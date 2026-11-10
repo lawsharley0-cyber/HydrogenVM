@@ -247,6 +247,7 @@ int runSuspendTests();
 int runGuestCallBoundaryChild(int mode);
 int runThreadLifetimeTests();
 int runThreadLifetimeChild();
+namespace Hydrogen { namespace Runtime { bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c); } }
 int runArenaPoolTests();
 
 namespace {
@@ -1367,6 +1368,7 @@ int runFullSubsystemTests() {
         std::string deep = "void main() { gl_FragColor = vec4(" + std::string(100, '(') + "1.0" + std::string(100, ')') + "); }";
         rejected &= !fragment.compile(deep, false);
         check(rejected, "GLSL rejects invalid writes, types, indexing, #include and excessive nesting");
+
 
         auto near4 = [](const float* g, float r, float gch, float b, float a) {
             return std::abs(g[0] - r) < 1e-5f && std::abs(g[1] - gch) < 1e-5f &&
@@ -4600,6 +4602,379 @@ int runFullSubsystemTests() {
               "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
     }
 
+    // NSGetSizeAndAlignment (armv7 iOS layout, worked out by hand): the size and alignment of the
+    // first encoded type, and a pointer to the next one. Dungeon Raid's PHInvocation sizes its
+    // argument buffers with it.
+    {
+        const uint32_t out = proc.heap().allocZeroed(8);
+        struct Case { const char* type; uint32_t size, align, consumed; };
+        const Case cases[] = {
+            {"i", 4, 4, 1}, {"c", 1, 1, 1}, {"s", 2, 2, 1}, {"q", 8, 4, 1}, {"d", 8, 4, 1}, {"@", 4, 4, 1}, {":", 4, 4, 1},
+            {"@8:12", 4, 4, 2},                                // an argument with its frame offset
+            {"^{CGRect={CGPoint=ff}{CGSize=ff}}i", 4, 4, 33},  // a pointer skips its pointee; the i is the next type
+            {"{CGRect={CGPoint=ff}{CGSize=ff}}", 16, 4, 32},
+            {"{pair=cq}", 12, 4, 9},                           // c at 0, q at 4 (8-byte scalars align to 4)
+            {"{mix=csc}", 6, 2, 9},                            // c at 0, s at 2, c at 4, padded to 6
+            {"[3s]", 6, 2, 4},
+            {"(u=cd)", 8, 4, 6},
+            {"r*", 4, 4, 2},                                   // const char*
+            {"@\"NSString\"i", 4, 4, 11},
+        };
+        bool ok = true;
+        for (const Case& c : cases) {
+            const uint32_t text = proc.heap().allocZeroed(uint32_t(std::strlen(c.type)) + 1);
+            std::memcpy(proc.mem().host(text), c.type, std::strlen(c.type) + 1);
+            proc.mem().write<uint32_t>(out, 0xDEAD);
+            proc.mem().write<uint32_t>(out + 4, 0xDEAD);
+            const uint32_t next = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_NSGetSizeAndAlignment"), {text, out, out + 4}));
+            const uint32_t size = proc.mem().read<uint32_t>(out), align = proc.mem().read<uint32_t>(out + 4);
+            if (size != c.size || align != c.align || next != text + c.consumed) {
+                std::printf("    NSGetSizeAndAlignment(\"%s\"): size %u align %u consumed %u\n", c.type, size, align, next - text);
+                ok = false;
+            }
+        }
+        check(ok, "NSGetSizeAndAlignment sizes scalars, structs, arrays, unions and pointers and returns the next type");
+    }
+
+    // libc++ iostreams, the part that lives in the dylib (Minecraft PE 0.10 builds its
+    // stringstreams itself and imports this). A stream is made by hand over the base
+    // streambuf with a 64-byte put area; expected text worked out by hand.
+    {
+        auto sym = [&](const char* n) { return *proc.lookupSymbol(n); };
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, sym(n), a)); };
+        auto& m = proc.mem();
+        const char* OS = "__ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE";
+        auto os = [&](const char* suffix) { return std::string(OS) + suffix; };
+        // vtable: vbase offset 4 at vptr-12, offset to top 0
+        const uint32_t vt = proc.heap().allocZeroed(16);
+        m.write<uint32_t>(vt, 4);
+        auto makeStream = [&](uint32_t sb) {
+            const uint32_t st = proc.heap().allocZeroed(4 + 80);
+            m.write<uint32_t>(st, vt + 12);
+            call("__ZNSt3__18ios_base4initEPv", {st + 4, sb});
+            return st;
+        };
+        const uint32_t sb = proc.heap().allocZeroed(32), area = proc.heap().allocZeroed(64);
+        call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {sb});
+        m.write<uint32_t>(sb + 20, area); m.write<uint32_t>(sb + 24, area); m.write<uint32_t>(sb + 28, area + 64);
+        const uint32_t st = makeStream(sb), ios = st + 4;
+
+        // basic_ios::init (in the app) widens ' ' through the locale's ctype facet for the fill
+        const uint32_t loc = proc.heap().allocZeroed(4);
+        call("__ZNKSt3__18ios_base6getlocEv", {loc, ios});
+        const uint32_t ctypeId = sym("__ZNSt3__15ctypeIcE2idE"), codecvtId = sym("__ZNSt3__17codecvtIcc11__mbstate_tE2idE");
+        const uint32_t ct = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, ctypeId});
+        const uint32_t cv = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, codecvtId});
+        auto virt = [&](uint32_t obj, uint32_t slot, std::initializer_list<uint32_t> a) {
+            std::vector<uint32_t> args{obj}; args.insert(args.end(), a);
+            return uint32_t(proc.callGuest(cpu, m.read<uint32_t>(m.read<uint32_t>(obj) + slot * 4), args));
+        };
+        const uint32_t unknownId = proc.heap().allocZeroed(8);
+        const bool facets = ct && cv && virt(ct, 7, {' '}) == ' ' && virt(ct, 3, {'q'}) == 'Q' && virt(ct, 5, {'Q'}) == 'q' &&
+            virt(ct, 9, {0xE9, '?'}) == '?' && virt(cv, 7, {}) == 1 && virt(cv, 6, {}) == 1 &&
+            (m.read<uint32_t>(m.read<uint32_t>(ct + 8) + ' ' * 4) & 0x4000) != 0 &&      // the mask table: space is _CTYPE_S
+            (m.read<uint32_t>(m.read<uint32_t>(ct + 8) + 'a' * 4) & 0x4000) == 0 &&
+            (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, ctypeId}) & 0xFF) == 1 &&
+            (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, unknownId}) & 0xFF) == 0;
+        check(facets, "libc++ locale: ctype<char> and codecvt<char,char> facets widen, map case, narrow and report no conversion");
+        m.write<uint32_t>(ios + 76, virt(ct, 7, {' '}));
+
+        call(os("lsEi").c_str(), {st, uint32_t(-42)});
+        m.write<uint32_t>(ios + 12, 6);                                       // width 6, for one insertion
+        call(os("lsEi").c_str(), {st, 7});
+        const bool widthReset = m.read<uint32_t>(ios + 12) == 0;
+        const uint32_t flags = m.read<uint32_t>(ios + 4);
+        m.write<uint32_t>(ios + 4, (flags & ~2u) | 8u | 512u);                // hex | showbase
+        call(os("lsEm").c_str(), {st, 255});
+        m.write<uint32_t>(ios + 4, flags);
+        call(os("lsEb").c_str(), {st, 1});
+        m.write<uint32_t>(ios + 4, flags | 1u);                               // boolalpha
+        call(os("lsEb").c_str(), {st, 1});
+        m.write<uint32_t>(ios + 4, flags);
+        const double d = 1.5; uint64_t db; std::memcpy(&db, &d, 8);
+        call(os("lsEd").c_str(), {st, uint32_t(db), uint32_t(db >> 32)});
+        const float f = 0.25f; uint32_t fb; std::memcpy(&fb, &f, 4);
+        call(os("lsEf").c_str(), {st, fb});
+        const int64_t big = -5000000000LL;
+        call(os("lsEx").c_str(), {st, uint32_t(uint64_t(big)), uint32_t(uint64_t(big) >> 32)});
+        call(os("lsEPKv").c_str(), {st, 0x1234});
+        const uint32_t abc = proc.heap().allocZeroed(4);
+        std::memcpy(m.host(abc), "abc", 3);
+        call(os("5writeEPKci").c_str(), {st, abc, 2});
+        call(os("lsEs").c_str(), {st, uint32_t(-3)});
+        const std::string want = "-42     70xff1true1.50.25-50000000000x1234ab-3";
+        const uint32_t wrote = m.read<uint32_t>(sb + 24) - area;
+        const std::string got(reinterpret_cast<const char*>(m.host(area)), wrote);
+        if (got != want) std::printf("    libc++ ostream wrote \"%s\"\n", got.c_str());
+        check(got == want && widthReset && m.read<uint32_t>(ios + 16) == 0,
+              "libc++ ostream: operator<< for int, unsigned long, bool, double, float, long long, pointer and short, and write()");
+
+        // fixed notation with precision 600: "1." and 600 zeros, 602 characters, none lost
+        {
+            const uint32_t bigSb = proc.heap().allocZeroed(32), bigArea = proc.heap().allocZeroed(700);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {bigSb});
+            m.write<uint32_t>(bigSb + 20, bigArea); m.write<uint32_t>(bigSb + 24, bigArea); m.write<uint32_t>(bigSb + 28, bigArea + 700);
+            const uint32_t bigSt = makeStream(bigSb);
+            m.write<uint32_t>(bigSt + 4 + 76, ' ');
+            m.write<uint32_t>(bigSt + 4 + 4, m.read<uint32_t>(bigSt + 4 + 4) | 4u);   // fixed
+            m.write<uint32_t>(bigSt + 4 + 8, 600);                                     // precision
+            const double one = 1.0; uint64_t ob; std::memcpy(&ob, &one, 8);
+            call(os("lsEd").c_str(), {bigSt, uint32_t(ob), uint32_t(ob >> 32)});
+            const uint32_t len = m.read<uint32_t>(bigSb + 24) - bigArea;
+            const std::string longText(reinterpret_cast<const char*>(m.host(bigArea)), len);
+            check(longText == "1." + std::string(600, '0'), "libc++ ostream: a 602-character fixed-notation double is written whole");
+            // the base streambuf's seekpos answers -1, which libc++ keeps after the 128-byte state
+            const uint32_t posOut = proc.heap().allocZeroed(136), posIn = proc.heap().allocZeroed(136);
+            cpu.r[13] -= 256;
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", {posOut, bigSb, posIn, 8});
+            cpu.r[13] += 256;
+            check(int64_t(m.read<uint64_t>(posOut + 128)) == -1 && m.read<uint32_t>(posOut) == 0,
+                  "libc++ streambuf::seekpos on the base class returns position -1 in libc++'s fpos layout");
+        }
+
+        // a full buffer: the base overflow refuses, so the stream goes bad|fail and stops writing
+        m.write<uint32_t>(sb + 28, m.read<uint32_t>(sb + 24));
+        call(os("lsEi").c_str(), {st, 1});
+        const uint32_t stateFull = m.read<uint32_t>(ios + 16);
+        const uint32_t sentry = proc.heap().allocZeroed(8);
+        call(os("6sentryC1ERS3_").c_str(), {sentry, st});
+        const bool sentryBad = m.read<uint8_t>(sentry) == 0 && m.read<uint32_t>(sentry + 4) == st;
+        call("__ZNSt3__18ios_base5clearEj", {ios, 0});
+        call(os("6sentryC1ERS3_").c_str(), {sentry, st});
+        check(stateFull == 5 && sentryBad && m.read<uint8_t>(sentry) == 1,
+              "libc++ ostream: a refused write sets badbit|failbit; the sentry is false until clear()");
+
+        // istream::sentry skips whitespace through the get area; only whitespace is failbit|eofbit
+        auto input = [&](const char* text) {
+            const uint32_t isb = proc.heap().allocZeroed(32), buf = proc.heap().allocZeroed(16);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {isb});
+            std::memcpy(m.host(buf), text, std::strlen(text));
+            m.write<uint32_t>(isb + 8, buf); m.write<uint32_t>(isb + 12, buf); m.write<uint32_t>(isb + 16, buf + uint32_t(std::strlen(text)));
+            return std::pair<uint32_t, uint32_t>(isb, buf);
+        };
+        const char* IS = "__ZNSt3__113basic_istreamIcNS_11char_traitsIcEEE6sentryC1ERS3_b";
+        const auto [isb1, buf1] = input("  \tx y");
+        const uint32_t is1 = makeStream(isb1);
+        call(IS, {sentry, is1, 0});
+        const bool skipOk = m.read<uint8_t>(sentry) == 1 && m.read<uint32_t>(isb1 + 12) == buf1 + 3 && m.read<uint32_t>(is1 + 4 + 16) == 0;
+        const auto [isb2, buf2] = input("  \tx");
+        const uint32_t is2 = makeStream(isb2);
+        call(IS, {sentry, is2, 1});                                           // noskipws: nothing consumed
+        const bool noskipOk = m.read<uint8_t>(sentry) == 1 && m.read<uint32_t>(isb2 + 12) == buf2;
+        const auto [isb3, buf3] = input("  ");
+        const uint32_t is3 = makeStream(isb3);
+        call(IS, {sentry, is3, 0});
+        const bool eofOk = m.read<uint8_t>(sentry) == 0 && m.read<uint32_t>(is3 + 4 + 16) == 6 && m.read<uint32_t>(isb3 + 12) == buf3 + 2;
+        if (!(skipOk && noskipOk && eofOk)) std::printf("    istream sentry: skip %d noskip %d eof %d\n", skipOk, noskipOk, eofOk);
+        check(skipOk && noskipOk && eofOk, "libc++ istream::sentry skips leading whitespace, honours noskipws, and fails at end of input");
+
+        // unformatted and formatted input (Terraria reads its data files with these). The stream
+        // layout here is vptr, gcount, then basic_ios at +8.
+        {
+            const uint32_t vt8 = proc.heap().allocZeroed(16);
+            m.write<uint32_t>(vt8, 8);
+            auto makeIn = [&](const char* text) {
+                const auto [isb, buf] = input(text);
+                const uint32_t st2 = proc.heap().allocZeroed(8 + 80);
+                m.write<uint32_t>(st2, vt8 + 12);
+                call("__ZNSt3__18ios_base4initEPv", {st2 + 8, isb});
+                return std::pair<uint32_t, uint32_t>(st2, isb);
+            };
+            const std::string I = "__ZNSt3__113basic_istreamIcNS_11char_traitsIcEEE";
+            const auto [in1, sb1] = makeIn("ab\ncd  -42x");
+            const uint32_t line = proc.heap().allocZeroed(16), num = proc.heap().allocZeroed(4);
+            call((I + "7getlineEPcic").c_str(), {in1, line, 16, '\n'});
+            const bool lineOk = proc.readCString(line) == "ab" && m.read<uint32_t>(in1 + 4) == 3 && m.read<uint32_t>(in1 + 8 + 16) == 0;
+            call((I + "4readEPci").c_str(), {in1, line, 2});
+            const bool readOk = std::memcmp(m.host(line), "cd", 2) == 0 && m.read<uint32_t>(in1 + 4) == 2;
+            call((I + "rsERi").c_str(), {in1, num});
+            const bool intOk = int32_t(m.read<uint32_t>(num)) == -42 && m.read<uint32_t>(in1 + 8 + 16) == 0 &&
+                               (call((I + "4peekEv").c_str(), {in1}) & 0xFF) == 'x';
+            // 3 bytes asked, 1 left: the count is 1 and the stream is failbit|eofbit
+            call((I + "4readEPci").c_str(), {in1, line, 3});
+            const bool shortOk = m.read<uint32_t>(in1 + 4) == 1 && m.read<uint32_t>(in1 + 8 + 16) == 6;
+            // the base streambuf cannot seek: tellg is -1 (the offset follows the 128-byte state), seekg sets failbit
+            const auto [in2, sb2] = makeIn("xyz");
+            const uint32_t pos = proc.heap().allocZeroed(136);
+            call((I + "5tellgEv").c_str(), {pos, in2});
+            const bool tellOk = int64_t(m.read<uint64_t>(pos + 128)) == -1 && m.read<uint32_t>(in2 + 8 + 16) == 0;
+            cpu.r[13] -= 64;
+            call((I + "5seekgExNS_8ios_base7seekdirE").c_str(), {in2, 0, 0, 2});
+            cpu.r[13] += 64;
+            const bool seekOk = m.read<uint32_t>(in2 + 8 + 16) == 4;
+            const auto [in3, sb3] = makeIn("zz");
+            call((I + "rsERi").c_str(), {in3, num});
+            const bool notNumber = m.read<uint32_t>(num) == 0 && m.read<uint32_t>(in3 + 8 + 16) == 4;
+            (void)sb1; (void)sb2; (void)sb3;
+            if (!(lineOk && readOk && intOk && shortOk && tellOk && seekOk && notNumber))
+                std::printf("    libc++ istream: line %d read %d int %d short %d tell %d seek %d nan %d\n", lineOk, readOk, intOk, shortOk, tellOk, seekOk, notNumber);
+            check(lineOk && readOk && intOk && shortOk && tellOk && seekOk && notNumber,
+                  "libc++ istream: getline, read, operator>>(int), peek, a short read, tellg and seekg on a buffer that cannot seek");
+        }
+
+        // A std::iostream built the way an app's inline constructor does it, from the dylib's
+        // vtable: istream vptr at +0, ostream vptr at +8, basic_ios at +12 (Terraria).
+        {
+            const uint32_t ztv = sym("__ZTVNSt3__114basic_iostreamIcNS_11char_traitsIcEEEE");
+            const uint32_t ztt = sym("__ZTTNSt3__114basic_iostreamIcNS_11char_traitsIcEEEE");
+            const bool offsets = int32_t(m.read<uint32_t>(ztv)) == 12 && m.read<uint32_t>(ztv + 4) == 0 &&       // istream part
+                                 int32_t(m.read<uint32_t>(ztv + 20)) == 4 && int32_t(m.read<uint32_t>(ztv + 24)) == -8 &&   // ostream part at +8
+                                 int32_t(m.read<uint32_t>(ztv + 40)) == -12 && int32_t(m.read<uint32_t>(ztv + 44)) == -12 && // basic_ios at +12
+                                 m.read<uint32_t>(ztt) == ztv + 12 && m.read<uint32_t>(ztt + 20) == ztv + 52 && m.read<uint32_t>(ztt + 24) == ztv + 32 &&
+                                 int32_t(m.read<uint32_t>(m.read<uint32_t>(ztt + 4) - 12)) == 12 &&    // istream while constructing: basic_ios 12 on
+                                 int32_t(m.read<uint32_t>(m.read<uint32_t>(ztt + 12) - 12)) == 4;      // ostream while constructing: basic_ios 4 on
+            const uint32_t obj = proc.heap().allocZeroed(12 + 80);
+            m.write<uint32_t>(obj, ztv + 12);
+            m.write<uint32_t>(obj + 8, ztv + 32);
+            m.write<uint32_t>(obj + 12, ztv + 52);
+            const uint32_t iosb = proc.heap().allocZeroed(32), ioArea = proc.heap().allocZeroed(16);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {iosb});
+            m.write<uint32_t>(iosb + 20, ioArea); m.write<uint32_t>(iosb + 24, ioArea); m.write<uint32_t>(iosb + 28, ioArea + 16);
+            call("__ZNSt3__18ios_base4initEPv", {obj + 12, iosb});
+            const uint32_t text = proc.heap().allocZeroed(4);
+            std::memcpy(m.host(text), "hey", 3);
+            call(os("5writeEPKci").c_str(), {obj + 8, text, 3});                    // through the ostream half
+            const bool wrote = std::memcmp(m.host(ioArea), "hey", 3) == 0 && m.read<uint32_t>(obj + 12 + 16) == 0;
+            // `delete` through the basic_ios subobject frees the whole stream
+            proc.callGuest(cpu, m.read<uint32_t>(m.read<uint32_t>(obj + 12) + 4), {obj + 12});
+            check(offsets && wrote && proc.heap().blockSize(obj) == 0,
+                  "libc++ vtable and VTT for std::iostream: base offsets, a write through the ostream half, delete through basic_ios");
+        }
+
+        // std::__sort for unsigned long long
+        const uint32_t arr = proc.heap().allocZeroed(24);
+        const uint64_t vals[3] = {3, 1ull << 40, 2};
+        std::memcpy(m.host(arr), vals, 24);
+        call("__ZNSt3__16__sortIRNS_6__lessIyyEEPyEEvT0_S5_T_", {arr, arr + 24, 0});
+        check(m.read<uint64_t>(arr) == 2 && m.read<uint64_t>(arr + 8) == 3 && m.read<uint64_t>(arr + 16) == (1ull << 40),
+              "libc++ __sort orders unsigned long long values");
+    }
+
+    // task_info(TASK_BASIC_INFO_32) writes its 8 words and no more, whatever count the caller
+    // claims. Terraria passes 32 (the size in bytes) for a 32-byte buffer on its stack; ten words
+    // were written and its return address was overwritten.
+    {
+        const uint32_t buf = proc.heap().allocZeroed(64), count = proc.heap().allocZeroed(4);
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 32);
+        const uint32_t kr = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 4, buf, count}));
+        const uint32_t virt = proc.mem().read<uint32_t>(buf + 4), resident = proc.mem().read<uint32_t>(buf + 8);
+        const bool basic = kr == 0 && proc.mem().read<uint32_t>(count) == 8 && proc.mem().read<uint32_t>(buf) == 0 &&
+                           resident > 0 && virt >= resident && proc.mem().read<uint32_t>(buf + 32) == 0xCAFEF00D;
+        proc.mem().write<uint32_t>(count, 4);                      // too small for the structure
+        proc.mem().write<uint32_t>(buf, 0xCAFEF00D);
+        const uint32_t small = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 4, buf, count}));
+        const bool smallUntouched = proc.mem().read<uint32_t>(buf) == 0xCAFEF00D;
+        // flavor 5: the 64-bit sizes when there is room for ten words, the 32-bit structure for eight
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 10);
+        const uint32_t kr64 = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 5, buf, count}));
+        const bool wide = kr64 == 0 && proc.mem().read<uint32_t>(count) == 10 && proc.mem().read<uint64_t>(buf + 12) > 0 &&
+                          proc.mem().read<uint64_t>(buf + 4) >= proc.mem().read<uint64_t>(buf + 12) &&
+                          proc.mem().read<uint64_t>(buf + 4) < (1ull << 32) && proc.mem().read<uint32_t>(buf + 40) == 0xCAFEF00D;
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 8);
+        const uint32_t kr8 = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 5, buf, count}));
+        const bool narrow = kr8 == 0 && proc.mem().read<uint32_t>(count) == 8 && proc.mem().read<uint32_t>(buf + 8) > 0 &&
+                            proc.mem().read<uint32_t>(buf + 4) >= proc.mem().read<uint32_t>(buf + 8) &&
+                            proc.mem().read<uint32_t>(buf + 32) == 0xCAFEF00D;
+        check(basic && small == 4 && smallUntouched && wide && narrow,
+              "task_info(TASK_BASIC_INFO_32) writes 8 words whatever the caller's count; too small a count is KERN_INVALID_ARGUMENT; flavor 5 fits the room given");
+    }
+
+    // ungetc takes back more than one byte, as Darwin's does. PvZ's XML reader reads three bytes
+    // looking for a byte-order mark and returns all three; with one byte of pushback it lost
+    // "<?" and could not parse resources.xml, so the game never drew anything.
+    {
+        const std::string path = proc.homePath() + "/unget_test.xml";
+        { std::ofstream(path) << "<?xml?>"; }
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(n), a)); };
+        auto cstr = [&](const std::string& t) { const uint32_t a = proc.heap().allocZeroed(uint32_t(t.size()) + 1); std::memcpy(proc.mem().host(a), t.data(), t.size()); return a; };
+        const uint32_t fp = call("_fopen", {cstr(path), cstr("rb")});
+        const uint32_t c1 = call("_fgetc", {fp}), c2 = call("_fgetc", {fp}), c3 = call("_fgetc", {fp});
+        call("_ungetc", {c3, fp}); call("_ungetc", {c2, fp}); call("_ungetc", {c1, fp});
+        const bool told = call("_ftell", {fp}) == 0 && call("_feof", {fp}) == 0;
+        const uint32_t buf = proc.heap().allocZeroed(16);
+        const uint32_t first = call("_fgetc", {fp});
+        const uint32_t got = call("_fread", {buf, 1, 6, fp});
+        const bool reread = first == '<' && got == 6 && std::memcmp(proc.mem().host(buf), "?xml?>", 6) == 0;
+        // a seek discards what was pushed back
+        call("_ungetc", {'Z', fp});
+        call("_fseek", {fp, 1, 0});
+        bool seekDrops = call("_fgetc", {fp}) == '?';
+        // SEEK_CUR counts from the stream's position, which is behind the file's by the bytes
+        // pushed back: after reading "<?" twice over and returning two bytes, +1 lands on 'x'... 
+        call("_fseek", {fp, 0, 0});
+        const uint32_t d1 = call("_fgetc", {fp}), d2 = call("_fgetc", {fp}), d3 = call("_fgetc", {fp});
+        call("_ungetc", {d3, fp}); call("_ungetc", {d2, fp}); call("_ungetc", {d1, fp});    // the stream is at 0, the file at 3
+        call("_fseek", {fp, 1, 1 /*SEEK_CUR*/});
+        seekDrops = seekDrops && call("_ftell", {fp}) == 1 && call("_fgetc", {fp}) == '?';
+        // a seek that fails keeps the pushed-back byte
+        call("_ungetc", {'Q', fp});
+        const bool failedSeekKeeps = int32_t(call("_fseek", {fp, uint32_t(-100), 0})) != 0 && call("_fgetc", {fp}) == 'Q';
+        seekDrops = seekDrops && failedSeekKeeps;
+        call("_fclose", {fp});
+        std::filesystem::remove(path);
+        check(fp && c1 == '<' && c2 == '?' && c3 == 'x' && told && reread && seekDrops,
+              "ungetc returns three bytes to a stream; fgetc and fread read them again in order; fseek discards them, counts SEEK_CUR from the stream position, and keeps them when it fails");
+    }
+
+    // sbrk as Darwin emulates it: 4 MB handed out in order, then -1 (not 0: an app's dlmalloc
+    // took the missing sbrk's 0 for a heap at address zero, PvZ).
+    {
+        auto sbrk = [&](int32_t n) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_sbrk"), {uint32_t(n)})); };
+        const uint32_t start = sbrk(0);
+        const uint32_t a = sbrk(4096), b = sbrk(8192);
+        proc.mem().write<uint32_t>(a, 0x12345678);                // the region is real memory
+        const bool grows = start != 0 && start != 0xFFFFFFFFu && a == start && b == start + 4096 && sbrk(0) == start + 12288 &&
+                           sbrk(-4096) == start + 12288 && proc.mem().read<uint32_t>(a) == 0x12345678;
+        const bool tooBig = sbrk(4 << 20) == 0xFFFFFFFFu && sbrk(0) == start + 12288;
+        const bool rest = sbrk((4 << 20) - 12288) == start + 12288 && sbrk(1) == 0xFFFFFFFFu;
+        const bool brkFails = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_brk"), {start})) == 0xFFFFFFFFu &&
+                              proc.mem().read<uint32_t>(proc.currentThread().errnoAddr) == 12 /*ENOMEM*/;
+        check(grows && tooBig && rest && brkFails,
+              "sbrk hands out its 4 MB region in order, reports the break for 0 or less, and returns -1 when it does not fit; brk always fails");
+    }
+
+    // An app with its own crash reporter catches the real fault and raises the signal again.
+    // The stop message for that raise names the fault that started it (Terraria: PLCrashReporter
+    // hid a null read inside std::string behind "the app raised signal 11").
+    {
+        ProcessConfig fcfg;
+        fcfg.homePath = (std::filesystem::temp_directory_path() / ("hvm_handled_fault_" + std::to_string(::getpid()))).string();
+        struct RemoveHome { std::string path; ~RemoveHome() { std::error_code ec; std::filesystem::remove_all(path, ec); } } removeHome{fcfg.homePath};
+        Process fproc(fcfg);
+        auto& fcpu = fproc.mainThread().cpu;
+        std::string raised;
+        const uint32_t handler = fproc.defineFunction("test_crash_reporter", [&](Ctx& x) {
+            try { x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_raise"), {11}); }
+            catch (const std::exception& e) { raised = e.what(); throw; }
+        });
+        fproc.callGuest(fcpu, *fproc.lookupSymbol("_signal"), {11, handler});
+        fcpu.exit_info = 0x10;                        // the address the guest touched
+        fcpu.r[13] = fproc.heap().allocZeroed(8192) + 8192;   // a stack for the signal frame
+        fcpu.r[15] = handler;
+        const bool resumed = hvmDeliverGuestFault(fproc, fcpu);
+        if (raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") == std::string::npos)
+            std::printf("    raise said: %s\n", raised.c_str());
+        // A handler that returns has dealt with its fault: a later raise does not mention it.
+        int recovered = 0;
+        const uint32_t quiet = fproc.defineFunction("test_recovering_handler", [&](Ctx&) { ++recovered; });
+        fproc.callGuest(fcpu, *fproc.lookupSymbol("_signal"), {11, quiet});
+        fcpu.exit_info = 0x20;
+        fcpu.r[15] = quiet;
+        fcpu.r[13] = fproc.heap().allocZeroed(8192) + 8192;
+        const bool resumedQuietly = hvmDeliverGuestFault(fproc, fcpu);
+        std::string later;
+        try { fproc.callGuest(fcpu, *fproc.lookupSymbol("_raise"), {6}); } catch (const std::exception& e) { later = e.what(); }
+        if (later.find("crash handler") != std::string::npos) std::printf("    later raise said: %s\n", later.c_str());
+        check(!resumed && raised.find("the app raised signal 11 after") != std::string::npos &&
+              raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") != std::string::npos &&
+              resumedQuietly && recovered == 1 && later.find("the app raised signal 6") != std::string::npos &&
+              later.find("crash handler") == std::string::npos,
+              "a signal raised by the app's crash handler reports the fault the handler caught; a fault the handler recovered from is forgotten");
+    }
+
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
     {
         const ObjC::Class winCls = r.getClass("UIWindow");
@@ -5861,6 +6236,19 @@ int runFullSubsystemTests() {
         const uint32_t readCount = call("__ZNSi4readEPci", {ifstreamObj, ifstreamReadBuf, 17});
         const std::string ifstreamReadStr = proc.readCString(ifstreamReadBuf);
         call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEED1Ev", {ifstreamObj});
+        // `delete stream` on a heap ifstream goes through the vtable's deleting destructor
+        // (Flight Control's file manager): the file closes and the block is freed.
+        {
+            const uint32_t heapStream = proc.heap().allocZeroed(520);
+            call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEEC1EPKcSt13_Ios_Openmode", {heapStream, cpath, 8});
+            const uint32_t probe = proc.heap().allocZeroed(8);
+            const bool readable = call("__ZNSi4readEPci", {heapStream, probe, 5}) == heapStream && proc.readCString(probe) == "Hello";
+            const uint32_t deleting = proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(heapStream) + 4);
+            bool threw = false;
+            try { proc.callGuest(cpu, deleting, {heapStream}); } catch (const std::exception&) { threw = true; }
+            check(readable && !threw && proc.heap().blockSize(heapStream) == 0,
+                  "libstdc++ ifstream: the virtual deleting destructor closes the file and frees the stream");
+        }
         std::filesystem::remove(tmpPath);
         check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!" &&
               readCount == ifstreamObj && ifstreamReadStr == "Hello basic_file!",
@@ -10222,11 +10610,43 @@ int runFullSubsystemTests() {
             static void bindFramebuffer(uint32_t, uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
             static void bindTexture(uint32_t, uint32_t t) { if (t >= 99) errors().push_back(0x0500); }
             static void texImage2D(uint32_t, int32_t, int32_t f, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void*) {
-                if (f == 0x84F9) errors().push_back(0x0502);   // a depth-stencil format the fake driver rejects
+                // Like an ES 3 driver: the unsized depth-stencil format is refused, the sized one accepted.
+                if (f == 0x84F9 || f == 0x7777 || (f == 0x88F0 && refuseSized())) errors().push_back(0x0502);
+                else lastInternalFormat() = f;
             }
+            static int32_t& lastInternalFormat() { static int32_t f = 0; return f; }
+            static bool& refuseSized() { static bool r = false; return r; }
             static void texSubImage2D(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t f, uint32_t, const void*) {
                 if (f == 0x84F9) errors().push_back(0x0500);
             }
+            // Buffer objects, with the iOS driver's rule that glBufferData refuses a mapped buffer.
+            struct Buffer { std::vector<uint8_t> data; bool mapped = false; };
+            static std::map<uint32_t, Buffer>& buffers() { static std::map<uint32_t, Buffer> b; return b; }
+            static uint32_t& boundArray() { static uint32_t b = 0; return b; }
+            static void bindBuffer(uint32_t target, uint32_t name) { if (target == 0x8892) boundArray() = name; }
+            static void bufferData(uint32_t, intptr_t size, const void* data, uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!boundArray() || b.mapped) { errors().push_back(0x0502); return; }
+                b.data.assign(size_t(size), 0);
+                if (data) std::memcpy(b.data.data(), data, size_t(size));
+            }
+            static void* mapBufferRange(uint32_t, intptr_t offset, intptr_t, uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!boundArray() || b.mapped) { errors().push_back(0x0502); return nullptr; }
+                b.mapped = true;
+                return b.data.data() + offset;
+            }
+            static uint8_t unmapBuffer(uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!b.mapped) { errors().push_back(0x0502); return 0; }
+                b.mapped = false;
+                return 1;
+            }
+            static void getBufferParameteriv(uint32_t, uint32_t pname, int32_t* out) {
+                const Buffer& b = buffers()[boundArray()];
+                *out = pname == 0x8764 ? int32_t(b.data.size()) : pname == 0x88BC ? int32_t(b.mapped) : 0;
+            }
+            static void getIntegerv(uint32_t pname, int32_t* out) { *out = pname == 0x8894 ? int32_t(boundArray()) : 0; }
         };
         struct ErrPlatform final : HostGL::Platform {
             std::mutex mu;
@@ -10250,6 +10670,12 @@ int runFullSubsystemTests() {
                 if (s == "glBindTexture") return reinterpret_cast<void*>(&FakeGL::bindTexture);
                 if (s == "glTexImage2D") return reinterpret_cast<void*>(&FakeGL::texImage2D);
                 if (s == "glTexSubImage2D") return reinterpret_cast<void*>(&FakeGL::texSubImage2D);
+                if (s == "glBindBuffer") return reinterpret_cast<void*>(&FakeGL::bindBuffer);
+                if (s == "glBufferData") return reinterpret_cast<void*>(&FakeGL::bufferData);
+                if (s == "glMapBufferRange") return reinterpret_cast<void*>(&FakeGL::mapBufferRange);
+                if (s == "glUnmapBuffer") return reinterpret_cast<void*>(&FakeGL::unmapBuffer);
+                if (s == "glGetBufferParameteriv") return reinterpret_cast<void*>(&FakeGL::getBufferParameteriv);
+                if (s == "glGetIntegerv") return reinterpret_cast<void*>(&FakeGL::getIntegerv);
                 return nullptr;
             }
         };
@@ -10308,7 +10734,7 @@ int runFullSubsystemTests() {
         er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
         const uint32_t savedSp = ecpu.r[13];
         ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;   // room for the five stack arguments
-        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x7777, 4, 4, 0, 0x7777, 0x1401, 0});
         ecpu.r[13] = savedSp;
         eproc.callGuest(ecpu, *eproc.lookupSymbol("_glBindTexture"), {0x0DE1, 0});
         const uint32_t texErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
@@ -10322,6 +10748,69 @@ int runFullSubsystemTests() {
             for (const auto& line : eproc.glErrorLog()) std::printf("    gl log: %s\n", line.c_str());
         check(texErr == 0x0502 && texNamed && !bindBlamed,
               "a hand-written GL function's error is logged under its own name, and the guest still sees it");
+        // A depth-stencil texture asked for the ES 2 way (unsized) on a driver that only takes the
+        // sized format: the runtime asks again with DEPTH24_STENCIL8 and the guest sees no error
+        // (Minecraft: Story Mode's framebuffer was incomplete on the phone). If the driver refuses
+        // both, the guest gets the first error.
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        FakeGL::lastInternalFormat() = 0;
+        ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        const uint32_t depthErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        const int32_t depthFormat = FakeGL::lastInternalFormat();
+        FakeGL::refuseSized() = true;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        const uint32_t bothErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        const uint32_t bothErrAgain = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        FakeGL::refuseSized() = false;
+        ecpu.r[13] = savedSp;
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        if (!(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0))
+            std::printf("    depth texture: err %x format %x both %x again %x\n", depthErr, depthFormat, bothErr, bothErrAgain);
+        check(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0,
+              "an unsized depth-stencil texture the driver refuses is created with the sized format; refused twice, the guest sees the error once");
+        // Two buffers mapped through the same target, then unmapped in the other order (Clumsy
+        // Ninja's vertex setup). Each unmap must write its own data to its own buffer and end the
+        // driver's mapping, or the next glBufferData is refused, as it was on the phone.
+        {
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+            auto gl = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol(n), a)); };
+            while (gl("_glGetError", {})) {}
+            gl("_glBindBuffer", {0x8892, 10});
+            gl("_glBufferData", {0x8892, 8, 0, 0x88E8});
+            const uint32_t mapA = gl("_glMapBufferOES", {0x8892, 0x88B9});
+            gl("_glBindBuffer", {0x8892, 9});
+            gl("_glBufferData", {0x8892, 4, 0, 0x88E8});
+            const uint32_t mapB = gl("_glMapBufferOES", {0x8892, 0x88B9});
+            if (mapA) std::memcpy(eproc.mem().host(mapA), "AAAAAAAA", 8);
+            if (mapB) std::memcpy(eproc.mem().host(mapB), "BBBB", 4);
+            gl("_glBindBuffer", {0x8892, 10});
+            const bool unmapA = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 1;
+            gl("_glBindBuffer", {0x8892, 9});
+            const bool unmapB = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 1;
+            const auto& bufs = FakeGL::buffers();
+            const bool contents = bufs.at(10).data == std::vector<uint8_t>(8, 'A') && bufs.at(9).data == std::vector<uint8_t>(4, 'B');
+            const uint32_t fresh = eproc.heap().allocZeroed(4);
+            std::memcpy(eproc.mem().host(fresh), "CCCC", 4);
+            gl("_glBufferData", {0x8892, 4, fresh, 0x88E4});
+            const uint32_t afterErr = gl("_glGetError", {});
+            // glBufferData on a buffer the app left mapped ends the mapping; a late unmap reports
+            // failure and writes nothing.
+            FakeGL::buffers()[11] = {};
+            gl("_glBindBuffer", {0x8892, 11});
+            gl("_glBufferData", {0x8892, 4, 0, 0x88E8});
+            gl("_glMapBufferOES", {0x8892, 0x88B9});
+            FakeGL::buffers()[11].mapped = false;   // what a real driver's glBufferData does to the old mapping
+            gl("_glBufferData", {0x8892, 4, fresh, 0x88E4});
+            const bool lateUnmap = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 0 && FakeGL::buffers()[11].data == std::vector<uint8_t>(4, 'C');
+            while (gl("_glGetError", {})) {}
+            gl("_glBindBuffer", {0x8892, 0});
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+            if (!(mapA && mapB && mapA != mapB && unmapA && unmapB && contents && afterErr == 0 && lateUnmap))
+                std::printf("    mapped buffers: maps %x %x unmap %d %d contents %d err %x late %d\n", mapA, mapB, unmapA, unmapB, contents, afterErr, lateUnmap);
+            check(mapA && mapB && mapA != mapB && unmapA && unmapB && contents && afterErr == 0 && lateUnmap,
+                  "two buffers mapped on one target each get their own data back on unmap, and glBufferData works afterwards");
+        }
         // glTexSubImage2D has no check of its own: HG_BEGIN's check on return names it.
         er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
         ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;

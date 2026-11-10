@@ -45,6 +45,56 @@ int32_t hvmFilebufRead(Ctx& x, uint32_t sb, uint32_t buf, int32_t n);
 int32_t hvmFilebufWrite(Ctx& x, uint32_t sb, const char* data, uint32_t n);
 int64_t hvmFilebufSeek(Ctx& x, uint32_t sb, int64_t off, uint32_t dir);
 
+// Formats an integer the way num_put does for these fmtflags (the values are the same in
+// libstdc++ and libc++). `prefix` is how much of the result precedes internal padding.
+std::string hvmIosFormatInt(uint32_t fl, int64_t v, bool isSigned, int bits, size_t& prefix) {
+    constexpr uint32_t fDec = 2, fHex = 8, fOct = 64, fShowbase = 512, fShowpos = 2048, fUppercase = 16384;
+    const uint32_t base = fl & (fDec | fOct | fHex);
+    char buf[80];
+    std::string pre, digits;
+    if (base == fHex || base == fOct) {
+        const uint64_t u = bits == 64 ? uint64_t(v) : uint64_t(uint32_t(v));
+        std::snprintf(buf, sizeof buf, base == fHex ? ((fl & fUppercase) ? "%" PRIX64 : "%" PRIx64) : "%" PRIo64, u);
+        digits = buf;
+        if ((fl & fShowbase) && u) pre = base == fOct ? "0" : (fl & fUppercase) ? "0X" : "0x";
+        if (base == fOct && pre == "0") { digits = "0" + digits; pre.clear(); }
+    } else if (isSigned) {
+        std::snprintf(buf, sizeof buf, "%" PRId64, v);
+        digits = buf;
+        if (v < 0) { pre = "-"; digits.erase(0, 1); }
+        else if (fl & fShowpos) pre = "+";
+    } else {
+        std::snprintf(buf, sizeof buf, "%" PRIu64, uint64_t(v));
+        digits = buf;
+    }
+    prefix = pre.size();
+    return pre + digits;
+}
+
+std::string hvmIosFormatDouble(uint32_t fl, int prec, double d, size_t& prefix) {
+    constexpr uint32_t fFixed = 4, fScientific = 256, fShowpoint = 1024, fShowpos = 2048, fUppercase = 16384;
+    std::string f = "%";
+    if (fl & fShowpos) f += '+';
+    if (fl & fShowpoint) f += '#';
+    const uint32_t ff = fl & (fFixed | fScientific);
+    const bool up = fl & fUppercase;
+    if (ff == (fFixed | fScientific)) f += up ? "A" : "a";
+    else {
+        if (prec < 0) prec = 6;
+        f += ".*";
+        f += ff == fFixed ? (up ? "F" : "f") : ff == fScientific ? (up ? "E" : "e") : (up ? "G" : "g");
+    }
+    // Sized from snprintf's own answer: fixed notation with a large precision is long.
+    const bool hexfloat = ff == (fFixed | fScientific);
+    const int need = hexfloat ? std::snprintf(nullptr, 0, f.c_str(), d) : std::snprintf(nullptr, 0, f.c_str(), prec, d);
+    std::string out(size_t(need < 0 ? 0 : need) + 1, '\0');
+    if (hexfloat) std::snprintf(out.data(), out.size(), f.c_str(), d);
+    else std::snprintf(out.data(), out.size(), f.c_str(), prec, d);
+    out.pop_back();
+    prefix = (!out.empty() && (out[0] == '-' || out[0] == '+')) ? 1 : 0;
+    return out;
+}
+
 namespace {
 
 constexpr uint32_t kPrecision = 4, kWidth = 8, kFlags = 12, kExceptions = 16, kState = 20, kWordSize = 100, kWords = 104,
@@ -161,48 +211,16 @@ uint32_t emit(Ctx& x, uint32_t os, std::string s, size_t prefix = 0) {
 
 // Integer formatting per the stream's flags. `bits` is the type's width (hex/oct print it unsigned).
 uint32_t putInt(Ctx& x, uint32_t os, int64_t v, bool isSigned, int bits) {
-    const uint32_t fl = rd(x, iosOf(x, os) + kFlags);
-    const uint32_t base = fl & (fDec | fOct | fHex);
-    char buf[80];
-    std::string pre, digits;
-    if (base == fHex || base == fOct) {
-        const uint64_t u = bits == 64 ? uint64_t(v) : uint64_t(uint32_t(v));
-        std::snprintf(buf, sizeof buf, base == fHex ? ((fl & fUppercase) ? "%" PRIX64 : "%" PRIx64) : "%" PRIo64, u);
-        digits = buf;
-        if ((fl & fShowbase) && u) pre = base == fOct ? "0" : (fl & fUppercase) ? "0X" : "0x";
-        if (base == fOct && pre == "0") { digits = "0" + digits; pre.clear(); }
-    } else if (isSigned) {
-        std::snprintf(buf, sizeof buf, "%" PRId64, v);
-        digits = buf;
-        if (v < 0) { pre = "-"; digits.erase(0, 1); }
-        else if (fl & fShowpos) pre = "+";
-    } else {
-        std::snprintf(buf, sizeof buf, "%" PRIu64, uint64_t(v));
-        digits = buf;
-    }
-    return emit(x, os, pre + digits, pre.size());
+    size_t prefix = 0;
+    std::string text = hvmIosFormatInt(rd(x, iosOf(x, os) + kFlags), v, isSigned, bits, prefix);
+    return emit(x, os, std::move(text), prefix);
 }
 
 uint32_t putDouble(Ctx& x, uint32_t os, double d) {
     const uint32_t ios = iosOf(x, os);
-    const uint32_t fl = rd(x, ios + kFlags);
-    int prec = int32_t(rd(x, ios + kPrecision));
-    std::string f = "%";
-    if (fl & fShowpos) f += '+';
-    if (fl & fShowpoint) f += '#';
-    const uint32_t ff = fl & (fFixed | fScientific);
-    const bool up = fl & fUppercase;
-    if (ff == (fFixed | fScientific)) f += up ? "A" : "a";
-    else {
-        if (prec < 0) prec = 6;
-        f += ".*";
-        f += ff == fFixed ? (up ? "F" : "f") : ff == fScientific ? (up ? "E" : "e") : (up ? "G" : "g");
-    }
-    char buf[512];
-    if (ff == (fFixed | fScientific)) std::snprintf(buf, sizeof buf, f.c_str(), d);
-    else std::snprintf(buf, sizeof buf, f.c_str(), prec, d);
-    const size_t prefix = (buf[0] == '-' || buf[0] == '+') ? 1 : 0;
-    return emit(x, os, buf, prefix);
+    size_t prefix = 0;
+    std::string text = hvmIosFormatDouble(rd(x, ios + kFlags), int32_t(rd(x, ios + kPrecision)), d, prefix);
+    return emit(x, os, std::move(text), prefix);
 }
 
 // A 64-bit argument after `this`: r1:r2 (iOS armv7 passes arguments APCS-style, no register pairing).
@@ -655,6 +673,12 @@ int32_t bs_eof2(Ctx&, GuestPtr, int32_t) { return kEofChar; }
 uint32_t bs_setbuf(Ctx&, GuestPtr sb, GuestPtr, int32_t) { return sb; }
 void bs_imbue(Ctx&, GuestPtr, GuestPtr) {}
 void bs_badpos(Ctx& x) { writePos(x, x.cpu.r[0], -1); }
+// libc++'s fpos keeps the 128-byte conversion state first and the offset after it.
+void libcxx_badpos(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0];
+    for (uint32_t i = 0; i < 128; i += 4) wr(x, ret + i, 0);
+    x.mem.write<uint64_t>(ret + 128, uint64_t(int64_t(-1)));
+}
 int32_t bs_uflow(Ctx& x, GuestPtr sb) {
     if (vcall(x, sb, sUnderflow, {}) == kEofChar) return kEofChar;
     const uint32_t g = rd(x, sb + 8);
@@ -1452,8 +1476,8 @@ void registerLibStdcxxStreams(Process& p) {
     const uint32_t lcD0 = p.def<&os_dtorDelete>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEED0Ev");
     const uint32_t lcImbue = p.def<&bs_imbue>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE5imbueERKNS_6localeE");
     const uint32_t lcSetbuf = p.def<&bs_setbuf>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6setbufEPci");
-    const uint32_t lcSeekoff = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekoffExNS_8ios_base7seekdirEj", bs_badpos);
-    const uint32_t lcSeekpos = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", bs_badpos);
+    const uint32_t lcSeekoff = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekoffExNS_8ios_base7seekdirEj", libcxx_badpos);
+    const uint32_t lcSeekpos = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", libcxx_badpos);
     const uint32_t lcSync = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE4syncEv");
     const uint32_t lcShow = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9showmanycEv");
     const uint32_t lcXsgetn = p.def<&libcxx_xsgetn>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6xsgetnEPci");

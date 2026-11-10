@@ -859,6 +859,16 @@ uint32_t g_signal(Ctx& x, int32_t sig, GuestPtr handler) {
     s.acts[sig] = {handler, 0, 0};
     return prev;
 }
+// The last fault handed to the app's own signal handler. A crash reporter in the app
+// (PLCrashReporter, HockeyApp) catches the real fault, writes its report and then raises the
+// signal again; the report for that raise names the fault that started it.
+struct HandledFault {
+    explicit HandledFault(Process&) {}
+    std::mutex mu;
+    struct Record { std::string where, backtrace; };
+    std::unordered_map<std::thread::id, Record> byThread;   // only while that thread's handler runs
+};
+
 // Runs the app's SIGSEGV (or SIGBUS) handler for a fault on `c`; true when the
 // handler returned and the thread continues from the context it left.
 bool deliverGuestFault(Process& p, CPU::Cpu& c) {
@@ -895,6 +905,24 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
     m.write<uint32_t>(mc + 80 + 256, c.fpscr);
     p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", sig, addr, pc);
     p.perf().faultsToApp++;
+    {
+        char where[96];
+        std::snprintf(where, sizeof where, "a bad memory access at 0x%08x%s at ", addr, addr < 0x1000 ? " (NULL pointer)" : "");
+        auto& hf = p.service<HandledFault>();
+        std::string bt = p.backtrace(c, 12);
+        std::lock_guard<std::mutex> lk(hf.mu);
+        hf.byThread[std::this_thread::get_id()] = {where + p.describeAddress(pc), std::move(bt)};
+    }
+    // The record lasts as long as the handler: a handler that returns has dealt with the fault,
+    // and a later raise on this thread has nothing to do with it.
+    struct Forget {
+        Process& p;
+        ~Forget() {
+            auto& hf = p.service<HandledFault>();
+            std::lock_guard<std::mutex> lk(hf.mu);
+            hf.byThread.erase(std::this_thread::get_id());
+        }
+    } forget{p};
     // Where the first few happened (Mono raises these routinely, so not every time).
     static std::atomic<int> traced{0};
     if (traced.fetch_add(1) < 3) p.logf(LogLevel::Info, "  fault backtrace:\n%s", p.backtrace(c, 8).c_str());
@@ -922,7 +950,16 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
 }
 int32_t g_raise(Ctx& x, int32_t sig) {
     flushGuestStdio(x.proc);
-    throw std::runtime_error("the app raised signal " + std::to_string(sig) + (sig == 6 ? " (SIGABRT)" : ""));
+    std::string what = "the app raised signal " + std::to_string(sig) + (sig == 6 ? " (SIGABRT)" : "");
+    {
+        auto& hf = x.proc.service<HandledFault>();
+        std::lock_guard<std::mutex> lk(hf.mu);
+        if (const auto it = hf.byThread.find(std::this_thread::get_id()); it != hf.byThread.end()) {
+            what += " after its own crash handler caught " + it->second.where;
+            x.proc.log(LogLevel::Error, "The fault the app's crash handler caught: " + it->second.where + "\n" + it->second.backtrace);
+        }
+    }
+    throw std::runtime_error(what);
 }
 int32_t g_kill(Ctx& x, int32_t pid, int32_t sig) { if (sig == 0) return 0; if (pid == 1234 || pid == 0) return g_raise(x, sig); setErrno(x, 1); return -1; }
 int32_t g_sigset(Ctx& x, GuestPtr set) { if (set) x.mem.write<uint32_t>(set, 0); return 0; }
@@ -995,16 +1032,43 @@ int32_t k_make_memory_entry(Ctx& x, uint32_t task, GuestPtr size, uint64_t offse
     // capability failure; do not fabricate a port or a successful mapping.
     return 46; // KERN_NOT_SUPPORTED
 }
+// task_info: the kernel writes exactly the flavor's structure and reports its size in words.
+// Apps pass counts that are too large (Terraria passes the size in bytes), so the caller's
+// count is only an upper bound; a count that is too small is KERN_INVALID_ARGUMENT.
 int32_t k_task_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
     const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
-    const uint32_t maxWords = std::min<uint32_t>(n, 10u);
-    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
-    if (out && flavor == 5 /*TASK_BASIC_INFO*/ && maxWords >= 5) {
-        const auto st = x.proc.heap().stats();
-        x.mem.write<uint32_t>(out + 4, uint32_t(st.committed + (16u << 20)));   // resident_size
-        x.mem.write<uint32_t>(out + 8, uint32_t(st.committed + (64u << 20)));   // virtual_size
+    uint32_t words = 0;
+    switch (flavor) {
+        case 1: words = 8; break;    // TASK_ABSOLUTETIME_INFO: four 64-bit times
+        case 2: words = 8; break;    // TASK_EVENTS_INFO
+        case 3: words = 4; break;    // TASK_THREAD_TIMES_INFO
+        case 4: words = 8; break;    // TASK_BASIC_INFO_32 (TASK_BASIC_INFO on armv7)
+        case 5: words = 10; break;   // TASK_BASIC_INFO_64
+        case 6: words = 8; break;    // TASK_BASIC2_INFO_32
+        default: break;
     }
-    if (count) x.mem.write<uint32_t>(count, maxWords);
+    if (!words) {   // a flavor with no layout here: zeros, never more than the caller has room for
+        x.proc.reportMissing("task_info flavor " + std::to_string(flavor) + " (answered with zeros)");
+        const uint32_t maxWords = std::min<uint32_t>(n, 10u);
+        if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+        if (count) x.mem.write<uint32_t>(count, maxWords);
+        return 0;
+    }
+    // Flavor 5 with room for only the 32-bit structure: an old SDK's TASK_BASIC_INFO, 32-bit sizes.
+    const bool narrow5 = flavor == 5 && n >= 8 && n < 10;
+    if (narrow5) words = 8;
+    if (!out || n < words) return 4;   // KERN_INVALID_ARGUMENT
+    std::memset(x.mem.host(out), 0, words * 4);
+    const auto st = x.proc.heap().stats();
+    const uint64_t resident = st.committed + (16u << 20), virt = st.committed + (64u << 20);
+    if (flavor == 4 || flavor == 6 || narrow5) {   // suspend_count, virtual_size, resident_size, times, policy
+        x.mem.write<uint32_t>(out + 4, uint32_t(virt));
+        x.mem.write<uint32_t>(out + 8, uint32_t(resident));
+    } else if (flavor == 5) {                  // the same with 64-bit sizes
+        x.mem.write<uint64_t>(out + 4, virt);
+        x.mem.write<uint64_t>(out + 12, resident);
+    }
+    x.mem.write<uint32_t>(count, words);
     return 0;
 }
 int32_t k_host_page_size(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 4096); return 0; }
@@ -1098,6 +1162,9 @@ int32_t sys_sem_close(Ctx& x, uint32_t) {
 }
 
 } // namespace
+
+// For tests: what the engine's fault hook does with a guest fault.
+bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c) { return deliverGuestFault(p, c); }
 
 void registerLibcSystem(Process& p) {
     registerStartupMach(p);
