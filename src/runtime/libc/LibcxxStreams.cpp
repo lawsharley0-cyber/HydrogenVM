@@ -356,8 +356,8 @@ void registerLibcxxStreams(Process& p) {
     s.ctypeId = p.defineDataBlock("__ZNSt3__15ctypeIcE2idE", 8);
     s.codecvtId = p.defineDataBlock("__ZNSt3__17codecvtIcc11__mbstate_tE2idE", 8);
     const uint32_t fD1 = p.def<&facetDtor>("__ZNSt3__16locale5facetD2Ev");
-    const uint32_t fD0 = p.def<&facetNop>("__ZNSt3__16locale5facetD0Ev");
-    const uint32_t fZero = p.def<&facetNop>("__ZNSt3__16locale5facet16__on_zero_sharedEv");
+    const uint32_t fD0 = supportDef<&facetNop>(p, "__ZNSt3__16locale5facetD0Ev", SupportStatus::Real, "The classic locale's facets live as long as the process: deleting one does nothing");
+    const uint32_t fZero = supportDef<&facetNop>(p, "__ZNSt3__16locale5facet16__on_zero_sharedEv", SupportStatus::Real, "The classic locale's facets are never released");
     s.ctypeVptr = vtable("__ZTVNSt3__15ctypeIcEE",
         {fD1, fD0, fZero,
          p.def<&ctToupper>("__ZNKSt3__15ctypeIcE10do_toupperEc"), p.def<&ctToupperRange>("__ZNKSt3__15ctypeIcE10do_toupperEPcPKc"),
@@ -366,9 +366,9 @@ void registerLibcxxStreams(Process& p) {
          p.def<&ctNarrow>("__ZNKSt3__15ctypeIcE9do_narrowEcc"), p.def<&ctNarrowRange>("__ZNKSt3__15ctypeIcE9do_narrowEPKcS3_cPc")});
     const uint32_t cvConv = p.defineFunction("__ZNKSt3__17codecvtIcc11__mbstate_tE6do_outERS1_PKcS5_RS5_PcS7_RS7_", cvNoconv);
     p.defineFunction("__ZNKSt3__17codecvtIcc11__mbstate_tE5do_inERS1_PKcS5_RS5_PcS7_RS7_", cvNoconv);
-    const uint32_t cvOneFn = p.def<&cvOne>("__ZNKSt3__17codecvtIcc11__mbstate_tE11do_encodingEv");
-    p.def<&cvOne>("__ZNKSt3__17codecvtIcc11__mbstate_tE16do_always_noconvEv");
-    p.def<&cvOne>("__ZNKSt3__17codecvtIcc11__mbstate_tE13do_max_lengthEv");
+    const uint32_t cvOneFn = supportDef<&cvOne>(p, "__ZNKSt3__17codecvtIcc11__mbstate_tE11do_encodingEv", SupportStatus::Real, "codecvt<char, char>: one external char per internal char");
+    supportDef<&cvOne>(p, "__ZNKSt3__17codecvtIcc11__mbstate_tE16do_always_noconvEv", SupportStatus::Real, "codecvt<char, char> never converts");
+    supportDef<&cvOne>(p, "__ZNKSt3__17codecvtIcc11__mbstate_tE13do_max_lengthEv", SupportStatus::Real, "codecvt<char, char>: at most one external char per internal char");
     s.codecvtVptr = vtable("__ZTVNSt3__17codecvtIcc11__mbstate_tEE",
         {fD1, fD0, fZero, cvConv, cvConv,
          p.def<&cvUnshift>("__ZNKSt3__17codecvtIcc11__mbstate_tE10do_unshiftERS1_PcS4_RS4_"),

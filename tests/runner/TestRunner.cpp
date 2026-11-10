@@ -6013,6 +6013,19 @@ int runFullSubsystemTests() {
         const uint32_t readCount = call("__ZNSi4readEPci", {ifstreamObj, ifstreamReadBuf, 17});
         const std::string ifstreamReadStr = proc.readCString(ifstreamReadBuf);
         call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEED1Ev", {ifstreamObj});
+        // `delete stream` on a heap ifstream goes through the vtable's deleting destructor
+        // (Flight Control's file manager): the file closes and the block is freed.
+        {
+            const uint32_t heapStream = proc.heap().allocZeroed(520);
+            call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEEC1EPKcSt13_Ios_Openmode", {heapStream, cpath, 8});
+            const uint32_t probe = proc.heap().allocZeroed(8);
+            const bool readable = call("__ZNSi4readEPci", {heapStream, probe, 5}) == heapStream && proc.readCString(probe) == "Hello";
+            const uint32_t deleting = proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(heapStream) + 4);
+            bool threw = false;
+            try { proc.callGuest(cpu, deleting, {heapStream}); } catch (const std::exception&) { threw = true; }
+            check(readable && !threw && proc.heap().blockSize(heapStream) == 0,
+                  "libstdc++ ifstream: the virtual deleting destructor closes the file and frees the stream");
+        }
         std::filesystem::remove(tmpPath);
         check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!" &&
               readCount == ifstreamObj && ifstreamReadStr == "Hello basic_file!",
