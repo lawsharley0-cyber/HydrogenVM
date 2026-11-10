@@ -74,6 +74,10 @@ enum class TouchPhase { Began = 0, Moved = 1, Ended = 3, Cancelled = 4 };
 class Process;
 namespace Audio { class Mixer; }
 
+// Darwin's thread-specific data: 256 slots for the system and frameworks, then 512 for
+// pthread_key_create. They live in guest memory at the start of the thread's pthread block.
+constexpr uint32_t kThreadSpecificSlots = 768;
+
 struct GuestThread {
     explicit GuestThread(Process& p) : proc(p) {}
     Process& proc;
@@ -82,7 +86,6 @@ struct GuestThread {
     uint32_t self = 0;            // guest pthread_t (address of a guest-side block)
     uint32_t stackBase = 0, stackSize = 0;
     uint32_t errnoAddr = 0;
-    std::unordered_map<uint32_t, uint32_t> tsd;   // pthread keys
     std::thread::native_handle_type host{};
     bool hostJoinable = false; // guarded by Process::threadsMu_; independent of guest detach
     std::atomic<bool> finished{false};
