@@ -4845,6 +4845,46 @@ int runFullSubsystemTests() {
               "task_info(TASK_BASIC_INFO_32) writes 8 words whatever the caller's count; too small a count is KERN_INVALID_ARGUMENT");
     }
 
+    // ungetc takes back more than one byte, as Darwin's does. PvZ's XML reader reads three bytes
+    // looking for a byte-order mark and returns all three; with one byte of pushback it lost
+    // "<?" and could not parse resources.xml, so the game never drew anything.
+    {
+        const std::string path = proc.homePath() + "/unget_test.xml";
+        { std::ofstream(path) << "<?xml?>"; }
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(n), a)); };
+        auto cstr = [&](const std::string& t) { const uint32_t a = proc.heap().allocZeroed(uint32_t(t.size()) + 1); std::memcpy(proc.mem().host(a), t.data(), t.size()); return a; };
+        const uint32_t fp = call("_fopen", {cstr(path), cstr("rb")});
+        const uint32_t c1 = call("_fgetc", {fp}), c2 = call("_fgetc", {fp}), c3 = call("_fgetc", {fp});
+        call("_ungetc", {c3, fp}); call("_ungetc", {c2, fp}); call("_ungetc", {c1, fp});
+        const bool told = call("_ftell", {fp}) == 0 && call("_feof", {fp}) == 0;
+        const uint32_t buf = proc.heap().allocZeroed(16);
+        const uint32_t first = call("_fgetc", {fp});
+        const uint32_t got = call("_fread", {buf, 1, 6, fp});
+        const bool reread = first == '<' && got == 6 && std::memcmp(proc.mem().host(buf), "?xml?>", 6) == 0;
+        // a seek discards what was pushed back
+        call("_ungetc", {'Z', fp});
+        call("_fseek", {fp, 1, 0});
+        const bool seekDrops = call("_fgetc", {fp}) == '?';
+        call("_fclose", {fp});
+        std::filesystem::remove(path);
+        check(fp && c1 == '<' && c2 == '?' && c3 == 'x' && told && reread && seekDrops,
+              "ungetc returns three bytes to a stream; fgetc and fread read them again in order; fseek discards them");
+    }
+
+    // sbrk as Darwin emulates it: 4 MB handed out in order, then -1 (not 0: an app's dlmalloc
+    // took the missing sbrk's 0 for a heap at address zero, PvZ).
+    {
+        auto sbrk = [&](int32_t n) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_sbrk"), {uint32_t(n)})); };
+        const uint32_t start = sbrk(0);
+        const uint32_t a = sbrk(4096), b = sbrk(8192);
+        proc.mem().write<uint32_t>(a, 0x12345678);                // the region is real memory
+        const bool grows = start != 0 && start != 0xFFFFFFFFu && a == start && b == start + 4096 && sbrk(0) == start + 12288 &&
+                           sbrk(-4096) == start + 12288 && proc.mem().read<uint32_t>(a) == 0x12345678;
+        const bool tooBig = sbrk(4 << 20) == 0xFFFFFFFFu && sbrk(0) == start + 12288;
+        const bool rest = sbrk((4 << 20) - 12288) == start + 12288 && sbrk(1) == 0xFFFFFFFFu;
+        check(grows && tooBig && rest, "sbrk hands out its 4 MB region in order, reports the break for 0, and returns -1 when it does not fit");
+    }
+
     // An app with its own crash reporter catches the real fault and raises the signal again.
     // The stop message for that raise names the fault that started it (Terraria: PLCrashReporter
     // hid a null read inside std::string behind "the app raised signal 11").
