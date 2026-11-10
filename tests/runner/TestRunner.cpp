@@ -4600,6 +4600,40 @@ int runFullSubsystemTests() {
               "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
     }
 
+    // NSGetSizeAndAlignment (armv7 iOS layout, worked out by hand): the size and alignment of the
+    // first encoded type, and a pointer to the next one. Dungeon Raid's PHInvocation sizes its
+    // argument buffers with it.
+    {
+        const uint32_t out = proc.heap().allocZeroed(8);
+        struct Case { const char* type; uint32_t size, align, consumed; };
+        const Case cases[] = {
+            {"i", 4, 4, 1}, {"c", 1, 1, 1}, {"s", 2, 2, 1}, {"q", 8, 4, 1}, {"d", 8, 4, 1}, {"@", 4, 4, 1}, {":", 4, 4, 1},
+            {"@8:12", 4, 4, 2},                                // an argument with its frame offset
+            {"^{CGRect={CGPoint=ff}{CGSize=ff}}i", 4, 4, 33},  // a pointer skips its pointee; the i is the next type
+            {"{CGRect={CGPoint=ff}{CGSize=ff}}", 16, 4, 32},
+            {"{pair=cq}", 12, 4, 9},                           // c at 0, q at 4 (8-byte scalars align to 4)
+            {"{mix=csc}", 6, 2, 9},                            // c at 0, s at 2, c at 4, padded to 6
+            {"[3s]", 6, 2, 4},
+            {"(u=cd)", 8, 4, 6},
+            {"r*", 4, 4, 2},                                   // const char*
+            {"@\"NSString\"i", 4, 4, 11},
+        };
+        bool ok = true;
+        for (const Case& c : cases) {
+            const uint32_t text = proc.heap().allocZeroed(uint32_t(std::strlen(c.type)) + 1);
+            std::memcpy(proc.mem().host(text), c.type, std::strlen(c.type) + 1);
+            proc.mem().write<uint32_t>(out, 0xDEAD);
+            proc.mem().write<uint32_t>(out + 4, 0xDEAD);
+            const uint32_t next = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_NSGetSizeAndAlignment"), {text, out, out + 4}));
+            const uint32_t size = proc.mem().read<uint32_t>(out), align = proc.mem().read<uint32_t>(out + 4);
+            if (size != c.size || align != c.align || next != text + c.consumed) {
+                std::printf("    NSGetSizeAndAlignment(\"%s\"): size %u align %u consumed %u\n", c.type, size, align, next - text);
+                ok = false;
+            }
+        }
+        check(ok, "NSGetSizeAndAlignment sizes scalars, structs, arrays, unions and pointers and returns the next type");
+    }
+
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
     {
         const ObjC::Class winCls = r.getClass("UIWindow");
@@ -10222,8 +10256,12 @@ int runFullSubsystemTests() {
             static void bindFramebuffer(uint32_t, uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
             static void bindTexture(uint32_t, uint32_t t) { if (t >= 99) errors().push_back(0x0500); }
             static void texImage2D(uint32_t, int32_t, int32_t f, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void*) {
-                if (f == 0x84F9) errors().push_back(0x0502);   // a depth-stencil format the fake driver rejects
+                // Like an ES 3 driver: the unsized depth-stencil format is refused, the sized one accepted.
+                if (f == 0x84F9 || f == 0x7777 || (f == 0x88F0 && refuseSized())) errors().push_back(0x0502);
+                else lastInternalFormat() = f;
             }
+            static int32_t& lastInternalFormat() { static int32_t f = 0; return f; }
+            static bool& refuseSized() { static bool r = false; return r; }
             static void texSubImage2D(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t f, uint32_t, const void*) {
                 if (f == 0x84F9) errors().push_back(0x0500);
             }
@@ -10308,7 +10346,7 @@ int runFullSubsystemTests() {
         er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
         const uint32_t savedSp = ecpu.r[13];
         ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;   // room for the five stack arguments
-        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x7777, 4, 4, 0, 0x7777, 0x1401, 0});
         ecpu.r[13] = savedSp;
         eproc.callGuest(ecpu, *eproc.lookupSymbol("_glBindTexture"), {0x0DE1, 0});
         const uint32_t texErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
@@ -10322,6 +10360,27 @@ int runFullSubsystemTests() {
             for (const auto& line : eproc.glErrorLog()) std::printf("    gl log: %s\n", line.c_str());
         check(texErr == 0x0502 && texNamed && !bindBlamed,
               "a hand-written GL function's error is logged under its own name, and the guest still sees it");
+        // A depth-stencil texture asked for the ES 2 way (unsized) on a driver that only takes the
+        // sized format: the runtime asks again with DEPTH24_STENCIL8 and the guest sees no error
+        // (Minecraft: Story Mode's framebuffer was incomplete on the phone). If the driver refuses
+        // both, the guest gets the first error.
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        FakeGL::lastInternalFormat() = 0;
+        ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        const uint32_t depthErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        const int32_t depthFormat = FakeGL::lastInternalFormat();
+        FakeGL::refuseSized() = true;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        const uint32_t bothErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        const uint32_t bothErrAgain = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        FakeGL::refuseSized() = false;
+        ecpu.r[13] = savedSp;
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        if (!(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0))
+            std::printf("    depth texture: err %x format %x both %x again %x\n", depthErr, depthFormat, bothErr, bothErrAgain);
+        check(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0,
+              "an unsized depth-stencil texture the driver refuses is created with the sized format; refused twice, the guest sees the error once");
         // glTexSubImage2D has no check of its own: HG_BEGIN's check on return names it.
         er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
         ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;

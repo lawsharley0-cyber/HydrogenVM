@@ -1026,6 +1026,87 @@ Class f_classFromString(Ctx& x, id s) {
     return ci && ci->stub ? 0 : c;
 }
 id f_stringFromSelector(Ctx& x, SEL s) { return s ? makeString(x, rt(x).selName(s)) : 0; }
+
+// NSGetSizeAndAlignment: the size and alignment of the first type in an Objective-C type
+// encoding, and where the next type starts. armv7 iOS layout: 8-byte scalars align to 4.
+// Apps walk a method signature with it to size NSInvocation argument buffers (PlayHaven's
+// PHInvocation in Dungeon Raid).
+struct EncodedType { uint32_t size = 0, align = 1; };
+const char* parseEncodedType(const char* p, EncodedType& out, int depth = 0) {
+    out = {};
+    while (*p && std::strchr("rnNoORV", *p)) ++p;   // const, in, inout, out, bycopy, byref, oneway
+    auto scalar = [&](uint32_t size, uint32_t align) { out = {size, align}; return p + 1; };
+    switch (*p) {
+        case 'c': case 'C': case 'B': return scalar(1, 1);
+        case 's': case 'S': return scalar(2, 2);
+        case 'i': case 'I': case 'l': case 'L': case 'f': case '#': case ':': case '*': return scalar(4, 4);
+        case 'q': case 'Q': case 'd': return scalar(8, 4);
+        case 'v': return scalar(0, 1);
+        case '?': return scalar(4, 4);   // a function pointer
+        case '@': {
+            out = {4, 4};
+            ++p;
+            if (*p == '?') return p + 1;                                    // a block
+            if (*p == '"') { const char* e = std::strchr(p + 1, '"'); return e ? e + 1 : p + std::strlen(p); }
+            return p;
+        }
+        case '^': {
+            EncodedType pointee;
+            const char* e = depth < 32 ? parseEncodedType(p + 1, pointee, depth + 1) : p + 1;
+            out = {4, 4};
+            return e;
+        }
+        case 'b': {   // a bit-field: its bits, rounded up to bytes
+            ++p;
+            uint32_t bits = 0;
+            while (*p >= '0' && *p <= '9') bits = bits * 10 + uint32_t(*p++ - '0');
+            out = {(bits + 7) / 8, 1};
+            return p;
+        }
+        case '[': {
+            ++p;
+            uint32_t count = 0;
+            while (*p >= '0' && *p <= '9') count = count * 10 + uint32_t(*p++ - '0');
+            EncodedType element;
+            if (depth < 32) p = parseEncodedType(p, element, depth + 1);
+            if (*p == ']') ++p;
+            out = {count * element.size, element.align};
+            return p;
+        }
+        case '{': case '(': {
+            const bool isUnion = *p == '(';
+            const char close = isUnion ? ')' : '}';
+            ++p;
+            while (*p && *p != '=' && *p != close) ++p;   // the name
+            if (*p == '=') ++p;
+            uint32_t size = 0, align = 1;
+            while (*p && *p != close && depth < 32) {
+                if (*p == '"') { const char* e = std::strchr(p + 1, '"'); if (!e) break; p = e + 1; continue; }   // a field name
+                EncodedType field;
+                const char* next = parseEncodedType(p, field, depth + 1);
+                if (next == p) break;   // not a type: stop instead of looping
+                p = next;
+                align = std::max(align, field.align);
+                if (isUnion) size = std::max(size, field.size);
+                else size = ((size + field.align - 1) / field.align) * field.align + field.size;
+            }
+            if (*p == close) ++p;
+            out = {((size + align - 1) / align) * align, align};
+            return p;
+        }
+        default: return p;   // unknown: nothing consumed
+    }
+}
+GuestPtr f_getSizeAndAlignment(Ctx& x, GuestPtr typePtr, GuestPtr sizeOut, GuestPtr alignOut) {
+    if (!typePtr) return 0;
+    const std::string type = x.proc.readCString(typePtr);
+    EncodedType t;
+    const char* end = parseEncodedType(type.c_str(), t);
+    if (sizeOut) x.mem.write<uint32_t>(sizeOut, t.size);
+    if (alignOut) x.mem.write<uint32_t>(alignOut, t.align);
+    while (*end >= '0' && *end <= '9') ++end;   // a method signature's frame offset
+    return typePtr + GuestPtr(end - type.c_str());
+}
 SEL f_selectorFromString(Ctx& x, id s) { return s ? rt(x).sel(utf8(x, s)) : 0; }
 id f_stringFromProtocol(Ctx& x, uint32_t p) { return p ? makeString(x, rt(x).protocolName(p)) : 0; }
 uint32_t f_protocolFromString(Ctx& x, id s) { return s ? rt(x).getProtocol(utf8(x, s)) : 0; }
@@ -1325,6 +1406,7 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     p.def<&f_stringFromClass>("_NSStringFromClass");
     p.def<&f_classFromString>("_NSClassFromString");
     p.def<&f_stringFromSelector>("_NSStringFromSelector");
+    p.def<&f_getSizeAndAlignment>("_NSGetSizeAndAlignment");
     p.def<&f_selectorFromString>("_NSSelectorFromString");
     p.def<&f_stringFromProtocol>("_NSStringFromProtocol");
     p.def<&f_protocolFromString>("_NSProtocolFromString");

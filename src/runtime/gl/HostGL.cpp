@@ -640,6 +640,38 @@ void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalfor
                      int32_t border, uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexImage2D)
     if (format == kBgra && internalformat == int32_t(kRgba) && !hc->desktop) internalformat = int32_t(kBgra);
+    // Depth textures. ES 2 names them by the unsized format (OES_depth_texture,
+    // OES_packed_depth_stencil); an ES 3 driver wants the sized one and answers
+    // INVALID_OPERATION otherwise, leaving the framebuffer they attach to incomplete
+    // (Minecraft: Story Mode on the phone, all black). Ask as the guest did; if the
+    // driver refuses, ask again with the sized format for the same data.
+    int32_t sized = 0;
+    if (internalformat == 0x84F9 /*DEPTH_STENCIL*/ && type == 0x84FA /*UNSIGNED_INT_24_8*/) sized = 0x88F0;        // DEPTH24_STENCIL8
+    else if (internalformat == 0x1902 /*DEPTH_COMPONENT*/ && type == 0x1403 /*UNSIGNED_SHORT*/) sized = 0x81A5;    // DEPTH_COMPONENT16
+    else if (internalformat == 0x1902 && type == 0x1405 /*UNSIGNED_INT*/) sized = 0x81A6;                          // DEPTH_COMPONENT24
+    if (sized && !hc->desktop && hc->fn.glGetError) {
+        const uint32_t pending = hc->fn.glGetError();   // the guest's own earlier error, kept for it
+        if (pending && !hc->guestError) hc->guestError = pending;
+        hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
+        const uint32_t refused = hc->fn.glGetError();
+        if (refused) {
+            for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+            hc->fn.glTexImage2D(target, level, sized, width, height, border, format, type, HG_PTR(x, pixels));
+            if (hc->fn.glGetError()) {   // neither form: the guest sees the first refusal
+                for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+                if (!hc->guestError) hc->guestError = refused;
+                x.proc.perf().glErrors++;
+                if (hgDebug || hc->trace) {
+                    char code[16];
+                    std::snprintf(code, sizeof code, "0x%04x", refused);
+                    x.proc.noteGLError(std::string("glTexImage2D -> ") + code + (hc->implicitWorker ? " [worker]" : " [main]"),
+                                       "glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) +
+                                       ") -> " + code + (hc->implicitWorker ? " [worker]" : " [main]") + " (the sized depth format was refused too)");
+                }
+            }
+        }
+        return;
+    }
     hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
     if (hgDebug || hc->trace)
         hgAfter(x, hc, "glTexImage2D", [&] { return hgArgs(target, level, internalformat, width, height, border, format, type, pixels); });
