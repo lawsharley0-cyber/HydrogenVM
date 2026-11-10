@@ -10396,6 +10396,34 @@ int runFullSubsystemTests() {
             static void texSubImage2D(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t f, uint32_t, const void*) {
                 if (f == 0x84F9) errors().push_back(0x0500);
             }
+            // Buffer objects, with the iOS driver's rule that glBufferData refuses a mapped buffer.
+            struct Buffer { std::vector<uint8_t> data; bool mapped = false; };
+            static std::map<uint32_t, Buffer>& buffers() { static std::map<uint32_t, Buffer> b; return b; }
+            static uint32_t& boundArray() { static uint32_t b = 0; return b; }
+            static void bindBuffer(uint32_t target, uint32_t name) { if (target == 0x8892) boundArray() = name; }
+            static void bufferData(uint32_t, intptr_t size, const void* data, uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!boundArray() || b.mapped) { errors().push_back(0x0502); return; }
+                b.data.assign(size_t(size), 0);
+                if (data) std::memcpy(b.data.data(), data, size_t(size));
+            }
+            static void* mapBufferRange(uint32_t, intptr_t offset, intptr_t, uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!boundArray() || b.mapped) { errors().push_back(0x0502); return nullptr; }
+                b.mapped = true;
+                return b.data.data() + offset;
+            }
+            static uint8_t unmapBuffer(uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!b.mapped) { errors().push_back(0x0502); return 0; }
+                b.mapped = false;
+                return 1;
+            }
+            static void getBufferParameteriv(uint32_t, uint32_t pname, int32_t* out) {
+                const Buffer& b = buffers()[boundArray()];
+                *out = pname == 0x8764 ? int32_t(b.data.size()) : pname == 0x88BC ? int32_t(b.mapped) : 0;
+            }
+            static void getIntegerv(uint32_t pname, int32_t* out) { *out = pname == 0x8894 ? int32_t(boundArray()) : 0; }
         };
         struct ErrPlatform final : HostGL::Platform {
             std::mutex mu;
@@ -10419,6 +10447,12 @@ int runFullSubsystemTests() {
                 if (s == "glBindTexture") return reinterpret_cast<void*>(&FakeGL::bindTexture);
                 if (s == "glTexImage2D") return reinterpret_cast<void*>(&FakeGL::texImage2D);
                 if (s == "glTexSubImage2D") return reinterpret_cast<void*>(&FakeGL::texSubImage2D);
+                if (s == "glBindBuffer") return reinterpret_cast<void*>(&FakeGL::bindBuffer);
+                if (s == "glBufferData") return reinterpret_cast<void*>(&FakeGL::bufferData);
+                if (s == "glMapBufferRange") return reinterpret_cast<void*>(&FakeGL::mapBufferRange);
+                if (s == "glUnmapBuffer") return reinterpret_cast<void*>(&FakeGL::unmapBuffer);
+                if (s == "glGetBufferParameteriv") return reinterpret_cast<void*>(&FakeGL::getBufferParameteriv);
+                if (s == "glGetIntegerv") return reinterpret_cast<void*>(&FakeGL::getIntegerv);
                 return nullptr;
             }
         };
@@ -10512,6 +10546,48 @@ int runFullSubsystemTests() {
             std::printf("    depth texture: err %x format %x both %x again %x\n", depthErr, depthFormat, bothErr, bothErrAgain);
         check(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0,
               "an unsized depth-stencil texture the driver refuses is created with the sized format; refused twice, the guest sees the error once");
+        // Two buffers mapped through the same target, then unmapped in the other order (Clumsy
+        // Ninja's vertex setup). Each unmap must write its own data to its own buffer and end the
+        // driver's mapping, or the next glBufferData is refused, as it was on the phone.
+        {
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+            auto gl = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol(n), a)); };
+            while (gl("_glGetError", {})) {}
+            gl("_glBindBuffer", {0x8892, 10});
+            gl("_glBufferData", {0x8892, 8, 0, 0x88E8});
+            const uint32_t mapA = gl("_glMapBufferOES", {0x8892, 0x88B9});
+            gl("_glBindBuffer", {0x8892, 9});
+            gl("_glBufferData", {0x8892, 4, 0, 0x88E8});
+            const uint32_t mapB = gl("_glMapBufferOES", {0x8892, 0x88B9});
+            if (mapA) std::memcpy(eproc.mem().host(mapA), "AAAAAAAA", 8);
+            if (mapB) std::memcpy(eproc.mem().host(mapB), "BBBB", 4);
+            gl("_glBindBuffer", {0x8892, 10});
+            const bool unmapA = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 1;
+            gl("_glBindBuffer", {0x8892, 9});
+            const bool unmapB = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 1;
+            const auto& bufs = FakeGL::buffers();
+            const bool contents = bufs.at(10).data == std::vector<uint8_t>(8, 'A') && bufs.at(9).data == std::vector<uint8_t>(4, 'B');
+            const uint32_t fresh = eproc.heap().allocZeroed(4);
+            std::memcpy(eproc.mem().host(fresh), "CCCC", 4);
+            gl("_glBufferData", {0x8892, 4, fresh, 0x88E4});
+            const uint32_t afterErr = gl("_glGetError", {});
+            // glBufferData on a buffer the app left mapped ends the mapping; a late unmap reports
+            // failure and writes nothing.
+            FakeGL::buffers()[11] = {};
+            gl("_glBindBuffer", {0x8892, 11});
+            gl("_glBufferData", {0x8892, 4, 0, 0x88E8});
+            gl("_glMapBufferOES", {0x8892, 0x88B9});
+            FakeGL::buffers()[11].mapped = false;   // what a real driver's glBufferData does to the old mapping
+            gl("_glBufferData", {0x8892, 4, fresh, 0x88E4});
+            const bool lateUnmap = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 0 && FakeGL::buffers()[11].data == std::vector<uint8_t>(4, 'C');
+            while (gl("_glGetError", {})) {}
+            gl("_glBindBuffer", {0x8892, 0});
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+            if (!(mapA && mapB && mapA != mapB && unmapA && unmapB && contents && afterErr == 0 && lateUnmap))
+                std::printf("    mapped buffers: maps %x %x unmap %d %d contents %d err %x late %d\n", mapA, mapB, unmapA, unmapB, contents, afterErr, lateUnmap);
+            check(mapA && mapB && mapA != mapB && unmapA && unmapB && contents && afterErr == 0 && lateUnmap,
+                  "two buffers mapped on one target each get their own data back on unmap, and glBufferData works afterwards");
+        }
         // glTexSubImage2D has no check of its own: HG_BEGIN's check on return names it.
         er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
         ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
