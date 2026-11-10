@@ -88,10 +88,50 @@ build/hvm_tests fulltest
 python3 tools/hvm_testlab.py run --hvm build/hvm --out /var/tmp/photo-testlab
 ```
 
+For the native touch probe, make an executable wrapper that runs the built
+`hvm "$@" --photo-library-image /absolute/path/to/authored.png`. Pass that wrapper
+as `--hvm` to `tools/clash_guest_ui_probe.py`, with the extracted updated guest
+`--app`, a **copied** earned/custom-card `--home`, `--gpu --capture-audio`,
+`--startup-seconds 12 --ready-log 'GuestOffline: queued response=24101'
+--ready-timeout 180 --seconds 600`, the committed `qa/phone-photos.json` as `--plan`
+and a new private `--out` directory. Cancellation uses the same wrapper with
+`--photo-library-image cancel`. Do not run against the only copy of a user save.
+Require zero exit/no crash, independently validate the ART2/FGR1 hashes and file
+pairs, compare progression before/after, and inspect the frames/status. Follow
+with separate startup/cards and normal battle/deploy processes against the same
+copied home, retaining its existing native cache. A zero process exit alone is
+not a successful import or rendering assertion.
+
 Native fixture evidence is private under `/var/tmp/hvm-photos-native-v1/` and
 `/var/tmp/hvm-photos-native-v2/`, using `tools/clash_guest_ui_probe.py` with normal
-GPU, touch, audio capture and the OwnHomeData readiness barrier. First troop and
-icon imports saved valid ART2 manifests in the native client without an abort.
-Later combined/replacement/relaunch/cancel results and Apple CI are recorded in
-the PR before delivery. This is scoped customization evidence, not full-game or
-physical-device qualification. No assets, photos, IPAs or earned saves belong in Git.
+GPU, touch, audio capture and the OwnHomeData readiness barrier:
+
+- Troop and icon imports save valid, checksummed ART2 revisions without an abort.
+  An icon import preserves an earlier troop picture and immutable revisions.
+- `pair`: two selections in one session retain both images and the same parsed
+  progression/FGR1 definition hash. The committed `qa/phone-photos.json` records
+  the normal touch sequence for the sole-custom-card fixture.
+- `cancel`: every existing art file, including active manifest, remains byte-for-byte
+  identical. Registry/progression are unchanged by selection/cancellation.
+- `reload` and `reload2`: separate warm-cache processes show the robot picture in
+  the first deck slot; `battle/deploy.png` shows the imported static robot walking
+  on the arena. No cache deletion, save reset or native assertion suppression.
+- `changed` / `changedreload`: replace the icon with visibly different geometric
+  art. The next process shows the new icon while retaining the troop pair; native
+  LZMAReader successfully decoded the previously guest-encoded atlas for editing.
+- All 540 original `res/` archive files remain byte-for-byte unchanged.
+
+Source runtime/guest commit: `d659fb7dd65ef03b6fd337036d0938ae1b712606`.
+Private package: `/var/tmp/hvm-clash-phone-photos-v2.ipa`, copied to the task
+`outputs/Clash-Offline-Guest-Phone-Photos-d659fb7.ipa`.
+Archive SHA256: `56b4afc093232760ad697823974c077eae2bef2675c3f95b80afeaba9801b1d1`.
+Executable SHA256: `fa789dae4a55df1486fe1e68faa251741584ea655f4a5a39f59bf4d2c25a3208`.
+
+Apple simulator shell compilation passes in run `42781986391`; the separate CI
+test harness initially failed because its explicit source list/mock bridge omitted
+the new photo API. Its source/dependency list and mock now include the service,
+with an actual RunModel request-epoch/cancellation/dismissal test. The failed run
+remains evidence, not a full Apple validation pass. The separate CI device
+packaging result/link is recorded in PR #391. This is scoped customization
+evidence, not full-game or physical-device qualification. No assets, photos, IPAs
+or earned saves belong in Git.
