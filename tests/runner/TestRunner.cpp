@@ -4936,6 +4936,28 @@ int runFullSubsystemTests() {
               "sbrk hands out its 4 MB region in order, reports the break for 0 or less, and returns -1 when it does not fit; brk always fails");
     }
 
+    // Thread-specific data lives in the guest slot array the thread register points at. Unity
+    // stores its per-thread allocator with pthread_setspecific and reads it back inline, as
+    // "thread register + key * 4"; with the values kept elsewhere it read nothing (Crossy Road).
+    {
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(n), a)); };
+        const uint32_t keyOut = proc.heap().allocZeroed(8);
+        const uint32_t created = call("_pthread_key_create", {keyOut, 0});
+        const uint32_t key = proc.mem().read<uint32_t>(keyOut);
+        const uint32_t base = cpu.tpidruro & ~3u;                        // what "mrc p15, 0, r0, c13, c0, 3" gives
+        const bool setOk = call("_pthread_setspecific", {key, 0x12345678}) == 0;
+        const bool inlineRead = proc.mem().read<uint32_t>(base + key * 4) == 0x12345678;
+        proc.mem().write<uint32_t>(base + key * 4, 0x0BADF00D);          // an inlined setspecific
+        const bool functionRead = call("_pthread_getspecific", {key}) == 0x0BADF00D;
+        call("_pthread_setspecific", {key, 0});
+        const bool selfSlot = proc.mem().read<uint32_t>(base) == call("_pthread_self", {});
+        const uint32_t errnoAddr = proc.currentThread().errnoAddr;
+        const bool errnoClear = errnoAddr >= base + 768 * 4;             // no key's slot is errno
+        const bool outOfRange = call("_pthread_setspecific", {768, 1}) == 22 && call("_pthread_getspecific", {768}) == 0;
+        check(created == 0 && key >= 256 && key < 768 && setOk && inlineRead && functionRead && selfSlot && errnoClear && outOfRange,
+              "pthread_setspecific stores in the slot the thread register points at, where inlined pthread_getspecific reads; key 768 is EINVAL");
+    }
+
     // An app with its own crash reporter catches the real fault and raises the signal again.
     // The stop message for that raise names the fault that started it (Terraria: PLCrashReporter
     // hid a null read inside std::string behind "the app raised signal 11").

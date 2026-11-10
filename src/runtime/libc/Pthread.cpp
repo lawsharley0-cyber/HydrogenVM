@@ -303,18 +303,25 @@ int32_t p_once(Ctx& x, GuestPtr once, GuestPtr fn) {
 int32_t k_create(Ctx& x, GuestPtr out, GuestPtr dtor) {
     auto& t = T(x);
     std::lock_guard<std::mutex> lk(t.mu);
+    if (t.nextKey >= kThreadSpecificSlots) return 35;   // EAGAIN: all 512 keys are taken
     const uint32_t k = t.nextKey++;
     t.keyDestructors[k] = dtor;
     x.mem.write<uint32_t>(out, k);
     return 0;
 }
 int32_t k_delete(Ctx& x, uint32_t key) { auto& t = T(x); std::lock_guard<std::mutex> lk(t.mu); t.keyDestructors.erase(key); return 0; }
+// The values live in the guest's own slot array, the one the thread register points at: code
+// that has pthread_getspecific inlined reads the slot directly, and must see what
+// pthread_setspecific stored (Crossy Road: Unity found no per-thread allocator and freed a
+// temporary block through the wrong one).
 uint32_t k_get(Ctx& x, uint32_t key) {
-    auto& tsd = x.proc.currentThread().tsd;
-    auto it = tsd.find(key);
-    return it == tsd.end() ? 0 : it->second;
+    return key < kThreadSpecificSlots ? x.mem.read<uint32_t>(x.proc.currentThread().self + key * 4) : 0;
 }
-int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) { x.proc.currentThread().tsd[key] = v; return 0; }
+int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) {
+    if (key >= kThreadSpecificSlots) return 22;   // EINVAL
+    x.mem.write<uint32_t>(x.proc.currentThread().self + key * 4, v);
+    return 0;
+}
 
 // -------------------------------------------------------------- threads ---
 

@@ -1013,10 +1013,12 @@ void Process::initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stack
         } else { t.stackBase = stackAddr; }
     t.stackSize = stackSize;
     if (!stackAddr) mem_->map(t.stackBase, stackSize, Memory::kProtRW);
-    // A guest-side block standing in for struct _pthread: TSD slots at the
-    // start (TPIDRURO points here, slot 0 = self), errno after them.
-    t.self = allocStatic(1024, 64);
-    t.errnoAddr = t.self + 0x200;
+    // A guest-side block standing in for struct _pthread: the thread-specific data slots at
+    // the start (TPIDRURO points here, slot 0 = self), errno after them. All 768 of Darwin's
+    // slots are real memory, because apps read them without calling pthread_getspecific:
+    // the compiler inlines it as "thread register + key * 4" (Unity's allocators do).
+    t.self = allocStatic(kThreadSpecificSlots * 4 + 64, 64);
+    t.errnoAddr = t.self + kThreadSpecificSlots * 4;
     mem_->write<uint32_t>(t.self, t.self);
     t.cpu.tpidruro = t.self;
     t.cpu.r[CPU::kSP] = t.stackBase + stackSize - 64;
