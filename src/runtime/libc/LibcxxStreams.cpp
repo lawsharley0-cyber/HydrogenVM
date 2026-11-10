@@ -18,6 +18,7 @@
 #include "runtime/Support.hpp"
 #include "runtime/Process.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -238,6 +239,125 @@ uint32_t isSentryCtor(Ctx& x, GuestPtr self, GuestPtr is, uint32_t noskipws) {
     return self;
 }
 
+// ---- unformatted and formatted input. basic_istream: +0 vptr, +4 gcount.
+bool inSentry(Ctx& x, uint32_t is, bool noskipws) {
+    const uint32_t tmp = x.proc.heap().allocZeroed(4);
+    isSentryCtor(x, tmp, is, noskipws ? 1 : 0);
+    const bool ok = x.mem.read<uint8_t>(tmp) != 0;
+    x.proc.heap().free(tmp);
+    return ok;
+}
+// pos_type streambuf::pubseekoff(off, way, which) through the virtual seekoff:
+// result by hidden pointer in r0, this in r1, the 64-bit offset in r2:r3, way and which on the stack.
+// libc++'s fpos is the 128-byte conversion state followed by the offset.
+int64_t sbSeekoff(Ctx& x, uint32_t sb, int64_t off, uint32_t way, uint32_t which) {
+    const uint32_t ret = x.proc.heap().allocZeroed(136);
+    x.mem.write<uint64_t>(ret + 128, uint64_t(int64_t(-1)));
+    x.proc.callGuest(x.cpu, rd(x, rd(x, sb) + sSeekoff * 4), {ret, sb, uint32_t(uint64_t(off)), uint32_t(uint64_t(off) >> 32), way, which});
+    const int64_t pos = int64_t(x.mem.read<uint64_t>(ret + 128));
+    x.proc.heap().free(ret);
+    return pos;
+}
+uint32_t i_read(Ctx& x, GuestPtr is, GuestPtr s, int32_t n) {
+    const uint32_t ios = iosOf(x, is);
+    wr(x, is + 4, 0);
+    if (!inSentry(x, is, true)) return is;   // the sentry has set failbit
+    const int32_t got = n > 0 ? vcall(x, rd(x, ios + kBuf), sXsgetn, {s, uint32_t(n)}) : 0;
+    wr(x, is + 4, uint32_t(got < 0 ? 0 : got));
+    if (got != n) iosSetstate(x, ios, kFail | kEof);
+    return is;
+}
+// istream& seekg(off_type off, seekdir way): this r0, off r1:r2, way r3
+void i_seekgOff(Ctx& x) {
+    const uint32_t is = x.cpu.r[0], way = x.cpu.r[3];
+    const int64_t off = arg64(x);
+    const uint32_t ios = iosOf(x, is);
+    iosClear(x, ios, rd(x, ios + kState) & ~kEof);
+    if (inSentry(x, is, true) && sbSeekoff(x, rd(x, ios + kBuf), off, way, 8 /*in*/) == -1) iosSetstate(x, ios, kFail);
+    x.cpu.r[0] = is;
+}
+// pos_type tellg(): result through r0, this in r1
+void i_tellg(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], is = x.cpu.r[1];
+    const uint32_t ios = iosOf(x, is);
+    int64_t pos = -1;
+    if (inSentry(x, is, true)) pos = sbSeekoff(x, rd(x, ios + kBuf), 0, 1 /*cur*/, 8 /*in*/);
+    for (uint32_t i = 0; i < 128; i += 4) wr(x, ret + i, 0);
+    x.mem.write<uint64_t>(ret + 128, uint64_t(pos));
+}
+// getline(char* s, streamsize n, char delim): the delimiter is consumed and not stored
+uint32_t i_getline(Ctx& x, GuestPtr is, GuestPtr s, int32_t n, uint32_t delimArg) {
+    const uint32_t ios = iosOf(x, is);
+    const int32_t delim = int32_t(delimArg & 0xFF);
+    uint32_t count = 0, stored = 0, state = 0;
+    wr(x, is + 4, 0);
+    if (inSentry(x, is, true)) {
+        const uint32_t sb = rd(x, ios + kBuf);
+        for (;;) {
+            const int32_t c = sbSgetc(x, sb);
+            if (c == kEofChar) { state |= kEof; break; }
+            if (c == delim) { sbSbumpc(x, sb); ++count; break; }
+            if (int32_t(stored) >= n - 1) { state |= kFail; break; }
+            x.mem.write<uint8_t>(s + stored++, uint8_t(c));
+            sbSbumpc(x, sb);
+            ++count;
+        }
+        if (count == 0) state |= kFail;
+    }
+    if (n > 0) x.mem.write<uint8_t>(s + stored, 0);
+    wr(x, is + 4, count);
+    if (state) iosSetstate(x, ios, state);
+    return is;
+}
+// operator>>(int&): skips whitespace, reads an optionally signed number in the stream's base
+uint32_t i_extractInt(Ctx& x, GuestPtr is, GuestPtr out) {
+    const uint32_t ios = iosOf(x, is);
+    if (!inSentry(x, is, false)) return is;
+    const uint32_t sb = rd(x, ios + kBuf);
+    const uint32_t basefield = rd(x, ios + kFlags) & (2u | 8u | 64u);
+    const int base = basefield == 8 ? 16 : basefield == 64 ? 8 : 10;
+    uint32_t state = 0;
+    bool negative = false, any = false;
+    int32_t c = sbSgetc(x, sb);
+    if (c == '-' || c == '+') { negative = c == '-'; sbSbumpc(x, sb); c = sbSgetc(x, sb); }
+    int64_t v = 0;
+    bool overflow = false;
+    for (;; c = sbSgetc(x, sb)) {
+        if (c == kEofChar) { state |= kEof; break; }
+        int digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
+        if (digit >= base) break;
+        any = true;
+        v = v * base + digit;
+        if (v > 0x80000000ll) { overflow = true; v = 0x80000000ll; }
+        sbSbumpc(x, sb);
+    }
+    int32_t result = 0;
+    if (!any) state |= kFail;
+    else if (overflow || (!negative && v > 0x7FFFFFFFll)) { state |= kFail; result = negative ? INT32_MIN : INT32_MAX; }
+    else result = int32_t(negative ? -v : v);
+    x.mem.write<uint32_t>(out, uint32_t(result));
+    if (state) iosSetstate(x, ios, state);
+    return is;
+}
+int32_t i_get(Ctx& x, GuestPtr is) {
+    const uint32_t ios = iosOf(x, is);
+    wr(x, is + 4, 0);
+    if (!inSentry(x, is, true)) return kEofChar;
+    const int32_t c = sbSbumpc(x, rd(x, ios + kBuf));
+    if (c == kEofChar) iosSetstate(x, ios, kFail | kEof);
+    else wr(x, is + 4, 1);
+    return c;
+}
+int32_t i_peek(Ctx& x, GuestPtr is) {
+    const uint32_t ios = iosOf(x, is);
+    wr(x, is + 4, 0);
+    if (!inSentry(x, is, true)) return kEofChar;
+    const int32_t c = sbSgetc(x, rd(x, ios + kBuf));
+    if (c == kEofChar) iosSetstate(x, ios, kEof);
+    return c;
+}
+void iosSetBadbit(Ctx& x, GuestPtr ios) { wr(x, ios + kState, rd(x, ios + kState) | kBad); }
+
 // ---- destructors. The stream classes own nothing; a deleting destructor frees the whole
 // object, found through the offset to top when it is reached through a thunk.
 uint32_t streamDtor(Ctx&, GuestPtr self) { return self; }
@@ -414,6 +534,15 @@ void registerLibcxxStreams(Process& p) {
     const std::string IS = "NSt3__113basic_istreamIcNS_11char_traitsIcEEE";
     p.def<&isSentryCtor>("__Z" + IS + "6sentryC1ERS3_b");
     p.def<&isSentryCtor>("__Z" + IS + "6sentryC2ERS3_b");
+    p.def<&i_read>("__Z" + IS + "4readEPci");
+    p.defineFunction("__Z" + IS + "5seekgExNS_8ios_base7seekdirE", i_seekgOff);
+    p.defineFunction("__Z" + IS + "5tellgEv", i_tellg);
+    p.def<&i_getline>("__Z" + IS + "7getlineEPcic");
+    p.def<&i_extractInt>("__Z" + IS + "rsERi");
+    p.def<&i_extractInt>("__Z" + IS + "rsERl");
+    p.def<&i_get>("__Z" + IS + "3getEv");
+    p.def<&i_peek>("__Z" + IS + "4peekEv");
+    p.def<&iosSetBadbit>("__ZNSt3__18ios_base33__set_badbit_and_consider_rethrowEv");
 
     // istream and iostream destructors (ostream's are with the streambuf in LibStdcxxStreams.cpp)
     const std::string IOS = "NSt3__114basic_iostreamIcNS_11char_traitsIcEEE";

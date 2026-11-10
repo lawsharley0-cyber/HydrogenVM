@@ -247,6 +247,7 @@ int runSuspendTests();
 int runGuestCallBoundaryChild(int mode);
 int runThreadLifetimeTests();
 int runThreadLifetimeChild();
+namespace Hydrogen { namespace Runtime { bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c); } }
 int runArenaPoolTests();
 
 namespace {
@@ -1367,6 +1368,7 @@ int runFullSubsystemTests() {
         std::string deep = "void main() { gl_FragColor = vec4(" + std::string(100, '(') + "1.0" + std::string(100, ')') + "); }";
         rejected &= !fragment.compile(deep, false);
         check(rejected, "GLSL rejects invalid writes, types, indexing, #include and excessive nesting");
+
 
         auto near4 = [](const float* g, float r, float gch, float b, float a) {
             return std::abs(g[0] - r) < 1e-5f && std::abs(g[1] - gch) < 1e-5f &&
@@ -4743,6 +4745,50 @@ int runFullSubsystemTests() {
         if (!(skipOk && noskipOk && eofOk)) std::printf("    istream sentry: skip %d noskip %d eof %d\n", skipOk, noskipOk, eofOk);
         check(skipOk && noskipOk && eofOk, "libc++ istream::sentry skips leading whitespace, honours noskipws, and fails at end of input");
 
+        // unformatted and formatted input (Terraria reads its data files with these). The stream
+        // layout here is vptr, gcount, then basic_ios at +8.
+        {
+            const uint32_t vt8 = proc.heap().allocZeroed(16);
+            m.write<uint32_t>(vt8, 8);
+            auto makeIn = [&](const char* text) {
+                const auto [isb, buf] = input(text);
+                const uint32_t st2 = proc.heap().allocZeroed(8 + 80);
+                m.write<uint32_t>(st2, vt8 + 12);
+                call("__ZNSt3__18ios_base4initEPv", {st2 + 8, isb});
+                return std::pair<uint32_t, uint32_t>(st2, isb);
+            };
+            const std::string I = "__ZNSt3__113basic_istreamIcNS_11char_traitsIcEEE";
+            const auto [in1, sb1] = makeIn("ab\ncd  -42x");
+            const uint32_t line = proc.heap().allocZeroed(16), num = proc.heap().allocZeroed(4);
+            call((I + "7getlineEPcic").c_str(), {in1, line, 16, '\n'});
+            const bool lineOk = proc.readCString(line) == "ab" && m.read<uint32_t>(in1 + 4) == 3 && m.read<uint32_t>(in1 + 8 + 16) == 0;
+            call((I + "4readEPci").c_str(), {in1, line, 2});
+            const bool readOk = std::memcmp(m.host(line), "cd", 2) == 0 && m.read<uint32_t>(in1 + 4) == 2;
+            call((I + "rsERi").c_str(), {in1, num});
+            const bool intOk = int32_t(m.read<uint32_t>(num)) == -42 && m.read<uint32_t>(in1 + 8 + 16) == 0 &&
+                               (call((I + "4peekEv").c_str(), {in1}) & 0xFF) == 'x';
+            // 3 bytes asked, 1 left: the count is 1 and the stream is failbit|eofbit
+            call((I + "4readEPci").c_str(), {in1, line, 3});
+            const bool shortOk = m.read<uint32_t>(in1 + 4) == 1 && m.read<uint32_t>(in1 + 8 + 16) == 6;
+            // the base streambuf cannot seek: tellg is -1 (the offset follows the 128-byte state), seekg sets failbit
+            const auto [in2, sb2] = makeIn("xyz");
+            const uint32_t pos = proc.heap().allocZeroed(136);
+            call((I + "5tellgEv").c_str(), {pos, in2});
+            const bool tellOk = int64_t(m.read<uint64_t>(pos + 128)) == -1 && m.read<uint32_t>(in2 + 8 + 16) == 0;
+            cpu.r[13] -= 64;
+            call((I + "5seekgExNS_8ios_base7seekdirE").c_str(), {in2, 0, 0, 2});
+            cpu.r[13] += 64;
+            const bool seekOk = m.read<uint32_t>(in2 + 8 + 16) == 4;
+            const auto [in3, sb3] = makeIn("zz");
+            call((I + "rsERi").c_str(), {in3, num});
+            const bool notNumber = m.read<uint32_t>(num) == 0 && m.read<uint32_t>(in3 + 8 + 16) == 4;
+            (void)sb1; (void)sb2; (void)sb3;
+            if (!(lineOk && readOk && intOk && shortOk && tellOk && seekOk && notNumber))
+                std::printf("    libc++ istream: line %d read %d int %d short %d tell %d seek %d nan %d\n", lineOk, readOk, intOk, shortOk, tellOk, seekOk, notNumber);
+            check(lineOk && readOk && intOk && shortOk && tellOk && seekOk && notNumber,
+                  "libc++ istream: getline, read, operator>>(int), peek, a short read, tellg and seekg on a buffer that cannot seek");
+        }
+
         // std::__sort for unsigned long long
         const uint32_t arr = proc.heap().allocZeroed(24);
         const uint64_t vals[3] = {3, 1ull << 40, 2};
@@ -4750,6 +4796,31 @@ int runFullSubsystemTests() {
         call("__ZNSt3__16__sortIRNS_6__lessIyyEEPyEEvT0_S5_T_", {arr, arr + 24, 0});
         check(m.read<uint64_t>(arr) == 2 && m.read<uint64_t>(arr + 8) == 3 && m.read<uint64_t>(arr + 16) == (1ull << 40),
               "libc++ __sort orders unsigned long long values");
+    }
+
+    // An app with its own crash reporter catches the real fault and raises the signal again.
+    // The stop message for that raise names the fault that started it (Terraria: PLCrashReporter
+    // hid a null read inside std::string behind "the app raised signal 11").
+    {
+        ProcessConfig fcfg;
+        fcfg.homePath = "/tmp/hvm_handled_fault";
+        Process fproc(fcfg);
+        auto& fcpu = fproc.mainThread().cpu;
+        std::string raised;
+        const uint32_t handler = fproc.defineFunction("test_crash_reporter", [&](Ctx& x) {
+            try { x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_raise"), {11}); }
+            catch (const std::exception& e) { raised = e.what(); throw; }
+        });
+        fproc.callGuest(fcpu, *fproc.lookupSymbol("_signal"), {11, handler});
+        fcpu.exit_info = 0x10;                        // the address the guest touched
+        fcpu.r[13] = fproc.heap().allocZeroed(8192) + 8192;   // a stack for the signal frame
+        fcpu.r[15] = handler;
+        const bool resumed = hvmDeliverGuestFault(fproc, fcpu);
+        if (raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") == std::string::npos)
+            std::printf("    raise said: %s\n", raised.c_str());
+        check(!resumed && raised.find("the app raised signal 11 after") != std::string::npos &&
+              raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") != std::string::npos,
+              "a signal raised by the app's crash handler reports the fault the handler caught");
     }
 
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor

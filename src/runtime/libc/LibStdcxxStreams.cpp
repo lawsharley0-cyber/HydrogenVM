@@ -669,6 +669,12 @@ int32_t bs_eof2(Ctx&, GuestPtr, int32_t) { return kEofChar; }
 uint32_t bs_setbuf(Ctx&, GuestPtr sb, GuestPtr, int32_t) { return sb; }
 void bs_imbue(Ctx&, GuestPtr, GuestPtr) {}
 void bs_badpos(Ctx& x) { writePos(x, x.cpu.r[0], -1); }
+// libc++'s fpos keeps the 128-byte conversion state first and the offset after it.
+void libcxx_badpos(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0];
+    for (uint32_t i = 0; i < 128; i += 4) wr(x, ret + i, 0);
+    x.mem.write<uint64_t>(ret + 128, uint64_t(int64_t(-1)));
+}
 int32_t bs_uflow(Ctx& x, GuestPtr sb) {
     if (vcall(x, sb, sUnderflow, {}) == kEofChar) return kEofChar;
     const uint32_t g = rd(x, sb + 8);
@@ -1466,8 +1472,8 @@ void registerLibStdcxxStreams(Process& p) {
     const uint32_t lcD0 = p.def<&os_dtorDelete>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEED0Ev");
     const uint32_t lcImbue = p.def<&bs_imbue>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE5imbueERKNS_6localeE");
     const uint32_t lcSetbuf = p.def<&bs_setbuf>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6setbufEPci");
-    const uint32_t lcSeekoff = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekoffExNS_8ios_base7seekdirEj", bs_badpos);
-    const uint32_t lcSeekpos = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", bs_badpos);
+    const uint32_t lcSeekoff = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekoffExNS_8ios_base7seekdirEj", libcxx_badpos);
+    const uint32_t lcSeekpos = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", libcxx_badpos);
     const uint32_t lcSync = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE4syncEv");
     const uint32_t lcShow = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9showmanycEv");
     const uint32_t lcXsgetn = p.def<&libcxx_xsgetn>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6xsgetnEPci");
