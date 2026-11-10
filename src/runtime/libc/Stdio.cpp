@@ -244,15 +244,20 @@ int32_t f_fseek(Ctx& x, GuestPtr fp, int32_t off, int32_t whence) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || !f->f) return -1;
-    f->unget.clear(); f->eof = false;
-    return std::fseek(f->f, off, whence);
+    // The stream's position is behind the host file's by the bytes pushed back.
+    const long adjusted = whence == SEEK_CUR ? long(off) - long(f->unget.size()) : long(off);
+    const int r = std::fseek(f->f, adjusted, whence);
+    if (r == 0) { f->unget.clear(); f->eof = false; }   // a failed seek leaves the stream as it was
+    return r;
 }
 int32_t f_fseeko(Ctx& x, GuestPtr fp, int64_t off, int32_t whence) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || !f->f) return -1;
-    f->unget.clear(); f->eof = false;
-    return fseeko(f->f, off_t(off), whence);
+    const off_t adjusted = whence == SEEK_CUR ? off_t(off) - off_t(f->unget.size()) : off_t(off);
+    const int r = fseeko(f->f, adjusted, whence);
+    if (r == 0) { f->unget.clear(); f->eof = false; }
+    return r;
 }
 int32_t f_ftell(Ctx& x, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);

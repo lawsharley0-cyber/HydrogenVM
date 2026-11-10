@@ -84,11 +84,15 @@ std::string hvmIosFormatDouble(uint32_t fl, int prec, double d, size_t& prefix) 
         f += ".*";
         f += ff == fFixed ? (up ? "F" : "f") : ff == fScientific ? (up ? "E" : "e") : (up ? "G" : "g");
     }
-    char buf[512];
-    if (ff == (fFixed | fScientific)) std::snprintf(buf, sizeof buf, f.c_str(), d);
-    else std::snprintf(buf, sizeof buf, f.c_str(), prec, d);
-    prefix = (buf[0] == '-' || buf[0] == '+') ? 1 : 0;
-    return buf;
+    // Sized from snprintf's own answer: fixed notation with a large precision is long.
+    const bool hexfloat = ff == (fFixed | fScientific);
+    const int need = hexfloat ? std::snprintf(nullptr, 0, f.c_str(), d) : std::snprintf(nullptr, 0, f.c_str(), prec, d);
+    std::string out(size_t(need < 0 ? 0 : need) + 1, '\0');
+    if (hexfloat) std::snprintf(out.data(), out.size(), f.c_str(), d);
+    else std::snprintf(out.data(), out.size(), f.c_str(), prec, d);
+    out.pop_back();
+    prefix = (!out.empty() && (out[0] == '-' || out[0] == '+')) ? 1 : 0;
+    return out;
 }
 
 namespace {

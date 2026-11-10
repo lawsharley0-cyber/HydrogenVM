@@ -105,8 +105,8 @@ uint32_t sbSputn(Ctx& x, uint32_t sb, const char* data, uint32_t n) {
     const uint32_t tmp = x.proc.heap().alloc(n);
     if (!tmp) return 0;
     std::memcpy(x.mem.host(tmp), data, n);
+    struct Free { Ctx& x; uint32_t p; ~Free() { x.proc.heap().free(p); } } release{x, tmp};   // also if the guest's xsputn throws
     const int32_t r = vcall(x, sb, sXsputn, {tmp, n});
-    x.proc.heap().free(tmp);
     return r < 0 ? 0 : uint32_t(r);
 }
 // ostream::flush on a tied stream (or the stream itself).
@@ -235,47 +235,40 @@ bool isSpace(Ctx& x, int32_t c) {
         return (rd(x, *rune + kRuneTypeOff + uint32_t(c) * 4) & kRuneSpace) != 0;
     return c == ' ' || (c >= '\t' && c <= '\r');
 }
-// istream::sentry { bool ok; }: flushes the tied stream and skips leading whitespace.
-uint32_t isSentryCtor(Ctx& x, GuestPtr self, GuestPtr is, uint32_t noskipws) {
+// What istream::sentry does: flushes the tied stream and skips leading whitespace; true if
+// the stream is good afterwards.
+bool inSentry(Ctx& x, uint32_t is, bool noskipws) {
     const uint32_t ios = iosOf(x, is);
-    bool ok = false;
-    if (rd(x, ios + kState) == 0) {
-        flushTie(x, ios);
-        const uint32_t sb = rd(x, ios + kBuf);
-        if (!(noskipws & 0xFF) && (rd(x, ios + kFlags) & fSkipws) && sb) {
-            for (;;) {
-                const int32_t c = sbSgetc(x, sb);
-                if (c == kEofChar) { iosSetstate(x, ios, kFail | kEof); break; }
-                if (!isSpace(x, c)) break;
-                sbSbumpc(x, sb);
-            }
+    if (rd(x, ios + kState) != 0) { iosSetstate(x, ios, kFail); return false; }
+    flushTie(x, ios);
+    const uint32_t sb = rd(x, ios + kBuf);
+    if (!noskipws && (rd(x, ios + kFlags) & fSkipws) && sb) {
+        for (;;) {
+            const int32_t c = sbSgetc(x, sb);
+            if (c == kEofChar) { iosSetstate(x, ios, kFail | kEof); break; }
+            if (!isSpace(x, c)) break;
+            sbSbumpc(x, sb);
         }
-        ok = rd(x, ios + kState) == 0;
-    } else {
-        iosSetstate(x, ios, kFail);
     }
-    x.mem.write<uint8_t>(self, ok ? 1 : 0);
+    return rd(x, ios + kState) == 0;
+}
+// istream::sentry { bool ok; }
+uint32_t isSentryCtor(Ctx& x, GuestPtr self, GuestPtr is, uint32_t noskipws) {
+    x.mem.write<uint8_t>(self, inSentry(x, is, (noskipws & 0xFF) != 0) ? 1 : 0);
     return self;
 }
 
 // ---- unformatted and formatted input. basic_istream: +0 vptr, +4 gcount.
-bool inSentry(Ctx& x, uint32_t is, bool noskipws) {
-    const uint32_t tmp = x.proc.heap().allocZeroed(4);
-    isSentryCtor(x, tmp, is, noskipws ? 1 : 0);
-    const bool ok = x.mem.read<uint8_t>(tmp) != 0;
-    x.proc.heap().free(tmp);
-    return ok;
-}
 // pos_type streambuf::pubseekoff(off, way, which) through the virtual seekoff:
 // result by hidden pointer in r0, this in r1, the 64-bit offset in r2:r3, way and which on the stack.
 // libc++'s fpos is the 128-byte conversion state followed by the offset.
 int64_t sbSeekoff(Ctx& x, uint32_t sb, int64_t off, uint32_t way, uint32_t which) {
     const uint32_t ret = x.proc.heap().allocZeroed(136);
+    if (!ret) return -1;
     x.mem.write<uint64_t>(ret + 128, uint64_t(int64_t(-1)));
+    struct Free { Ctx& x; uint32_t p; ~Free() { x.proc.heap().free(p); } } release{x, ret};   // also if the guest's seekoff throws
     x.proc.callGuest(x.cpu, rd(x, rd(x, sb) + sSeekoff * 4), {ret, sb, uint32_t(uint64_t(off)), uint32_t(uint64_t(off) >> 32), way, which});
-    const int64_t pos = int64_t(x.mem.read<uint64_t>(ret + 128));
-    x.proc.heap().free(ret);
-    return pos;
+    return int64_t(x.mem.read<uint64_t>(ret + 128));
 }
 uint32_t i_read(Ctx& x, GuestPtr is, GuestPtr s, int32_t n) {
     const uint32_t ios = iosOf(x, is);

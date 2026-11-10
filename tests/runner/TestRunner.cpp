@@ -4709,6 +4709,29 @@ int runFullSubsystemTests() {
         check(got == want && widthReset && m.read<uint32_t>(ios + 16) == 0,
               "libc++ ostream: operator<< for int, unsigned long, bool, double, float, long long, pointer and short, and write()");
 
+        // fixed notation with precision 600: "1." and 600 zeros, 602 characters, none lost
+        {
+            const uint32_t bigSb = proc.heap().allocZeroed(32), bigArea = proc.heap().allocZeroed(700);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {bigSb});
+            m.write<uint32_t>(bigSb + 20, bigArea); m.write<uint32_t>(bigSb + 24, bigArea); m.write<uint32_t>(bigSb + 28, bigArea + 700);
+            const uint32_t bigSt = makeStream(bigSb);
+            m.write<uint32_t>(bigSt + 4 + 76, ' ');
+            m.write<uint32_t>(bigSt + 4 + 4, m.read<uint32_t>(bigSt + 4 + 4) | 4u);   // fixed
+            m.write<uint32_t>(bigSt + 4 + 8, 600);                                     // precision
+            const double one = 1.0; uint64_t ob; std::memcpy(&ob, &one, 8);
+            call(os("lsEd").c_str(), {bigSt, uint32_t(ob), uint32_t(ob >> 32)});
+            const uint32_t len = m.read<uint32_t>(bigSb + 24) - bigArea;
+            const std::string longText(reinterpret_cast<const char*>(m.host(bigArea)), len);
+            check(longText == "1." + std::string(600, '0'), "libc++ ostream: a 602-character fixed-notation double is written whole");
+            // the base streambuf's seekpos answers -1, which libc++ keeps after the 128-byte state
+            const uint32_t posOut = proc.heap().allocZeroed(136), posIn = proc.heap().allocZeroed(136);
+            cpu.r[13] -= 256;
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", {posOut, bigSb, posIn, 8});
+            cpu.r[13] += 256;
+            check(int64_t(m.read<uint64_t>(posOut + 128)) == -1 && m.read<uint32_t>(posOut) == 0,
+                  "libc++ streambuf::seekpos on the base class returns position -1 in libc++'s fpos layout");
+        }
+
         // a full buffer: the base overflow refuses, so the stream goes bad|fail and stops writing
         m.write<uint32_t>(sb + 28, m.read<uint32_t>(sb + 24));
         call(os("lsEi").c_str(), {st, 1});
@@ -4841,8 +4864,22 @@ int runFullSubsystemTests() {
         proc.mem().write<uint32_t>(count, 4);                      // too small for the structure
         proc.mem().write<uint32_t>(buf, 0xCAFEF00D);
         const uint32_t small = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 4, buf, count}));
-        check(basic && small == 4 && proc.mem().read<uint32_t>(buf) == 0xCAFEF00D,
-              "task_info(TASK_BASIC_INFO_32) writes 8 words whatever the caller's count; too small a count is KERN_INVALID_ARGUMENT");
+        const bool smallUntouched = proc.mem().read<uint32_t>(buf) == 0xCAFEF00D;
+        // flavor 5: the 64-bit sizes when there is room for ten words, the 32-bit structure for eight
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 10);
+        const uint32_t kr64 = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 5, buf, count}));
+        const bool wide = kr64 == 0 && proc.mem().read<uint32_t>(count) == 10 && proc.mem().read<uint64_t>(buf + 12) > 0 &&
+                          proc.mem().read<uint64_t>(buf + 4) >= proc.mem().read<uint64_t>(buf + 12) &&
+                          proc.mem().read<uint64_t>(buf + 4) < (1ull << 32) && proc.mem().read<uint32_t>(buf + 40) == 0xCAFEF00D;
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 8);
+        const uint32_t kr8 = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 5, buf, count}));
+        const bool narrow = kr8 == 0 && proc.mem().read<uint32_t>(count) == 8 && proc.mem().read<uint32_t>(buf + 8) > 0 &&
+                            proc.mem().read<uint32_t>(buf + 4) >= proc.mem().read<uint32_t>(buf + 8) &&
+                            proc.mem().read<uint32_t>(buf + 32) == 0xCAFEF00D;
+        check(basic && small == 4 && smallUntouched && wide && narrow,
+              "task_info(TASK_BASIC_INFO_32) writes 8 words whatever the caller's count; too small a count is KERN_INVALID_ARGUMENT; flavor 5 fits the room given");
     }
 
     // ungetc takes back more than one byte, as Darwin's does. PvZ's XML reader reads three bytes
@@ -4864,11 +4901,22 @@ int runFullSubsystemTests() {
         // a seek discards what was pushed back
         call("_ungetc", {'Z', fp});
         call("_fseek", {fp, 1, 0});
-        const bool seekDrops = call("_fgetc", {fp}) == '?';
+        bool seekDrops = call("_fgetc", {fp}) == '?';
+        // SEEK_CUR counts from the stream's position, which is behind the file's by the bytes
+        // pushed back: after reading "<?" twice over and returning two bytes, +1 lands on 'x'... 
+        call("_fseek", {fp, 0, 0});
+        const uint32_t d1 = call("_fgetc", {fp}), d2 = call("_fgetc", {fp}), d3 = call("_fgetc", {fp});
+        call("_ungetc", {d3, fp}); call("_ungetc", {d2, fp}); call("_ungetc", {d1, fp});    // the stream is at 0, the file at 3
+        call("_fseek", {fp, 1, 1 /*SEEK_CUR*/});
+        seekDrops = seekDrops && call("_ftell", {fp}) == 1 && call("_fgetc", {fp}) == '?';
+        // a seek that fails keeps the pushed-back byte
+        call("_ungetc", {'Q', fp});
+        const bool failedSeekKeeps = int32_t(call("_fseek", {fp, uint32_t(-100), 0})) != 0 && call("_fgetc", {fp}) == 'Q';
+        seekDrops = seekDrops && failedSeekKeeps;
         call("_fclose", {fp});
         std::filesystem::remove(path);
         check(fp && c1 == '<' && c2 == '?' && c3 == 'x' && told && reread && seekDrops,
-              "ungetc returns three bytes to a stream; fgetc and fread read them again in order; fseek discards them");
+              "ungetc returns three bytes to a stream; fgetc and fread read them again in order; fseek discards them, counts SEEK_CUR from the stream position, and keeps them when it fails");
     }
 
     // sbrk as Darwin emulates it: 4 MB handed out in order, then -1 (not 0: an app's dlmalloc
@@ -4882,7 +4930,10 @@ int runFullSubsystemTests() {
                            sbrk(-4096) == start + 12288 && proc.mem().read<uint32_t>(a) == 0x12345678;
         const bool tooBig = sbrk(4 << 20) == 0xFFFFFFFFu && sbrk(0) == start + 12288;
         const bool rest = sbrk((4 << 20) - 12288) == start + 12288 && sbrk(1) == 0xFFFFFFFFu;
-        check(grows && tooBig && rest, "sbrk hands out its 4 MB region in order, reports the break for 0, and returns -1 when it does not fit");
+        const bool brkFails = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_brk"), {start})) == 0xFFFFFFFFu &&
+                              proc.mem().read<uint32_t>(proc.currentThread().errnoAddr) == 12 /*ENOMEM*/;
+        check(grows && tooBig && rest && brkFails,
+              "sbrk hands out its 4 MB region in order, reports the break for 0 or less, and returns -1 when it does not fit; brk always fails");
     }
 
     // An app with its own crash reporter catches the real fault and raises the signal again.
@@ -4890,7 +4941,8 @@ int runFullSubsystemTests() {
     // hid a null read inside std::string behind "the app raised signal 11").
     {
         ProcessConfig fcfg;
-        fcfg.homePath = "/tmp/hvm_handled_fault";
+        fcfg.homePath = (std::filesystem::temp_directory_path() / ("hvm_handled_fault_" + std::to_string(::getpid()))).string();
+        struct RemoveHome { std::string path; ~RemoveHome() { std::error_code ec; std::filesystem::remove_all(path, ec); } } removeHome{fcfg.homePath};
         Process fproc(fcfg);
         auto& fcpu = fproc.mainThread().cpu;
         std::string raised;
@@ -4905,9 +4957,22 @@ int runFullSubsystemTests() {
         const bool resumed = hvmDeliverGuestFault(fproc, fcpu);
         if (raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") == std::string::npos)
             std::printf("    raise said: %s\n", raised.c_str());
+        // A handler that returns has dealt with its fault: a later raise does not mention it.
+        int recovered = 0;
+        const uint32_t quiet = fproc.defineFunction("test_recovering_handler", [&](Ctx&) { ++recovered; });
+        fproc.callGuest(fcpu, *fproc.lookupSymbol("_signal"), {11, quiet});
+        fcpu.exit_info = 0x20;
+        fcpu.r[15] = quiet;
+        fcpu.r[13] = fproc.heap().allocZeroed(8192) + 8192;
+        const bool resumedQuietly = hvmDeliverGuestFault(fproc, fcpu);
+        std::string later;
+        try { fproc.callGuest(fcpu, *fproc.lookupSymbol("_raise"), {6}); } catch (const std::exception& e) { later = e.what(); }
+        if (later.find("crash handler") != std::string::npos) std::printf("    later raise said: %s\n", later.c_str());
         check(!resumed && raised.find("the app raised signal 11 after") != std::string::npos &&
-              raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") != std::string::npos,
-              "a signal raised by the app's crash handler reports the fault the handler caught");
+              raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") != std::string::npos &&
+              resumedQuietly && recovered == 1 && later.find("the app raised signal 6") != std::string::npos &&
+              later.find("crash handler") == std::string::npos,
+              "a signal raised by the app's crash handler reports the fault the handler caught; a fault the handler recovered from is forgotten");
     }
 
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
