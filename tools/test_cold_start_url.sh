@@ -109,7 +109,10 @@ open_url() {
                 return 0
             fi
             tail -100 "$log"
-            bash "$SCRIPT_DIR/annotate_xctest_failures.sh" "$log" "cold-start confirmation, attempt $attempt"
+            # A missed first attempt is only a warning: the retry may still pass.
+            local level=error
+            if [ "$attempt" = 1 ]; then level=warning; fi
+            bash "$SCRIPT_DIR/annotate_xctest_failures.sh" "$log" "cold-start confirmation, attempt $attempt" "$level"
             if [ "$attempt" = 1 ]; then echo "Retrying the system URL confirmation once"; fi
         done
         fail "system URL confirmation did not complete"

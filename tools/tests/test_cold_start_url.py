@@ -19,7 +19,9 @@ class ColdStartAnnotationTests(unittest.TestCase):
     def test_confirmation_helper_is_retried_once(self):
         result = self.exercise_driver(confirm=True, flaky_helper=True)
         self.assertIn('Retrying the system URL confirmation once', result.stdout)
-        self.assertIn('::error title=cold-start confirmation, attempt 1::', result.stdout)
+        # The recovered first attempt is a warning, so the green run has no error annotation.
+        self.assertIn('::warning title=cold-start confirmation, attempt 1::', result.stdout)
+        self.assertNotIn('::error', result.stdout)
 
     def exercise_driver(self, confirm=False, flaky_helper=False):
         with tempfile.TemporaryDirectory() as directory:
