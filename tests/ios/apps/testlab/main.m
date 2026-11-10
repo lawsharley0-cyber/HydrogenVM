@@ -95,7 +95,7 @@ static const int kVersionG = 1;
 static const int kVersionH = 1;
 static const int kVersionI = 1;
 static const int kVersionJ = 1;
-static const int kVersionK = 1;
+static const int kVersionK = 2;
 
 // ─────────────────────────── timing ──────────────────────────────────────────
 
@@ -1355,6 +1355,11 @@ static TLResult *runCaseJ(void) {
 }
 @end
 
+@interface NSObject (TLPhotoPickerTraits)
+- (void)setAllowsEditing:(BOOL)value;
+- (BOOL)allowsEditing;
+@end
+
 static TLResult *runCaseK(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_K version:kVersionK];
     double t0 = monoMs();
@@ -1388,19 +1393,24 @@ static TLResult *runCaseK(void) {
     NSArray *sorted = [arr sortedArrayUsingDescriptors:@[sd]];
     BOOL sortOk = sorted.count == 3 && [sorted[0] isEqualToString:@"a"] && [sorted[1] isEqualToString:@"cat"] && [sorted[2] isEqualToString:@"banana"];
 
+    id photoPicker = [[NSClassFromString(@"UIImagePickerController") alloc] init];
+    [photoPicker setAllowsEditing:YES];
+    BOOL photoTraitsOk = [photoPicker allowsEditing];
+    r.diagnostics[@"photoTraitsOk"] = @(photoTraitsOk);
+
     r.diagnostics[@"btnOk"] = @(btnOk);
     r.diagnostics[@"swOk"] = @(swOk);
     r.diagnostics[@"sbOk"] = @(sbOk);
     r.diagnostics[@"sortOk"] = @(sortOk);
 
-    BOOL allOk = btnOk && swOk && sbOk && sortOk;
+    BOOL allOk = btnOk && swOk && sbOk && sortOk && photoTraitsOk;
     r.status = allOk ? @"passed" : @"failed";
-    r.expected = @"buttonTapped=1, controlChanged=1, searchBarOk=1, sortOk=1";
-    r.actual = [NSString stringWithFormat:@"buttonTapped=%d, controlChanged=%d, searchBarOk=%d, sortOk=%d",
-                btnOk, swOk, sbOk, sortOk];
+    r.expected = @"buttonTapped=1, controlChanged=1, searchBarOk=1, sortOk=1, photoTraitsOk=1";
+    r.actual = [NSString stringWithFormat:@"buttonTapped=%d, controlChanged=%d, searchBarOk=%d, sortOk=%d, photoTraitsOk=%d",
+                btnOk, swOk, sbOk, sortOk, photoTraitsOk];
 
     if (!allOk) {
-        r.reason = [NSString stringWithFormat:@"UIKit mismatch: btn=%d sw=%d sb=%d sort=%d", btnOk, swOk, sbOk, sortOk];
+        r.reason = [NSString stringWithFormat:@"UIKit mismatch: btn=%d sw=%d sb=%d sort=%d photo=%d", btnOk, swOk, sbOk, sortOk, photoTraitsOk];
     }
 
     clearCheckpoint();

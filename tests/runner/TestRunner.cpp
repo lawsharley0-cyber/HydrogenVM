@@ -4285,6 +4285,40 @@ int runFullSubsystemTests() {
         UIKit::setTextInputObserver(proc, nullptr);
     }
 
+    // Photo-library presentation is a shared host service, with guest-main-loop delivery.
+    {
+        std::vector<UIKit::PhotoPickerRequest> requests;
+        check(!(r.send(cpu,r.getClass("UIImagePickerController"),"isSourceTypeAvailable:",{0})&255),"photo library is unavailable without a host provider");
+        UIKit::setPhotoPickerObserver(proc,[&](const auto& q){requests.push_back(q);});
+        check((r.send(cpu,r.getClass("UIImagePickerController"),"isSourceTypeAvailable:",{0})&255) && !(r.send(cpu,r.getClass("UIImagePickerController"),"isSourceTypeAvailable:",{1})&255),"photo host enables library, never camera capture");
+        int selected=0,cancelled=0;bool imageOk=false;
+        ObjC::ClassBuilder del=r.defineClass("HVMPhotoDelegate","NSObject");
+        del.method("imagePickerController:didFinishPickingMediaWithInfo:",[&](Ctx& x){
+            ++selected;const auto info=x.cpu.r[3];const auto img=Foundation::dictGet(x,info,Foundation::makeString(x,"UIImagePickerControllerOriginalImage"));
+            const auto cg=ObjC::id(r.send(cpu,img,"CGImage"));auto pixels=CG::imageOf(x,cg);
+            imageOk=pixels && pixels->width==2 && pixels->height==1 && pixels->rgba[0]==255 && pixels->rgba[5]==255;
+            r.send(cpu,x.cpu.r[2],"dismissViewControllerAnimated:completion:",{0,0});
+        },"v@:@@");
+        del.method("imagePickerControllerDidCancel:",[&](Ctx& x){++cancelled;r.send(cpu,x.cpu.r[2],"dismissViewControllerAnimated:completion:",{0,0});},"v@:@");
+        const auto delegate=r.createInstance(del.cls());
+        const auto presenter=ObjC::id(r.send(cpu,r.getClass("UIViewController"),r.sel("new")));
+        const auto picker=ObjC::id(r.send(cpu,r.getClass("UIImagePickerController"),r.sel("new")));
+        r.send(cpu,picker,"setDelegate:",{delegate});r.send(cpu,picker,"setAllowsEditing:",{1});
+        check((r.send(cpu,picker,"allowsEditing")&255) && uint32_t(r.send(cpu,picker,"delegate"))==delegate,"image picker preserves delegate and configuration");
+        const auto present=[&]{r.send(cpu,presenter,"presentViewController:animated:completion:",{picker,0,0});};
+        const auto pump=[&]{for(int i=0;i<3;++i)Foundation::mainRunLoop(proc).runOnce(cpu,0.0);};
+        present();const auto first=requests.back().requestId;
+        Graphics::Image image;image.width=2;image.height=1;image.rgba={255,0,0,255,0,255,0,255};const auto png=Graphics::encodePng(image);
+        UIKit::submitPhotoPickerResult(proc,first+1,png);pump();check(selected==0,"image picker drops mismatched request epochs");
+        UIKit::submitPhotoPickerResult(proc,first,png);check(selected==0,"photo result waits for the guest main run loop");pump();
+        check(selected==1 && imageOk && !requests.back().active,"selected pixels reach the UIImage delegate, followed by dismissal");
+        UIKit::submitPhotoPickerResult(proc,first,png);pump();check(selected==1,"dismissed photo requests cannot deliver duplicate results");
+        present();const auto second=requests.back().requestId;UIKit::submitPhotoPickerResult(proc,first,png);UIKit::submitPhotoPickerResult(proc,second,{});pump();
+        check(second!=first && selected==1 && cancelled==1 && !requests.back().active,"new photo requests reject stale selections and deliver cancellation");
+        r.release(cpu,picker);r.release(cpu,presenter);r.release(cpu,delegate);
+        UIKit::setPhotoPickerObserver(proc,nullptr);
+    }
+
     // Composed ranges use UTF-16 coordinates and expand to whole Unicode clusters.
     {
         const auto range = [&](const std::u16string& text, uint32_t location, uint32_t length, bool atIndex = false) {

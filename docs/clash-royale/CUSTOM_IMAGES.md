@@ -1,3 +1,9 @@
+# Phone import update (2026-11-10)
+
+[Photos inside Clash](PHONE_PHOTOS_2026-11-10.md) adds direct selection from the
+iPhone library and guest-side encoding, with updated host and guest packages.
+The computer packer below remains an optional legacy ART1 workflow.
+
 # Custom PNG icons and troop appearances
 
 This is the first static-image art importer for Card Forge. It changes only

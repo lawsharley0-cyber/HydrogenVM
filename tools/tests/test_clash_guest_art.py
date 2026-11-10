@@ -108,5 +108,18 @@ int main(int argc,char **argv){
             # An append-only registry extension still accepts a pack for slot zero.
             one=encode_registry(dict(version=1,cards=[dict(slot=0,baseCardId=26000000,name='Authored A')]))
             m,_=make_pack(bundle,one,{'0':{'icon':image,'troop':image}});mp.write_bytes(m);run('1 3 0\n')
+            # Phone imports publish an immutable revision, then atomically switch
+            # the root ART2 manifest. ART1 remains readable for existing players.
+            generation=folder/'g00000007';generation.mkdir()
+            for (kind,slot),data in assets.items():(generation/asset_name(kind,slot)).write_bytes(data)
+            h=list(struct.unpack_from('<8I',manifest));h[:2]=[0x32545241,2]
+            body=struct.pack('<I',7)+manifest[32:]
+            revision=rehash(h,body);mp.write_bytes(revision);run('1 3 0\n')
+            for bad in [0,8,0xffffffff]:
+                mp.write_bytes(rehash(h,struct.pack('<I',bad)+manifest[32:]));run('0 0 0\n')
+            mp.write_bytes(revision)
+            target=generation/'ModLabArt_0000.sc';target.write_bytes(b'partial revision')
+            run('0 0 0\n');self.assertEqual(mp.read_bytes(),revision)
+            mp.write_bytes(manifest);run('1 3 0\n')
 
 if __name__=='__main__':unittest.main()

@@ -407,6 +407,10 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 @property (nonatomic, readwrite, nullable) CALayer *glLayer;
 @end
 
+@interface HVMPhotoPickerRequest ()
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId;
+@end
+
 @interface HVMTextInputRequest ()
 - (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q;
 @end
@@ -546,6 +550,13 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     HVMSession *s = weakSelf;
                     if (s && s.onTextInput) s.onTextInput(req);
+                });
+            });
+            RT::UIKit::setPhotoPickerObserver(*proc, [weakSelf](const RT::UIKit::PhotoPickerRequest &q) {
+                HVMPhotoPickerRequest *req = [[HVMPhotoPickerRequest alloc] initWithActive:q.active requestId:q.requestId];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    HVMSession *s = weakSelf;
+                    if (s && s.onPhotoPicker) s.onPhotoPicker(req);
                 });
             });
             startAudio(core, proc->mixerPtr());
@@ -716,6 +727,19 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p && _core->ready) p->enterForeground();
 }
 
+- (void)submitPhoto:(NSData *)imageData requestId:(uint64_t)requestId {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return;
+    std::vector<uint8_t> data;
+    if (imageData && imageData.length <= 16u * 1024 * 1024) {
+        const auto *bytes = static_cast<const uint8_t *>(imageData.bytes);
+        data.assign(bytes, bytes + imageData.length);
+    }
+    RT::UIKit::submitPhotoPickerResult(*p, requestId, std::move(data));
+}
+
 - (void)submitTextInput:(RT::UIKit::TextInputEvent)ev {
     if (!_core->ready) return;
     std::shared_ptr<RT::Process> p;
@@ -767,6 +791,13 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 @end
 
 // --------------------------------------------------------------- engine ---
+
+@implementation HVMPhotoPickerRequest
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId {
+    if ((self = [super init])) { _active = active; _requestId = requestId; }
+    return self;
+}
+@end
 
 @implementation HVMTextInputRequest
 - (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q {

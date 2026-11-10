@@ -1,5 +1,7 @@
 # Clash Royale solo restoration investigation
 
+November 10 current: [Phone Photos](clash-royale/PHONE_PHOTOS_2026-11-10.md) adds direct iPhone photo selection for custom-card icons and static troop art. The generic host picker and guest-side encoder require updated Hydrogen and Clash packages; existing game/Forge/mechanics data are retained. ART2 atomically switches immutable art generations and accepts legacy ART1. Shared gates: 690 runtime checks/26 Test Lab; focused guest tests: 71. Actual phone presentation, iCloud and conversion latency remain device qualification tasks.
+
 November 9 current: [Card behavior + custom PNG images](clash-royale/MOD_CUSTOMIZATION_2026-11-09.md) records the Spawns controls, MCH1 optional profile, ART1 image packs, 67 focused checks, native two-troop deployment, image battle/relaunch and retained-file fallback. Overrides must match bundled res/sc source assets, never decompressed swfcache/sc files. PNG import currently uses the computer packer; static troop art and phone qualification limits are explicit. Keep original training and definition-linked saves intact.
 
 November 8 troop-save crash follow-up: [MOD_SIZE_ABORT_2026-11-08.md](clash-royale/MOD_SIZE_ABORT_2026-11-08.md) records the reproduced Knight-size Apply abort, checked binary32 correction, 60 focused tests and recovery of the exact retained profile without resetting progression. The earlier Card Forge download is superseded for size edits. Remaining modifier/phone breadth is explicitly unqualified.

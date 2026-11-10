@@ -52,6 +52,7 @@ targetTemplates:
       - sdk: CoreText.framework
       - sdk: CoreFoundation.framework
       - sdk: ImageIO.framework
+      - sdk: PhotosUI.framework                     # selection-only system photo picker
       - sdk: CoreMotion.framework
       - sdk: Intents.framework                      # Add to Home Screen via Shortcuts (AddToHomeScreen.swift)
       - sdk: IntentsUI.framework

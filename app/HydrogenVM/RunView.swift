@@ -22,6 +22,7 @@ final class RunModel {
     private(set) var running = false
     /// The guest text field that has focus, if any: the host keyboard bar is shown for it (#303).
     private(set) var keyboard: HVMTextInputRequest?
+    var photoPicker: GamePhotoRequest?
     private(set) var fps = 0
     private(set) var orientation = GuestOrientation.portrait
     private(set) var activity = PlayerActivity()
@@ -110,6 +111,11 @@ final class RunModel {
         }
     }
 
+    func finishPhoto(_ data: Data?, requestId: UInt64) {
+        guard running, !closing, photoPicker?.id == requestId else { return }
+        session?.submitPhoto(data, requestId: requestId)
+    }
+
     func start(keepGoing: Bool) {
         guard session == nil else { return }
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
@@ -135,6 +141,13 @@ final class RunModel {
         s.onTextInput = { [weak self] request in
             MainActor.assumeIsolated { self?.keyboard = request.active ? request : nil }
         }
+        s.onPhotoPicker = { [weak self] request in
+            MainActor.assumeIsolated {
+                guard let self, self.running, !self.closing else { return }
+                if request.active { self.photoPicker = GamePhotoRequest(id: request.requestId) }
+                else if self.photoPicker?.id == request.requestId { self.photoPicker = nil }
+            }
+        }
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -159,6 +172,7 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.keyboard = nil
+                self.photoPicker = nil
                 self.running = false
                 self.closing = false
                 self.cancelActiveTouches()
@@ -567,6 +581,10 @@ struct RunView: View {
         .onDisappear {
             model.teardown()
             OrientationLock.shared.lock(.all)
+        }
+        .sheet(item: $model.photoPicker) { request in
+            GamePhotoPicker { data in model.finishPhoto(data, requestId: request.id) }
+                .interactiveDismissDisabled()
         }
         .sheet(item: $model.savedCrash) { CrashReportView(report: $0) }
         .alert("\(app.title) crashed", isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {

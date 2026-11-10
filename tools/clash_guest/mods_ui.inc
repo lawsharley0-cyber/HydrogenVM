@@ -61,6 +61,9 @@ static void mod_ui_refresh(int stats) {
         mod_send1(mod_fields[f],"setEnabled:",enabled);mod_send1(mod_minus[f],"setEnabled:",enabled);mod_send1(mod_plus[f],"setEnabled:",enabled);
     }
 }
+#ifdef GUEST_ART_SOURCE_TOKEN
+#include "photo_import.inc"
+#endif
 #ifdef GUEST_MECH_CARD_COUNT
 #include "mechanics_ui.inc"
 #endif
@@ -72,14 +75,9 @@ static void mod_action(u32 self,u32 selector,u32 sender) {
     if(tag==40 || tag>=400){mech_ui_action(tag);return;}
 #endif
 #ifdef GUEST_ART_SOURCE_TOKEN
-    if(tag==31){
-        if(mod_selected<GUEST_MOD_UNIT_COUNT)mod_message("Select a custom card to view its images.");
-        else if(art_rejected)mod_message("Image pack rejected. Original art kept.\nRebuild the pack for this card registry.");
-        else {u32 flags=art_flags[mod_selected-GUEST_MOD_UNIT_COUNT];
-            mod_message(flags==3?"Custom icon + static troop image loaded.":flags==1?"Custom icon loaded. Original troop artwork.":flags==2?"Static troop image loaded. Original icon.":"Import art pack to Documents/ClashForgeArt-v1.\nRestart Clash to load custom images.");
-        }
-        mod_ui_refresh(0);return;
-    }
+    if(tag==31){photo_open();return;}
+    if(tag==32 || tag==33){photo_choose((u32)(tag-32));return;}
+    if(tag==34){mod_send1(photo_panel,"setHidden:",1);return;}
 #endif
     if(tag==30) {
         void *home,*avatar;
@@ -132,6 +130,9 @@ static void mod_action(u32 self,u32 selector,u32 sender) {
 static void mod_ui_open(void) {
     if(!mod_allowed()){mod_message("Mod Lab unlocks after the seven trainers.");return;}
     mod_initialize();
+#ifdef GUEST_ART_SOURCE_TOKEN
+    if(photo_panel)mod_send1(photo_panel,"setHidden:",1);
+#endif
     mod_reset_requested=0;
     mod_msg=symbol("objc_msgSend");mod_sel_api=symbol("sel_registerName");mod_class_api=symbol("objc_getClass");
     mod_old_window=mod_send0(mod_send0(mod_class("UIApplication"),"sharedApplication"),"keyWindow");
@@ -139,6 +140,9 @@ static void mod_ui_open(void) {
     if(!mod_window) {
         u32 cls=CALL(symbol("objc_allocateClassPair"),u32,(u32,const char*,u32))(mod_class("NSObject"),"ClashGuestModActions",0);
         if(!cls || !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("modPress:"),(u32)mod_action,"v@:@"))fail("Mod Lab: action registration failed");
+#ifdef GUEST_ART_SOURCE_TOKEN
+        if(!CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("imagePickerController:didFinishPickingMediaWithInfo:"),(u32)photo_finished,"v@:@@") || !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("imagePickerControllerDidCancel:"),(u32)photo_cancelled,"v@:@"))fail("Photo delegate registration failed");
+#endif
         CALL(symbol("objc_registerClassPair"),void,(u32))(cls);mod_target=mod_send0(mod_send0(cls,"alloc"),"init");
         mod_window=mod_send0(mod_send0(mod_class("UIWindow"),"alloc"),"init");
         ModRect bounds;CALL(symbol("objc_msgSend_stret"),void,(void*,u32,u32))(&bounds,mod_send0(mod_class("UIScreen"),"mainScreen"),mod_sel("bounds"));
@@ -194,6 +198,9 @@ static void mod_ui_open(void) {
 static void mod_tick(void) {
     if(!save_initialized || !logged_in || battle_started)return;
     mod_initialize();if(!mod_applied)mod_apply_units();
+#ifdef GUEST_ART_SOURCE_TOKEN
+    photo_tick();
+#endif
 }
 extern void *guest_original_mod_string(const char*);
 static int mod_equal(const char *a,const char *b){if(!a||!b)return 0;u32 i=0;while(a[i]&&a[i]==b[i])++i;return a[i]==b[i];}

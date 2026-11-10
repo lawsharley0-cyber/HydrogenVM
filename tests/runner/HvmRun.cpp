@@ -63,6 +63,7 @@ int hvmRunMain(int argc, char** argv) {
     std::vector<LifeEvent> lifeEvents;
     std::string screenshot, reportPath, frameFile, inputFile;
     int audioFd = -1;
+    std::string photoLibraryImage;
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
     for (int i = 2; i < argc; ++i) {
@@ -81,6 +82,7 @@ int hvmRunMain(int argc, char** argv) {
         }
         if (!std::strcmp(argv[i], "--report") && i + 1 < argc) { reportPath = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--frame-file") && i + 1 < argc) { frameFile = argv[++i]; continue; }
+        if (!std::strcmp(argv[i], "--photo-library-image") && i+1<argc) { photoLibraryImage=argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--input-file") && i + 1 < argc) { inputFile = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--audio-fd") && i + 1 < argc) {
             char* end = nullptr;
@@ -193,6 +195,20 @@ int hvmRunMain(int argc, char** argv) {
         EntryTrace entryTrace;
         Runtime::Process proc(cfg);
         entryTrace.attach(proc);
+        if(!photoLibraryImage.empty()) {
+            Runtime::UIKit::setPhotoPickerObserver(proc,[&proc,photoLibraryImage](const Runtime::UIKit::PhotoPickerRequest& q){
+                if(!q.active)return;
+                std::vector<uint8_t> bytes;
+                if(photoLibraryImage!="cancel") {
+                    std::ifstream file(photoLibraryImage,std::ios::binary|std::ios::ate);
+                    const auto size=file.tellg();
+                    if(size>0 && size<=16*1024*1024){bytes.resize(size);file.seekg(0);if(!file.read(reinterpret_cast<char*>(bytes.data()),size))bytes.clear();}
+                }
+                proc.log(Runtime::LogLevel::Info,"desktop photo-library fixture selected");
+                Runtime::UIKit::submitPhotoPickerResult(proc,q.requestId,std::move(bytes));
+            });
+        }
+
         // Desktop text commands answer the guest's latest keyboard request (#303/#381):
         // custom UIKeyInput responders get incremental events, text fields their full text.
         // Shared with the observer, which a guest worker may still call while the process ends.
