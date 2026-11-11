@@ -1,5 +1,7 @@
 # Clash Royale solo restoration investigation
 
+November 11 music implementation. [Custom menu music](clash-royale/CUSTOM_MUSIC_2026-11-11.md) records the guest controls, shared Files bridge and validation status.
+
 November 11. [Custom spell creation](clash-royale/SPELL_FORGE_2026-11-11.md) covers Fireball and Rocket clones, private projectiles, Photos icons and native validation.
 
 November 11. [Mod Lab workshop](clash-royale/MOD_WORKSHOP_2026-11-11.md) covers editor navigation, spell templates, mutation, preset exchange and the native comparison harness.

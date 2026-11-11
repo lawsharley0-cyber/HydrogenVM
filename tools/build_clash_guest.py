@@ -127,6 +127,7 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
         header.write(mechanics_header(build_dir/'source'/app_root))
         from clash_spell_catalog import header as spell_header
         header.write(spell_header(build_dir/'source'/app_root))
+        header.write('#define GUEST_MUSIC_LAB 1\n')
         header.write(forge_header(build_dir/'source'/app_root,entries,spell_clones=True))
         from clash_art_templates import header as art_header
         header.write(art_header(build_dir/'source'/app_root,entries))
@@ -300,6 +301,13 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
     at=segment[3]+file_stub-segment[1];target=mod['symbols']['_guest_forge_fopen']
     binary[at:at+8]=struct.pack('<II',0xe51ff004,target)
     patches.append(dict(address=hex(file_stub),function='_guest_forge_fopen',target=hex(target),mode='ARM import stub'))
+    for imported, function in [('_AudioFileOpenURL', '_guest_music_audio_open'), ('_ExtAudioFileOpenURL', '_guest_music_ext_open')]:
+        stub = parsed['stubs'][imported]
+        segment = next(s for s in parsed['segments'] if s[1] <= stub < s[1]+s[4])
+        at = segment[3]+stub-segment[1]
+        target = mod['symbols'][function]
+        binary[at:at+8] = struct.pack('<II', 0xe51ff004, target)
+        patches.append(dict(address=hex(stub), function=function, target=hex(target), mode='ARM import stub'))
     info['CFBundleIdentifier']='com.hydrogenvm.clashroyale.guestdev'
     info['CFBundleDisplayName']='Clash Offline Guest DEV'
     info.pop('HydrogenVMOfflineBackend',None)

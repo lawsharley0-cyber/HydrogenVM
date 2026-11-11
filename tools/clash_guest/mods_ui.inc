@@ -61,6 +61,9 @@ static void mod_ui_refresh(int stats) {
         mod_send1(mod_fields[f],"setEnabled:",enabled);mod_send1(mod_minus[f],"setEnabled:",enabled);mod_send1(mod_plus[f],"setEnabled:",enabled);
     }
 }
+#ifdef GUEST_MUSIC_LAB
+#include "music_ui.inc"
+#endif
 #ifdef GUEST_ART_SOURCE_TOKEN
 #include "photo_import.inc"
 #endif
@@ -73,6 +76,10 @@ static void mod_ui_refresh(int stats) {
 #ifdef GUEST_SPELL_COUNT
 static u32 lab_menu,lab_back,lab_heading;
 static void lab_show_menu(void){
+#ifdef GUEST_MUSIC_LAB
+    if(music_panel)mod_send1(music_panel,"setHidden:",1);
+    if(music_player)mod_send0(music_player,"stop");
+#endif
 #ifdef GUEST_FORGE_SPELLS
     spell_clone_close();
 #endif
@@ -90,10 +97,13 @@ static void lab_show_menu(void){
     mod_text(mod_status_label,mod_status);
 }
 static void lab_open_section(int tag){
-    static const char *titles[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab"};
+    static const char *titles[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab","Music"};
     mod_send1(lab_menu,"setHidden:",1);
     mod_send1(lab_back,"setHidden:",0);
     mod_text(lab_heading,titles[tag-51]);
+    #ifdef GUEST_MUSIC_LAB
+    if(tag==56){music_open();return;}
+#endif
     if(tag==55){spell_ui_open();return;}
     if(tag==54){mech_showing=0;mech_ui_action(40);return;}
     mod_send1(mod_main_scroll,"setHidden:",0);
@@ -108,10 +118,10 @@ static void lab_setup(u32 root,ModRect bounds){
     mod_frame(lab_menu,(ModRect){0,54,bounds.w,bounds.h-110});
     mod_send1(root,"addSubview:",lab_menu);
     mod_send1(lab_menu,"setClipsToBounds:",1);
-    CALL(mod_msg,void,(u32,u32,ModSize))(lab_menu,mod_sel("setContentSize:"),(ModSize){bounds.w,375});
-    const char *names[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab"};
-    const char *details[]={"Gold and gems","Speed, size, health and damage","Create cards and import artwork","Troops, projectiles and summons","Effects, cost and spell templates"};
-    for(u32 i=0;i<5;++i){
+    CALL(mod_msg,void,(u32,u32,ModSize))(lab_menu,mod_sel("setContentSize:"),(ModSize){bounds.w,448});
+    const char *names[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab","Music"};
+    const char *details[]={"Gold and gems","Speed, size, health and damage","Create cards and import artwork","Troops, projectiles and summons","Effects, cost and spell templates","Import and preview a menu soundtrack"};
+    for(u32 i=0;i<6;++i){
         float y=4+73*(float)i;
         mod_button(lab_menu,names[i],51+(int)i,(ModRect){12,y,bounds.w-24,44});
         mod_label(lab_menu,details[i],(ModRect){16,y+44,bounds.w-32,22},13);
@@ -121,10 +131,14 @@ static void lab_setup(u32 root,ModRect bounds){
 static void mod_close(void){mod_send1(mod_window,"endEditing:",1);mod_send1(mod_window,"setHidden:",1);if(mod_old_window)mod_send0(mod_old_window,"makeKeyAndVisible");}
 static void mod_action(u32 self,u32 selector,u32 sender) {
     (void)self;(void)selector;int tag=(int)mod_send0(sender,"tag");
+#ifdef GUEST_MUSIC_LAB
+    if(tag>=380 && tag<=384){music_action(tag);return;}
+    if(tag==10 && music_player)mod_send0(music_player,"stop");
+#endif
     if(tag==10){mod_close();return;}
 #ifdef GUEST_SPELL_COUNT
     if(tag==50 || tag==345){lab_show_menu();return;}
-    if(tag>=51 && tag<=55){lab_open_section(tag);return;}
+    if(tag>=51 && tag<=56){lab_open_section(tag);return;}
     if(tag==41){lab_open_section(55);return;}
     if(tag>=300 && tag<=371){spell_ui_action(tag);return;}
     if(tag==40 && spell_panel)mod_send1(spell_panel,"setHidden:",1);
@@ -204,6 +218,10 @@ static void mod_ui_open(void) {
         if(!cls || !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("modPress:"),(u32)mod_action,"v@:@"))fail("Mod Lab: action registration failed");
 #ifdef GUEST_ART_SOURCE_TOKEN
         if(!CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("imagePickerController:didFinishPickingMediaWithInfo:"),(u32)photo_finished,"v@:@@") || !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("imagePickerControllerDidCancel:"),(u32)photo_cancelled,"v@:@"))fail("Photo delegate registration failed");
+#endif
+#ifdef GUEST_MUSIC_LAB
+        if(!CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("documentPicker:didPickDocumentAtURL:"),(u32)music_picked,"v@:@@") ||
+           !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("documentPickerWasCancelled:"),(u32)music_cancelled,"v@:@"))fail("Music delegate registration failed");
 #endif
         CALL(symbol("objc_registerClassPair"),void,(u32))(cls);mod_target=mod_send0(mod_send0(cls,"alloc"),"init");
         mod_window=mod_send0(mod_send0(mod_class("UIWindow"),"alloc"),"init");

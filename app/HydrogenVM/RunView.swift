@@ -23,6 +23,7 @@ final class RunModel {
     /// The guest text field that has focus, if any: the host keyboard bar is shown for it (#303).
     private(set) var keyboard: HVMTextInputRequest?
     var photoPicker: GamePhotoRequest?
+    var documentPicker: HVMDocumentPickerRequest?
     private(set) var fps = 0
     private(set) var orientation = GuestOrientation.portrait
     private(set) var activity = PlayerActivity()
@@ -111,6 +112,11 @@ final class RunModel {
         }
     }
 
+    func finishDocument(_ path: String?, requestId: UInt64) {
+        guard running, !closing, documentPicker?.requestId == requestId else { return }
+        session?.submitDocument(path, requestId: requestId)
+    }
+
     func finishPhoto(_ data: Data?, requestId: UInt64) {
         guard running, !closing, photoPicker?.id == requestId else { return }
         session?.submitPhoto(data, requestId: requestId)
@@ -140,6 +146,13 @@ final class RunModel {
         // The bridge delivers every callback on the main queue.
         s.onTextInput = { [weak self] request in
             MainActor.assumeIsolated { self?.keyboard = request.active ? request : nil }
+        }
+        s.onDocumentPicker = { [weak self] request in
+            MainActor.assumeIsolated {
+                guard let self, self.running, !self.closing else { return }
+                if request.active { self.documentPicker = request }
+                else if self.documentPicker?.requestId == request.requestId { self.documentPicker = nil }
+            }
         }
         s.onPhotoPicker = { [weak self] request in
             MainActor.assumeIsolated {
@@ -173,6 +186,7 @@ final class RunModel {
                 guard let self else { return }
                 self.keyboard = nil
                 self.photoPicker = nil
+                self.documentPicker = nil
                 self.running = false
                 self.closing = false
                 self.cancelActiveTouches()
@@ -581,6 +595,13 @@ struct RunView: View {
         .onDisappear {
             model.teardown()
             OrientationLock.shared.lock(.all)
+        }
+        .sheet(isPresented: Binding(get: { model.documentPicker != nil }, set: { _ in })) {
+            if let request = model.documentPicker {
+                GameDocumentPicker(types: request.types) { path in
+                    model.finishDocument(path, requestId: request.requestId)
+                }.interactiveDismissDisabled()
+            }
         }
         .sheet(item: $model.photoPicker) { request in
             GamePhotoPicker { data in model.finishPhoto(data, requestId: request.id) }

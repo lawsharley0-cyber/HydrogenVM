@@ -942,7 +942,7 @@ void vc_present(Ctx& x, id self, SEL, id vc, bool, uint32_t completion) {
     if (d.presented) { x.proc.log(LogLevel::Warning, "presentViewController: already presenting"); return; }
     d.presented = rt(x).retain(x.cpu, vc);
     VC(x, vc).presenting = self;
-    if (!presentPhotoPicker(x, vc)) {
+    if (!presentPhotoPicker(x, vc) && !presentDocumentPicker(x, vc)) {
     // Show it full screen in the presenter's window.
     id window = 0;
     if (d.view) window = viewWindow(x, d.view);
@@ -968,6 +968,7 @@ void vc_dismiss(Ctx& x, id self, SEL, bool, uint32_t completion) {
     const id vc = d.presented;
     if (vc) {
         dismissPhotoPicker(x, vc);
+        dismissDocumentPicker(x, vc);
         d.presented = 0;
         VC(x, vc).presenting = 0;
         if (const id view = VC(x, vc).view) rt(x).send(x.cpu, view, "removeFromSuperview");

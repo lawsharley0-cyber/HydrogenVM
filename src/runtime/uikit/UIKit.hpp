@@ -104,6 +104,7 @@ struct VCData : ObjC::HostObject {
 
 struct TextInputRequest;
 struct PhotoPickerRequest;
+struct DocumentPickerRequest;
 
 // Per-process UIKit state.
 struct UIState {
@@ -154,6 +155,10 @@ struct UIState {
     // on-screen keyboard (#303)
     std::function<void(const TextInputRequest&)> textInputObserver;   // guarded by inputMu
     std::function<void(const PhotoPickerRequest&)> photoPickerObserver; // guarded by inputMu
+    std::function<void(const DocumentPickerRequest&)> documentPickerObserver;
+    id activeDocumentPicker = 0;
+    uint64_t documentRequestId = 0;
+    bool documentResultDelivered = false;
     id activePhotoPicker = 0; // retained until dismissal
     uint64_t photoRequestId = 0;
     bool photoResultDelivered = false;
@@ -184,6 +189,14 @@ struct TextInputEvent {
 void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&)> observer);
 void submitTextInput(Process& p, TextInputEvent ev);
 void customKeyboardFocus(Ctx& x, id responder, bool active);
+// Import-only document selection. Host paths are copied into the guest sandbox.
+struct DocumentPickerRequest { bool active = false; uint64_t requestId = 0; std::vector<std::string> types; };
+void setDocumentPickerObserver(Process& p, std::function<void(const DocumentPickerRequest&)> observer);
+void submitDocumentPickerResult(Process& p, uint64_t requestId, std::string sourcePath);
+bool presentDocumentPicker(Ctx& x, id controller);
+void dismissDocumentPicker(Ctx& x, id controller);
+void registerDocumentPicker(Process& p, ObjC::Runtime& r);
+
 // Native photo selection; callbacks carry an epoch unique across process instances.
 struct PhotoPickerRequest { bool active = false; uint64_t requestId = 0; };
 void setPhotoPickerObserver(Process& p, std::function<void(const PhotoPickerRequest&)> observer);

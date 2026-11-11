@@ -46,6 +46,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly) uint64_t requestId;
 @end
 
+@interface HVMDocumentPickerRequest : HVMPhotoPickerRequest
+@property (nonatomic, readonly, copy) NSArray<NSString *> *types;
+@end
+
 @interface HVMTextInputRequest : NSObject
 @property (nonatomic, readonly) BOOL active;   // NO = hide the keyboard
 /// Identifies the guest focus this request belongs to; every event sent back must echo it.
@@ -117,6 +121,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 
 /// A guest text field gained or lost focus, or its text changed behind the keyboard (main queue).
 @property (nonatomic, copy, nullable) void (^onTextInput)(HVMTextInputRequest *request);
+@property (nonatomic, copy, nullable) void (^onDocumentPicker)(HVMDocumentPickerRequest *request);
+- (void)submitDocument:(nullable NSString *)sourcePath requestId:(uint64_t)requestId;
 @property (nonatomic, copy, nullable) void (^onPhotoPicker)(HVMPhotoPickerRequest *request);
 - (void)submitPhoto:(nullable NSData *)imageData requestId:(uint64_t)requestId;
 /// The player's new full text for the focused guest field (delegate-checked in the guest). Dropped by the guest if

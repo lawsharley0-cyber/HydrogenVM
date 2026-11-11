@@ -1,5 +1,7 @@
 # HydrogenVM — handoff (2026-10-20)
 
+November 11 music implementation. [Custom menu music](clash-royale/CUSTOM_MUSIC_2026-11-11.md) records the guest controls, shared Files bridge and validation status.
+
 November 11 priority. Build [custom music](clash-royale/SANDBOX_ROADMAP_2026-11-10.md#next-milestone--custom-music) before Arrows. Start with Files import, menu playback, offline relaunch and restore.
 
 November 11. [Custom spell creation](clash-royale/SPELL_FORGE_2026-11-11.md) covers Fireball and Rocket clones, private projectiles, Photos icons and native validation.
