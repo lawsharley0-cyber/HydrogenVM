@@ -1,0 +1,11 @@
+{
+  "name": "Earned home with Fireball clone first and original Fireball cycling in next",
+  "steps": [
+    {"id":"battle","expected":"Native arena begins","actions":[{"tap":[160,365]}],"settleSeconds":14},
+    {"id":"select-clone","expected":"Custom spell selected in first slot","actions":[{"tap":[100,500]}],"settleSeconds":2},
+    {"id":"cast-clone","expected":"Right tower takes clone damage","actions":[{"drag":[100,500,245,110]}],"settleSeconds":7},
+    {"id":"select-source","expected":"Original spell selected in newly cycled slot","actions":[{"tap":[100,500]}],"settleSeconds":3},
+    {"id":"cast-source","expected":"Left tower takes original damage","actions":[{"drag":[100,500,74,110]}],"settleSeconds":7},
+    {"id":"both-towers","expected":"Compare both tower HP and King activation","actions":[],"settleSeconds":5}
+  ]
+}

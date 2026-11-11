@@ -6,7 +6,7 @@ from pathlib import Path
 import struct
 import tempfile
 
-from clash_custom_cards import fnv
+from clash_custom_cards import SPELL_BASES, Table, decode_registry, fnv
 from clash_spell_catalog import catalog
 
 HEADER = struct.Struct("<7I")
@@ -17,12 +17,31 @@ FIELDS = ("damage", "radius", "duration", "speed", "cost")
 DEFAULTS = (100, 100, 100, 100, 0)
 
 
+def preset_catalog(app, registry=None):
+    definitions = catalog(app)
+    if registry is None:
+        return definitions
+    by_id = {d["id"]: d for d in definitions}
+    next_id = 28000000 + len(Table(app, "logic", "spells_other").groups)
+    for card in decode_registry(registry.read_bytes())["cards"]:
+        if card["baseCardId"] in SPELL_BASES:
+            base = by_id[card["baseCardId"]]
+            definitions.append(dict(id=next_id, caps=base["caps"], name=card["name"], blueprint=card))
+            next_id += 1
+    return definitions
+
+
 def checked_records(items, definitions):
     if not isinstance(items, list) or not 1 <= len(items) <= len(definitions):
         raise ValueError("Invalid spell count")
     records = []
     for item, definition in zip(items, definitions):
-        if not isinstance(item, dict) or set(item) != {"id", *FIELDS}:
+        keys = {"id", *FIELDS}
+        if "blueprint" in definition:
+            keys.add("blueprint")
+            if not isinstance(item, dict) or item.get("blueprint") != definition["blueprint"]:
+                raise ValueError("Custom spell requires a matching Forge definition")
+        if not isinstance(item, dict) or set(item) != keys:
             raise ValueError("Invalid spell fields")
         if type(item["id"]) is not int or item["id"] != definition["id"]:
             raise ValueError("Spell IDs must match the catalog in order")
@@ -63,6 +82,9 @@ def decode(data, definitions, name):
     if fnv(data[:24]) != header_hash or fnv(body) != body_hash:
         raise ValueError("Damaged spell profile")
     spells = [dict(zip(("id", *FIELDS), row)) for row in RECORD.iter_unpack(body)]
+    for row, definition in zip(spells, definitions):
+        if "blueprint" in definition:
+            row["blueprint"] = definition["blueprint"]
     preset = dict(format=FORMAT, name=name, enabled=bool(enabled), selected=selected, spells=spells)
     encode(preset, definitions)
     return preset
@@ -89,9 +111,10 @@ def main():
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path, help="New file to create")
     parser.add_argument("--name", help="Display name when exporting a preset")
+    parser.add_argument("--registry", type=Path, help="Matching ClashForge-v1.bin for profiles containing custom spells")
     args = parser.parse_args()
     try:
-        definitions = catalog(args.app)
+        definitions = preset_catalog(args.app, args.registry)
         with args.source.open("rb") as stream:
             data = stream.read(65537)
         if len(data) > 65536:

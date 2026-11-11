@@ -36,7 +36,11 @@ static void art_initialize(void){
     if(ok && h[1]==2){if(!body[0])ok=0;else{char gen[16],root[512];memcpy(root,art_folder,sizeof root);art_generation(gen,body[0]);path_append(art_folder,root,gen,sizeof art_folder);++values;}}
 
     if(ok){
-        for(u32 slot=0;slot<h[2];++slot){art_flags[slot]=values[slot];if(art_flags[slot]>3)ok=0;any_icon|=art_flags[slot]&1;}
+        for(u32 slot=0;slot<h[2];++slot){art_flags[slot]=values[slot];if(art_flags[slot]>3)ok=0;
+#ifdef GUEST_FORGE_SPELLS
+            if(forge_records[slot].base>=28000000u && (art_flags[slot]&2))ok=0;
+#endif
+            any_icon|=art_flags[slot]&1;}
         for(u32 i=0;ok && i<h[5];++i){u32 *row=values+h[2]+i*4,kind=row[0],slot=row[1];
             if(kind>3 || slot>=h[2]){ok=0;break;}
             if(kind<2){u32 bit=1u<<kind;if(slot || !any_icon || ui_seen&bit){ok=0;break;}ui_seen|=bit;}

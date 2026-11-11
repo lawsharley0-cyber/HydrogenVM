@@ -1,5 +1,7 @@
 # Clash sandbox development roadmap
 
+November 11. [Custom spell creation](SPELL_FORGE_2026-11-11.md) covers Fireball and Rocket clones, private projectiles, Photos icons and native validation.
+
 Owner-authorized direction, November 10, 2026. This records all ideas from the
 sandbox discussion. The owner requested implementation of the full roadmap on November 11.
 See the [workshop handoff](MOD_WORKSHOP_2026-11-11.md) for implemented controls, test evidence and outstanding work.

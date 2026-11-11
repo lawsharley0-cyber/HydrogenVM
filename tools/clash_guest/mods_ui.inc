@@ -73,6 +73,9 @@ static void mod_ui_refresh(int stats) {
 #ifdef GUEST_SPELL_COUNT
 static u32 lab_menu,lab_back,lab_heading;
 static void lab_show_menu(void){
+#ifdef GUEST_FORGE_SPELLS
+    spell_clone_close();
+#endif
     mod_send1(mod_window,"endEditing:",1);
     mod_send1(mod_main_scroll,"setHidden:",1);
     mod_send1(mech_scroll,"setHidden:",1);
@@ -123,7 +126,7 @@ static void mod_action(u32 self,u32 selector,u32 sender) {
     if(tag==50 || tag==345){lab_show_menu();return;}
     if(tag>=51 && tag<=55){lab_open_section(tag);return;}
     if(tag==41){lab_open_section(55);return;}
-    if(tag>=300 && tag<=367){spell_ui_action(tag);return;}
+    if(tag>=300 && tag<=371){spell_ui_action(tag);return;}
     if(tag==40 && spell_panel)mod_send1(spell_panel,"setHidden:",1);
 #endif
 #ifdef GUEST_MECH_CARD_COUNT

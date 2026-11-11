@@ -1,3 +1,4 @@
+#include "forge_slots.inc"
 #include "mods_math.inc"
 #ifdef GUEST_SPELL_COUNT
 static void spell_initialize(void),spell_restore(void),spell_apply(void);
@@ -10,7 +11,7 @@ static u32 mech_shot_base(void*,u32);
 #endif
 struct ModRecord {u32 value[MOD_FIELDS];};
 #define MOD_UNIT_CAPACITY (GUEST_MOD_UNIT_COUNT+FORGE_MAX_CARDS)
-static u32 mod_count(void){return GUEST_MOD_UNIT_COUNT+forge_loaded_count;}
+static u32 mod_count(void){return GUEST_MOD_UNIT_COUNT+forge_unit_count;}
 static struct ModRecord mod_records[MOD_UNIT_CAPACITY];
 static void *mod_units[MOD_UNIT_CAPACITY],*mod_shots[MOD_UNIT_CAPACITY];
 static u32 mod_original[MOD_UNIT_CAPACITY][6],mod_enabled,mod_ready,mod_selected,mod_applied;
@@ -66,11 +67,11 @@ static void *mod_data(const char *name,u32 address) {
     if(!*name)return 0;u32 text[5];CALL(0x18dcf9,void,(void*,const char*))(text,name);
     void *p=CALL(address,void*,(void*,void*))(text,0);CALL(0x18db2d,void,(void*))(text);return p;
 }
-static u32 mod_card_id(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].cardId:forge_ids[i-GUEST_MOD_UNIT_COUNT];}
-static const char *mod_name(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].name:forge_records[i-GUEST_MOD_UNIT_COUNT].name;}
+static u32 mod_card_id(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].cardId:forge_ids[FORGE_UNIT_SLOT(i-GUEST_MOD_UNIT_COUNT)];}
+static const char *mod_name(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].name:forge_records[FORGE_UNIT_SLOT(i-GUEST_MOD_UNIT_COUNT)].name;}
 static const char *mod_shot_name(u32 i,char out[24]) {
     if(i<GUEST_MOD_UNIT_COUNT)return mod_unit_defs[i].projectile;
-    u32 slot=i-GUEST_MOD_UNIT_COUNT;const struct ForgeBlueprint *bp=forge_blueprint(forge_records[slot].base);
+    u32 slot=FORGE_UNIT_SLOT(i-GUEST_MOD_UNIT_COUNT);const struct ForgeBlueprint *bp=forge_blueprint(forge_records[slot].base);
     if(!bp || !bp->rows[4][0])return "";
     forge_identifier(out,"ModLabShot_",slot);return out;
 }

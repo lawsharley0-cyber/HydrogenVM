@@ -6,8 +6,7 @@ import shutil
 import subprocess
 import sys
 
-from clash_spell_catalog import catalog
-from clash_spell_preset import encode
+from clash_spell_preset import encode, preset_catalog
 
 
 def compare(hvm, app, home, plan, output, variant, seconds):
@@ -20,7 +19,11 @@ def compare(hvm, app, home, plan, output, variant, seconds):
         raise ValueError("Guest home contains symbolic links; supply a self-contained snapshot")
     if not isinstance(json.loads(plan.read_text())["steps"], list):
         raise ValueError("Invalid UI plan")
-    replacement = encode(json.loads(variant.read_text(encoding="utf-8")), catalog(app)) if variant else None
+    replacement = None
+    if variant:
+        registry = home / "Documents/ClashForge-v1.bin"
+        definitions = preset_catalog(app, registry if registry.exists() else None)
+        replacement = encode(json.loads(variant.read_text(encoding="utf-8")), definitions)
     output.mkdir(parents=True, exist_ok=False)
     baseline, modified = output / "baseline", output / "variant"
     # Finish both copies before HVM can write either one.

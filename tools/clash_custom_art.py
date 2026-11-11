@@ -117,6 +117,8 @@ def make_pack(bundle,registry,images):
     for key,images_for_card in images.items():
         slot=int(key)
         if not isinstance(images_for_card,dict) or not images_for_card or set(images_for_card)-{'icon','troop'}:raise ValueError('Image entries accept icon and/or troop PNG paths')
+        if cards[slot]['baseCardId'] >= 28000000 and 'troop' in images_for_card:
+            raise ValueError('Spell clones accept icon artwork only')
         if 'icon' in images_for_card:flags[slot]|=1;icons.append((slot,pixels(images_for_card['icon'],128,162)))
         if 'troop' in images_for_card:
             flags[slot]|=2;meta,tex=troop_pair(slot,pixels(images_for_card['troop'],128,160));assets[(2,slot)]=pack_sc(meta);assets[(3,slot)]=pack_sc(tex)

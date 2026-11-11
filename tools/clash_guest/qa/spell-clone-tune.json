@@ -1,0 +1,12 @@
+{
+  "name": "Fresh launch after creating one spell; Fireball selected and spell editing enabled",
+  "steps": [
+    {"id":"settings","expected":"settings","actions":[{"tap":[290,52]}],"settleSeconds":3},
+    {"id":"editors","expected":"editors","actions":[{"tap":[230,250]}],"settleSeconds":3},
+    {"id":"spell-lab","expected":"spell lab","actions":[{"tap":[160,373]}],"settleSeconds":3},
+    {"id":"select-last-spell","expected":"select last spell","actions":[{"tap":[29,78]}],"settleSeconds":3},
+    {"id":"damage-125","expected":"damage 125","actions":[{"tap":[294,168]}],"settleSeconds":3},
+    {"id":"one-elixir","expected":"one elixir","actions":[{"tap":[294,340]}],"settleSeconds":3},
+    {"id":"apply","expected":"apply","actions":[{"tap":[80,402]}],"settleSeconds":3}
+  ]
+}

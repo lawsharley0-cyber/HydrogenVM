@@ -25,6 +25,20 @@ class SpellPresetTests(unittest.TestCase):
             preset["spells"] = preset["spells"][:count]
             self.assertEqual(decode(encode(preset, self.definitions), self.definitions, "Wide"), preset)
 
+    def test_custom_spell_preset_checks_definition_identity(self):
+        blueprint = dict(slot=1, baseCardId=28000000, name="Meteor")
+        clone = dict(id=28000009, caps=27, name="Meteor", blueprint=blueprint)
+        defs = [*self.definitions, clone]
+        preset = self.preset()
+        preset["spells"].append(dict(id=clone["id"], blueprint=blueprint, **dict(zip(FIELDS, DEFAULTS))))
+        binary = encode(preset, defs)
+        self.assertEqual(decode(binary, defs, "Wide"), preset)
+        other = dict(clone, blueprint=dict(blueprint, baseCardId=28000003))
+        with self.assertRaises(ValueError):
+            encode(preset, [*self.definitions, other])
+        with self.assertRaises(ValueError):
+            decode(binary, self.definitions, "Wide")
+
     def test_rejects_incompatible_and_damaged_inputs(self):
         for key, value in (("id", 28000002), ("cost", 1), ("damage", False)):
             preset = self.preset()
