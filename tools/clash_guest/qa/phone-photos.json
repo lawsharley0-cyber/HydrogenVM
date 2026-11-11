@@ -3,6 +3,7 @@
   "steps": [
     {"id":"settings","expected":"Native settings","actions":[{"tap":[290,52]}],"settleSeconds":3},
     {"id":"modlab","expected":"Mod Lab","actions":[{"tap":[230,250]}],"settleSeconds":3},
+    {"id":"account","expected":"Account at top of the tuning scroll","actions":[{"tap":[160,81]}],"settleSeconds":3},
     {"id":"custom","expected":"Sole custom card selected by previous-arrow wrap","actions":[{"tap":[32,274]}],"settleSeconds":3},
     {"id":"scroll","expected":"Images control visible","actions":[{"drag":[125,465,125,150]},{"drag":[125,465,125,150]}],"settleSeconds":2},
     {"id":"images","expected":"Custom Card Photos panel","actions":[{"tap":[260,398]}],"settleSeconds":3},

@@ -1,8 +1,8 @@
 # Clash sandbox development roadmap
 
 Owner-authorized direction, November 10, 2026. This records all ideas from the
-sandbox discussion. Only the first spell-editor slice is implementation work
-now; listing a feature here does not mean it exists or has passed testing.
+sandbox discussion. The owner requested implementation of the full roadmap on November 11.
+See the [workshop handoff](MOD_WORKSHOP_2026-11-11.md) for implemented controls, test evidence and outstanding work.
 Hydrogen is an alpha ARMv7 interpreter/runtime; shared engine changes may be
 needed. Preserve original seven-trainer names, decks, AI and tutorial sequence.
 Advanced opponent-AI refinement remains deferred. Keep earned saves intact.

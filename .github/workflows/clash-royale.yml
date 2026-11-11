@@ -11,6 +11,8 @@ on:
       - 'tools/clash_guest/**'
       - 'tools/build_clash_guest.py'
       - 'tools/clash_*catalog.py'
+      - 'tools/clash_spell_preset.py'
+      - 'tools/clash_sandbox_compare.py'
       - 'tools/clash_custom_*.py'
       - 'tools/clash_art_templates.py'
       - 'tools/tests/*clash_guest*.py'

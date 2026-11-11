@@ -1,5 +1,7 @@
 # HydrogenVM — handoff (2026-10-20)
 
+November 11. [Mod Lab workshop](clash-royale/MOD_WORKSHOP_2026-11-11.md) covers editor navigation, spell templates, mutation, preset exchange and the native comparison harness.
+
 November 10 update. [Spell Lab](clash-royale/SPELL_LAB_2026-11-10.md) documents the guest spell controls, save compatibility and native battle checks. [Sandbox roadmap](clash-royale/SANDBOX_ROADMAP_2026-11-10.md) includes custom music import.
 
 November 10 sandbox direction: [SANDBOX_ROADMAP_2026-11-10.md](clash-royale/SANDBOX_ROADMAP_2026-11-10.md) records every discussed sandbox idea and primary research sources, including the owner's custom-music addition. Dedicated spell editing is the current first implementation step; all other entries are proposals. Keep original training and earned saves intact.

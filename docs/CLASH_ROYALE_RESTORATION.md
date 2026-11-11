@@ -1,5 +1,7 @@
 # Clash Royale solo restoration investigation
 
+November 11. [Mod Lab workshop](clash-royale/MOD_WORKSHOP_2026-11-11.md) covers editor navigation, spell templates, mutation, preset exchange and the native comparison harness.
+
 November 10 update. [Spell Lab](clash-royale/SPELL_LAB_2026-11-10.md) documents the guest spell controls, save compatibility and native battle checks. [Sandbox roadmap](clash-royale/SANDBOX_ROADMAP_2026-11-10.md) includes custom music import.
 
 November 10 current: [Phone Photos](clash-royale/PHONE_PHOTOS_2026-11-10.md) adds direct iPhone photo selection for custom-card icons and static troop art. The generic host picker and guest-side encoder require updated Hydrogen and Clash packages; existing game/Forge/mechanics data are retained. ART2 atomically switches immutable art generations and accepts legacy ART1. Shared gates: 690 runtime checks/26 Test Lab; focused guest tests: 71. Actual phone presentation, iCloud and conversion latency remain device qualification tasks.

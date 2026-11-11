@@ -70,13 +70,60 @@ static void mod_ui_refresh(int stats) {
 #include "spells_ui.inc"
 #endif
 #endif
+#ifdef GUEST_SPELL_COUNT
+static u32 lab_menu,lab_back,lab_heading;
+static void lab_show_menu(void){
+    mod_send1(mod_window,"endEditing:",1);
+    mod_send1(mod_main_scroll,"setHidden:",1);
+    mod_send1(mech_scroll,"setHidden:",1);
+    if(spell_panel)mod_send1(spell_panel,"setHidden:",1);
+#ifdef GUEST_ART_SOURCE_TOKEN
+    if(photo_panel)mod_send1(photo_panel,"setHidden:",1);
+#endif
+    mod_send1(lab_menu,"setHidden:",0);
+    mod_send1(lab_back,"setHidden:",1);
+    mod_text(lab_heading,"Mod Lab");
+    mod_message("Choose an editor.");
+    mod_text(mod_status_label,mod_status);
+}
+static void lab_open_section(int tag){
+    static const char *titles[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab"};
+    mod_send1(lab_menu,"setHidden:",1);
+    mod_send1(lab_back,"setHidden:",0);
+    mod_text(lab_heading,titles[tag-51]);
+    if(tag==55){spell_ui_open();return;}
+    if(tag==54){mech_showing=0;mech_ui_action(40);return;}
+    mod_send1(mod_main_scroll,"setHidden:",0);
+    float offset=tag==51?0:tag==52?168:792;
+    CALL(mod_msg,void,(u32,u32,ModSize))(mod_main_scroll,mod_sel("setContentOffset:"),(ModSize){0,offset});
+    mod_message(tag==53?"Select a unit in Unit tuning to clone it.":"Edit values, then save your changes.");
+    mod_text(mod_status_label,mod_status);
+}
+static void lab_setup(u32 root,ModRect bounds){
+    lab_back=mod_button(root,"Editors",50,(ModRect){bounds.w-164,10,78,38});
+    lab_menu=mod_send0(mod_send0(mod_class("UIScrollView"),"alloc"),"init");
+    mod_frame(lab_menu,(ModRect){0,54,bounds.w,bounds.h-110});
+    mod_send1(root,"addSubview:",lab_menu);
+    mod_send1(lab_menu,"setClipsToBounds:",1);
+    CALL(mod_msg,void,(u32,u32,ModSize))(lab_menu,mod_sel("setContentSize:"),(ModSize){bounds.w,375});
+    const char *names[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab"};
+    const char *details[]={"Gold and gems","Speed, size, health and damage","Create cards and import artwork","Troops, projectiles and summons","Effects, cost and spell templates"};
+    for(u32 i=0;i<5;++i){
+        float y=4+73*(float)i;
+        mod_button(lab_menu,names[i],51+(int)i,(ModRect){12,y,bounds.w-24,44});
+        mod_label(lab_menu,details[i],(ModRect){16,y+44,bounds.w-32,22},13);
+    }
+}
+#endif
 static void mod_close(void){mod_send1(mod_window,"endEditing:",1);mod_send1(mod_window,"setHidden:",1);if(mod_old_window)mod_send0(mod_old_window,"makeKeyAndVisible");}
 static void mod_action(u32 self,u32 selector,u32 sender) {
     (void)self;(void)selector;int tag=(int)mod_send0(sender,"tag");
     if(tag==10){mod_close();return;}
 #ifdef GUEST_SPELL_COUNT
-    if(tag==41){spell_ui_open();return;}
-    if(tag>=300 && tag<=345){spell_ui_action(tag);return;}
+    if(tag==50 || tag==345){lab_show_menu();return;}
+    if(tag>=51 && tag<=55){lab_open_section(tag);return;}
+    if(tag==41){lab_open_section(55);return;}
+    if(tag>=300 && tag<=367){spell_ui_action(tag);return;}
     if(tag==40 && spell_panel)mod_send1(spell_panel,"setHidden:",1);
 #endif
 #ifdef GUEST_MECH_CARD_COUNT
@@ -139,6 +186,7 @@ static void mod_ui_open(void) {
     if(!mod_allowed()){mod_message("Mod Lab unlocks after the seven trainers.");return;}
     mod_initialize();
 #ifdef GUEST_SPELL_COUNT
+    spell_session_started=0;
     if(spell_panel)mod_send1(spell_panel,"setHidden:",1);
 #endif
 #ifdef GUEST_ART_SOURCE_TOKEN
@@ -161,7 +209,10 @@ static void mod_ui_open(void) {
         CALL(mod_msg,void,(u32,u32,float))(mod_window,mod_sel("setWindowLevel:"),10.0f);
         u32 root=mod_send0(mod_send0(mod_class("UIView"),"alloc"),"init");mod_frame(root,bounds);mod_send1(root,"setBackgroundColor:",mod_color(0.06f,0.09f,0.14f));
         u32 vc=mod_send0(mod_send0(mod_class("UIViewController"),"alloc"),"init");mod_send1(vc,"setView:",root);mod_send1(mod_window,"setRootViewController:",vc);
-        mod_label(root,"MOD LAB",(ModRect){12,14,180,30},22);mod_button(root,"Close",10,(ModRect){bounds.w-80,12,68,32});
+        #ifdef GUEST_SPELL_COUNT
+        lab_heading=
+#endif
+        mod_label(root,"Mod Lab",(ModRect){12,14,180,30},22);mod_button(root,"Close",10,(ModRect){bounds.w-80,12,68,32});
         u32 scroll=mod_send0(mod_send0(mod_class("UIScrollView"),"alloc"),"init");mod_frame(scroll,(ModRect){0,54,bounds.w,bounds.h-110});mod_send1(root,"addSubview:",scroll);mod_send1(scroll,"setClipsToBounds:",1);
 #ifdef GUEST_MECH_CARD_COUNT
         mod_main_scroll=scroll;
@@ -201,13 +252,21 @@ static void mod_ui_open(void) {
         mod_status_label=mod_label(root,"",(ModRect){12,bounds.h-52,bounds.w-24,46},12);mod_send1(mod_status_label,"setNumberOfLines:",2);
 #ifdef GUEST_MECH_CARD_COUNT
         mech_ui_setup(root,bounds);
+#ifdef GUEST_SPELL_COUNT
+        mod_send1(mod_mech_button,"setHidden:",1);
+        lab_setup(root,bounds);
+#endif
 #endif
     }
 #ifdef GUEST_MECH_CARD_COUNT
     mech_ui_begin();
 #endif
     void *home,*avatar;if(mod_home(&home,&avatar)){mod_set_number(mod_gold_field,CALL(0x9ab55,u32,(void*))(avatar));mod_set_number(mod_gem_field,CALL(0x9a41d,u32,(void*))(avatar));}
-    mod_message(mod_profile_rejected?"Saved modifiers rejected. Reset draft.":"Edit, then save. Close cancels draft.");mod_ui_refresh(1);mod_send1(mod_window,"setHidden:",0);mod_send0(mod_window,"makeKeyAndVisible");
+    mod_message(mod_profile_rejected?"Saved modifiers rejected. Reset draft.":"Edit, then save. Close cancels draft.");mod_ui_refresh(1);
+#ifdef GUEST_SPELL_COUNT
+    lab_show_menu();
+#endif
+    mod_send1(mod_window,"setHidden:",0);mod_send0(mod_window,"makeKeyAndVisible");
 }
 static void mod_tick(void) {
     if(!save_initialized || !logged_in || battle_started)return;
