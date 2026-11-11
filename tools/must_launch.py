@@ -153,6 +153,10 @@ def main(argv=None):
             manifest = json.load(f)
     except OSError:
         manifest = {"games": []}
+    except ValueError as e:
+        # A damaged list is not an empty one: recording over it would forget every game.
+        print("cannot read %s: %s" % (args.manifest, e))
+        return 2
     entries = {g["folder"]: g for g in manifest.get("games", [])}
     if args.record:
         folders = sorted(f for f in os.listdir(args.apps) if os.path.isdir(os.path.join(args.apps, f)))
