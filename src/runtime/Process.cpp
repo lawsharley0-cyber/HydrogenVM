@@ -1,4 +1,5 @@
 #include "Process.hpp"
+#include <unordered_set>
 #include "MemoryDiagnostics.hpp"
 #include "Support.hpp"
 #include "libc/Unwind.hpp"
@@ -39,6 +40,16 @@ namespace {
 thread_local GuestThread* t_thread = nullptr;
 thread_local uint64_t t_processIdentity = 0;
 std::atomic<uint64_t> nextProcessIdentity{1};
+// Live Process identities. Never destroyed: a host thread still running during
+// static destruction (exit()) may ask whether a Process is live.
+struct LiveIdentities {
+    std::mutex mu;
+    std::unordered_set<uint64_t> ids;
+};
+LiveIdentities& liveIdentities() {
+    static auto* live = new LiveIdentities;
+    return *live;
+}
 
 constexpr uint32_t kHeapBase = 0x10000000u, kHeapLimit = 0x80000000u;
 constexpr uint32_t kStaticBase = 0x0E000000u, kStaticLimit = 0x10000000u;
@@ -545,23 +556,66 @@ void Process::unmapGuestDylibs() {
 
 // -------------------------------------------------------------- symbols ---
 
+namespace {
+// The last host functions each guest thread called (the thread's own ring: guest
+// threads are host threads). A crash report lists them, so "what did the app call
+// just before it died, and what did it get back" needs no rerun with --trace.
+struct HostCallCrumb {
+    uint64_t process = 0;   // Process identity: a thread may outlive one Process and serve the next
+    uint32_t hle = 0;       // the host function's HLE index (its name lives in the engine)
+    uint32_t from = 0, result = 0;
+    uint32_t serial = 0;    // which call this slot holds, so a nested call cannot overwrite the result
+    bool returned = false;
+};
+struct HostCallRing {
+    static constexpr unsigned kSize = 12;
+    HostCallCrumb crumb[kSize];
+    uint32_t next = 0;
+};
+thread_local HostCallRing tHostCalls;
+// objc_msgSend and friends dispatch every method call: they would push everything else out.
+bool crumbWorthy(const std::string& name) {
+    return name.compare(0, 13, "_objc_msgSend") != 0 && name != "_objc_retain" && name != "_objc_release" &&
+           name != "_objc_autorelease" && name != "_objc_retainAutoreleasedReturnValue" &&
+           name != "_objc_storeStrong" && name != "_objc_autoreleaseReturnValue";
+}
+}
+
 uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) {
-    return engine_->registerHle(debugName, [this, fn = std::move(fn), debugName](CPU::Cpu& c) {
+    const bool worthy = crumbWorthy(debugName);
+    auto index = std::make_shared<uint32_t>(0);   // known once registered
+    const uint32_t addr = engine_->registerHle(debugName, [this, fn = std::move(fn), debugName, worthy, index](CPU::Cpu& c) {
         if (cfg_.traceCalls) log(LogLevel::Debug, "→ " + debugName + " (from " + describeAddress(c.r[CPU::kLR]) + ")");
+        HostCallCrumb* crumb = nullptr;
+        uint32_t serial = 0;
+        if (worthy) {
+            HostCallRing& ring = tHostCalls;
+            serial = ++ring.next;
+            crumb = &ring.crumb[serial % HostCallRing::kSize];
+            *crumb = {identity_, *index, c.r[CPU::kLR], 0, serial, false};
+        }
         Ctx x{*this, c, *mem_};
         try {
             fn(x);
         } catch (const GuestThrow& g) {
             landGuestException(x, g.ue);   // e.g. -[NSException raise] inside an app's @try
+            return;
         } catch (const ProcessExit&) {
             // This is intentional process control, not an HLE exception.
             // Let nested guest calls propagate Halt instead of manufacturing
             // HostError("stopping") in Engine::callHle.
             c.exit = CPU::Exit::Halt;
+            return;
         } catch (const std::runtime_error& e) {
             if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
+            return;   // handled as an error, not a return value
         }
+        // Only a normal return records a result: a call that threw, or whose guest
+        // callback faulted, stays "did not return" and is never blamed for its r0.
+        if (crumb && crumb->serial == serial) { crumb->result = c.r[0]; crumb->returned = true; }
     });
+    *index = engine_->hleIndex(addr);
+    return addr;
 }
 
 uint32_t Process::defineFunction(const std::string& name, HostFn fn) {
@@ -959,10 +1013,12 @@ void Process::initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stack
         } else { t.stackBase = stackAddr; }
     t.stackSize = stackSize;
     if (!stackAddr) mem_->map(t.stackBase, stackSize, Memory::kProtRW);
-    // A guest-side block standing in for struct _pthread: TSD slots at the
-    // start (TPIDRURO points here, slot 0 = self), errno after them.
-    t.self = allocStatic(1024, 64);
-    t.errnoAddr = t.self + 0x200;
+    // A guest-side block standing in for struct _pthread: the thread-specific data slots at
+    // the start (TPIDRURO points here, slot 0 = self), errno after them. All 768 of Darwin's
+    // slots are real memory, because apps read them without calling pthread_getspecific:
+    // the compiler inlines it as "thread register + key * 4" (Unity's allocators do).
+    t.self = allocStatic(kThreadSpecificSlots * 4 + 64, 64);
+    t.errnoAddr = t.self + kThreadSpecificSlots * 4;
     mem_->write<uint32_t>(t.self, t.self);
     t.cpu.tpidruro = t.self;
     t.cpu.r[CPU::kSP] = t.stackBase + stackSize - 64;
@@ -982,6 +1038,26 @@ GuestThread& Process::currentThread() {
     if (t_thread && t_processIdentity == identity_) return *t_thread;
     // A host thread that isn't a guest thread (e.g. a UI callback) acts as main.
     return *mainThread_;
+}
+
+Process::LiveIdentity::LiveIdentity(uint64_t identity) : id(identity) {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    live.ids.insert(id);
+}
+Process::LiveIdentity::~LiveIdentity() {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    live.ids.erase(id);
+}
+bool Process::isLiveIdentity(uint64_t identity) {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    return live.ids.count(identity) != 0;
+}
+
+bool Process::isGuestBoundThread() const {
+    return t_thread && t_processIdentity == identity_;
 }
 
 GuestThread* Process::findThread(uint32_t self) {
@@ -1388,6 +1464,57 @@ int Process::run() {
     return crashed_ ? -1 : exitCode_;
 }
 
+uint32_t Process::insn32At(uint32_t pc, bool thumb) const {
+    try {
+        if (!mem_->isMapped(pc) || !mem_->isMapped(pc + 3)) return 0;
+        return thumb ? (uint32_t(mem_->read<uint16_t>(pc)) << 16 | mem_->read<uint16_t>(pc + 2)) : mem_->read<uint32_t>(pc);
+    } catch (...) {
+        return 0;
+    }
+}
+
+// "Last host calls" and "likely cause" lines for a crash report. Read on the crashing
+// thread, so the host-call ring is that thread's.
+std::string Process::crashClues(CPU::Exit why, uint32_t insn, bool thumb) const {
+    std::string out;
+    std::vector<const HostCallCrumb*> calls;   // oldest first
+    const HostCallRing& ring = tHostCalls;
+    for (uint32_t i = 1; i <= HostCallRing::kSize; ++i) {
+        const HostCallCrumb& cr = ring.crumb[(ring.next + i) % HostCallRing::kSize];
+        if (cr.serial && cr.process == identity_) calls.push_back(&cr);
+    }
+    auto name = [&](const HostCallCrumb* cr) { return engine_->hleName(cr->hle); };
+    char buf[96];
+    if (!calls.empty()) {
+        out += "  last host calls (oldest first):\n";
+        for (const HostCallCrumb* cr : calls) {
+            if (cr->returned) std::snprintf(buf, sizeof buf, " -> 0x%08x", cr->result);
+            else std::snprintf(buf, sizeof buf, " (did not return)");
+            out += "    " + name(cr) + buf + " from " + describeAddress(cr->from) + "\n";
+        }
+    }
+    std::vector<std::string> clues;
+    // Thumb udf #254 (0xdefe) / ARM 0xe7ffdefe: what __builtin_trap and many asserts compile to.
+    const bool trap = why == CPU::Exit::Breakpoint || (thumb ? (insn >> 16) == 0xdefe : insn == 0xe7ffdefe);
+    if (trap) {
+        clues.push_back("the app stopped itself on purpose (__builtin_trap or an assertion): look at what it checked just before");
+        const auto gl = glErrorLog();
+        if (!gl.empty()) clues.push_back("the app saw GL errors before it stopped; first: " + gl.front());
+    }
+    if (why == CPU::Exit::MemFault && !calls.empty()) {
+        // A NULL access right after a host function returned 0: that function's result is the usual suspect.
+        for (auto it = calls.rbegin(); it != calls.rend() && it - calls.rbegin() < 3; ++it)
+            if ((*it)->returned && (*it)->result == 0) {
+                clues.push_back(name(*it) + " returned 0 just before: if the app expected an object or buffer, that function is the likely cause");
+                break;
+            }
+    }
+    if (!calls.empty() && !calls.back()->returned)
+        clues.push_back("the crash happened inside " + name(calls.back()) + " (or code it called back into)");
+    for (const auto& c : clues) out += "  likely cause: " + c + "\n";
+    return out;
+}
+
 void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     try { flushGuestStdio(*this); } catch (...) {}   // what the app printed before dying is the most useful clue
     std::lock_guard<std::mutex> lk(exitMu_);
@@ -1416,7 +1543,10 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
         case CPU::Exit::Undefined: {
             const uint32_t insn = (f.valid ? f.thumb : c.thumb) ? (uint32_t(mem_->read<uint16_t>(r[15])) << 16 | mem_->read<uint16_t>(r[15] + 2))
                                                                 : mem_->read<uint32_t>(r[15]);
-            std::snprintf(buf, sizeof buf, "Crash: unsupported instruction 0x%08x at %s", insn, describeAddress(r[15]).c_str());
+            if ((f.valid ? f.thumb : c.thumb) ? (insn >> 16) == 0xdefe : insn == 0xe7ffdefe)   // __builtin_trap: not an emulator gap
+                std::snprintf(buf, sizeof buf, "Crash: the app stopped itself (trap 0x%08x) at %s", insn, describeAddress(r[15]).c_str());
+            else
+                std::snprintf(buf, sizeof buf, "Crash: unsupported instruction 0x%08x at %s", insn, describeAddress(r[15]).c_str());
             head = buf;
             break;
         }
@@ -1436,6 +1566,7 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     CPU::Cpu tmp;
     std::memcpy(tmp.r, r, sizeof r);
     rep += "  backtrace:\n" + backtrace(tmp);
+    rep += crashClues(why, insn32At(r[15], f.valid ? f.thumb : c.thumb), f.valid ? f.thumb : c.thumb);
     crashReport_ = rep;
     CPU::Cpu snapshot;
     std::memcpy(snapshot.r, r, sizeof r);

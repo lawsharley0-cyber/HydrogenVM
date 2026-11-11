@@ -489,6 +489,16 @@ template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* n
             ++hc->fboDescribes;
             line += " " + hgDescribeFramebuffer(hc);
         }
+        // A buffer upload with nothing bound: say what is bound, so a phone report shows it.
+        if (std::strncmp(name, "glBuffer", 8) == 0 && hc->fn.glGetIntegerv) {
+            int32_t array = 0, element = 0, vao = 0;
+            hc->fn.glGetIntegerv(0x8894 /*ARRAY_BUFFER_BINDING*/, &array);
+            hc->fn.glGetIntegerv(0x8895 /*ELEMENT_ARRAY_BUFFER_BINDING*/, &element);
+            hc->fn.glGetIntegerv(0x85B5 /*VERTEX_ARRAY_BINDING*/, &vao);
+            for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+            line += " (array buffer " + std::to_string(array) + ", element buffer " + std::to_string(element) +
+                    ", vertex array " + std::to_string(vao) + ")";
+        }
         x.proc.noteGLError(key, std::move(line));
     }
     static std::atomic<int> logged{0};
@@ -537,9 +547,22 @@ static uint32_t toGuest(Ctx& x, const void* p) {
 
 // ------------------------------------------------------------- hand wrappers ---
 
+// Hand-written GL functions check for errors when they return, like the generated ones:
+// otherwise a failing call's error is reported on the next checked call (a phone report
+// once showed glBindTexture(GL_TEXTURE_2D, 0) failing, for an error glTexImage2D raised).
+struct HgCheckOnReturn {
+    Ctx& x;
+    HostContext* hc;
+    const char* name;
+    ~HgCheckOnReturn() {
+        if (hc && (hgDebug || hc->trace)) hgAfter(x, hc, name, [] { return std::string("..."); });
+    }
+};
+#define HG_CHECK_ON_RETURN(name) HgCheckOnReturn hgCheckOnReturn_{x, hc, name};
 #define HG_BEGIN(name, ...)                                   \
     HostContext* hc = hgCurrent(x);                           \
-    if (!hc || !hc->fn.name) { hgMissing(x, hc, #name); return __VA_ARGS__; }
+    if (!hc || !hc->fn.name) { hgMissing(x, hc, #name); return __VA_ARGS__; } \
+    HG_CHECK_ON_RETURN(#name)
 
 
 void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
@@ -617,7 +640,41 @@ void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalfor
                      int32_t border, uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexImage2D)
     if (format == kBgra && internalformat == int32_t(kRgba) && !hc->desktop) internalformat = int32_t(kBgra);
+    // Depth textures. ES 2 names them by the unsized format (OES_depth_texture,
+    // OES_packed_depth_stencil); an ES 3 driver wants the sized one and answers
+    // INVALID_OPERATION otherwise, leaving the framebuffer they attach to incomplete
+    // (Minecraft: Story Mode on the phone, all black). Ask as the guest did; if the
+    // driver refuses, ask again with the sized format for the same data.
+    int32_t sized = 0;
+    if (internalformat == 0x84F9 /*DEPTH_STENCIL*/ && type == 0x84FA /*UNSIGNED_INT_24_8*/) sized = 0x88F0;        // DEPTH24_STENCIL8
+    else if (internalformat == 0x1902 /*DEPTH_COMPONENT*/ && type == 0x1403 /*UNSIGNED_SHORT*/) sized = 0x81A5;    // DEPTH_COMPONENT16
+    else if (internalformat == 0x1902 && type == 0x1405 /*UNSIGNED_INT*/) sized = 0x81A6;                          // DEPTH_COMPONENT24
+    if (sized && !hc->desktop && hc->fn.glGetError) {
+        const uint32_t pending = hc->fn.glGetError();   // the guest's own earlier error, kept for it
+        if (pending && !hc->guestError) hc->guestError = pending;
+        hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
+        const uint32_t refused = hc->fn.glGetError();
+        if (refused) {
+            for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+            hc->fn.glTexImage2D(target, level, sized, width, height, border, format, type, HG_PTR(x, pixels));
+            if (hc->fn.glGetError()) {   // neither form: the guest sees the first refusal
+                for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+                if (!hc->guestError) hc->guestError = refused;
+                x.proc.perf().glErrors++;
+                if (hgDebug || hc->trace) {
+                    char code[16];
+                    std::snprintf(code, sizeof code, "0x%04x", refused);
+                    x.proc.noteGLError(std::string("glTexImage2D -> ") + code + (hc->implicitWorker ? " [worker]" : " [main]"),
+                                       "glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) +
+                                       ") -> " + code + (hc->implicitWorker ? " [worker]" : " [main]") + " (the sized depth format was refused too)");
+                }
+            }
+        }
+        return;
+    }
     hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
+    if (hgDebug || hc->trace)
+        hgAfter(x, hc, "glTexImage2D", [&] { return hgArgs(target, level, internalformat, width, height, border, format, type, pixels); });
 }
 void hg_glTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t width, int32_t height,
                         uint32_t format, uint32_t type, GuestPtr pixels) {
@@ -627,18 +684,21 @@ void hg_glTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int3
 
 void hg_glOrthof(Ctx& x, float l, float r, float b, float t, float n, float f) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glOrthof")
     if (hc && hc->fn.glOrthof) hc->fn.glOrthof(l, r, b, t, n, f);
     else if (hc && hc->fn.glOrtho) hc->fn.glOrtho(l, r, b, t, n, f);
     else hgMissing(x, hc, "glOrthof");
 }
 void hg_glFrustumf(Ctx& x, float l, float r, float b, float t, float n, float f) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glFrustumf")
     if (hc && hc->fn.glFrustumf) hc->fn.glFrustumf(l, r, b, t, n, f);
     else if (hc && hc->fn.glFrustum) hc->fn.glFrustum(l, r, b, t, n, f);
     else hgMissing(x, hc, "glFrustumf");
 }
 void hg_glClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glClipPlanef")
     if (!hc || !eq) return;
     if (hc->fn.glClipPlanef) { hc->fn.glClipPlanef(plane, x.mem.host(eq)); return; }
     if (!hc->fn.glClipPlane) { hgMissing(x, hc, "glClipPlanef"); return; }
@@ -648,6 +708,7 @@ void hg_glClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
 }
 void hg_glGetClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glGetClipPlanef")
     if (!hc || !eq) return;
     if (hc->fn.glGetClipPlanef) { hc->fn.glGetClipPlanef(plane, x.mem.host(eq)); return; }
     if (!hc->fn.glGetClipPlane) { hgMissing(x, hc, "glGetClipPlanef"); return; }
@@ -765,7 +826,37 @@ void hg_glLinkProgram(Ctx& x, uint32_t program) {
 // The driver's mapping is host memory the guest can't address. Hand the guest a
 // shadow copy and write it back on flush / unmap.
 
+// The buffer object bound to a target. Mappings belong to the buffer, not the target: an app
+// maps one buffer, binds and maps another on the same target, then unmaps each in turn
+// (Clumsy Ninja), so each must find its own shadow copy.
+static uint32_t hgBoundBuffer(HostContext* hc, uint32_t target) {
+    uint32_t pname = 0;
+    switch (target) {
+        case 0x8892: pname = 0x8894; break;   // ARRAY_BUFFER
+        case 0x8893: pname = 0x8895; break;   // ELEMENT_ARRAY_BUFFER
+        case 0x88EB: pname = 0x88ED; break;   // PIXEL_PACK_BUFFER
+        case 0x88EC: pname = 0x88EF; break;   // PIXEL_UNPACK_BUFFER
+        case 0x8F36: pname = 0x8F36; break;   // COPY_READ_BUFFER
+        case 0x8F37: pname = 0x8F37; break;   // COPY_WRITE_BUFFER
+        case 0x8C8E: pname = 0x8C8F; break;   // TRANSFORM_FEEDBACK_BUFFER
+        case 0x8A11: pname = 0x8A28; break;   // UNIFORM_BUFFER
+        default: return 0;
+    }
+    int32_t v[4] = {};
+    if (hc->fn.glGetIntegerv) hc->fn.glGetIntegerv(pname, v);
+    return uint32_t(v[0]);
+}
+// Whether the driver still has the bound buffer mapped. glBufferData and glDeleteBuffers end a
+// mapping without glUnmapBuffer; the driver's pointer is gone then and must not be written.
+static bool hgStillMapped(HostContext* hc, uint32_t target) {
+    int32_t mapped = 1;
+    if (hc->fn.glGetBufferParameteriv) hc->fn.glGetBufferParameteriv(target, 0x88BC /*BUFFER_MAPPED*/, &mapped);
+    return mapped != 0;
+}
+
 static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offset, intptr_t length, uint32_t access) {
+    const uint32_t buffer = hgBoundBuffer(hc, target);
+    if (!buffer) return 0;   // nothing bound: the driver would refuse too
     if (length <= 0) {
         int32_t size = 0;
         hc->fn.glGetBufferParameteriv(target, kBufferSize, &size);
@@ -785,7 +876,8 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
     m.guest = x.proc.heap().allocZeroed(uint32_t(length));
     if (host && (access & kMapReadBit)) std::memcpy(x.mem.host(m.guest), host, size_t(length));
     else if (host && !(access & (0x4 | 0x8))) std::memcpy(x.mem.host(m.guest), host, size_t(length));   // keep contents unless invalidated
-    hc->mapped[target] = m;
+    if (auto old = hc->mapped.find(buffer); old != hc->mapped.end()) x.proc.heap().free(old->second.guest);   // a mapping the app never ended
+    hc->mapped[buffer] = m;
     if (hgDebugLevel >= 2)
         x.proc.log(LogLevel::Debug, "GL map target " + std::to_string(target) + " +" + std::to_string(offset) + " len " +
                                         std::to_string(length) + (host ? "" : " (driver gave no mapping)"));
@@ -794,33 +886,39 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
 
 uint32_t hg_glMapBufferOES(Ctx& x, uint32_t target, uint32_t /*access: WRITE_ONLY_OES*/) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glMapBufferOES")
     if (!hc) return 0;
     return mapRange(x, hc, target, 0, 0, kMapWriteBit);
 }
 uint32_t hg_glMapBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length, uint32_t access) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glMapBufferRange")
     if (!hc) return 0;
     return mapRange(x, hc, target, intptr_t(uint32_t(offset)), intptr_t(uint32_t(length)), access);
 }
 void hg_glFlushMappedBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glFlushMappedBufferRange")
     if (!hc) return;
-    auto it = hc->mapped.find(target);
+    auto it = hc->mapped.find(hgBoundBuffer(hc, target));
     if (it == hc->mapped.end() || !it->second.host) return;
     MappedBuffer& m = it->second;
-    if (offset < 0 || length <= 0 || offset + length > m.length) return;
+    if (offset < 0 || length <= 0 || int64_t(offset) + int64_t(length) > int64_t(m.length) || !hgStillMapped(hc, target)) return;
     std::memcpy(static_cast<uint8_t*>(m.host) + offset, x.mem.host(m.guest + uint32_t(offset)), size_t(length));
     if (hc->fn.glFlushMappedBufferRange) hc->fn.glFlushMappedBufferRange(target, offset, length);
 }
 bool hg_glUnmapBufferOES(Ctx& x, uint32_t target) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glUnmapBufferOES")
     if (!hc) return false;
-    auto it = hc->mapped.find(target);
+    auto it = hc->mapped.find(hgBoundBuffer(hc, target));
     if (it == hc->mapped.end()) return false;
     MappedBuffer m = it->second;
     hc->mapped.erase(it);
     bool ok = true;
-    if (m.host) {
+    if (m.host && !hgStillMapped(hc, target)) {
+        ok = false;   // glBufferData replaced the storage since: the mapping ended there
+    } else if (m.host) {
         if ((m.access & kMapWriteBit) && !(m.access & kMapFlushExplicitBit))
             std::memcpy(m.host, x.mem.host(m.guest), size_t(m.length));
         if (hc->fn.glUnmapBuffer) ok = hc->fn.glUnmapBuffer(target) != 0;
@@ -843,7 +941,7 @@ bool hg_glUnmapBuffer(Ctx& x, uint32_t target) { return hg_glUnmapBufferOES(x, t
 void hg_glGetBufferPointervOES(Ctx& x, uint32_t target, uint32_t pname, GuestPtr out) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !out) return;
-    auto it = hc->mapped.find(target);
+    auto it = hc->mapped.find(hgBoundBuffer(hc, target));
     x.mem.write<uint32_t>(out, pname == kBufferMapPointer && it != hc->mapped.end() ? it->second.guest : 0);
 }
 
@@ -868,6 +966,7 @@ void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachmen
 
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glResolveMultisampleFramebufferAPPLE")
     if (!hc) return;
     if (hc->fn.glResolveMultisampleFramebufferAPPLE) { hc->fn.glResolveMultisampleFramebufferAPPLE(); return; }
     if (!hc->fn.glBlitFramebuffer) { hgMissing(x, hc, "glResolveMultisampleFramebufferAPPLE"); return; }

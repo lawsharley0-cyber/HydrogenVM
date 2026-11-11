@@ -13,6 +13,7 @@
 namespace Hydrogen::Runtime {
 
 void registerLibcxxString(Process& p);
+void registerLibcxxStreams(Process& p);
 
 namespace {
 
@@ -264,6 +265,7 @@ uint32_t nextPrime(Ctx&, uint32_t n) {
 void registerLibcxx(Process& p) {
     p.def<&nextPrime>("__ZNSt3__112__next_primeEm");
     registerLibcxxString(p);
+    registerLibcxxStreams(p);
     p.def<&tld_get>("__ZNSt3__119__thread_local_dataEv");
 
     p.def<&ts_ctor>("__ZNSt3__115__thread_structC1Ev");

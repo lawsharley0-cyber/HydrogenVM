@@ -74,6 +74,10 @@ enum class TouchPhase { Began = 0, Moved = 1, Ended = 3, Cancelled = 4 };
 class Process;
 namespace Audio { class Mixer; }
 
+// Darwin's thread-specific data: 256 slots for the system and frameworks, then 512 for
+// pthread_key_create. They live in guest memory at the start of the thread's pthread block.
+constexpr uint32_t kThreadSpecificSlots = 768;
+
 struct GuestThread {
     explicit GuestThread(Process& p) : proc(p) {}
     Process& proc;
@@ -82,7 +86,6 @@ struct GuestThread {
     uint32_t self = 0;            // guest pthread_t (address of a guest-side block)
     uint32_t stackBase = 0, stackSize = 0;
     uint32_t errnoAddr = 0;
-    std::unordered_map<uint32_t, uint32_t> tsd;   // pthread keys
     std::thread::native_handle_type host{};
     bool hostJoinable = false; // guarded by Process::threadsMu_; independent of guest detach
     std::atomic<bool> finished{false};
@@ -241,6 +244,10 @@ public:
     // ---- results
     bool crashed() const { return crashed_; }
     const std::string& crashReport() const { return crashReport_; }
+    // Crash-report helpers: the instruction at a pc (0 if unmapped), and the "last host
+    // calls" / "likely cause" lines for the crashing thread.
+    uint32_t insn32At(uint32_t pc, bool thumb) const;
+    std::string crashClues(CPU::Exit why, uint32_t insn, bool thumb) const;
     std::string crashBundle();
     // Each thread's (finished ones included, so a crashed worker stays) last `perThread` host calls as a JSON array, oldest first (T2c). Safe while threads run.
     std::string callRingJson(size_t perThread);
@@ -328,6 +335,14 @@ public:
 
     // ---- threads
     GuestThread& currentThread();
+    // True when the calling host thread is bound to this Process as its main
+    // thread or one of its guest threads. currentThread() maps any other host
+    // thread to main; per-thread runtime state must not follow that fallback.
+    bool isGuestBoundThread() const;
+    uint64_t identity() const { return identity_; }
+    // True while a Process with this identity exists. Identities come from a
+    // monotonic counter and are never reused within one host process.
+    static bool isLiveIdentity(uint64_t identity);
     GuestThread* findThread(uint32_t self);
     GuestThread* findThreadById(uint32_t id);
     std::vector<uint32_t> liveThreadIds();   // ids of the main thread and all running threads
@@ -429,6 +444,16 @@ private:
 
     ProcessConfig cfg_;
     const uint64_t identity_; // distinguishes stale host TLS from a different/reused Process
+    // Registers identity_ as live for exactly the lifetime of this Process,
+    // including a constructor that throws after this member is built.
+    struct LiveIdentity {
+        explicit LiveIdentity(uint64_t id);
+        ~LiveIdentity();
+        LiveIdentity(const LiveIdentity&) = delete;
+        LiveIdentity& operator=(const LiveIdentity&) = delete;
+        const uint64_t id;
+    };
+    LiveIdentity liveIdentity_{identity_};
     std::unique_ptr<Memory::GuestArena> mem_;
     std::unique_ptr<CPU::Engine> engine_;
     std::unique_ptr<Heap> heap_;

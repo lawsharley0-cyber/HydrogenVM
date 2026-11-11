@@ -203,9 +203,18 @@ void deliverPendingInput(Ctx& x) {
     auto& r = rt(x);
     static thread_local TapMemory lastTap;
     for (const auto& ht : pending) {
-        if (u.ignoreCount > 0) continue;
         const G::Point sp{ht.x, ht.y};
         auto it = std::find_if(u.activeTouches.begin(), u.activeTouches.end(), [&](auto& t) { return t.hostId == ht.id; });
+        if (u.ignoreCount > 0) {
+            // beginIgnoringInteractionEvents drops events, but a finger that lifts meanwhile is
+            // gone: forget it, or its id stays "down" and that finger never works again.
+            if (ht.phase >= 3 && it != u.activeTouches.end()) {
+                const id t = it->touch;
+                u.activeTouches.erase(it);
+                r.release(x.cpu, t);
+            }
+            continue;
+        }
         id touch = 0;
         if (ht.phase == 0) {
             if (it != u.activeTouches.end()) continue;   // duplicate begin
@@ -236,6 +245,12 @@ void deliverPendingInput(Ctx& x) {
             if (ht.phase == 1 && td.prev.x == td.loc.x && td.prev.y == td.loc.y) continue;   // no movement: no event
             if (ht.phase >= 3) { lastTap = {sp, ht.time, td.tapCount}; }
         }
+        // One touch changes per event; every other finger still down is UITouchPhaseStationary
+        // and is not delivered again. Left in their last phase, they were re-sent with each
+        // event: a second finger going down gave the first a second touchesBegan:, and a game
+        // that tracks fingers by touch (a held move button under a look finger) then kept
+        // a finger "down" after it lifted.
+        for (auto& at : u.activeTouches) if (at.touch != touch) TD(x, at.touch).phase = 2;
         // build the event with all live touches
         const id event = r.createInstance(u.event);
         EventData& ed = ED(x, event);

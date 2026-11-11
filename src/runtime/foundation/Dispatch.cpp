@@ -321,6 +321,12 @@ void timerLoop(Process* p) {
         auto fn = d.timed.top().fn;
         d.timed.pop();
         lk.unlock();
+        // Known gap (#399): this host thread has no guest Cpu or stack of its own,
+        // and ticks use the main thread's Cpu. It deliberately opens no autorelease
+        // pool, because draining one here could run a guest dealloc on main's Cpu
+        // while main runs. Objects autoreleased in a tick leak (with the runtime's
+        // "no pool in place" warning) until #399 gives this thread its own Cpu and
+        // a per-tick pool.
         try { fn(); } catch (const std::exception& e) { p->logf(LogLevel::Warning, "dispatch timer: %s", e.what()); }
         lk.lock();
     }
