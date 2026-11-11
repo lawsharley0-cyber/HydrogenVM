@@ -182,6 +182,7 @@ public:
         std::atomic<uint64_t> faultsToApp{0};     // bad accesses handed to the app's signal handler
         std::atomic<uint64_t> frameNs{0};         // host time inside frame hooks (input, links, layout, display, composite)
         std::atomic<uint64_t> compositeNs{0};     // of which compositing
+        std::atomic<uint64_t> presentWaitNs{0};   // time GL presents waited so as not to outrun the display
         std::atomic<uint64_t> maxFrameNs{0};
         std::atomic<uint64_t> slowFrames{0};      // frame hooks over 16.7 ms
         // ~0 until the first presented frame. 0 ns is a real measurement.

@@ -161,7 +161,7 @@ struct UIState {
     // Host video playback (HostMovie.cpp). All guarded by inputMu.
     std::function<void(const MovieRequest&)> movieObserver;
     uint64_t activeMovieId = 0;
-    std::function<void(Ctx&)> movieOnEnd;
+    std::function<void(Ctx&, bool)> movieOnEnd;
     id activePhotoPicker = 0; // retained until dismissal
     uint64_t photoRequestId = 0;
     bool photoResultDelivered = false;
@@ -207,11 +207,12 @@ struct MovieRequest { bool active = false; uint64_t requestId = 0; std::string h
 void setMovieObserver(Process& p, std::function<void(const MovieRequest&)> observer);
 // The host finished (or could not play, or the player skipped) the movie it was given.
 void movieFinished(Process& p, uint64_t requestId);
-// Asks the host to play a file. Returns the request id, or 0 if the host cannot play it; onEnd
-// runs on the guest's main thread when the host reports the end. A movie already playing is
-// stopped first (its onEnd does not run).
-uint64_t startHostMovie(Ctx& x, const std::string& hostPath, std::function<void(Ctx&)> onEnd);
-// The guest stopped the movie itself: the host removes it; onEnd does not run.
+// Asks the host to play a file. Returns the request id, or 0 if the host cannot play it. onEnd
+// runs exactly once, on the guest's main thread, however the movie ends: with true when the host
+// reports the end, with false when the guest stopped it or another movie replaced it. Whatever
+// the caller keeps alive for the movie is released there.
+uint64_t startHostMovie(Ctx& x, const std::string& hostPath, std::function<void(Ctx&, bool finished)> onEnd);
+// The guest stopped the movie itself: the host removes it, and onEnd(false) runs before this returns.
 void stopHostMovie(Ctx& x, uint64_t requestId);
 // Whether a guest file URL names a video file the host could play; fills its host path.
 bool hostMovieFile(Ctx& x, id url, std::string& hostPath);

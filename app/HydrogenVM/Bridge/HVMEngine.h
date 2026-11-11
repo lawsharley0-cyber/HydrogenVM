@@ -115,6 +115,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// faultsToApp (bad accesses handed to the game's signal handler),
 /// missingCount (distinct missing functions/APIs called), timeToFirstFrameMs.
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *diagnostics;
+/// Where the time goes: wallSeconds, guestMIPS (millions of guest instructions per second),
+/// frames (60 Hz frame loop passes), avg/p50/p95/p99/maxFrameMs (time inside one pass),
+/// slowFrames (passes over 16.7 ms), compositeMs, presentWaitMs (GL presents held back to the display rate).
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *perfDetail;
 /// Host output gain, 0...1. Does not change guest audio source gains.
 @property (nonatomic) float outputVolume;
 @property (nonatomic, readonly, getter=isRunning) BOOL running;

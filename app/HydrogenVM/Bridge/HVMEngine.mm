@@ -670,6 +670,25 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     return p ? double(p->perf().frameTimes.percentile(95)) / 1e6 : 0;
 }
 
+- (NSDictionary<NSString *, NSNumber *> *)perfDetail {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return @{};
+    auto& pf = p->perf();
+    const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - pf.origin).count();
+    const uint64_t frames = pf.frames.load(), insns = p->guestInstructions();
+    return @{
+        @"wallSeconds": @(wall), @"guestMIPS": @(wall > 0 ? double(insns) / 1e6 / wall : 0),
+        @"frames": @(frames), @"framesPresented": @(pf.framesPresented.load()),
+        @"avgFrameMs": @(frames ? double(pf.frameNs.load()) / 1e6 / double(frames) : 0),
+        @"p50FrameMs": @(double(pf.frameTimes.percentile(50)) / 1e6),
+        @"p95FrameMs": @(double(pf.frameTimes.percentile(95)) / 1e6),
+        @"p99FrameMs": @(double(pf.frameTimes.percentile(99)) / 1e6),
+        @"maxFrameMs": @(double(pf.maxFrameNs.load()) / 1e6), @"slowFrames": @(pf.slowFrames.load()),
+        @"compositeMs": @(double(pf.compositeNs.load()) / 1e6), @"presentWaitMs": @(double(pf.presentWaitNs.load()) / 1e6),
+    };
+}
+
 - (NSInteger)interfaceOrientation {
     std::shared_ptr<RT::Process> p;
     { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }

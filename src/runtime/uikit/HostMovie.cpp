@@ -31,38 +31,44 @@ bool hostMovieFile(Ctx& x, id url, std::string& hostPath) {
     hostPath = host;
     return true;
 }
-uint64_t startHostMovie(Ctx& x, const std::string& hostPath, std::function<void(Ctx&)> onEnd) {
+uint64_t startHostMovie(Ctx& x, const std::string& hostPath, std::function<void(Ctx&, bool)> onEnd) {
     auto& u = ui(x);
     uint64_t previous = 0, id = 0;
+    std::function<void(Ctx&, bool)> replaced;
     {
         std::lock_guard<std::mutex> lock(u.inputMu);
         if (!u.movieObserver || hostPath.empty()) return 0;
         previous = u.activeMovieId;
+        replaced = std::move(u.movieOnEnd);
         id = nextMovie.fetch_add(1);
         u.activeMovieId = id;
         u.movieOnEnd = std::move(onEnd);
     }
     if (previous) publish(x.proc, {false, previous, {}});
+    if (replaced) replaced(x, false);   // the movie this one replaces is over, unfinished
     x.proc.log(LogLevel::Info, "Movie: playing " + std::filesystem::path(hostPath).filename().string() + " on the host");
     publish(x.proc, {true, id, hostPath});
     return id;
 }
 void stopHostMovie(Ctx& x, uint64_t requestId) {
     auto& u = ui(x);
+    std::function<void(Ctx&, bool)> onEnd;
     {
         std::lock_guard<std::mutex> lock(u.inputMu);
         if (!requestId || u.activeMovieId != requestId) return;
         u.activeMovieId = 0;
+        onEnd = std::move(u.movieOnEnd);
         u.movieOnEnd = nullptr;
     }
     publish(x.proc, {false, requestId, {}});
+    if (onEnd) onEnd(x, false);
 }
 void movieFinished(Process& p, uint64_t requestId) {
     Process* process = &p;
     Foundation::mainRunLoop(p).post([process, requestId](CPU::Cpu& cpu) {
         Ctx x{*process, cpu, process->mem()};
         auto& u = ui(x);
-        std::function<void(Ctx&)> onEnd;
+        std::function<void(Ctx&, bool)> onEnd;
         {
             std::lock_guard<std::mutex> lock(u.inputMu);
             if (!requestId || u.activeMovieId != requestId) return;   // stopped, replaced, or answered twice
@@ -71,7 +77,7 @@ void movieFinished(Process& p, uint64_t requestId) {
             u.movieOnEnd = nullptr;
         }
         publish(x.proc, {false, requestId, {}});
-        if (onEnd) onEnd(x);
+        if (onEnd) onEnd(x, true);
     });
 }
 }

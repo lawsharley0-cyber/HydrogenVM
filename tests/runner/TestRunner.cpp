@@ -4385,6 +4385,37 @@ int runFullSubsystemTests() {
         UIKit::setTextInputObserver(proc, nullptr);
     }
 
+    // GL presents are held to the display rate by a schedule of deadlines. A game driven by the
+    // 60 Hz frame loop is never held (it was, and ran at 50-55 fps on the phone); a game that
+    // presents in a tight loop gets exactly one present per period however late each sleep wakes.
+    {
+        const int64_t ms = 1'000'000;
+        HostGL::PresentPacer grid;
+        int held = 0;
+        int64_t t = 5 * ms;
+        for (int i = 0; i < 600; ++i) {
+            // one present per 16.667 ms frame, give or take 0.8 ms
+            const int64_t at = t + (i % 3 - 1) * (ms * 8 / 10);
+            if (grid.next(at)) ++held;
+            t += 16'666'667;
+        }
+        HostGL::PresentPacer loop;
+        int64_t now = 5 * ms, first = 0, last = 0;
+        int presents = 0;
+        for (int i = 0; i < 600; ++i) {
+            const int64_t until = loop.next(now);
+            if (until) now = until + ms + ms / 2;   // every sleep wakes 1.5 ms late
+            if (!first) first = now;
+            last = now;
+            ++presents;
+            now += ms;                              // 1 ms of work, then the next present
+        }
+        const double period = double(last - first) / double(presents - 1) / double(ms);
+        if (!(held == 0 && period > 16.4 && period < 16.6)) std::printf("    pacing: held %d period %.3f ms\n", held, period);
+        check(held == 0, "a game paced by the 60 Hz frame loop is never held at present");
+        check(period > 16.4 && period < 16.6, "a tight render loop presents once per period, however late its sleeps wake");
+    }
+
     // Video is played by the host: MPMoviePlayerController hands it the file and stays "playing"
     // until the host says the movie ended (Goat Simulator's logo, Minion Rush's loading video).
     // Without a host player the movie finishes at once, as before.
@@ -4431,7 +4462,26 @@ int runFullSubsystemTests() {
         settle();
         const bool stopped = requests.size() == 4 && requests[2].active && !requests[3].active && requests[3].requestId == requests[2].requestId &&
                              state(skipped) == 0;
+        // An AVPlayer on a video file goes the same way; replacing its item takes the video down.
+        const size_t before = requests.size();
+        const auto av = ObjC::id(r.send(cpu, r.getClass("AVPlayer"), "playerWithURL:", {url}));
+        r.send(cpu, av, "play");
+        settle();
+        const bool avAsked = requests.size() == before + 1 && requests.back().active;
+        const uint64_t avId = requests.back().requestId;
+        r.send(cpu, av, "replaceCurrentItemWithPlayerItem:", {0});
+        const bool avReplaced = requests.size() == before + 2 && !requests.back().active && requests.back().requestId == avId;
+        // Starting a second movie while one plays ends the first (its player is let go).
+        const auto first = newPlayer(), second = newPlayer();
+        r.send(cpu, first, "play");
+        r.send(cpu, second, "play");
+        settle();
+        const bool replacedFirst = state(second) == 1 && requests.size() == before + 5 && !requests[before + 3].active;
+        r.send(cpu, second, "stop");
+        settle();
         UIKit::setMovieObserver(proc, nullptr);
+        check(avAsked && avReplaced, "an AVPlayer's video file is handed to the host, and replacing its item takes it down");
+        check(replacedFirst, "a second movie replaces the one that is playing");
         if (!(asked && stillPlaying && ignoresStranger && ended && stopped))
             std::printf("    movie: asked %d playing %d stranger %d ended %d stopped %d requests %zu\n", asked, stillPlaying, ignoresStranger, ended, stopped, requests.size());
         check(finishesAlone, "without a host player a movie finishes at once");
@@ -9868,6 +9918,7 @@ int runFullSubsystemTests() {
             "    \"framesPresented\": 0,\n"
             "    \"avgFrameMs\": 0,\n"
             "    \"avgCompositeMs\": 0,\n"
+            "    \"presentWaitMs\": 0,\n"
             "    \"maxFrameMs\": 0,\n"
             "    \"slowFrames\": 0,\n"
             "    \"p50FrameMs\": 0,\n"

@@ -30,7 +30,8 @@ final class RunModel {
     private(set) var activity = PlayerActivity()
     private(set) var frameTimeP95 = 0.0
     var volume: Double = 1 { didSet { session?.outputVolume = Float(volume) } }
-    var inputEnabled: Bool { running && frame != nil && !closing && activity.acceptsInput }
+    // A movie shown before the game's first frame still takes touches (a tap to skip it).
+    var inputEnabled: Bool { running && (frame != nil || movie != nil) && !closing && activity.acceptsInput }
     @ObservationIgnored private var activityTimer: Timer?
     @ObservationIgnored private var activeTouches: [Int: CGPoint] = [:]
 

@@ -179,7 +179,10 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
             frameDue = true;
             hooks = frameHooks;
             // 60 Hz cadence; if we fell behind, don't try to catch up with a burst of frames.
-            nextFrameAt = std::max(nextFrameAt + 1.0 / 60.0, t + 0.004);
+            // A frame that overran its slot is followed after a short breath (timers and
+            // queued work run first in every pass), not after a fixed 4 ms: that turned an
+            // 18 ms frame into a 22 ms one.
+            nextFrameAt = std::max(nextFrameAt + 1.0 / 60.0, t + 0.001);
         }
     }
     bool ran = !work.empty();

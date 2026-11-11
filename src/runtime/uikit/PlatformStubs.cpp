@@ -3111,8 +3111,11 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         x.cpu.r[0] = d ? d->currentItem : 0;
     }, "@@:");
     avPlayer.method("replaceCurrentItemWithPlayerItem:", [prepareItem](Ctx& x) {
-        auto& d = rt(x).host<AVPlayerData>(x.cpu.r[0]);
-        const id next = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        const id player = x.cpu.r[0], nextItem = x.cpu.r[2];
+        // The video the host is playing belongs to the item being replaced.
+        if (const uint64_t movie = rt(x).host<AVPlayerData>(player).hostMovie) UIKit::stopHostMovie(x, movie);
+        auto& d = rt(x).host<AVPlayerData>(player);
+        const id next = nextItem ? rt(x).retain(x.cpu, nextItem) : 0;
         if (d.currentItem) rt(x).release(x.cpu, d.currentItem);
         d.currentItem = next;
         prepareItem(x,next);
@@ -3129,13 +3132,13 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         if (UIKit::hostMovieFile(x, url, hostPath)) {
             const id item = rt(x).retain(x.cpu, d.currentItem);
             rt(x).retain(x.cpu, self);
-            d.hostMovie = UIKit::startHostMovie(x, hostPath, [self, item](Ctx& cx) {
-                if (auto* pd = rt(cx).hostIf<AVPlayerData>(self)) { pd->hostMovie = 0; pd->rate = 0.0f; }
-                Foundation::postNotification(cx, "AVPlayerItemDidPlayToEndTimeNotification", item);
+            const uint64_t movie = UIKit::startHostMovie(x, hostPath, [self, item](Ctx& cx, bool finished) {
+                if (auto* pd = rt(cx).hostIf<AVPlayerData>(self)) { pd->hostMovie = 0; if (finished) pd->rate = 0.0f; }
+                if (finished) Foundation::postNotification(cx, "AVPlayerItemDidPlayToEndTimeNotification", item);
                 rt(cx).release(cx.cpu, item);
                 rt(cx).release(cx.cpu, self);
             });
-            if (d.hostMovie) return;
+            if (movie) { rt(x).host<AVPlayerData>(self).hostMovie = movie; return; }
             rt(x).release(x.cpu, item);
             rt(x).release(x.cpu, self);
         }
