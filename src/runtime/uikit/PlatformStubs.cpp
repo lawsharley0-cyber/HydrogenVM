@@ -306,8 +306,13 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
 int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf);
 int32_t aq_allocateBufferWithPacketDescriptions(Ctx& x, uint32_t qid, uint32_t byteSize, uint32_t descs, GuestPtr outBuf) {
     const int32_t r = aq_allocateBuffer(x, qid, byteSize, outBuf);
-    if (r != 0 || !descs) return r;
+    if (r != 0) return r;
     const uint32_t hdr = x.mem.read<uint32_t>(outBuf);
+    // A compressed file is presented to the app as PCM, one frame per "packet". A game written
+    // for the compressed file asks for no descriptions when it sees a constant packet size, yet
+    // still copies one description per packet it read (PvZ's music stream, between its primed
+    // and its queue buffers). Give the buffer room for as many as it can hold frames.
+    if (!descs) descs = std::min<uint32_t>(std::max(byteSize, 16u) / 2, (8u << 20) / 16);
     // 16-byte AudioStreamPacketDescriptions: refuse a count whose size wraps or cannot be allocated.
     const uint32_t descBlock = descs <= (64u << 20) / 16 ? x.proc.heap().allocZeroed(descs * 16) : 0;
     if (!descBlock) { aq_freeBuffer(x, qid, hdr); x.mem.write<uint32_t>(outBuf, 0); return -108; }
@@ -1777,6 +1782,7 @@ int32_t aug_stop(Ctx& x, uint32_t graph) {
     for (uint32_t n : augOutputs(st, graph)) au_stop(x, n);
     return 0;
 }
+int32_t au_converterSetProperty(Ctx&, uint32_t, uint32_t, uint32_t, GuestPtr) { return 0; }
 int32_t aug_dispose(Ctx& x, uint32_t graph) {
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
@@ -2629,6 +2635,9 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_getParam>("_AudioUnitGetParameter");
     p.def<&au_render>("_AudioUnitRender");
     p.def<&aug_new>("_NewAUGraph");
+    // Tuning of the converter inside an ExtAudioFile (bit rate, quality): accepted, the
+    // runtime's own encoders and decoders have no such settings.
+    supportDef<&au_converterSetProperty>(p, "_AudioConverterSetProperty", SupportStatus::Approx, "Accepted; converter tuning is not applied");
     p.def<&aug_dispose>("_DisposeAUGraph");
     p.def<&aug_addNode>("_AUGraphAddNode");
     p.def<&aug_ok2>("_AUGraphRemoveNode");

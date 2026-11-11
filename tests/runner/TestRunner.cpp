@@ -3488,7 +3488,11 @@ int runFullSubsystemTests() {
             std::filesystem::create_directories(cx.proc.bundlePath(), ec);
             const std::string name = "hvm-relative-test.xml";
             { std::ofstream(cx.proc.bundlePath() + "/" + name) << "x"; }
+            // The same name made absolute against "/" first (PvZ builds a CFURL from
+            // "sounds/buttonclick.caf") resolves into the bundle too.
             relativeBundle = relativeBundle && cx.proc.hostPath(name) == cx.proc.bundlePath() + "/" + name &&
+                             cx.proc.hostPath("/" + name) == cx.proc.bundlePath() + "/" + name &&
+                             cx.proc.hostPath("/missing-everywhere.xml") == "/missing-everywhere.xml" &&
                              cx.proc.hostPath("missing-everywhere.xml") == "/missing-everywhere.xml";
             std::filesystem::remove(cx.proc.bundlePath() + "/" + name, ec);
         }
@@ -3685,6 +3689,74 @@ int runFullSubsystemTests() {
             std::printf("    legacy rotation: will %d did %d bounds %gx%g asked %d/%d gravity %g,%g queued %d\n",
                         willTo, didFrom, b.w, b.h, callsAfterFirst, asked, g[0], g[1], queued);
         check(rotated && gravity && queued, "window-subview controller rotates with callbacks; resting gravity and orientation notification follow");
+
+        // The same controller in three cases that must not be turned:
+        //  - an app built for iPhone OS 2 turns its own picture (PvZ drew its title upside down);
+        //  - a view the app already made landscape itself (turned twice, the whole game went
+        //    sideways and stayed: Minecraft PE with its keyboard up);
+        //  - and one with the iOS 2 two-step callbacks gets those, not the one-step call.
+        static int firstHalf = 0, secondHalf = 0;
+        firstHalf = secondHalf = 0;
+        ObjC::ClassBuilder twoStep = r.defineClass("HvmTwoStepRotationVC", "HvmLegacyRotationVC");
+        twoStep.method("willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:", [](Ctx& x) { firstHalf = int(x.cpu.r[2]); }, "v@:id")
+               .method("willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:", [](Ctx& x) { secondHalf = int(x.cpu.r[2]); }, "v@:id");
+        auto fresh = [&](ObjC::Class cls) {
+            const ObjC::id c = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, cls, r.selAlloc)), r.selInit));
+            const ObjC::id w = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+            r.send(cpu, w, "addSubview:", {ObjC::id(r.send(cpu, c, "view"))});
+            return c;
+        };
+        u.statusBarOrientation = 3;
+        u.accelFromHost = false;
+        const ObjC::id oldApp = fresh(legacy.cls());
+        u.builtForIOS2 = true;
+        willTo = 0;
+        UIKit::rotateLegacyControllers(cx, "test");
+        u.builtForIOS2 = false;
+        const auto oldBounds = UIKit::getRect(cx, ObjC::id(r.send(cpu, oldApp, "view")), "bounds");
+        const bool ios2Left = willTo == 0 && oldBounds.h > oldBounds.w;
+        r.send(cpu, ObjC::id(r.send(cpu, oldApp, "view")), "removeFromSuperview");
+        const ObjC::id own = fresh(legacy.cls());
+        UIKit::sendRect(cx, ObjC::id(r.send(cpu, own, "view")), r.sel("setBounds:"), {0, 0, 480, 320});
+        willTo = 0;
+        UIKit::rotateLegacyControllers(cx, "test");
+        const auto ownBounds = UIKit::getRect(cx, ObjC::id(r.send(cpu, own, "view")), "bounds");
+        const bool ownLeft = willTo == 0 && ownBounds.w == 480 && ownBounds.w > ownBounds.h;
+        r.send(cpu, ObjC::id(r.send(cpu, own, "view")), "removeFromSuperview");
+        const ObjC::id stepped = fresh(twoStep.cls());
+        willTo = 0;
+        UIKit::rotateLegacyControllers(cx, "test");
+        const bool halves = willTo == 3 && firstHalf == 3 && secondHalf == 1;
+        r.send(cpu, ObjC::id(r.send(cpu, stepped, "view")), "removeFromSuperview");
+        u.statusBarOrientation = savedOrientation;
+        u.accelFromHost = savedHost;
+        if (!(ios2Left && ownLeft && halves))
+            std::printf("    legacy rotation 2: ios2 %d own %d (%gx%g, will %d) halves %d/%d\n", ios2Left, ownLeft, ownBounds.w, ownBounds.h, willTo, firstHalf, secondHalf);
+        check(ios2Left, "an app built for iPhone OS 2 keeps its portrait view in landscape");
+        check(ownLeft, "a view the app already made landscape is not turned again");
+        check(halves, "a controller with the two-step rotation callbacks gets both halves");
+    }
+
+    // Accelerate's vector routines on recorded sound (Talking John), and long long rounding.
+    {
+        const uint32_t mem = proc.heap().allocZeroed(128);
+        const float in[4] = {0.25f, -0.75f, 0.5f, 40000.0f};
+        proc.mem().copyIn(mem, in, 16);
+        auto fn = [&](const char* sym, std::initializer_list<uint32_t> args) { return proc.callGuest(cpu, *proc.lookupSymbol(sym), args); };
+        fn("_vDSP_maxmgv", {mem, 1, mem + 32, 3});
+        const float peak = proc.mem().read<float>(mem + 32);
+        const float gain = 1000.0f;
+        proc.mem().write<float>(mem + 36, gain);
+        fn("_vDSP_vsmul", {mem, 1, mem + 36, mem + 48, 1, 4});
+        fn("_vDSP_vfix16", {mem + 48, 1, mem + 80, 1, 4});
+        const int16_t s0 = proc.mem().read<int16_t>(mem + 80), s1 = proc.mem().read<int16_t>(mem + 82), s3 = proc.mem().read<int16_t>(mem + 86);
+        double half = 2.5;
+        uint32_t bits[2];
+        std::memcpy(bits, &half, 8);
+        const int64_t rounded = int64_t(fn("_llrint", {bits[0], bits[1]}));
+        proc.heap().free(mem);
+        check(peak == 0.75f && s0 == 250 && s1 == -750 && s3 == 32767, "vDSP_maxmgv, vDSP_vsmul and vDSP_vfix16 work on guest arrays (and saturate)");
+        check(rounded == 2, "llrint rounds to even and returns a long long");
     }
 
     // NSUserDefaults hands out one long-lived object per stored value (Tiny Wings keeps the
@@ -7435,6 +7507,23 @@ int runFullSubsystemTests() {
                   "AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM");
             // CoreAudio's I/O thread has a 512 KB stack; Smash Hit's callback needs over 256 KB.
             check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
+        }
+
+        // A buffer asked for with no packet descriptions still has room for them (PvZ copies one
+        // per frame of its music between buffers and crashed on a null pointer).
+        {
+            const uint32_t outAt = proc.heap().allocZeroed(64);
+            const uint32_t fmt = proc.heap().allocZeroed(40);
+            proc.mem().write<double>(fmt, 44100.0);
+            const uint32_t lpcm[8] = {0x6C70636D, 0x0C, 4, 1, 4, 2, 16, 0};
+            proc.mem().copyIn(fmt + 8, lpcm, 32);
+            callAT("_AudioQueueNewOutput", {fmt, 0, 0, 0, 0, 0, outAt});
+            const uint32_t q = proc.mem().read<uint32_t>(outAt);
+            const uint32_t status = uint32_t(callAT("_AudioQueueAllocateBufferWithPacketDescriptions", {q, 4096, 0, outAt + 8}));
+            const uint32_t buf = proc.mem().read<uint32_t>(outAt + 8);
+            const bool room = status == 0 && buf && proc.mem().read<uint32_t>(buf + 20) != 0 && proc.mem().read<uint32_t>(buf + 16) >= 1024;
+            callAT("_AudioQueueDispose", {q, 1});
+            check(room, "an audio queue buffer asked for without packet descriptions still has room for one per frame");
         }
 
         // An AUGraph with a mixer feeding the output (Unreal Engine 3 sound effects): each mixer

@@ -129,6 +129,9 @@ struct UIState {
     // Info.plist lists only landscape orientations. Such an app is never shown in portrait
     // (iOS 6+ intersects the app's list with what a view controller accepts).
     bool plistLandscapeOnly = false;
+    // Info.plist MinimumOSVersion is below 3.0: the app predates automatic rotation of a
+    // launch-landscape view (rotateLegacyControllers).
+    bool builtForIOS2 = false;
     // beginGeneratingDeviceOrientationNotifications was called: on the next frame, post the
     // UIDeviceOrientationDidChangeNotification iOS sends once the device's orientation is known.
     bool deviceOrientationNotePending = false;
