@@ -7318,6 +7318,82 @@ int runFullSubsystemTests() {
             check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
         }
 
+        // An AUGraph with a mixer feeding the output (Unreal Engine 3 sound effects): each mixer
+        // input has its own callback, asked with its input number, and a disabled input is not asked.
+        {
+            std::atomic<int> calls0{0}, calls1{0}, calls2{0};
+            uint32_t busSeen0 = 99, busSeen1 = 99, frames1 = 0;
+            const auto cb = proc.registerHostFunction("hvm_test_aug_input", [&](Ctx& cx) {
+                const uint32_t bus = cx.cpu.r[3];
+                const uint32_t frames = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
+                const uint32_t abl = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 4);
+                if (cx.cpu.r[0] == 100) { ++calls0; busSeen0 = bus; }
+                else if (cx.cpu.r[0] == 101) { ++calls1; busSeen1 = bus; frames1 = frames; }
+                else ++calls2;
+                cx.cpu.r[0] = 0;
+                if (!abl || cx.mem.read<uint32_t>(abl) != 1) return;
+                const uint32_t data = cx.mem.read<uint32_t>(abl + 12);
+                // input 1 is 22050 Hz mono, the others the default 44100 Hz stereo
+                const uint32_t samples = bus == 1 ? frames : frames * 2;
+                if (!data || cx.mem.read<uint32_t>(abl + 8) < samples * 2) return;
+                for (uint32_t i = 0; i < samples; ++i) cx.mem.write<int16_t>(data + i * 2, 9000);
+            });
+            const uint32_t scratch = proc.heap().allocZeroed(128);
+            const uint32_t descAt = scratch, outAt = scratch + 24, cbAt = scratch + 40, fmtAt = scratch + 48;
+            callAT("_NewAUGraph", {outAt});
+            const uint32_t graph = proc.mem().read<uint32_t>(outAt);
+            const uint32_t mixerDesc[5] = {0x61756D78 /*aumx*/, 0x3364656D /*3dem*/, 0x6170706C, 0, 0};
+            const uint32_t outDesc[5] = {0x61756F75 /*auou*/, 0x72696F63 /*rioc*/, 0x6170706C, 0, 0};
+            proc.mem().copyIn(descAt, mixerDesc, 20);
+            callAT("_AUGraphAddNode", {graph, descAt, outAt});
+            const uint32_t mixerNode = proc.mem().read<uint32_t>(outAt);
+            proc.mem().copyIn(descAt, outDesc, 20);
+            callAT("_AUGraphAddNode", {graph, descAt, outAt});
+            const uint32_t outNode = proc.mem().read<uint32_t>(outAt);
+            callAT("_AUGraphGetNodeCount", {graph, outAt});
+            const uint32_t nodeCount = proc.mem().read<uint32_t>(outAt);
+            callAT("_AUGraphOpen", {graph});
+            callAT("_AUGraphNodeInfo", {graph, mixerNode, 0, outAt});
+            const uint32_t mixer = proc.mem().read<uint32_t>(outAt);
+            callAT("_AUGraphConnectNodeInput", {graph, mixerNode, 0, outNode, 0});
+            // input 0: AUGraphSetNodeInputCallback; inputs 1 and 2: the mixer unit's own property
+            proc.mem().write<uint32_t>(cbAt, cb);
+            proc.mem().write<uint32_t>(cbAt + 4, 100);
+            callAT("_AUGraphSetNodeInputCallback", {graph, mixerNode, 0, cbAt});
+            proc.mem().write<uint32_t>(cbAt + 4, 101);
+            callAT("_AudioUnitSetProperty", {mixer, 23, 1, 1, cbAt, 8});
+            proc.mem().write<uint32_t>(cbAt + 4, 102);
+            callAT("_AudioUnitSetProperty", {mixer, 23, 1, 2, cbAt, 8});
+            proc.mem().write<double>(fmtAt, 22050.0);
+            const uint32_t mono[8] = {0x6C70636D, 0x0C, 2, 1, 2, 1, 16, 0};
+            proc.mem().copyIn(fmtAt + 8, mono, 32);
+            const uint32_t fmtStatus = uint32_t(callAT("_AudioUnitSetProperty", {mixer, 8, 1, 1, fmtAt, 40}));
+            proc.mem().write<uint32_t>(outAt, 40);
+            callAT("_AudioUnitGetProperty", {mixer, 8, 1, 1, scratch + 88, outAt});
+            const bool formatReadBack = proc.mem().read<double>(scratch + 88) == 22050.0 && proc.mem().read<uint32_t>(scratch + 88 + 28) == 1;
+            const float off = 0.0f;
+            uint32_t offBits;
+            std::memcpy(&offBits, &off, 4);
+            callAT("_AudioUnitSetParameter", {mixer, 5 /*k3DMixerParam_Enable*/, 1, 2, offBits, 0});
+            callAT("_AUGraphInitialize", {graph});
+            callAT("_AUGraphIsRunning", {graph, outAt});
+            const bool runningBefore = proc.mem().read<uint8_t>(outAt) != 0;
+            renderedFrames(4096);
+            callAT("_AUGraphStart", {graph});
+            for (int i = 0; i < 100 && (!calls0 || !calls1); ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
+            callAT("_AUGraphIsRunning", {graph, outAt});
+            const bool runningAfter = proc.mem().read<uint8_t>(outAt) != 0;
+            const size_t mixed = renderedFrames(1024);
+            callAT("_AUGraphStop", {graph});
+            callAT("_DisposeAUGraph", {graph});
+            check(graph != 0 && mixer != 0 && nodeCount == 2 && fmtStatus == 0 && calls0 > 0 && calls1 > 0 && busSeen0 == 0 && busSeen1 == 1,
+                  "AUGraphStart pulls every mixer input from its own callback, with its input number");
+            check(frames1 > 200 && frames1 < 240, "a 22050 Hz mixer input is asked for 22050 Hz worth of frames");
+            check(calls2 == 0, "a mixer input disabled with k3DMixerParam_Enable is not pulled");
+            check(formatReadBack, "a mixer input reads back the stream format set on it");
+            check(mixed > 0 && !runningBefore && runningAfter, "the mixer inputs are audible, and AUGraphIsRunning follows start");
+        }
+
         // OpenGL ES 1.1 Fixed-Function + 2D Texture + glDrawElements test
         const ObjC::Class ctxCls = r.getClass("EAGLContext");
         const ObjC::id gl1Ctx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, ctxCls, r.selAlloc)), "initWithAPI:", {1}));

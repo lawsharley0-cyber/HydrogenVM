@@ -577,9 +577,11 @@ int32_t wsbXsgetn(Ctx& x, GuestPtr sb, GuestPtr s, int32_t n) {
     int32_t got = 0;
     while (got < n) {
         const uint32_t g = rd(x, sb + kGptr), e = rd(x, sb + kEgptr);
-        if (g && g < e) {
+        // Less than one whole character left in the area counts as empty (and must not loop here).
+        if (g && g < e && e - g >= 4) {
             const uint32_t take = std::min<uint32_t>((e - g) / 4, uint32_t(n - got));
             need(x, s + uint32_t(got) * 4, uint64_t(take) * 4, Memory::kProtRW, "wstreambuf::xsgetn destination");
+            need(x, g, uint64_t(take) * 4, Memory::kProtRead, "wstreambuf::xsgetn get area");
             std::memmove(x.mem.host(s + uint32_t(got) * 4), x.mem.host(g), size_t(take) * 4);
             wr(x, sb + kGptr, g + take * 4);
             got += int32_t(take);
@@ -596,9 +598,10 @@ int32_t wsbXsputn(Ctx& x, GuestPtr sb, GuestPtr s, int32_t n) {
     int32_t put = 0;
     while (put < n) {
         const uint32_t pp = rd(x, sb + kPptr), e = rd(x, sb + kEpptr);
-        if (pp && pp < e) {
+        if (pp && pp < e && e - pp >= 4) {
             const uint32_t take = std::min<uint32_t>((e - pp) / 4, uint32_t(n - put));
             need(x, s + uint32_t(put) * 4, uint64_t(take) * 4, Memory::kProtRead, "wstreambuf::xsputn source");
+            need(x, pp, uint64_t(take) * 4, Memory::kProtWrite, "wstreambuf::xsputn put area");
             std::memmove(x.mem.host(pp), x.mem.host(s + uint32_t(put) * 4), size_t(take) * 4);
             wr(x, sb + kPptr, pp + take * 4);
             put += int32_t(take);

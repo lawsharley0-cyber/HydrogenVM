@@ -96,3 +96,14 @@ class Measure(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_damaged_list_stops_without_rewriting(tmp_path, capsys):
+    import must_launch
+    manifest = tmp_path / "must_launch.json"
+    manifest.write_text("{ not json")
+    apps = tmp_path / "apps"
+    apps.mkdir()
+    assert must_launch.main(["--apps", str(apps), "--manifest", str(manifest), "--record"]) == 2
+    assert manifest.read_text() == "{ not json"
+    assert "cannot read" in capsys.readouterr().out

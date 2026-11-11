@@ -32,8 +32,8 @@ int main() {
                             "_glGenQueriesEXT", "_glGenQueries", "_glDeleteQueriesEXT", "_glDeleteQueries",
                             "_glIsQueryEXT", "_glIsQuery", "_glBeginQueryEXT", "_glBeginQuery",
                             "_glEndQueryEXT", "_glEndQuery", "_glGetQueryivEXT", "_glGetQueryiv",
-                            "_glGetQueryObjectuivEXT", "_glGetQueryObjectuiv", "_AUGraphGetIndNode",
-                            "_AUGraphGetNodeCount", "_AudioUnitAddRenderNotify", "_SCNetworkReachabilityGetFlags"}) {
+                            "_glGetQueryObjectuivEXT", "_glGetQueryObjectuiv",
+                            "_AudioUnitAddRenderNotify", "_SCNetworkReachabilityGetFlags"}) {
         const auto r = registry.find(name);
         check(r && r->status == SupportStatus::Stub && !r->provenance.empty(), name);
     }
