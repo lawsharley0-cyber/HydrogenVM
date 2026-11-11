@@ -9,7 +9,7 @@ def header(bundle):
     original = (Path(bundle) / "res/csv_client/music.csv").read_text(encoding="utf-8-sig")
     rows = list(csv.reader(io.StringIO(original)))
     columns = rows[0]
-    name, loop, fade = [columns.index(k) for k in ("Name", "Loop", "FadeOutTimeSec")]
+    name, loop, fade, duration = [columns.index(k) for k in ("Name", "Loop", "FadeOutTimeSec", "DurationSec")]
     current = ""
     found = 0
     for row in rows[2:]:
@@ -19,7 +19,7 @@ def header(bundle):
         if row[name]:
             current = row[name]
         if current == "MenuMusic":
-            row[loop], row[fade] = "true", "0"
+            row[loop], row[fade], row[duration] = "true", "0", "@MUSIC_SECONDS@"
             found += 1
     if found != 3:
         raise ValueError("Pinned menu music group must have three variants")

@@ -30,7 +30,7 @@ static uintptr_t symbol(const char *name){
     MAP("fopen",fopen); MAP("fread",fread); MAP("fwrite",fwrite);
     MAP("fclose",fclose); MAP("ferror",ferror); MAP("getenv",getenv);
     MAP("fflush",fflush); MAP("fileno",fileno); MAP("fsync",fsync);
-    MAP("mkdir",mkdir); MAP("rename",rename);
+    MAP("fseek",fseek); MAP("mkdir",mkdir); MAP("rename",rename);
     fprintf(stderr,"unexpected symbol %s",name);exit(5);
 }
 static void path_append(char *out,const char *a,const char *b,u32 cap){
@@ -65,8 +65,8 @@ class MusicTests(unittest.TestCase):
             actual = list(csv.reader(io.StringIO(json.loads(encoded))))
             self.assertEqual(actual[:3], rows[:3])
             self.assertEqual(actual[-1], rows[-1])
-            self.assertEqual(actual[3:6], [["MenuMusic", "true", "2", "0", "96"],
-                                         ["", "true", "2", "0", "96"], ["", "true", "2", "0", "96"]])
+            self.assertEqual(actual[3:6], [["MenuMusic", "true", "2", "0", "@MUSIC_SECONDS@"],
+                                         ["", "true", "2", "0", "@MUSIC_SECONDS@"], ["", "true", "2", "0", "@MUSIC_SECONDS@"]])
 
     def test_duration_is_bounded_before_decode(self):
         import wave
@@ -84,13 +84,13 @@ class MusicTests(unittest.TestCase):
             (root / "short.mp3").write_bytes(frame * 6890)
             (root / "long.mp3").write_bytes(frame * 6891)
             (root / "bad.mp3").write_bytes(b"ID3" + bytes(10))
-            preamble = PREAMBLE.replace('MAP("mkdir",mkdir);', 'MAP("fseek",fseek); MAP("mkdir",mkdir);')
+            preamble = PREAMBLE
             module = (ROOT / "tools/clash_guest/music_limits.inc").read_text()
             code = preamble + "\nstatic u32 mod_div(u32 a,u32 b){return a/b;}\n" + module
             code += r'''
 int main(int argc,char **argv){
     FILE *f=fopen(argv[1],"rb");fseek(f,0,SEEK_END);u32 size=ftell(f);fclose(f);
-    return music_duration_bound(argv[1],size)?0:1;
+    u32 seconds=music_duration_bound(argv[1],size);printf("%u\n",seconds);return seconds?0:1;
 }
 '''
             source = root / "probe.c"
@@ -99,8 +99,9 @@ int main(int argc,char **argv){
             subprocess.run(["clang", "-w", "-fno-builtin", str(source), "-o", str(executable)], check=True)
             for file, expected in [(short, 0), (long, 1), (root / "short.mp3", 0),
                                    (root / "long.mp3", 1), (root / "bad.mp3", 1)]:
-                result = subprocess.run([str(executable), str(file)])
+                result = subprocess.run([str(executable), str(file)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, expected, file.name)
+                self.assertEqual(result.stdout.strip(), "180" if expected == 0 else "0")
 
     def test_native_assignment_reader_and_menu_scope(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -121,14 +122,20 @@ int main(void){
 }
 ''')
             exe = root / "probe"
-            subprocess.run(["clang", "-w", "-fno-builtin", str(source), "-o", str(exe)], check=True)
+            subprocess.run(["clang", "-w", "-fno-builtin", "-I", str(ROOT / "tools/clash_guest"), str(source), "-o", str(exe)], check=True)
             def run(expected):
                 import os
                 result = subprocess.run([str(exe)], env=dict(os.environ, HOME=str(root)), capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f"selected={expected}", result.stdout)
             run(0)
-            track = b"authored track"
+            import io
+            import wave
+            buffer = io.BytesIO()
+            with wave.open(buffer, "wb") as stream:
+                stream.setparams((1, 2, 1000, 0, "NONE", "not compressed"))
+                stream.writeframes(bytes(2000))
+            track = buffer.getvalue()
             (directory / "track-00000001.audio").write_bytes(track)
             head = struct.pack("<4I", 0x3143554d, 1, len(track), fnv(track))
             data = head + struct.pack("<I", fnv(head))

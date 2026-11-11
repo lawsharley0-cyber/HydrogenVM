@@ -5,9 +5,9 @@ static int music_read_at(void *file,u32 position,u8 *out,u32 count){
     return !CALL(symbol("fseek"),int,(void*,int,int))(file,(int)position,0) &&
         CALL(symbol("fread"),u32,(void*,u32,u32,void*))(out,1,count,file)==count;
 }
-static int music_duration_bound(const char *path,u32 size){
+static u32 music_duration_bound(const char *path,u32 size){
     void *file=CALL(symbol("fopen"),void*,(const char*,const char*))(path,"rb");if(!file)return 0;
-    u8 head[20];int ok=0;
+    u8 head[20];u32 seconds=0;
     if(size>=12 && music_read_at(file,0,head,12)){
         if(music_le32(head)==0x46464952u && music_le32(head+8)==0x45564157u){
             u32 offset=12,rate=0;
@@ -22,7 +22,7 @@ static int music_duration_bound(const char *path,u32 size){
                        (bits!=8 && bits!=16 && bits!=24 && bits!=32) || (format==3 && bits!=32))break;
                     rate=samples*channels*(bits>>3);
                     if(music_le32(head+8)!=rate || music_le16(head+12)!=channels*(bits>>3))break;
-                }else if(kind==0x61746164u){ok=rate && length && length<=rate*180u;break;}
+                }else if(kind==0x61746164u){if(rate && length && length<=rate*180u)seconds=mod_div(length+rate-1,rate);break;}
                 offset+=length;if(length&1){if(offset==size)break;++offset;}
             }
         }else{
@@ -47,10 +47,10 @@ static int music_duration_bound(const char *path,u32 size){
                 if(length<4 || length>size-offset)break;
                 offset+=length;++frames;
             }
-            ok=frames && offset==size && total_samples<=sample_rate*180u;
+            if(frames && offset==size && total_samples<=sample_rate*180u)seconds=mod_div(total_samples+sample_rate-1,sample_rate);
         }
     }
 finished:
-    if(CALL(symbol("fclose"),int,(void*))(file))ok=0;
-    return ok;
+    if(CALL(symbol("fclose"),int,(void*))(file))seconds=0;
+    return seconds;
 }

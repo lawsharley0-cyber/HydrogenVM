@@ -1,4 +1,3 @@
-#include "music_limits.inc"
 static u32 music_panel,music_picker,music_player,music_candidate_bytes,music_candidate_hash;
 static char music_candidate[560];
 static void music_status(const char *text){mod_message(text);mod_text(mod_status_label,mod_status);}

@@ -1,3 +1,5 @@
+#ifndef CLASH_MODS_MATH_INCLUDED
+#define CLASH_MODS_MATH_INCLUDED
 #define MOD_FIELDS 8
 enum {MOD_MOVE,MOD_ATTACK,MOD_DEPLOY,MOD_SIZE,MOD_SHOT_SPEED,MOD_HEALTH,MOD_DAMAGE,MOD_RANGE};
 static u32 mod_div(u32 n,u32 d) {
@@ -30,3 +32,5 @@ static int mod_parse_number(const char *s,u32 *out) {
     for(u32 i=0;s[i];++i){if(i>=9 || s[i]<'0' || s[i]>'9')return 0;n=n*10u+(u32)(s[i]-'0');}
     *out=n;return 1;
 }
+
+#endif
