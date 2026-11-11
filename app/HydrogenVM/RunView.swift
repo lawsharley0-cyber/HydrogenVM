@@ -23,6 +23,8 @@ final class RunModel {
     /// The guest text field that has focus, if any: the host keyboard bar is shown for it (#303).
     private(set) var keyboard: HVMTextInputRequest?
     var photoPicker: GamePhotoRequest?
+    /// The video the game is playing, shown over the game picture.
+    private(set) var movie: GameMovieRequest?
     private(set) var fps = 0
     private(set) var orientation = GuestOrientation.portrait
     private(set) var activity = PlayerActivity()
@@ -116,6 +118,13 @@ final class RunModel {
         session?.submitPhoto(data, requestId: requestId)
     }
 
+    /// The video ended, could not be played, or was taken down: the game moves on.
+    func finishMovie(requestId: UInt64) {
+        guard movie?.id == requestId else { return }
+        movie = nil
+        session?.movieFinished(requestId)
+    }
+
     func start(keepGoing: Bool) {
         guard session == nil else { return }
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
@@ -148,6 +157,13 @@ final class RunModel {
                 else if self.photoPicker?.id == request.requestId { self.photoPicker = nil }
             }
         }
+        s.onMovie = { [weak self] request in
+            MainActor.assumeIsolated {
+                guard let self, self.running, !self.closing else { return }
+                if request.active { self.movie = GameMovieRequest(id: request.requestId, url: URL(fileURLWithPath: request.path)) }
+                else if self.movie?.id == request.requestId { self.movie = nil }
+            }
+        }
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -173,6 +189,7 @@ final class RunModel {
                 guard let self else { return }
                 self.keyboard = nil
                 self.photoPicker = nil
+                self.movie = nil
                 self.running = false
                 self.closing = false
                 self.cancelActiveTouches()
@@ -501,11 +518,20 @@ struct RunView: View {
                         }
                         .padding(20)
                         .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
-                    } else if model.frame == nil && model.running {
+                    } else if model.frame == nil && model.running && model.movie == nil {
                         VStack(spacing: 12) {
                             ProgressView().tint(.white)
                             Text("Starting \(app.title)…").foregroundStyle(.white.opacity(0.8)).font(.callout)
                         }
+                    }
+                    // A video the game plays (logo, intro, loading movie), over the game picture.
+                    // Touches pass through to the game, which may stop the video itself.
+                    if let movie = model.movie {
+                        GameMoviePlayer(request: movie, volume: Float(model.volume)) { model.finishMovie(requestId: movie.id) }
+                            .id(movie.id)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .background(Color.black)
+                            .allowsHitTesting(false)
                     }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)

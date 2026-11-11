@@ -46,6 +46,14 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly) uint64_t requestId;
 @end
 
+/// A video file the game wants played (active), or one to take down (not active).
+@interface HVMMovieRequest : NSObject
+@property (nonatomic, readonly) BOOL active;
+@property (nonatomic, readonly) uint64_t requestId;
+/// The file on this device; empty when not active.
+@property (nonatomic, readonly, copy) NSString *path;
+@end
+
 @interface HVMTextInputRequest : NSObject
 @property (nonatomic, readonly) BOOL active;   // NO = hide the keyboard
 /// Identifies the guest focus this request belongs to; every event sent back must echo it.
@@ -119,6 +127,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, copy, nullable) void (^onTextInput)(HVMTextInputRequest *request);
 @property (nonatomic, copy, nullable) void (^onPhotoPicker)(HVMPhotoPickerRequest *request);
 - (void)submitPhoto:(nullable NSData *)imageData requestId:(uint64_t)requestId;
+/// The game plays or stops a video; the host shows it over the game (main queue).
+@property (nonatomic, copy, nullable) void (^onMovie)(HVMMovieRequest *request);
+/// The video ended, failed or was skipped: the game is told it finished.
+- (void)movieFinished:(uint64_t)requestId;
 /// The player's new full text for the focused guest field (delegate-checked in the guest). Dropped by the guest if
 /// focusId is no longer the focused field's.
 - (void)submitText:(NSString *)text focusId:(uint64_t)focusId sequence:(uint64_t)sequence;

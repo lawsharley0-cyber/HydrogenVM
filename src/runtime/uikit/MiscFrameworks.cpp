@@ -154,9 +154,10 @@ id loc_nil(Ctx&, id, SEL) { return 0; }
 void loc_ignoreObj(Ctx&, id, SEL, id) {}
 void loc_ignoreInt(Ctx&, id, SEL, int32_t) {}
 
-// ---- MPMoviePlayerController: no video decoding. play() "finishes" right away, so
-// intro/cut-scene code moves on as if the movie had played.
-struct MovieData : ObjC::HostObject { id url = 0, view = 0, background = 0; int32_t state = 0; bool finished = false; };
+// ---- MPMoviePlayerController. The host plays the file when it can (UIKit::startHostMovie)
+// and the finish notifications follow the real end of the movie. Without a host player
+// play() "finishes" right away, so intro/cut-scene code moves on as if the movie had played.
+struct MovieData : ObjC::HostObject { id url = 0, view = 0, background = 0; int32_t state = 0; bool finished = false; uint64_t hostMovie = 0; };
 MovieData& MD(Ctx& x, id self) { return rt(x).host<MovieData>(self); }
 id mp_initWithURL(Ctx& x, id self, SEL, id url) {
     MovieData& m = MD(x, self);
@@ -177,24 +178,48 @@ void mp_setURL(Ctx& x, id self, SEL, id url) {
     m.finished = false;
 }
 id mp_background(Ctx& x, id self, SEL) { MovieData& m = MD(x, self); return m.background ? m.background : m.view; }
+void mp_finished(Ctx& cx, id self, int32_t reason) {
+    MD(cx, self).state = 0;
+    MD(cx, self).hostMovie = 0;
+    const id info = Foundation::makeDict(cx, {{Foundation::constString(cx.proc, "MPMoviePlayerPlaybackDidFinishReasonUserInfoKey"),
+                                               Foundation::makeNumberInt(cx, reason)}});
+    postNote(cx, "MPMoviePlayerPlaybackStateDidChangeNotification", self, 0);
+    postNote(cx, "MPMoviePlayerPlaybackDidFinishNotification", self, info);
+}
 void mp_play(Ctx& x, id self, SEL) {
     MovieData& m = MD(x, self);
-    if (m.finished) return;
+    if (m.state == 2 && m.hostMovie) { m.state = 1; return; }   // resumed (the host movie was never paused)
+    if (m.finished || m.hostMovie) return;
     m.finished = true;
-    m.state = 1;   // MPMoviePlaybackStatePlaying, briefly
+    m.state = 1;   // MPMoviePlaybackStatePlaying
     later(x, self, 0.05, [self](Ctx& cx) {
         postNote(cx, "MPMoviePlayerLoadStateDidChangeNotification", self, 0);
         postNote(cx, "MPMoviePlayerPlaybackStateDidChangeNotification", self, 0);
     });
-    later(x, self, 0.25, [self](Ctx& cx) {
-        MD(cx, self).state = 0;
-        const id info = Foundation::makeDict(cx, {{Foundation::constString(cx.proc, "MPMoviePlayerPlaybackDidFinishReasonUserInfoKey"),
-                                                   Foundation::makeNumberInt(cx, 0 /* MPMovieFinishReasonPlaybackEnded */)}});
-        postNote(cx, "MPMoviePlayerPlaybackStateDidChangeNotification", self, 0);
-        postNote(cx, "MPMoviePlayerPlaybackDidFinishNotification", self, info);
-    });
+    std::string hostPath;
+    if (UIKit::hostMovieFile(x, m.url, hostPath)) {
+        // The player object must outlive the movie: the game may release it while it plays.
+        rt(x).retain(x.cpu, self);
+        m.hostMovie = UIKit::startHostMovie(x, hostPath, [self](Ctx& cx) {
+            mp_finished(cx, self, 0 /* MPMovieFinishReasonPlaybackEnded */);
+            rt(cx).release(cx.cpu, self);
+        });
+        if (m.hostMovie) return;
+        rt(x).release(x.cpu, self);
+    }
+    later(x, self, 0.25, [self](Ctx& cx) { mp_finished(cx, self, 0); });
 }
-void mp_stop(Ctx& x, id self, SEL) { MD(x, self).state = 0; }
+void mp_stop(Ctx& x, id self, SEL) {
+    MovieData& m = MD(x, self);
+    if (m.hostMovie) {
+        // Stopping a playing movie ends it: the game is told, as on iOS (reason: user exited).
+        UIKit::stopHostMovie(x, m.hostMovie);
+        later(x, self, 0, [self](Ctx& cx) { mp_finished(cx, self, 2 /* MPMovieFinishReasonUserExited */); });
+        rt(x).release(x.cpu, self);   // the reference the movie held
+        m.hostMovie = 0;
+    }
+    m.state = 0;
+}
 void mp_pause(Ctx& x, id self, SEL) { MD(x, self).state = 2; }
 void mp_prepare(Ctx& x, id self, SEL) { later(x, self, 0.02, [self](Ctx& cx) { postNote(cx, "MPMediaPlaybackIsPreparedToPlayDidChangeNotification", self, 0); }); }
 bool mp_yes(Ctx&, id, SEL) { return true; }

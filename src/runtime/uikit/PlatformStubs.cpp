@@ -3066,6 +3066,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         float rate = 0.0f, volume = 1.0f;
         int32_t actionAtItemEnd = 0;
         bool muted = false;
+        uint64_t hostMovie = 0;   // the host is playing this player's video file
     };
     auto notifyFinish = [](Ctx& x, id self) {
         auto* d = rt(x).hostIf<AVPlayerData>(self);
@@ -3118,7 +3119,26 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     }, "v@:@");
     avPlayer.method("play", [notifyFinish](Ctx& x) {
         const id self = x.cpu.r[0];
-        rt(x).host<AVPlayerData>(self).rate = 1.0f;
+        auto& d = rt(x).host<AVPlayerData>(self);
+        d.rate = 1.0f;
+        if (d.hostMovie) return;   // already playing on the host
+        // A video file is played by the host, and the item ends when the host says so.
+        std::string hostPath;
+        const id asset = d.currentItem ? id(rt(x).send(x.cpu, d.currentItem, "asset")) : 0;
+        const id url = asset && rt(x).respondsTo(asset, rt(x).sel("URL")) ? id(rt(x).send(x.cpu, asset, "URL")) : 0;
+        if (UIKit::hostMovieFile(x, url, hostPath)) {
+            const id item = rt(x).retain(x.cpu, d.currentItem);
+            rt(x).retain(x.cpu, self);
+            d.hostMovie = UIKit::startHostMovie(x, hostPath, [self, item](Ctx& cx) {
+                if (auto* pd = rt(cx).hostIf<AVPlayerData>(self)) { pd->hostMovie = 0; pd->rate = 0.0f; }
+                Foundation::postNotification(cx, "AVPlayerItemDidPlayToEndTimeNotification", item);
+                rt(cx).release(cx.cpu, item);
+                rt(cx).release(cx.cpu, self);
+            });
+            if (d.hostMovie) return;
+            rt(x).release(x.cpu, item);
+            rt(x).release(x.cpu, self);
+        }
         notifyFinish(x, self);
     }, "v@:");
     avPlayer.method("pause", [](Ctx& x) { rt(x).host<AVPlayerData>(x.cpu.r[0]).rate = 0.0f; }, "v@:");

@@ -313,6 +313,12 @@ int32_t app_statusBarOrientation(Ctx& x, id, SEL) { return ui(x).statusBarOrient
 void app_setStatusBarOrientation(Ctx& x, id, SEL, int32_t o) {
     auto& u = ui(x);
     if (o < 1 || o > 4) return;
+    if (u.plistLandscapeOnly && o <= 2) {
+        // Minecraft PE's keyboard turned the whole game to portrait and left it there.
+        x.proc.logf(LogLevel::Info, "Orientation: stays %d (the app asked for portrait with setStatusBarOrientation:, but its Info.plist allows landscape only)",
+                    u.statusBarOrientation);
+        return;
+    }
     u.orientationSetByApp = true;
     if (o == u.statusBarOrientation) return;
     x.proc.logf(LogLevel::Info, "Orientation: %d -> %d (setStatusBarOrientation: from the app)", u.statusBarOrientation, o);
@@ -545,6 +551,12 @@ void configureScreen(Ctx& x) {
         }
         u.initialOrientation = orientationFromString(o);
         u.statusBarOrientation = u.initialOrientation;
+        const Plist::Value* list = info->get("UISupportedInterfaceOrientations~iphone");
+        if (!list) list = info->get("UISupportedInterfaceOrientations");
+        if (list && list->type == Plist::Value::Type::Array && !list->array.empty()) {
+            u.plistLandscapeOnly = true;
+            for (const auto& v : list->array) if (orientationFromString(v->s) <= 2) u.plistLandscapeOnly = false;
+        }
     }
     x.proc.logf(LogLevel::Info, "Screen: %gx%g @%gx, %s, status bar %s", u.screenW, u.screenH, u.scale,
                 u.initialOrientation >= 3 ? "landscape" : "portrait", u.statusBarHidden ? "hidden" : "visible");
