@@ -46,33 +46,39 @@ struct GameMoviePlayer: UIViewRepresentable {
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
     }
 
+    @MainActor
     final class Coordinator: NSObject {
         private let finished: () -> Void
         private var done = false
         private var observers: [NSObjectProtocol] = []
         private var status: NSKeyValueObservation?
         private var watchdog: Timer?
+        private weak var player: AVPlayer?
 
         init(finished: @escaping () -> Void) { self.finished = finished }
 
         func watch(_ player: AVPlayer) {
+            self.player = player
             guard let item = player.currentItem else { finish(); return }
             let center = NotificationCenter.default
             for name in [AVPlayerItem.didPlayToEndTimeNotification, AVPlayerItem.failedToPlayToEndTimeNotification] {
                 observers.append(center.addObserver(forName: name, object: item, queue: .main) { [weak self] _ in
-                    self?.finish()
+                    Task { @MainActor in self?.finish() }
                 })
             }
             // A file the system player cannot decode never reaches its end: say so at once.
             status = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-                guard item.status == .failed else { return }
-                DispatchQueue.main.async { self?.finish() }
+                let failed = item.status == .failed
+                Task { @MainActor in if failed { self?.finish() } }
             }
             // And a player that never starts must not hold the game forever.
-            watchdog = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self, weak player] _ in
-                guard let self, let player else { return }
-                if player.currentItem?.status != .readyToPlay { self.finish() }
+            watchdog = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.checkStarted() }
             }
+        }
+
+        private func checkStarted() {
+            if player?.currentItem?.status != .readyToPlay { finish() }
         }
 
         func stop() {
