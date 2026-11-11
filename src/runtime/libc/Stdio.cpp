@@ -23,7 +23,7 @@ struct Stdio {
     explicit Stdio(Process& p) : proc(p) {}
     Process& proc;
     std::mutex mu;
-    struct File { std::FILE* f = nullptr; int stream = 0; /*1 stdout 2 stderr*/ std::string pending; int unget = -1; bool eof = false; uint64_t fileHandle = 0; int64_t bytesRead = 0; };
+    struct File { std::FILE* f = nullptr; int stream = 0; /*1 stdout 2 stderr*/ std::string pending; std::string unget; /* pushed-back bytes, the last one read first */ bool eof = false; uint64_t fileHandle = 0; int64_t bytesRead = 0; };
     std::unordered_map<uint32_t, File> files;
     uint32_t sF = 0;   // __sF[3]
 
@@ -199,7 +199,9 @@ uint32_t f_fread(Ctx& x, GuestPtr ptr, uint32_t size, uint32_t n, GuestPtr fp) {
     if (!f || !f->f || !size || !n) return 0;
     char* dst = reinterpret_cast<char*>(x.mem.host(ptr));
     size_t total = size_t(size) * n, got = 0;
-    if (f->unget >= 0) { dst[got++] = char(f->unget); f->unget = -1; }
+    // Darwin's ungetc takes any number of bytes back (PvZ's XML reader returns three after
+    // looking for a byte-order mark); they are read again in reverse order of pushing.
+    while (!f->unget.empty() && got < total) { dst[got++] = f->unget.back(); f->unget.pop_back(); }
     got += std::fread(dst + got, 1, total - got, f->f);
     if (got < total) f->eof = std::feof(f->f);
     f->bytesRead += got;
@@ -210,9 +212,10 @@ int32_t f_fgetc(Ctx& x, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || !f->f) return -1;
-    if (f->unget >= 0) { const int c = f->unget; f->unget = -1; return c; }
+    if (!f->unget.empty()) { const int c = uint8_t(f->unget.back()); f->unget.pop_back(); return c; }
     const int c = std::fgetc(f->f);
     if (c == EOF) f->eof = true;
+    else if ((++f->bytesRead & 0xFFF) == 0) x.proc.updateFileRead(f->fileHandle, f->bytesRead);   // counted; published every 4 KB
     return c;
 }
 int32_t f_srget(Ctx& x, GuestPtr fp) { return f_fgetc(x, fp); }
@@ -221,7 +224,7 @@ int32_t f_ungetc(Ctx& x, int32_t c, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || c == EOF) return -1;
-    f->unget = c & 0xFF;
+    f->unget.push_back(char(c & 0xFF));
     f->eof = false;
     return c & 0xFF;
 }
@@ -242,33 +245,38 @@ int32_t f_fseek(Ctx& x, GuestPtr fp, int32_t off, int32_t whence) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || !f->f) return -1;
-    f->unget = -1; f->eof = false;
-    return std::fseek(f->f, off, whence);
+    // The stream's position is behind the host file's by the bytes pushed back.
+    const long adjusted = whence == SEEK_CUR ? long(off) - long(f->unget.size()) : long(off);
+    const int r = std::fseek(f->f, adjusted, whence);
+    if (r == 0) { f->unget.clear(); f->eof = false; }   // a failed seek leaves the stream as it was
+    return r;
 }
 int32_t f_fseeko(Ctx& x, GuestPtr fp, int64_t off, int32_t whence) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || !f->f) return -1;
-    f->unget = -1; f->eof = false;
-    return fseeko(f->f, off_t(off), whence);
+    const off_t adjusted = whence == SEEK_CUR ? off_t(off) - off_t(f->unget.size()) : off_t(off);
+    const int r = fseeko(f->f, adjusted, whence);
+    if (r == 0) { f->unget.clear(); f->eof = false; }
+    return r;
 }
 int32_t f_ftell(Ctx& x, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || !f->f) return -1;
-    return int32_t(std::ftell(f->f) - (f->unget >= 0 ? 1 : 0));
+    return int32_t(std::ftell(f->f) - long(f->unget.size()));
 }
 int64_t f_ftello(Ctx& x, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
     if (!f || !f->f) return -1;
-    return int64_t(ftello(f->f)) - (f->unget >= 0 ? 1 : 0);
+    return int64_t(ftello(f->f)) - int64_t(f->unget.size());
 }
 void f_rewind(Ctx& x, GuestPtr fp) { f_fseek(x, fp, 0, SEEK_SET); }
 int32_t f_feof(Ctx& x, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);
     auto* f = S(x).get(fp);
-    return f && f->unget < 0 && (f->eof || (f->f && std::feof(f->f))) ? 1 : 0;
+    return f && f->unget.empty() && (f->eof || (f->f && std::feof(f->f))) ? 1 : 0;
 }
 int32_t f_ferror(Ctx& x, GuestPtr fp) {
     std::lock_guard<std::mutex> lk(S(x).mu);

@@ -39,6 +39,13 @@ jobs:
             tools/tests/swift/RecentSaveFilesTests.swift
           set -o pipefail
           build/file-editor/recent-tests 2>&1 | tee build/file-editor/recent-files.log
+      - name: Test All Games selection, retest and report rules (Swift 6)
+        run: |
+          xcrun swiftc -swift-version 6 -o build/file-editor/batch-selection-tests \
+            app/HydrogenVM/BatchSelection.swift app/HydrogenVM/BatchSnapshot.swift \
+            tools/tests/swift/BatchSelectionTests.swift
+          set -o pipefail
+          build/file-editor/batch-selection-tests 2>&1 | tee build/file-editor/batch-selection.log
       - name: Generate project
         if: ${{ !cancelled() }}
         run: |

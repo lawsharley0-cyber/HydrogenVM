@@ -1,6 +1,8 @@
 // HydrogenVM — <stdlib.h>: heap, conversions, sorting, random numbers,
 // environment, process exit.
+#include <mutex>
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -38,6 +40,28 @@ int32_t  m_posix_memalign(Ctx& x, GuestPtr out, uint32_t align, uint32_t n) {
     return 0;
 }
 uint32_t m_malloc_size(Ctx& x, uint32_t p) { return x.proc.heap().blockSize(p); }
+// sbrk, as Darwin's libc emulates it: one 4 MB region handed out from the bottom. A request that
+// does not fit returns -1, and an app's own allocator (PvZ carries dlmalloc) then turns to mmap.
+// Zero or a negative size reports the current break; the break never moves down.
+struct SbrkRegion {
+    explicit SbrkRegion(Process&) {}
+    std::mutex mu;
+    uint32_t brk = 0, left = 4u << 20;
+};
+uint32_t m_sbrk(Ctx& x, int32_t size) {
+    auto& r = x.proc.service<SbrkRegion>();
+    std::lock_guard<std::mutex> lk(r.mu);
+    if (!r.brk) {
+        r.brk = x.proc.heap().allocZeroed(r.left);
+        if (!r.brk) { setErrno(x, ENOMEM); return 0xFFFFFFFFu; }
+    }
+    if (size <= 0) return r.brk;
+    if (uint32_t(size) > r.left) { setErrno(x, ENOMEM); return 0xFFFFFFFFu; }
+    r.brk += uint32_t(size);
+    r.left -= uint32_t(size);
+    return r.brk - uint32_t(size);
+}
+uint32_t m_brk(Ctx& x, GuestPtr) { setErrno(x, ENOMEM); return 0xFFFFFFFFu; }   // Darwin's brk always fails
 uint32_t m_malloc_good_size(Ctx&, uint32_t n) { return (n + 15) & ~15u; }
 uint32_t m_zone_size(Ctx& x, uint32_t, uint32_t p) { return x.proc.heap().blockSize(p); }
 uint32_t m_zone_malloc(Ctx& x, uint32_t, uint32_t n) { return x.proc.heap().alloc(n); }
@@ -341,6 +365,8 @@ void registerLibcStdlib(Process& p) {
     p.def<&m_valloc>("_valloc");
     p.def<&m_posix_memalign>("_posix_memalign");
     p.def<&m_malloc_size>("_malloc_size");
+    p.def<&m_sbrk>("_sbrk");
+    supportDef<&m_brk>(p, "_brk", SupportStatus::Real, "Darwin's brk() always returns -1; sbrk() is the emulated one");
     p.def<&m_malloc_good_size>("_malloc_good_size");
     p.def<&m_default_zone>("_malloc_default_zone");
     p.def<&m_zone_size>("__hvm_zone_size");

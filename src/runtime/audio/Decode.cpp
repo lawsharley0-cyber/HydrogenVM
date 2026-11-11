@@ -338,6 +338,105 @@ DecodedAudio decodeKnown(const uint8_t* data, size_t n) {
 }
 
 
+} // namespace
+
+namespace {
+struct Mp3Header { int version = 0, sampleRate = 0, channels = 0; uint32_t size = 0, frames = 0; };
+// A layer III frame header at p (4 bytes), or false.
+bool parseMp3Header(const uint8_t* p, Mp3Header& h) {
+    if (p[0] != 0xFF || (p[1] & 0xE0) != 0xE0) return false;
+    const int version = (p[1] >> 3) & 3, layer = (p[1] >> 1) & 3;   // 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5; layer 1 = III
+    const int bitrateIndex = p[2] >> 4, rateIndex = (p[2] >> 2) & 3, padding = (p[2] >> 1) & 1;
+    if (version == 1 || layer != 1 || bitrateIndex == 0 || bitrateIndex == 15 || rateIndex == 3) return false;
+    static const int kbps1[15] = {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320};
+    static const int kbps2[15] = {0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160};
+    static const int rates[3] = {44100, 48000, 32000};
+    const bool v1 = version == 3;
+    h.version = version;
+    h.sampleRate = rates[rateIndex] >> (version == 3 ? 0 : version == 2 ? 1 : 2);
+    h.channels = (p[3] >> 6) == 3 ? 1 : 2;
+    h.frames = v1 ? 1152 : 576;
+    const int bitrate = (v1 ? kbps1 : kbps2)[bitrateIndex] * 1000;
+    h.size = uint32_t((v1 ? 144 : 72) * bitrate / h.sampleRate + padding);
+    return h.size >= 24;
+}
+}
+bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
+    size_t off = 0;
+    if (n >= 10 && std::memcmp(data, "ID3", 3) == 0) {
+        off = 10 + ((size_t(data[6] & 0x7F) << 21) | (size_t(data[7] & 0x7F) << 14) | (size_t(data[8] & 0x7F) << 7) | size_t(data[9] & 0x7F));
+        if (data[5] & 0x10) off += 10;   // footer
+    }
+    // The first frame: a header whose own length leads to another header of the same stream
+    // (or to the end), so stray 0xFF bytes are not taken for audio.
+    Mp3Header first;
+    const size_t scanEnd = std::min(n, off + (64u << 10));
+    for (;; ++off) {
+        if (off + 4 > scanEnd) return false;
+        if (!parseMp3Header(data + off, first)) continue;
+        const size_t next = off + first.size;
+        Mp3Header second;
+        if (next == n) break;
+        if (next + 4 <= n && parseMp3Header(data + next, second) && second.sampleRate == first.sampleRate && second.version == first.version) break;
+    }
+    // A Xing/Info frame describes the stream and holds no audio: AudioFile does not count it.
+    const size_t side = first.version == 3 ? (first.channels == 1 ? 17 : 32) : (first.channels == 1 ? 9 : 17);
+    if (off + 4 + side + 4 <= n && (std::memcmp(data + off + 4 + side, "Xing", 4) == 0 || std::memcmp(data + off + 4 + side, "Info", 4) == 0))
+        off += first.size;
+    out = Mp3Packets{};
+    out.sampleRate = first.sampleRate;
+    out.channels = first.channels;
+    out.framesPerPacket = first.frames;
+    out.dataOffset = uint32_t(off);
+    while (off + 4 <= n) {
+        Mp3Header h;
+        if (!parseMp3Header(data + off, h) || h.sampleRate != first.sampleRate || h.channels != first.channels || off + h.size > n) break;
+        out.packets.emplace_back(uint32_t(off), h.size);
+        out.maxPacketSize = std::max(out.maxPacketSize, h.size);
+        out.dataBytes += h.size;
+        off += h.size;
+    }
+    return !out.packets.empty();
+}
+struct Mp3Stream {
+    mp3dec_t dec;
+    std::vector<uint8_t> carry;   // the tail of the last call that was not a whole frame
+    Mp3Stream() { mp3dec_init(&dec); }
+};
+std::shared_ptr<Mp3Stream> mp3StreamNew() { return std::make_shared<Mp3Stream>(); }
+int mp3StreamDecode(Mp3Stream& s, const uint8_t* data, size_t n, std::vector<int16_t>& stereoOut) {
+    std::vector<uint8_t> joined;
+    if (!s.carry.empty()) {
+        joined = std::move(s.carry);
+        joined.insert(joined.end(), data, data + n);
+        data = joined.data();
+        n = joined.size();
+    }
+    std::vector<int16_t> pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);
+    int rate = 0;
+    size_t off = 0;
+    while (off + 4 <= n) {
+        Mp3Header h;
+        if (!parseMp3Header(data + off, h)) { ++off; continue; }
+        if (off + h.size > n) break;   // the rest of this frame comes with the next packet
+        mp3dec_frame_info_t info{};
+        const int samples = mp3dec_decode_frame(&s.dec, data + off, int(h.size), pcm.data(), &info);
+        off += h.size;
+        if (samples <= 0) continue;    // the first frames of a stream can lack their bit reservoir
+        rate = info.hz;
+        for (int i = 0; i < samples; ++i) {
+            const int16_t l = pcm[size_t(i * info.channels)];
+            stereoOut.push_back(l);
+            stereoOut.push_back(info.channels >= 2 ? pcm[size_t(i * info.channels + 1)] : l);
+        }
+    }
+    std::vector<uint8_t> rest(data + std::min(off, n), data + n);
+    s.carry = std::move(rest);
+    if (s.carry.size() > (64u << 10)) s.carry.clear();   // not MP3 at all
+    return rate;
+}
+
+namespace {
 // MPEG-1/2 layer III (and I/II) via minimp3. Skips an ID3v2 tag first.
 bool decodeMp3(DecodedAudio& out, const uint8_t* data, size_t n) {
     size_t off = 0;
@@ -346,6 +445,9 @@ bool decodeMp3(DecodedAudio& out, const uint8_t* data, size_t n) {
         if (data[5] & 0x10) off += 10;   // footer
     }
     if (off >= n) return false;
+    // Start at the first audio frame: a Xing/Info frame describes the stream and decodes to
+    // 26 ms of silence that is not part of it.
+    if (Mp3Packets index; indexMp3(data, n, index)) off = index.dataOffset;
     auto dec = std::make_unique<mp3dec_t>();
     mp3dec_init(dec.get());
     std::vector<int16_t> pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);

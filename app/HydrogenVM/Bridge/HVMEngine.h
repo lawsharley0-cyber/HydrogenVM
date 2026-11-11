@@ -50,6 +50,14 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly, copy) NSArray<NSString *> *types;
 @end
 
+/// A video file the game wants played (active), or one to take down (not active).
+@interface HVMMovieRequest : NSObject
+@property (nonatomic, readonly) BOOL active;
+@property (nonatomic, readonly) uint64_t requestId;
+/// The file on this device; empty when not active.
+@property (nonatomic, readonly, copy) NSString *path;
+@end
+
 @interface HVMTextInputRequest : NSObject
 @property (nonatomic, readonly) BOOL active;   // NO = hide the keyboard
 /// Identifies the guest focus this request belongs to; every event sent back must echo it.
@@ -111,6 +119,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// faultsToApp (bad accesses handed to the game's signal handler),
 /// missingCount (distinct missing functions/APIs called), timeToFirstFrameMs.
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *diagnostics;
+/// Where the time goes: wallSeconds, guestMIPS (millions of guest instructions per second),
+/// frames (60 Hz frame loop passes), avg/p50/p95/p99/maxFrameMs (time inside one pass),
+/// slowFrames (passes over 16.7 ms), compositeMs, presentWaitMs (GL presents held back to the display rate).
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *perfDetail;
 /// Host output gain, 0...1. Does not change guest audio source gains.
 @property (nonatomic) float outputVolume;
 @property (nonatomic, readonly, getter=isRunning) BOOL running;
@@ -125,6 +137,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 - (void)submitDocument:(nullable NSString *)sourcePath requestId:(uint64_t)requestId;
 @property (nonatomic, copy, nullable) void (^onPhotoPicker)(HVMPhotoPickerRequest *request);
 - (void)submitPhoto:(nullable NSData *)imageData requestId:(uint64_t)requestId;
+/// The game plays or stops a video; the host shows it over the game (main queue).
+@property (nonatomic, copy, nullable) void (^onMovie)(HVMMovieRequest *request);
+/// The video ended, failed or was skipped: the game is told it finished.
+- (void)movieFinished:(uint64_t)requestId;
 /// The player's new full text for the focused guest field (delegate-checked in the guest). Dropped by the guest if
 /// focusId is no longer the focused field's.
 - (void)submitText:(NSString *)text focusId:(uint64_t)focusId sequence:(uint64_t)sequence;

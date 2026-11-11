@@ -105,6 +105,7 @@ struct VCData : ObjC::HostObject {
 struct TextInputRequest;
 struct PhotoPickerRequest;
 struct DocumentPickerRequest;
+struct MovieRequest;
 
 // Per-process UIKit state.
 struct UIState {
@@ -126,6 +127,9 @@ struct UIState {
     int32_t statusBarOrientation = 1;   // UIInterfaceOrientationPortrait
     int32_t initialOrientation = 1;
     bool orientationSetByApp = false;   // the app chose one with setStatusBarOrientation:
+    // Info.plist lists only landscape orientations. Such an app is never shown in portrait
+    // (iOS 6+ intersects the app's list with what a view controller accepts).
+    bool plistLandscapeOnly = false;
     // beginGeneratingDeviceOrientationNotifications was called: on the next frame, post the
     // UIDeviceOrientationDidChangeNotification iOS sends once the device's orientation is known.
     bool deviceOrientationNotePending = false;
@@ -159,6 +163,10 @@ struct UIState {
     id activeDocumentPicker = 0;
     uint64_t documentRequestId = 0;
     bool documentResultDelivered = false;
+    // Host video playback (HostMovie.cpp). All guarded by inputMu.
+    std::function<void(const MovieRequest&)> movieObserver;
+    uint64_t activeMovieId = 0;
+    std::function<void(Ctx&, bool)> movieOnEnd;
     id activePhotoPicker = 0; // retained until dismissal
     uint64_t photoRequestId = 0;
     bool photoResultDelivered = false;
@@ -204,6 +212,23 @@ void submitPhotoPickerResult(Process& p, uint64_t requestId, std::vector<uint8_t
 bool presentPhotoPicker(Ctx& x, id controller);
 void dismissPhotoPicker(Ctx& x, id controller);
 void registerPhotoPicker(Process& p, ObjC::Runtime& r);
+// Video. The runtime decodes no video itself: a movie the guest plays (MPMoviePlayerController,
+// or an AVPlayer on a video file) is handed to the host, which shows it over the game and says
+// when it ended. With no host observer, or a file the host cannot see, the caller keeps its old
+// behaviour (the movie "finishes" at once).
+struct MovieRequest { bool active = false; uint64_t requestId = 0; std::string hostPath; };
+void setMovieObserver(Process& p, std::function<void(const MovieRequest&)> observer);
+// The host finished (or could not play, or the player skipped) the movie it was given.
+void movieFinished(Process& p, uint64_t requestId);
+// Asks the host to play a file. Returns the request id, or 0 if the host cannot play it. onEnd
+// runs exactly once, on the guest's main thread, however the movie ends: with true when the host
+// reports the end, with false when the guest stopped it or another movie replaced it. Whatever
+// the caller keeps alive for the movie is released there.
+uint64_t startHostMovie(Ctx& x, const std::string& hostPath, std::function<void(Ctx&, bool finished)> onEnd);
+// The guest stopped the movie itself: the host removes it, and onEnd(false) runs before this returns.
+void stopHostMovie(Ctx& x, uint64_t requestId);
+// Whether a guest file URL names a video file the host could play; fills its host path.
+bool hostMovieFile(Ctx& x, id url, std::string& hostPath);
 
 inline UIState& ui(Ctx& x) { return ui(x.proc); }
 

@@ -203,9 +203,18 @@ void deliverPendingInput(Ctx& x) {
     auto& r = rt(x);
     static thread_local TapMemory lastTap;
     for (const auto& ht : pending) {
-        if (u.ignoreCount > 0) continue;
         const G::Point sp{ht.x, ht.y};
         auto it = std::find_if(u.activeTouches.begin(), u.activeTouches.end(), [&](auto& t) { return t.hostId == ht.id; });
+        if (u.ignoreCount > 0) {
+            // beginIgnoringInteractionEvents drops events, but a finger that lifts meanwhile is
+            // gone: forget it, or its id stays "down" and that finger never works again.
+            if (ht.phase >= 3 && it != u.activeTouches.end()) {
+                const id t = it->touch;
+                u.activeTouches.erase(it);
+                r.release(x.cpu, t);
+            }
+            continue;
+        }
         id touch = 0;
         if (ht.phase == 0) {
             if (it != u.activeTouches.end()) continue;   // duplicate begin
@@ -218,8 +227,11 @@ void deliverPendingInput(Ctx& x) {
             td.timestamp = ht.time;
             const id event0 = 0;
             id view = hitTest(x, window, td.loc, event0);
-            // a view that isn't multi-touch only gets one touch at a time
-            if (view && !viewData(x, view).multipleTouch) {
+            // A view that isn't multi-touch only gets one touch at a time. The view is asked, as
+            // UIKit asks it: Minecraft's EAGLView never sets the property, it overrides
+            // -isMultipleTouchEnabled to return YES. Read from the stored flag, its second
+            // finger was dropped and the player could not look around while walking.
+            if (view && !(uint32_t(r.send(x.cpu, view, "isMultipleTouchEnabled")) & 0xFF)) {
                 for (auto& at : u.activeTouches) if (at.view == view) { view = 0; break; }
             }
             td.view = view ? r.retain(x.cpu, view) : 0;
@@ -236,6 +248,12 @@ void deliverPendingInput(Ctx& x) {
             if (ht.phase == 1 && td.prev.x == td.loc.x && td.prev.y == td.loc.y) continue;   // no movement: no event
             if (ht.phase >= 3) { lastTap = {sp, ht.time, td.tapCount}; }
         }
+        // One touch changes per event; every other finger still down is UITouchPhaseStationary
+        // and is not delivered again. Left in their last phase, they were re-sent with each
+        // event: a second finger going down gave the first a second touchesBegan:, and a game
+        // that tracks fingers by touch (a held move button under a look finger) then kept
+        // a finger "down" after it lifted.
+        for (auto& at : u.activeTouches) if (at.touch != touch) TD(x, at.touch).phase = 2;
         // build the event with all live touches
         const id event = r.createInstance(u.event);
         EventData& ed = ED(x, event);
@@ -295,6 +313,12 @@ int32_t app_statusBarOrientation(Ctx& x, id, SEL) { return ui(x).statusBarOrient
 void app_setStatusBarOrientation(Ctx& x, id, SEL, int32_t o) {
     auto& u = ui(x);
     if (o < 1 || o > 4) return;
+    if (u.plistLandscapeOnly && o <= 2) {
+        // Minecraft PE's keyboard turned the whole game to portrait and left it there.
+        x.proc.logf(LogLevel::Info, "Orientation: stays %d (the app asked for portrait with setStatusBarOrientation:, but its Info.plist allows landscape only)",
+                    u.statusBarOrientation);
+        return;
+    }
     u.orientationSetByApp = true;
     if (o == u.statusBarOrientation) return;
     x.proc.logf(LogLevel::Info, "Orientation: %d -> %d (setStatusBarOrientation: from the app)", u.statusBarOrientation, o);
@@ -527,6 +551,12 @@ void configureScreen(Ctx& x) {
         }
         u.initialOrientation = orientationFromString(o);
         u.statusBarOrientation = u.initialOrientation;
+        const Plist::Value* list = info->get("UISupportedInterfaceOrientations~iphone");
+        if (!list) list = info->get("UISupportedInterfaceOrientations");
+        if (list && list->type == Plist::Value::Type::Array && !list->array.empty()) {
+            u.plistLandscapeOnly = true;
+            for (const auto& v : list->array) if (orientationFromString(v->s) <= 2) u.plistLandscapeOnly = false;
+        }
     }
     x.proc.logf(LogLevel::Info, "Screen: %gx%g @%gx, %s, status bar %s", u.screenW, u.screenH, u.scale,
                 u.initialOrientation >= 3 ? "landscape" : "portrait", u.statusBarHidden ? "hidden" : "visible");

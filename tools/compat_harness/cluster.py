@@ -236,6 +236,8 @@ def _fault_cluster(report: str) -> dict:
     flat_pc = _HEX.sub("0x", pc)[:160]
     if "unsupported instruction" in head:
         key = "undefined:" + (flat_pc or _squash(head)[:120])
+    elif "the app stopped itself" in head:   # __builtin_trap / assert in the app: not an emulator gap
+        key = "trap:" + (flat_pc or _squash(head)[:120])
     elif "bad memory access" in head:
         key = "memfault:" + area + ":" + (flat_pc or "unknown")
     else:

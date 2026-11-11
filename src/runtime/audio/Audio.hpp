@@ -30,6 +30,28 @@ struct DecodedAudio {
     uint32_t codec = 0;   // the source's format id ('aac ', 'lpcm', ...) when known
 };
 
+// An MP3 stream as AudioFile presents it: compressed packets, one per MPEG frame. Apps that
+// decode through an AudioQueue (FMOD in Unity games) read these packets and enqueue them.
+struct Mp3Packets {
+    int sampleRate = 44100;
+    int channels = 2;
+    uint32_t framesPerPacket = 1152;              // 1152 for MPEG-1, 576 for MPEG-2 and 2.5
+    std::vector<std::pair<uint32_t, uint32_t>> packets;   // offset in the file, byte size
+    uint32_t maxPacketSize = 0;
+    uint32_t dataOffset = 0;                      // of the first audio packet
+    uint64_t dataBytes = 0;                       // sum of the packet sizes
+};
+// Indexes a layer III stream: skips an ID3v2 tag and a Xing/Info header frame, stops at the
+// first thing that is not a frame of the same rate and channel count. False if there is no
+// such stream.
+bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out);
+// Decodes MP3 packets as they arrive, keeping the decoder's state between calls.
+struct Mp3Stream;
+std::shared_ptr<Mp3Stream> mp3StreamNew();
+// Decodes the whole frames in [data, data+n), appending interleaved stereo (mono is doubled);
+// returns the stream's sample rate, or 0 if nothing decoded.
+int mp3StreamDecode(Mp3Stream& s, const uint8_t* data, size_t n, std::vector<int16_t>& stereoOut);
+
 // WAV (PCM 8/16/24/32-bit, float, mono/stereo 4-bit IMA ADPCM), CAF (LPCM, IMA4), AIFF/AIFC, MP3.
 // Unknown formats give no samples and an estimated duration.
 DecodedAudio decode(const uint8_t* data, size_t n);

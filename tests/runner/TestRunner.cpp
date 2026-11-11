@@ -219,6 +219,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 #include "runtime/Support.hpp"
 #include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
+#include "ToneMp3.inc"
 #include "AudioOutput.hpp"
 #include <functional>
 #include <map>
@@ -233,6 +234,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include "runtime/graphics/TrueType.hpp"
 #include "runtime/graphics/Shader.hpp"
 #include "TestFont.hpp"
+#include "DesktopInput.hpp"
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -246,6 +248,7 @@ int runSuspendTests();
 int runGuestCallBoundaryChild(int mode);
 int runThreadLifetimeTests();
 int runThreadLifetimeChild();
+namespace Hydrogen { namespace Runtime { bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c); } }
 int runArenaPoolTests();
 
 namespace {
@@ -1367,6 +1370,7 @@ int runFullSubsystemTests() {
         rejected &= !fragment.compile(deep, false);
         check(rejected, "GLSL rejects invalid writes, types, indexing, #include and excessive nesting");
 
+
         auto near4 = [](const float* g, float r, float gch, float b, float a) {
             return std::abs(g[0] - r) < 1e-5f && std::abs(g[1] - gch) < 1e-5f &&
                    std::abs(g[2] - b) < 1e-5f && std::abs(g[3] - a) < 1e-5f;
@@ -1762,6 +1766,16 @@ int runFullSubsystemTests() {
                   runStage("void main() { vec4 v = vec4(1.0, 2.0, 3.0, 4.0); mat2 m = mat2(1.0, 2.0, 3.0, 4.0); gl_FragColor = vec4(v[2], m[1].x, m[1].y, 1.0); }",
                            false, [](auto&, auto&) {}, o) && near4(o, 3, 3, 4, 1),
               "GLSL rejects out-of-range constant indexes, including float32 literals that do not fit in int");
+        // Literal indexes at the edges of the range check. 16777217 is not a float32;
+        // it rounds to 16777216, still far past a[3]. For vec4 the last valid index
+        // is 3 and the first invalid one is 4; for ivec2 it is 1 and 2. With
+        // v = (0.25, 0.5, 0.75, 1.0), v[3] = 1.0 and v[0] = 0.25.
+        check(shows("float a[4];\nvoid main() { gl_FragColor = vec4(a[16777217]); }", "array index must be an in-range literal") &&
+                  shows("void main() { vec4 v = vec4(1.0); gl_FragColor = vec4(v[4]); }", "array index must be an in-range literal") &&
+                  shows("void main() { ivec2 v = ivec2(1, 2); gl_FragColor = vec4(float(v[2])); }", "array index must be an in-range literal") &&
+                  runStage("void main() { vec4 v = vec4(0.25, 0.5, 0.75, 1.0); gl_FragColor = vec4(v[3], v[0], 0.0, 1.0); }",
+                           false, [](auto&, auto&) {}, o) && near4(o, 1.0f, 0.25f, 0, 1),
+              "GLSL constant index range check accepts the last element and rejects the next");
         {
             Shader::Program warned;
             const bool ok = warned.compile(
@@ -2331,6 +2345,60 @@ int runFullSubsystemTests() {
     // Initialize main thread stack & environment for direct host->guest ObjC calls
     proc.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
     cpu.r[CPU::kSP] = 0xBF000000u - 256;
+    // Crash clues: the crashing thread's last host calls and what they returned, and a
+    // "likely cause" for a NULL access right after a function returned 0 or for a trap.
+    {
+        const uint32_t nilFn = proc.defineFunction("_test_returns_nothing", [](Ctx& x) { x.cpu.r[0] = 0; });
+        const uint32_t okFn = proc.defineFunction("_test_returns_object", [](Ctx& x) { x.cpu.r[0] = 0x1234; });
+        proc.callGuest(cpu, okFn, {});
+        proc.callGuest(cpu, nilFn, {});
+        // files the app failed to open, and the last it opened, are part of the clues
+        {
+            Process fp(ProcessConfig{});
+            for (int i = 0; i < 8; ++i) fp.recordFileOpen("/app/missing" + std::to_string(i) + ".xnb", "open", ENOENT, -1, 0, false);
+            const uint64_t h = fp.recordFileOpen("/app/Content/Manifest.xnb", "fopen", 0, 1234, 0, true);
+            fp.updateFileRead(h, 100);
+            const std::string fc = fp.crashClues(CPU::Exit::MemFault, 0, true);
+            const size_t m2 = fc.find("open /app/missing2.xnb: No such file or directory"), m7 = fc.find("open /app/missing7.xnb: No such file or directory");
+            check(fc.find("files the app could not open (latest last):") != std::string::npos &&
+                  fc.find("missing1.xnb") == std::string::npos && m2 != std::string::npos && m7 != std::string::npos && m2 < m7 &&   // the last six, oldest first
+                  fc.find("fopen /app/Content/Manifest.xnb (1234 bytes, at least 100 read)") != std::string::npos,
+                  "crash clues list the last six files the app could not open and the last files it opened, with sizes");
+            check(Process(ProcessConfig{}).crashClues(CPU::Exit::MemFault, 0, true).find("files") == std::string::npos,
+                  "crash clues say nothing about files when the app touched none");
+        }
+        const std::string nullClues = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        const bool listed = nullClues.find("_test_returns_object -> 0x00001234") != std::string::npos &&
+                            nullClues.find("_test_returns_nothing -> 0x00000000") != std::string::npos &&
+                            nullClues.find("_test_returns_object") < nullClues.find("_test_returns_nothing");
+        const bool blamed = nullClues.find("likely cause: _test_returns_nothing returned 0") != std::string::npos;
+        // Instruction sets: Thumb udf #254 and ARM 0xe7ffdefe are traps; an ARM word whose
+        // high half happens to be 0xdefe (a conditional coprocessor op) is not.
+        const bool trap = proc.crashClues(CPU::Exit::Undefined, 0xdefe981du, true).find("stopped itself on purpose") != std::string::npos &&
+                          proc.crashClues(CPU::Exit::Undefined, 0xe7ffdefeu, false).find("stopped itself on purpose") != std::string::npos;
+        const bool notTrap = proc.crashClues(CPU::Exit::Undefined, 0xee000a10u, true).find("stopped itself") == std::string::npos &&
+                             proc.crashClues(CPU::Exit::Undefined, 0xdefe0010u, false).find("stopped itself") == std::string::npos;
+        // A host call that threw is "did not return", never blamed for the 0 left in r0.
+        const uint32_t throwsFn = proc.defineFunction("_test_throws", [](Ctx& x) { x.cpu.r[0] = 0; throw std::logic_error("test"); });
+        try { proc.callGuest(cpu, throwsFn, {}); } catch (const std::exception&) {}
+        const std::string thrown = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        const bool unfinished = thrown.find("_test_throws (did not return)") != std::string::npos &&
+                                thrown.find("_test_throws returned 0") == std::string::npos &&
+                                thrown.find("likely cause: the crash happened inside _test_throws") != std::string::npos;
+        // More than 12 calls: only the newest 12, oldest first.
+        const uint32_t countFn = proc.defineFunction("_test_count", [](Ctx& x) { x.cpu.r[0] = x.cpu.r[0] + 100; });
+        for (uint32_t k = 1; k <= 14; ++k) proc.callGuest(cpu, countFn, {k});
+        const std::string many = proc.crashClues(CPU::Exit::MemFault, 0, true);
+        size_t shown = 0, pos = 0;
+        while ((pos = many.find("_test_count -> ", pos)) != std::string::npos) { ++shown; ++pos; }
+        const bool newest = shown == 12 && many.find("_test_count -> 0x00000066") == std::string::npos &&   // call 2 (2 + 100) dropped
+                            many.find("_test_count -> 0x00000067") != std::string::npos &&                   // call 3 is the oldest kept
+                            many.find("0x00000067") < many.find("0x00000072") && many.find("_test_throws") == std::string::npos;
+        if (!(listed && blamed && trap && notTrap && unfinished && newest))
+            std::printf("    clues:\n%s%s%s", nullClues.c_str(), thrown.c_str(), many.c_str());
+        check(listed && blamed && trap && notTrap && unfinished && newest,
+              "crash clues list the newest 12 host calls in order with results, blame a 0 result only from a call that returned, and name app traps per instruction set");
+    }
     const uint32_t outerPool = r.poolPush();
 
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.
@@ -2377,6 +2445,23 @@ int runFullSubsystemTests() {
             bool ok=true;
             auto expectRows=[&](uint32_t pred,std::vector<ObjC::id> want,const char* what){ if(matches(pred)!=want){ std::printf("    NSPredicate: %s\n",what); ok=false; } };
             expectRows(fmt("(%K == %@ || %K == %@)",{K,makeString(cx,"a"),K,makeString(cx,"b")}),{a1,a2,b3},"(%K == %@ || %K == %@)");
+            // String operators and IN (Kindle stops on "%K BEGINSWITH %@").
+            const auto T=makeString(cx,"title");
+            auto book=[&](const char* title){return makeDict(cx,{{T,makeString(cx,title)}});};
+            const auto b1=book("Caf\xc3\xa9 Stories"), b2=book("cafe society"), b3t=book("The Last Cafe"), b4=book("Notes");
+            const auto books=makeArray(cx,{b1,b2,b3t,b4});
+            auto bookMatches=[&](uint32_t pred){return arrayItems(cx,call(books,"filteredArrayUsingPredicate:",{pred}));};
+            auto expectBooks=[&](uint32_t pred,std::vector<ObjC::id> want,const char* what){ if(bookMatches(pred)!=want){ std::printf("    NSPredicate: %s\n",what); ok=false; } };
+            expectBooks(fmt("%K BEGINSWITH %@",{T,makeString(cx,"caf")}),{b2},"%K BEGINSWITH %@ (case-sensitive)");
+            expectBooks(fmt("%K BEGINSWITH[c] %@",{T,makeString(cx,"CAF")}),{b1,b2},"BEGINSWITH[c]");
+            expectBooks(fmt("title ENDSWITH[cd] %@",{makeString(cx,"CAFE")}),{b3t},"ENDSWITH[cd]");
+            expectBooks(fmt("title CONTAINS[cd] %@",{makeString(cx,"cafe")}),{b1,b2,b3t},"CONTAINS[cd] folds the accent");
+            expectBooks(fmt("title CONTAINS %@",{makeString(cx,"cafe")}),{b2},"CONTAINS is case- and accent-sensitive");
+            expectBooks(fmt("title BEGINSWITH[d] %@",{makeString(cx,"Cafe")}),{b1},"[d] alone folds the accent and keeps case");
+            expectBooks(fmt("title BEGINSWITH[n] %@",{makeString(cx,"cafe")}),{b2},"[n] changes nothing for composed text");
+            expectBooks(fmt("title LIKE[c] %@",{makeString(cx,"*c?fe*")}),{b2,b3t},"LIKE with * and ?");
+            expectBooks(fmt("title IN %@",{makeArray(cx,{makeString(cx,"Notes"),makeString(cx,"x")})}),{b4},"IN an array");
+            expectBooks(fmt("NOT (title BEGINSWITH 'The') AND title CONTAINS[c] 'CAF'"),{b1,b2},"string operators inside NOT/AND");
             expectRows(fmt("n > 1 AND (kind == 'a' OR kind == 'c')"),{a2,c4},"AND with a parenthesised OR");
             expectRows(fmt("NOT (n >= 3)"),{a1,a2},"NOT (...)");
             expectRows(fmt("!(kind == 'a') && n < 4"),{b3},"! and &&");
@@ -2390,7 +2475,8 @@ int runFullSubsystemTests() {
             expectRows(call(r.getClass("NSCompoundPredicate"),"andPredicateWithSubpredicates:",{makeArray(cx,{})}),{a1,a2,b3,c4},"empty AND is true");
             expectRows(call(r.getClass("NSCompoundPredicate"),"orPredicateWithSubpredicates:",{makeArray(cx,{})}),{},"empty OR is false");
             (void)P;
-            for(const char* bad : {"name IN %@","(kind == 'a'","kind == 'a' extra","kind == 'a' AND","kind CONTAINS 'a'","AND == 1"}) {
+            // IN and CONTAINS are supported now (string operators above); BETWEEN and broken syntax still raise.
+            for(const char* bad : {"n BETWEEN %@","(kind == 'a'","kind == 'a' extra","kind == 'a' AND","kind CONTAINS[x] 'a'","AND == 1"}) {
                 bool rejected=false;
                 try{ fmt(bad,{makeArray(cx,{})}); }catch(const std::exception& e){ rejected=std::string(e.what()).find("unsupported NSPredicate format")!=std::string::npos; }
                 if(!rejected){ std::printf("    NSPredicate: accepted %s\n",bad); ok=false; }
@@ -3949,6 +4035,20 @@ int runFullSubsystemTests() {
         const ObjC::id view = ObjC::id(r.send(cpu, vc, "view"));
         const UIKit::LayerData& vl = UIKit::layerData(cx, UIKit::viewLayer(cx, view));
         const bool rotatedBounds = vl.bounds.w > vl.bounds.h;     // the root view is laid out for landscape
+        // An app whose Info.plist lists landscape only is never turned to portrait: not by a
+        // controller that accepts portrait only, and not by setStatusBarOrientation: (Minecraft PE's
+        // keyboard turned the whole game to portrait and left it there).
+        landscapeOk = false;
+        u.statusBarOrientation = 3;
+        u.plistLandscapeOnly = true;
+        const ObjC::id winL = makeWindow();
+        const ObjC::id vcL = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, winL, "setRootViewController:", {vcL});
+        const bool staysAtRoot = u.statusBarOrientation == 3;
+        r.send(cpu, u.app ? u.app : r.createInstance(r.getClass("UIApplication")), "setStatusBarOrientation:", {1});
+        const bool staysWhenAsked = u.statusBarOrientation == 3 && !u.orientationSetByApp;
+        u.plistLandscapeOnly = false;
+        check(staysAtRoot && staysWhenAsked, "an app that lists landscape only in Info.plist is never turned to portrait");
         // The app's own choice wins.
         landscapeOk = false;
         u.statusBarOrientation = 3;
@@ -4285,6 +4385,111 @@ int runFullSubsystemTests() {
         UIKit::setTextInputObserver(proc, nullptr);
     }
 
+    // GL presents are held to the display rate by a schedule of deadlines. A game driven by the
+    // 60 Hz frame loop is never held (it was, and ran at 50-55 fps on the phone); a game that
+    // presents in a tight loop gets exactly one present per period however late each sleep wakes.
+    {
+        const int64_t ms = 1'000'000;
+        HostGL::PresentPacer grid;
+        int held = 0;
+        int64_t t = 5 * ms;
+        for (int i = 0; i < 600; ++i) {
+            // one present per 16.667 ms frame, give or take 0.8 ms
+            const int64_t at = t + (i % 3 - 1) * (ms * 8 / 10);
+            if (grid.next(at)) ++held;
+            t += 16'666'667;
+        }
+        HostGL::PresentPacer loop;
+        int64_t now = 5 * ms, first = 0, last = 0;
+        int presents = 0;
+        for (int i = 0; i < 600; ++i) {
+            const int64_t until = loop.next(now);
+            if (until) now = until + ms + ms / 2;   // every sleep wakes 1.5 ms late
+            if (!first) first = now;
+            last = now;
+            ++presents;
+            now += ms;                              // 1 ms of work, then the next present
+        }
+        const double period = double(last - first) / double(presents - 1) / double(ms);
+        if (!(held == 0 && period > 16.4 && period < 16.6)) std::printf("    pacing: held %d period %.3f ms\n", held, period);
+        check(held == 0, "a game paced by the 60 Hz frame loop is never held at present");
+        check(period > 16.4 && period < 16.6, "a tight render loop presents once per period, however late its sleeps wake");
+    }
+
+    // Video is played by the host: MPMoviePlayerController hands it the file and stays "playing"
+    // until the host says the movie ended (Goat Simulator's logo, Minion Rush's loading video).
+    // Without a host player the movie finishes at once, as before.
+    {
+        const std::string moviePath = proc.homePath() + "/intro-test.mp4";
+        { std::ofstream file(moviePath, std::ios::binary); file << "not really a movie"; }
+        const auto url = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, moviePath)}));
+        auto newPlayer = [&] {
+            return ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("MPMoviePlayerController"), r.selAlloc)), "initWithContentURL:", {url}));
+        };
+        auto state = [&](ObjC::id player) { return uint32_t(r.send(cpu, player, "playbackState")); };
+        // Runs the main loop for up to a second, or until the condition holds.
+        auto spin = [&](const std::function<bool()>& done) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            while (!done() && std::chrono::steady_clock::now() < deadline) {
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        };
+        auto settle = [&] { const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(120); spin([&] { return std::chrono::steady_clock::now() >= until; }); };
+        const auto plain = newPlayer();
+        r.send(cpu, plain, "play");
+        const bool playsFirst = state(plain) == 1;
+        spin([&] { return state(plain) == 0; });
+        const bool finishesAlone = playsFirst && state(plain) == 0;
+        std::vector<UIKit::MovieRequest> requests;
+        UIKit::setMovieObserver(proc, [&](const UIKit::MovieRequest& q) { requests.push_back(q); });
+        const auto hosted = newPlayer();
+        r.send(cpu, hosted, "play");
+        settle();
+        const bool asked = requests.size() == 1 && requests[0].active && requests[0].requestId && requests[0].hostPath == proc.hostPath(moviePath);
+        const bool stillPlaying = state(hosted) == 1;
+        UIKit::movieFinished(proc, requests.empty() ? 0 : requests[0].requestId + 1000);   // an answer for another movie
+        settle();
+        const bool ignoresStranger = state(hosted) == 1;
+        UIKit::movieFinished(proc, requests.empty() ? 0 : requests[0].requestId);
+        spin([&] { return state(hosted) == 0; });
+        const bool ended = state(hosted) == 0 && requests.size() == 2 && !requests[1].active &&
+                           requests[1].requestId == requests[0].requestId;
+        // The game stops a movie itself (a tap to skip): the host is told to take it down.
+        const auto skipped = newPlayer();
+        r.send(cpu, skipped, "play");
+        r.send(cpu, skipped, "stop");
+        settle();
+        const bool stopped = requests.size() == 4 && requests[2].active && !requests[3].active && requests[3].requestId == requests[2].requestId &&
+                             state(skipped) == 0;
+        // An AVPlayer on a video file goes the same way; replacing its item takes the video down.
+        const size_t before = requests.size();
+        const auto av = ObjC::id(r.send(cpu, r.getClass("AVPlayer"), "playerWithURL:", {url}));
+        r.send(cpu, av, "play");
+        settle();
+        const bool avAsked = requests.size() == before + 1 && requests.back().active;
+        const uint64_t avId = requests.back().requestId;
+        r.send(cpu, av, "replaceCurrentItemWithPlayerItem:", {0});
+        const bool avReplaced = requests.size() == before + 2 && !requests.back().active && requests.back().requestId == avId;
+        // Starting a second movie while one plays ends the first (its player is let go).
+        const auto first = newPlayer(), second = newPlayer();
+        r.send(cpu, first, "play");
+        r.send(cpu, second, "play");
+        settle();
+        const bool replacedFirst = state(second) == 1 && requests.size() == before + 5 && !requests[before + 3].active;
+        r.send(cpu, second, "stop");
+        settle();
+        UIKit::setMovieObserver(proc, nullptr);
+        check(avAsked && avReplaced, "an AVPlayer's video file is handed to the host, and replacing its item takes it down");
+        check(replacedFirst, "a second movie replaces the one that is playing");
+        if (!(asked && stillPlaying && ignoresStranger && ended && stopped))
+            std::printf("    movie: asked %d playing %d stranger %d ended %d stopped %d requests %zu\n", asked, stillPlaying, ignoresStranger, ended, stopped, requests.size());
+        check(finishesAlone, "without a host player a movie finishes at once");
+        check(asked && stillPlaying, "a movie file is handed to the host and stays playing");
+        check(ignoresStranger && ended, "the movie ends when the host reports its own request finished, and the host is told to take it down");
+        check(stopped, "a movie the game stops is taken down on the host");
+    }
+
     // Photo-library presentation is a shared host service, with guest-main-loop delivery.
     {
         std::vector<UIKit::PhotoPickerRequest> requests;
@@ -4498,6 +4703,630 @@ int runFullSubsystemTests() {
         const auto validItems = Runtime::Foundation::arrayItems(cx, validArrBack);
         const std::string validDesc = validItems.empty() ? std::string() : Runtime::Foundation::utf8(cx, validItems[0]);
         check(!validItems.empty() && validDesc == "validStringValue", "NSUserDefaults preserves nested supported plist values across round-trip");
+    }
+
+    // Multi-touch delivery. Each event carries one changed finger; the others still down are
+    // UITouchPhaseStationary and are not sent to the view again. A game's held move button
+    // stuck "down" when a second finger (looking around) made the first finger's
+    // touchesBegan: arrive twice. Expected calls are written out by hand below.
+    {
+        auto& u = UIKit::ui(cx);
+        const ObjC::id savedApp = u.app, savedKey = u.keyWindow;
+        if (!u.app) u.app = r.createInstance(r.getClass("UIApplication"));
+        std::vector<std::string> calls;
+        std::vector<ObjC::id> seen;   // touch objects in order of first appearance: A, B, ...
+        int stationaryOthers = -1, touchesInEndEvent = -1;
+        auto letters = [&](Ctx& rx, ObjC::id set) {
+            std::string out;
+            for (ObjC::id t : Runtime::Foundation::setItems(rx, set)) {
+                auto it = std::find(seen.begin(), seen.end(), t);
+                if (it == seen.end()) { seen.push_back(t); it = seen.end() - 1; }
+                out += char('A' + (it - seen.begin()));
+            }
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        auto logCls = r.defineClass("HVMTouchLogView", "UIView");
+        logCls.method("touchesBegan:withEvent:", [&](Ctx& rx) { calls.push_back("began:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesMoved:withEvent:", [&](Ctx& rx) { calls.push_back("moved:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesCancelled:withEvent:", [&](Ctx& rx) { calls.push_back("cancelled:" + letters(rx, rx.cpu.r[2])); }, "v@:@@");
+        logCls.method("touchesEnded:withEvent:", [&](Ctx& rx) {
+            const ObjC::id touches = rx.cpu.r[2], event = rx.cpu.r[3];
+            calls.push_back("ended:" + letters(rx, touches));
+            if (stationaryOthers >= 0) return;   // only the first lift is inspected
+            // The event still lists every finger; the ones that did not change are stationary (2).
+            const auto ended = Runtime::Foundation::setItems(rx, touches);
+            const auto all = Runtime::Foundation::setItems(rx, ObjC::id(r.send(rx.cpu, event, "allTouches")));
+            touchesInEndEvent = int(all.size());
+            stationaryOthers = 0;
+            for (ObjC::id t : all)
+                if (std::find(ended.begin(), ended.end(), t) == ended.end() && int32_t(r.send(rx.cpu, t, "phase")) == 2) ++stationaryOthers;
+        }, "v@:@@");
+        const ObjC::id win = UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        r.send(cpu, win, "makeKeyAndVisible");
+        const ObjC::id pad = UIKit::sendRect(cx, ObjC::id(r.send(cpu, logCls.cls(), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+        r.send(cpu, pad, "setMultipleTouchEnabled:", {1});
+        r.send(cpu, win, "addSubview:", {pad});
+        using TP = Runtime::TouchPhase;
+        auto touch = [&](TP phase, float tx, float ty, uint32_t finger) {
+            proc.injectTouch(phase, tx, ty, finger);
+            UIKit::deliverPendingInput(cx);
+        };
+        touch(TP::Began, 50, 400, 1);    // move button
+        touch(TP::Began, 250, 100, 2);   // look finger goes down while the first is held
+        touch(TP::Moved, 240, 110, 2);
+        touch(TP::Moved, 60, 400, 1);
+        touch(TP::Ended, 60, 400, 1);    // move button released; the look finger stays
+        touch(TP::Moved, 230, 120, 2);
+        touch(TP::Ended, 230, 120, 2);
+        const std::vector<std::string> want = {"began:A", "began:B", "moved:B", "moved:A", "ended:A", "moved:B", "ended:B"};
+        if (calls != want) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+        check(calls == want && touchesInEndEvent == 2 && stationaryOthers == 1,
+              "each touch event delivers only the finger that changed; fingers held still are stationary, not begun or moved again");
+        // A view can enable multi-touch by overriding the getter instead of setting the property
+        // (Minecraft's EAGLView): a second finger on it is delivered. Without either, the second
+        // finger on the same view is not.
+        {
+            auto overrideCls = r.defineClass("HVMTouchGetterView", "HVMTouchLogView");
+            overrideCls.method("isMultipleTouchEnabled", [](Ctx& rx) { rx.cpu.r[0] = 1; }, "c@:");
+            for (const bool byGetter : {true, false}) {
+                r.send(cpu, pad, "setHidden:", {1});
+                const ObjC::id v = UIKit::sendRect(cx, ObjC::id(r.send(cpu, byGetter ? overrideCls.cls() : logCls.cls(), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+                r.send(cpu, win, "addSubview:", {v});
+                calls.clear();
+                seen.clear();
+                touch(TP::Began, 50, 400, 11);
+                touch(TP::Began, 250, 100, 12);
+                touch(TP::Moved, 240, 110, 12);
+                touch(TP::Ended, 240, 110, 12);
+                touch(TP::Ended, 50, 400, 11);
+                const std::vector<std::string> both = {"began:A", "began:B", "moved:B", "ended:B", "ended:A"}, one = {"began:A", "ended:A"};
+                if (calls != (byGetter ? both : one)) { std::printf("    getter %d touch calls:", byGetter); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+                check(calls == (byGetter ? both : one),
+                      byGetter ? "a view that overrides -isMultipleTouchEnabled receives a second finger"
+                               : "a view without multi-touch receives only its first finger");
+                r.send(cpu, v, "removeFromSuperview");
+                r.send(cpu, pad, "setHidden:", {0});
+            }
+        }
+        // A finger that lifts while the app ignores interaction events is forgotten, so the
+        // same finger works again afterwards (it used to stay "down" forever).
+        calls.clear();
+        touch(TP::Began, 100, 100, 5);
+        r.send(cpu, u.app, "beginIgnoringInteractionEvents");
+        touch(TP::Ended, 100, 100, 5);
+        const size_t whileIgnoring = calls.size();   // 1: the began; the lift is dropped
+        r.send(cpu, u.app, "endIgnoringInteractionEvents");
+        touch(TP::Began, 100, 100, 5);
+        touch(TP::Ended, 100, 100, 5);
+        size_t begans = 0, endeds = 0;
+        for (const auto& c : calls) { begans += c.rfind("began:", 0) == 0; endeds += c.rfind("ended:", 0) == 0; }
+        if (!(whileIgnoring == 1 && begans == 2 && endeds == 1)) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+        check(whileIgnoring == 1 && begans == 2 && endeds == 1, "a finger lifted during beginIgnoringInteractionEvents can touch again afterwards");
+        // An input-file line goes through the same applyTouch the hvm loop calls and reaches UIKit
+        // with its finger id: "touch 0 100 100 7" makes host finger 7 active (not the default 1),
+        // and "touch 3 100 100 7" ends that same finger.
+        calls.clear();
+        auto activeIds = [&] { std::vector<uint32_t> ids; for (const auto& at : u.activeTouches) ids.push_back(at.hostId); return ids; };
+        const bool downOk = DesktopInput::applyTouch(proc, "touch 0 100 100 7", true);
+        UIKit::deliverPendingInput(cx);
+        const auto whileDown = activeIds();
+        const bool upOk = DesktopInput::applyTouch(proc, "touch 3 100 100 7", true);
+        UIKit::deliverPendingInput(cx);
+        const auto afterUp = activeIds();
+        const bool badRejected = !DesktopInput::applyTouch(proc, "touch 0 100 100 two", true);
+        UIKit::deliverPendingInput(cx);
+        if (whileDown != std::vector<uint32_t>{7}) { std::printf("    active host ids:"); for (auto i : whileDown) std::printf(" %u", i); std::printf("\n"); }
+        check(downOk && upOk && badRejected && whileDown == std::vector<uint32_t>{7} && afterUp.empty() && calls.size() == 2 &&
+              calls[0].rfind("began:", 0) == 0 && calls[1].rfind("ended:", 0) == 0,
+              "an input-file touch line reaches UIKit with its own finger id");
+        r.send(cpu, win, "setHidden:", {1});
+        u.app = savedApp;
+        if (savedKey) u.keyWindow = savedKey;
+    }
+
+    // `hvm run --input-file` touch lines: the optional finger field reaches injectTouch, and a
+    // malformed one rejects the line instead of silently meaning finger 1. Expected values are
+    // read off each literal line by hand.
+    {
+        using DesktopInput::parseTouch;
+        const auto two = parseTouch("touch 0 100 200 2");
+        const auto dflt = parseTouch("touch 3 12.5 40");
+        const auto crlf = parseTouch("touch 1 7 8 10\r");
+        const bool fingerKept = two && two->phase == 0 && two->x == 100.0f && two->y == 200.0f && two->finger == 2;
+        const bool defaultOne = dflt && dflt->phase == 3 && dflt->x == 12.5f && dflt->y == 40.0f && dflt->finger == 1;
+        const bool maxFinger = crlf && crlf->phase == 1 && crlf->finger == 10;
+        int wronglyAccepted = 0;
+        for (const char* bad : {"touch 3 100 200 two", "touch 3 100 200 2x", "touch 3 100 200 11", "touch 3 100 200 -1",
+                                "touch 3 100 200 +2", "touch 3 100 200 2 3", "touch 2 100 200", "touch 0 nan 200",
+                                "touch 0 100 200y", "touch 0 100", "touchy 0 100 200"})
+            if (parseTouch(bad)) { std::printf("    accepted: %s\n", bad); ++wronglyAccepted; }
+        // A NUL inside a field is part of the token, not its end: finger "1\0x" and y "200\0x" are invalid.
+        using namespace std::string_view_literals;
+        for (std::string_view bad : {"touch 3 100 200 1\0x"sv, "touch 3 100 200\0x 2"sv})
+            if (parseTouch(bad)) { std::printf("    accepted a field with an embedded NUL\n"); ++wronglyAccepted; }
+        check(fingerKept && defaultOne && maxFinger && wronglyAccepted == 0,
+              "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
+    }
+
+    // NSGetSizeAndAlignment (armv7 iOS layout, worked out by hand): the size and alignment of the
+    // first encoded type, and a pointer to the next one. Dungeon Raid's PHInvocation sizes its
+    // argument buffers with it.
+    {
+        const uint32_t out = proc.heap().allocZeroed(8);
+        struct Case { const char* type; uint32_t size, align, consumed; };
+        const Case cases[] = {
+            {"i", 4, 4, 1}, {"c", 1, 1, 1}, {"s", 2, 2, 1}, {"q", 8, 4, 1}, {"d", 8, 4, 1}, {"@", 4, 4, 1}, {":", 4, 4, 1},
+            {"@8:12", 4, 4, 2},                                // an argument with its frame offset
+            {"^{CGRect={CGPoint=ff}{CGSize=ff}}i", 4, 4, 33},  // a pointer skips its pointee; the i is the next type
+            {"{CGRect={CGPoint=ff}{CGSize=ff}}", 16, 4, 32},
+            {"{pair=cq}", 12, 4, 9},                           // c at 0, q at 4 (8-byte scalars align to 4)
+            {"{mix=csc}", 6, 2, 9},                            // c at 0, s at 2, c at 4, padded to 6
+            {"[3s]", 6, 2, 4},
+            {"(u=cd)", 8, 4, 6},
+            {"r*", 4, 4, 2},                                   // const char*
+            {"@\"NSString\"i", 4, 4, 11},
+        };
+        bool ok = true;
+        for (const Case& c : cases) {
+            const uint32_t text = proc.heap().allocZeroed(uint32_t(std::strlen(c.type)) + 1);
+            std::memcpy(proc.mem().host(text), c.type, std::strlen(c.type) + 1);
+            proc.mem().write<uint32_t>(out, 0xDEAD);
+            proc.mem().write<uint32_t>(out + 4, 0xDEAD);
+            const uint32_t next = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_NSGetSizeAndAlignment"), {text, out, out + 4}));
+            const uint32_t size = proc.mem().read<uint32_t>(out), align = proc.mem().read<uint32_t>(out + 4);
+            if (size != c.size || align != c.align || next != text + c.consumed) {
+                std::printf("    NSGetSizeAndAlignment(\"%s\"): size %u align %u consumed %u\n", c.type, size, align, next - text);
+                ok = false;
+            }
+        }
+        check(ok, "NSGetSizeAndAlignment sizes scalars, structs, arrays, unions and pointers and returns the next type");
+    }
+
+    // libc++ iostreams, the part that lives in the dylib (Minecraft PE 0.10 builds its
+    // stringstreams itself and imports this). A stream is made by hand over the base
+    // streambuf with a 64-byte put area; expected text worked out by hand.
+    {
+        auto sym = [&](const char* n) { return *proc.lookupSymbol(n); };
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, sym(n), a)); };
+        auto& m = proc.mem();
+        const char* OS = "__ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE";
+        auto os = [&](const char* suffix) { return std::string(OS) + suffix; };
+        // vtable: vbase offset 4 at vptr-12, offset to top 0
+        const uint32_t vt = proc.heap().allocZeroed(16);
+        m.write<uint32_t>(vt, 4);
+        auto makeStream = [&](uint32_t sb) {
+            const uint32_t st = proc.heap().allocZeroed(4 + 80);
+            m.write<uint32_t>(st, vt + 12);
+            call("__ZNSt3__18ios_base4initEPv", {st + 4, sb});
+            return st;
+        };
+        const uint32_t sb = proc.heap().allocZeroed(32), area = proc.heap().allocZeroed(64);
+        call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {sb});
+        m.write<uint32_t>(sb + 20, area); m.write<uint32_t>(sb + 24, area); m.write<uint32_t>(sb + 28, area + 64);
+        const uint32_t st = makeStream(sb), ios = st + 4;
+
+        // basic_ios::init (in the app) widens ' ' through the locale's ctype facet for the fill
+        const uint32_t loc = proc.heap().allocZeroed(4);
+        call("__ZNKSt3__18ios_base6getlocEv", {loc, ios});
+        const uint32_t ctypeId = sym("__ZNSt3__15ctypeIcE2idE"), codecvtId = sym("__ZNSt3__17codecvtIcc11__mbstate_tE2idE");
+        const uint32_t ct = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, ctypeId});
+        const uint32_t cv = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, codecvtId});
+        auto virt = [&](uint32_t obj, uint32_t slot, std::initializer_list<uint32_t> a) {
+            std::vector<uint32_t> args{obj}; args.insert(args.end(), a);
+            return uint32_t(proc.callGuest(cpu, m.read<uint32_t>(m.read<uint32_t>(obj) + slot * 4), args));
+        };
+        const uint32_t unknownId = proc.heap().allocZeroed(8);
+        const bool facets = ct && cv && virt(ct, 7, {' '}) == ' ' && virt(ct, 3, {'q'}) == 'Q' && virt(ct, 5, {'Q'}) == 'q' &&
+            virt(ct, 9, {0xE9, '?'}) == '?' && virt(cv, 7, {}) == 1 && virt(cv, 6, {}) == 1 &&
+            (m.read<uint32_t>(m.read<uint32_t>(ct + 8) + ' ' * 4) & 0x4000) != 0 &&      // the mask table: space is _CTYPE_S
+            (m.read<uint32_t>(m.read<uint32_t>(ct + 8) + 'a' * 4) & 0x4000) == 0 &&
+            (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, ctypeId}) & 0xFF) == 1 &&
+            (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, unknownId}) & 0xFF) == 0;
+        check(facets, "libc++ locale: ctype<char> and codecvt<char,char> facets widen, map case, narrow and report no conversion");
+        m.write<uint32_t>(ios + 76, virt(ct, 7, {' '}));
+
+        call(os("lsEi").c_str(), {st, uint32_t(-42)});
+        m.write<uint32_t>(ios + 12, 6);                                       // width 6, for one insertion
+        call(os("lsEi").c_str(), {st, 7});
+        const bool widthReset = m.read<uint32_t>(ios + 12) == 0;
+        const uint32_t flags = m.read<uint32_t>(ios + 4);
+        m.write<uint32_t>(ios + 4, (flags & ~2u) | 8u | 512u);                // hex | showbase
+        call(os("lsEm").c_str(), {st, 255});
+        m.write<uint32_t>(ios + 4, flags);
+        call(os("lsEb").c_str(), {st, 1});
+        m.write<uint32_t>(ios + 4, flags | 1u);                               // boolalpha
+        call(os("lsEb").c_str(), {st, 1});
+        m.write<uint32_t>(ios + 4, flags);
+        const double d = 1.5; uint64_t db; std::memcpy(&db, &d, 8);
+        call(os("lsEd").c_str(), {st, uint32_t(db), uint32_t(db >> 32)});
+        const float f = 0.25f; uint32_t fb; std::memcpy(&fb, &f, 4);
+        call(os("lsEf").c_str(), {st, fb});
+        const int64_t big = -5000000000LL;
+        call(os("lsEx").c_str(), {st, uint32_t(uint64_t(big)), uint32_t(uint64_t(big) >> 32)});
+        call(os("lsEPKv").c_str(), {st, 0x1234});
+        const uint32_t abc = proc.heap().allocZeroed(4);
+        std::memcpy(m.host(abc), "abc", 3);
+        call(os("5writeEPKci").c_str(), {st, abc, 2});
+        call(os("lsEs").c_str(), {st, uint32_t(-3)});
+        const std::string want = "-42     70xff1true1.50.25-50000000000x1234ab-3";
+        const uint32_t wrote = m.read<uint32_t>(sb + 24) - area;
+        const std::string got(reinterpret_cast<const char*>(m.host(area)), wrote);
+        if (got != want) std::printf("    libc++ ostream wrote \"%s\"\n", got.c_str());
+        check(got == want && widthReset && m.read<uint32_t>(ios + 16) == 0,
+              "libc++ ostream: operator<< for int, unsigned long, bool, double, float, long long, pointer and short, and write()");
+
+        // fixed notation with precision 600: "1." and 600 zeros, 602 characters, none lost
+        {
+            const uint32_t bigSb = proc.heap().allocZeroed(32), bigArea = proc.heap().allocZeroed(700);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {bigSb});
+            m.write<uint32_t>(bigSb + 20, bigArea); m.write<uint32_t>(bigSb + 24, bigArea); m.write<uint32_t>(bigSb + 28, bigArea + 700);
+            const uint32_t bigSt = makeStream(bigSb);
+            m.write<uint32_t>(bigSt + 4 + 76, ' ');
+            m.write<uint32_t>(bigSt + 4 + 4, m.read<uint32_t>(bigSt + 4 + 4) | 4u);   // fixed
+            m.write<uint32_t>(bigSt + 4 + 8, 600);                                     // precision
+            const double one = 1.0; uint64_t ob; std::memcpy(&ob, &one, 8);
+            call(os("lsEd").c_str(), {bigSt, uint32_t(ob), uint32_t(ob >> 32)});
+            const uint32_t len = m.read<uint32_t>(bigSb + 24) - bigArea;
+            const std::string longText(reinterpret_cast<const char*>(m.host(bigArea)), len);
+            check(longText == "1." + std::string(600, '0'), "libc++ ostream: a 602-character fixed-notation double is written whole");
+            // the base streambuf's seekpos answers -1, which libc++ keeps after the 128-byte state
+            const uint32_t posOut = proc.heap().allocZeroed(136), posIn = proc.heap().allocZeroed(136);
+            cpu.r[13] -= 256;
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", {posOut, bigSb, posIn, 8});
+            cpu.r[13] += 256;
+            check(int64_t(m.read<uint64_t>(posOut + 128)) == -1 && m.read<uint32_t>(posOut) == 0,
+                  "libc++ streambuf::seekpos on the base class returns position -1 in libc++'s fpos layout");
+        }
+
+        // a full buffer: the base overflow refuses, so the stream goes bad|fail and stops writing
+        m.write<uint32_t>(sb + 28, m.read<uint32_t>(sb + 24));
+        call(os("lsEi").c_str(), {st, 1});
+        const uint32_t stateFull = m.read<uint32_t>(ios + 16);
+        const uint32_t sentry = proc.heap().allocZeroed(8);
+        call(os("6sentryC1ERS3_").c_str(), {sentry, st});
+        const bool sentryBad = m.read<uint8_t>(sentry) == 0 && m.read<uint32_t>(sentry + 4) == st;
+        call("__ZNSt3__18ios_base5clearEj", {ios, 0});
+        call(os("6sentryC1ERS3_").c_str(), {sentry, st});
+        check(stateFull == 5 && sentryBad && m.read<uint8_t>(sentry) == 1,
+              "libc++ ostream: a refused write sets badbit|failbit; the sentry is false until clear()");
+
+        // istream::sentry skips whitespace through the get area; only whitespace is failbit|eofbit
+        auto input = [&](const char* text) {
+            const uint32_t isb = proc.heap().allocZeroed(32), buf = proc.heap().allocZeroed(16);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {isb});
+            std::memcpy(m.host(buf), text, std::strlen(text));
+            m.write<uint32_t>(isb + 8, buf); m.write<uint32_t>(isb + 12, buf); m.write<uint32_t>(isb + 16, buf + uint32_t(std::strlen(text)));
+            return std::pair<uint32_t, uint32_t>(isb, buf);
+        };
+        const char* IS = "__ZNSt3__113basic_istreamIcNS_11char_traitsIcEEE6sentryC1ERS3_b";
+        const auto [isb1, buf1] = input("  \tx y");
+        const uint32_t is1 = makeStream(isb1);
+        call(IS, {sentry, is1, 0});
+        const bool skipOk = m.read<uint8_t>(sentry) == 1 && m.read<uint32_t>(isb1 + 12) == buf1 + 3 && m.read<uint32_t>(is1 + 4 + 16) == 0;
+        const auto [isb2, buf2] = input("  \tx");
+        const uint32_t is2 = makeStream(isb2);
+        call(IS, {sentry, is2, 1});                                           // noskipws: nothing consumed
+        const bool noskipOk = m.read<uint8_t>(sentry) == 1 && m.read<uint32_t>(isb2 + 12) == buf2;
+        const auto [isb3, buf3] = input("  ");
+        const uint32_t is3 = makeStream(isb3);
+        call(IS, {sentry, is3, 0});
+        const bool eofOk = m.read<uint8_t>(sentry) == 0 && m.read<uint32_t>(is3 + 4 + 16) == 6 && m.read<uint32_t>(isb3 + 12) == buf3 + 2;
+        if (!(skipOk && noskipOk && eofOk)) std::printf("    istream sentry: skip %d noskip %d eof %d\n", skipOk, noskipOk, eofOk);
+        check(skipOk && noskipOk && eofOk, "libc++ istream::sentry skips leading whitespace, honours noskipws, and fails at end of input");
+
+        // unformatted and formatted input (Terraria reads its data files with these). The stream
+        // layout here is vptr, gcount, then basic_ios at +8.
+        {
+            const uint32_t vt8 = proc.heap().allocZeroed(16);
+            m.write<uint32_t>(vt8, 8);
+            auto makeIn = [&](const char* text) {
+                const auto [isb, buf] = input(text);
+                const uint32_t st2 = proc.heap().allocZeroed(8 + 80);
+                m.write<uint32_t>(st2, vt8 + 12);
+                call("__ZNSt3__18ios_base4initEPv", {st2 + 8, isb});
+                return std::pair<uint32_t, uint32_t>(st2, isb);
+            };
+            const std::string I = "__ZNSt3__113basic_istreamIcNS_11char_traitsIcEEE";
+            const auto [in1, sb1] = makeIn("ab\ncd  -42x");
+            const uint32_t line = proc.heap().allocZeroed(16), num = proc.heap().allocZeroed(4);
+            call((I + "7getlineEPcic").c_str(), {in1, line, 16, '\n'});
+            const bool lineOk = proc.readCString(line) == "ab" && m.read<uint32_t>(in1 + 4) == 3 && m.read<uint32_t>(in1 + 8 + 16) == 0;
+            call((I + "4readEPci").c_str(), {in1, line, 2});
+            const bool readOk = std::memcmp(m.host(line), "cd", 2) == 0 && m.read<uint32_t>(in1 + 4) == 2;
+            call((I + "rsERi").c_str(), {in1, num});
+            const bool intOk = int32_t(m.read<uint32_t>(num)) == -42 && m.read<uint32_t>(in1 + 8 + 16) == 0 &&
+                               (call((I + "4peekEv").c_str(), {in1}) & 0xFF) == 'x';
+            // 3 bytes asked, 1 left: the count is 1 and the stream is failbit|eofbit
+            call((I + "4readEPci").c_str(), {in1, line, 3});
+            const bool shortOk = m.read<uint32_t>(in1 + 4) == 1 && m.read<uint32_t>(in1 + 8 + 16) == 6;
+            // the base streambuf cannot seek: tellg is -1 (the offset follows the 128-byte state), seekg sets failbit
+            const auto [in2, sb2] = makeIn("xyz");
+            const uint32_t pos = proc.heap().allocZeroed(136);
+            call((I + "5tellgEv").c_str(), {pos, in2});
+            const bool tellOk = int64_t(m.read<uint64_t>(pos + 128)) == -1 && m.read<uint32_t>(in2 + 8 + 16) == 0;
+            cpu.r[13] -= 64;
+            call((I + "5seekgExNS_8ios_base7seekdirE").c_str(), {in2, 0, 0, 2});
+            cpu.r[13] += 64;
+            const bool seekOk = m.read<uint32_t>(in2 + 8 + 16) == 4;
+            const auto [in3, sb3] = makeIn("zz");
+            call((I + "rsERi").c_str(), {in3, num});
+            const bool notNumber = m.read<uint32_t>(num) == 0 && m.read<uint32_t>(in3 + 8 + 16) == 4;
+            (void)sb1; (void)sb2; (void)sb3;
+            if (!(lineOk && readOk && intOk && shortOk && tellOk && seekOk && notNumber))
+                std::printf("    libc++ istream: line %d read %d int %d short %d tell %d seek %d nan %d\n", lineOk, readOk, intOk, shortOk, tellOk, seekOk, notNumber);
+            check(lineOk && readOk && intOk && shortOk && tellOk && seekOk && notNumber,
+                  "libc++ istream: getline, read, operator>>(int), peek, a short read, tellg and seekg on a buffer that cannot seek");
+        }
+
+        // A std::iostream built the way an app's inline constructor does it, from the dylib's
+        // vtable: istream vptr at +0, ostream vptr at +8, basic_ios at +12 (Terraria).
+        {
+            const uint32_t ztv = sym("__ZTVNSt3__114basic_iostreamIcNS_11char_traitsIcEEEE");
+            const uint32_t ztt = sym("__ZTTNSt3__114basic_iostreamIcNS_11char_traitsIcEEEE");
+            const bool offsets = int32_t(m.read<uint32_t>(ztv)) == 12 && m.read<uint32_t>(ztv + 4) == 0 &&       // istream part
+                                 int32_t(m.read<uint32_t>(ztv + 20)) == 4 && int32_t(m.read<uint32_t>(ztv + 24)) == -8 &&   // ostream part at +8
+                                 int32_t(m.read<uint32_t>(ztv + 40)) == -12 && int32_t(m.read<uint32_t>(ztv + 44)) == -12 && // basic_ios at +12
+                                 m.read<uint32_t>(ztt) == ztv + 12 && m.read<uint32_t>(ztt + 20) == ztv + 52 && m.read<uint32_t>(ztt + 24) == ztv + 32 &&
+                                 int32_t(m.read<uint32_t>(m.read<uint32_t>(ztt + 4) - 12)) == 12 &&    // istream while constructing: basic_ios 12 on
+                                 int32_t(m.read<uint32_t>(m.read<uint32_t>(ztt + 12) - 12)) == 4;      // ostream while constructing: basic_ios 4 on
+            const uint32_t obj = proc.heap().allocZeroed(12 + 80);
+            m.write<uint32_t>(obj, ztv + 12);
+            m.write<uint32_t>(obj + 8, ztv + 32);
+            m.write<uint32_t>(obj + 12, ztv + 52);
+            const uint32_t iosb = proc.heap().allocZeroed(32), ioArea = proc.heap().allocZeroed(16);
+            call("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEEC2Ev", {iosb});
+            m.write<uint32_t>(iosb + 20, ioArea); m.write<uint32_t>(iosb + 24, ioArea); m.write<uint32_t>(iosb + 28, ioArea + 16);
+            call("__ZNSt3__18ios_base4initEPv", {obj + 12, iosb});
+            const uint32_t text = proc.heap().allocZeroed(4);
+            std::memcpy(m.host(text), "hey", 3);
+            call(os("5writeEPKci").c_str(), {obj + 8, text, 3});                    // through the ostream half
+            const bool wrote = std::memcmp(m.host(ioArea), "hey", 3) == 0 && m.read<uint32_t>(obj + 12 + 16) == 0;
+            // `delete` through the basic_ios subobject frees the whole stream
+            proc.callGuest(cpu, m.read<uint32_t>(m.read<uint32_t>(obj + 12) + 4), {obj + 12});
+            check(offsets && wrote && proc.heap().blockSize(obj) == 0,
+                  "libc++ vtable and VTT for std::iostream: base offsets, a write through the ostream half, delete through basic_ios");
+        }
+
+        // Wide streams (Terraria formats "Gender (1/9)" through a wostringstream; with no
+        // ctype<wchar_t> facet it crashed when a character was created). wchar_t is 4 bytes.
+        {
+            const uint32_t wid = sym("__ZNSt3__15ctypeIwE2idE");
+            const uint32_t wct = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, wid});
+            const bool wfacet = wct && virt(wct, 11, {' '}) == ' ' && virt(wct, 7, {'q'}) == 'Q' && virt(wct, 9, {'Q'}) == 'q' &&
+                                virt(wct, 13, {0x263A, '?'}) == '?' && virt(wct, 13, {'z', '?'}) == 'z' &&
+                                (virt(wct, 3, {0x4000, ' '}) & 0xFF) == 1 && (virt(wct, 3, {0x4000, 'a'}) & 0xFF) == 0 &&
+                                (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, wid}) & 0xFF) == 1;
+            const char* WSB = "__ZNSt3__115basic_streambufIwNS_11char_traitsIwEEE";
+            const uint32_t wsb = proc.heap().allocZeroed(32), warea = proc.heap().allocZeroed(64);
+            call((std::string(WSB) + "C2Ev").c_str(), {wsb});
+            m.write<uint32_t>(wsb + 20, warea); m.write<uint32_t>(wsb + 24, warea); m.write<uint32_t>(wsb + 28, warea + 64);
+            const uint32_t wst = makeStream(wsb);
+            m.write<uint32_t>(wst + 4 + 76, 0xFFFFFFFFu);                         // fill not yet widened: a space
+            const char* WOS = "__ZNSt3__113basic_ostreamIwNS_11char_traitsIwEEElsEi";
+            call(WOS, {wst, uint32_t(-42)});
+            m.write<uint32_t>(wst + 4 + 12, 4);                                   // width 4
+            m.write<uint32_t>(wst + 4 + 76, '*');
+            call(WOS, {wst, 7});
+            const uint32_t wantWide[7] = {'-', '4', '2', '*', '*', '*', '7'};
+            const bool wrote = m.read<uint32_t>(wsb + 24) == warea + 28 && std::memcmp(m.host(warea), wantWide, 28) == 0 &&
+                               m.read<uint32_t>(wst + 4 + 12) == 0 && m.read<uint32_t>(wst + 4 + 16) == 0;
+            // the put area is full after 9 more characters: 16 fit, the rest is refused and the stream goes bad|fail
+            call(WOS, {wst, 123456789});
+            call(WOS, {wst, 5});
+            const bool full = m.read<uint32_t>(wsb + 24) == warea + 64 && m.read<uint32_t>(warea + 60) == '9' && m.read<uint32_t>(wst + 4 + 16) == 5;
+            // reading: xsgetn copies whole characters out of the get area and stops at its end
+            const uint32_t rsb = proc.heap().allocZeroed(32), rarea = proc.heap().allocZeroed(16), rout = proc.heap().allocZeroed(32);
+            call((std::string(WSB) + "C2Ev").c_str(), {rsb});
+            const uint32_t src4[3] = {'a', 0x263A, 'c'};
+            std::memcpy(m.host(rarea), src4, 12);
+            m.write<uint32_t>(rsb + 8, rarea); m.write<uint32_t>(rsb + 12, rarea); m.write<uint32_t>(rsb + 16, rarea + 12);
+            // (the base class's uflow asks underflow, which has nothing to offer: end of file. A get
+            // area is read directly, by sbumpc inlined in the app or by xsgetn here.)
+            const uint32_t baseUflow = call((std::string(WSB) + "5uflowEv").c_str(), {rsb});
+            const uint32_t took = call((std::string(WSB) + "6xsgetnEPwi").c_str(), {rsb, rout, 5});
+            const bool readBack = baseUflow == 0xFFFFFFFFu && took == 3 && m.read<uint32_t>(rout) == 'a' && m.read<uint32_t>(rout + 4) == 0x263A &&
+                                  m.read<uint32_t>(rout + 8) == 'c' && m.read<uint32_t>(rsb + 12) == rarea + 12;
+            if (!(wfacet && wrote && full && readBack)) std::printf("    wide streams: facet %d wrote %d full %d read %d\n", wfacet, wrote, full, readBack);
+            check(wfacet && wrote && full && readBack,
+                  "libc++ wide streams: ctype<wchar_t>, wostream << int with width and fill, a full buffer, and wstreambuf reads");
+        }
+
+        // std::__sort for unsigned long long
+        const uint32_t arr = proc.heap().allocZeroed(24);
+        const uint64_t vals[3] = {3, 1ull << 40, 2};
+        std::memcpy(m.host(arr), vals, 24);
+        call("__ZNSt3__16__sortIRNS_6__lessIyyEEPyEEvT0_S5_T_", {arr, arr + 24, 0});
+        check(m.read<uint64_t>(arr) == 2 && m.read<uint64_t>(arr + 8) == 3 && m.read<uint64_t>(arr + 16) == (1ull << 40),
+              "libc++ __sort orders unsigned long long values");
+    }
+
+    // task_info(TASK_BASIC_INFO_32) writes its 8 words and no more, whatever count the caller
+    // claims. Terraria passes 32 (the size in bytes) for a 32-byte buffer on its stack; ten words
+    // were written and its return address was overwritten.
+    {
+        const uint32_t buf = proc.heap().allocZeroed(64), count = proc.heap().allocZeroed(4);
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 32);
+        const uint32_t kr = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 4, buf, count}));
+        const uint32_t virt = proc.mem().read<uint32_t>(buf + 4), resident = proc.mem().read<uint32_t>(buf + 8);
+        const bool basic = kr == 0 && proc.mem().read<uint32_t>(count) == 8 && proc.mem().read<uint32_t>(buf) == 0 &&
+                           resident > 0 && virt >= resident && proc.mem().read<uint32_t>(buf + 32) == 0xCAFEF00D;
+        proc.mem().write<uint32_t>(count, 4);                      // too small for the structure
+        proc.mem().write<uint32_t>(buf, 0xCAFEF00D);
+        const uint32_t small = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 4, buf, count}));
+        const bool smallUntouched = proc.mem().read<uint32_t>(buf) == 0xCAFEF00D;
+        // flavor 5: the 64-bit sizes when there is room for ten words, the 32-bit structure for eight
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 10);
+        const uint32_t kr64 = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 5, buf, count}));
+        const bool wide = kr64 == 0 && proc.mem().read<uint32_t>(count) == 10 && proc.mem().read<uint64_t>(buf + 12) > 0 &&
+                          proc.mem().read<uint64_t>(buf + 4) >= proc.mem().read<uint64_t>(buf + 12) &&
+                          proc.mem().read<uint64_t>(buf + 4) < (1ull << 32) && proc.mem().read<uint32_t>(buf + 40) == 0xCAFEF00D;
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 8);
+        const uint32_t kr8 = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 5, buf, count}));
+        const bool narrow = kr8 == 0 && proc.mem().read<uint32_t>(count) == 8 && proc.mem().read<uint32_t>(buf + 8) > 0 &&
+                            proc.mem().read<uint32_t>(buf + 4) >= proc.mem().read<uint32_t>(buf + 8) &&
+                            proc.mem().read<uint32_t>(buf + 32) == 0xCAFEF00D;
+        // a flavor with no layout: zeros, at most what the caller has room for, and reported as missing
+        for (uint32_t i = 0; i < 64; i += 4) proc.mem().write<uint32_t>(buf + i, 0xCAFEF00D);
+        proc.mem().write<uint32_t>(count, 3);
+        const size_t missingBefore = proc.missingCount();
+        const uint32_t krOdd = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_task_info"), {0x103, 99, buf, count}));
+        const bool unknown = krOdd == 0 && proc.mem().read<uint32_t>(count) == 3 && proc.mem().read<uint32_t>(buf + 8) == 0 &&
+                             proc.mem().read<uint32_t>(buf + 12) == 0xCAFEF00D && proc.missingCount() == missingBefore + 1;
+        check(basic && small == 4 && smallUntouched && wide && narrow && unknown,
+              "task_info(TASK_BASIC_INFO_32) writes 8 words whatever the caller's count; too small a count is KERN_INVALID_ARGUMENT; flavor 5 fits the room given; an unknown flavor is reported");
+    }
+
+    // ungetc takes back more than one byte, as Darwin's does. PvZ's XML reader reads three bytes
+    // looking for a byte-order mark and returns all three; with one byte of pushback it lost
+    // "<?" and could not parse resources.xml, so the game never drew anything.
+    {
+        const std::string path = proc.homePath() + "/unget_test.xml";
+        { std::ofstream(path) << "<?xml?>"; }
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(n), a)); };
+        auto cstr = [&](const std::string& t) { const uint32_t a = proc.heap().allocZeroed(uint32_t(t.size()) + 1); std::memcpy(proc.mem().host(a), t.data(), t.size()); return a; };
+        const uint32_t fp = call("_fopen", {cstr(path), cstr("rb")});
+        const uint32_t c1 = call("_fgetc", {fp}), c2 = call("_fgetc", {fp}), c3 = call("_fgetc", {fp});
+        call("_ungetc", {c3, fp}); call("_ungetc", {c2, fp}); call("_ungetc", {c1, fp});
+        const bool told = call("_ftell", {fp}) == 0 && call("_feof", {fp}) == 0;
+        const uint32_t buf = proc.heap().allocZeroed(16);
+        const uint32_t first = call("_fgetc", {fp});
+        const uint32_t got = call("_fread", {buf, 1, 6, fp});
+        const bool reread = first == '<' && got == 6 && std::memcmp(proc.mem().host(buf), "?xml?>", 6) == 0;
+        // a seek discards what was pushed back
+        call("_ungetc", {'Z', fp});
+        call("_fseek", {fp, 1, 0});
+        bool seekDrops = call("_fgetc", {fp}) == '?';
+        // SEEK_CUR counts from the stream's position, which is behind the file's by the bytes
+        // pushed back: after reading "<?" twice over and returning two bytes, +1 lands on 'x'... 
+        call("_fseek", {fp, 0, 0});
+        const uint32_t d1 = call("_fgetc", {fp}), d2 = call("_fgetc", {fp}), d3 = call("_fgetc", {fp});
+        call("_ungetc", {d3, fp}); call("_ungetc", {d2, fp}); call("_ungetc", {d1, fp});    // the stream is at 0, the file at 3
+        call("_fseek", {fp, 1, 1 /*SEEK_CUR*/});
+        seekDrops = seekDrops && call("_ftell", {fp}) == 1 && call("_fgetc", {fp}) == '?';
+        // a seek that fails keeps the pushed-back byte
+        call("_ungetc", {'Q', fp});
+        const bool failedSeekKeeps = int32_t(call("_fseek", {fp, uint32_t(-100), 0})) != 0 && call("_fgetc", {fp}) == 'Q';
+        seekDrops = seekDrops && failedSeekKeeps;
+        call("_fclose", {fp});
+        std::filesystem::remove(path);
+        check(fp && c1 == '<' && c2 == '?' && c3 == 'x' && told && reread && seekDrops,
+              "ungetc returns three bytes to a stream; fgetc and fread read them again in order; fseek discards them, counts SEEK_CUR from the stream position, and keeps them when it fails");
+    }
+
+    // sbrk as Darwin emulates it: 4 MB handed out in order, then -1 (not 0: an app's dlmalloc
+    // took the missing sbrk's 0 for a heap at address zero, PvZ).
+    {
+        auto sbrk = [&](int32_t n) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_sbrk"), {uint32_t(n)})); };
+        const uint32_t start = sbrk(0);
+        const uint32_t a = sbrk(4096), b = sbrk(8192);
+        proc.mem().write<uint32_t>(a, 0x12345678);                // the region is real memory
+        const bool grows = start != 0 && start != 0xFFFFFFFFu && a == start && b == start + 4096 && sbrk(0) == start + 12288 &&
+                           sbrk(-4096) == start + 12288 && proc.mem().read<uint32_t>(a) == 0x12345678;
+        const bool tooBig = sbrk(4 << 20) == 0xFFFFFFFFu && sbrk(0) == start + 12288;
+        const bool rest = sbrk((4 << 20) - 12288) == start + 12288 && sbrk(1) == 0xFFFFFFFFu;
+        const bool brkFails = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_brk"), {start})) == 0xFFFFFFFFu &&
+                              proc.mem().read<uint32_t>(proc.currentThread().errnoAddr) == 12 /*ENOMEM*/;
+        check(grows && tooBig && rest && brkFails,
+              "sbrk hands out its 4 MB region in order, reports the break for 0 or less, and returns -1 when it does not fit; brk always fails");
+    }
+
+    // Thread-specific data lives in the guest slot array the thread register points at. Unity
+    // stores its per-thread allocator with pthread_setspecific and reads it back inline, as
+    // "thread register + key * 4"; with the values kept elsewhere it read nothing (Crossy Road).
+    {
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(n), a)); };
+        // This test process never loaded an app, so its main thread has no pthread block yet:
+        // give it one laid out as Process::initThreadState does.
+        auto& thread = proc.currentThread();
+        const uint32_t savedSelf = thread.self, savedErrno = thread.errnoAddr, savedTp = cpu.tpidruro;
+        thread.self = proc.heap().allocZeroed(kThreadSpecificSlots * 4 + 64);
+        thread.errnoAddr = thread.self + kThreadSpecificSlots * 4;
+        proc.mem().write<uint32_t>(thread.self, thread.self);
+        cpu.tpidruro = thread.self;
+        const uint32_t keyOut = proc.heap().allocZeroed(8);
+        const uint32_t created = call("_pthread_key_create", {keyOut, 0});
+        const uint32_t key = proc.mem().read<uint32_t>(keyOut);
+        const uint32_t base = cpu.tpidruro & ~3u;                        // what "mrc p15, 0, r0, c13, c0, 3" gives
+        const bool setOk = call("_pthread_setspecific", {key, 0x12345678}) == 0;
+        const bool inlineRead = proc.mem().read<uint32_t>(base + key * 4) == 0x12345678;
+        proc.mem().write<uint32_t>(base + key * 4, 0x0BADF00D);          // an inlined setspecific
+        const bool functionRead = call("_pthread_getspecific", {key}) == 0x0BADF00D;
+        call("_pthread_setspecific", {key, 0});
+        const bool selfSlot = proc.mem().read<uint32_t>(base) == call("_pthread_self", {});
+        const uint32_t errnoAddr = proc.currentThread().errnoAddr;
+        const bool errnoClear = errnoAddr >= base + 768 * 4;             // no key's slot is errno
+        const bool outOfRange = call("_pthread_setspecific", {768, 1}) == 22 && call("_pthread_getspecific", {768}) == 0;
+        thread.self = savedSelf; thread.errnoAddr = savedErrno; cpu.tpidruro = savedTp;
+        check(created == 0 && key >= 256 && key < 768 && setOk && inlineRead && functionRead && selfSlot && errnoClear && outOfRange,
+              "pthread_setspecific stores in the slot the thread register points at, where inlined pthread_getspecific reads; key 768 is EINVAL");
+    }
+
+    // CoreText's font trait keys bind to string constants when an app imports them. They were
+    // missing data (nil), and Crossy Road stopped on "setObject:forKey: key cannot be nil".
+    {
+        auto keyText = [&](const char* symbol) -> std::string {
+            const uint32_t cell = proc.resolveMissingSymbol(symbol, Process::MissingSymbolMode::Import);
+            const uint32_t str = cell ? proc.mem().read<uint32_t>(cell) : 0;
+            return str ? Foundation::utf8(cx, str) : std::string("(nil)");
+        };
+        check(keyText("_kCTFontSymbolicTrait") == "kCTFontSymbolicTrait" && keyText("_kCTFontWeightTrait") == "kCTFontWeightTrait" &&
+              keyText("_kCTFontSlantTrait") == "kCTFontSlantTrait",
+              "CoreText font trait keys imported by an app are string constants, not nil");
+        // dlsym is not answered from the naming rule: an app probing for a symbol must not be told it exists
+        check(proc.resolveMissingSymbol("_kCTFontWidthTrait") == 0, "the CoreText trait rule applies to imports only, not to dlsym");
+    }
+
+    // A failed stat through the guest call is part of the file history in the crash clues.
+    {
+        const uint32_t missingPath = proc.heap().allocZeroed(64), statOut = proc.heap().allocZeroed(128);
+        std::memcpy(proc.mem().host(missingPath), "/no/such/dir/Manifest.xnb", 26);
+        const int32_t statResult = int32_t(uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_stat"), {missingPath, statOut})));
+        check(statResult == -1 && proc.mem().read<uint32_t>(proc.currentThread().errnoAddr) == ENOENT &&
+              proc.crashClues(CPU::Exit::MemFault, 0, true).find("stat /no/such/dir/Manifest.xnb: No such file or directory") != std::string::npos,
+              "a stat that fails is recorded: -1, ENOENT, and the path in the crash clues");
+    }
+
+    // An app with its own crash reporter catches the real fault and raises the signal again.
+    // The stop message for that raise names the fault that started it (Terraria: PLCrashReporter
+    // hid a null read inside std::string behind "the app raised signal 11").
+    {
+        ProcessConfig fcfg;
+        fcfg.homePath = (std::filesystem::temp_directory_path() / ("hvm_handled_fault_" + std::to_string(::getpid()))).string();
+        struct RemoveHome { std::string path; ~RemoveHome() { std::error_code ec; std::filesystem::remove_all(path, ec); } } removeHome{fcfg.homePath};
+        Process fproc(fcfg);
+        auto& fcpu = fproc.mainThread().cpu;
+        std::string raised;
+        const uint32_t handler = fproc.defineFunction("test_crash_reporter", [&](Ctx& x) {
+            try { x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_raise"), {11}); }
+            catch (const std::exception& e) { raised = e.what(); throw; }
+        });
+        fproc.callGuest(fcpu, *fproc.lookupSymbol("_signal"), {11, handler});
+        fcpu.exit_info = 0x10;                        // the address the guest touched
+        fcpu.r[13] = fproc.heap().allocZeroed(8192) + 8192;   // a stack for the signal frame
+        fcpu.r[15] = handler;
+        const bool resumed = hvmDeliverGuestFault(fproc, fcpu);
+        if (raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") == std::string::npos)
+            std::printf("    raise said: %s\n", raised.c_str());
+        // A handler that returns has dealt with its fault: a later raise does not mention it.
+        int recovered = 0;
+        const uint32_t quiet = fproc.defineFunction("test_recovering_handler", [&](Ctx&) { ++recovered; });
+        fproc.callGuest(fcpu, *fproc.lookupSymbol("_signal"), {11, quiet});
+        fcpu.exit_info = 0x20;
+        fcpu.r[15] = quiet;
+        fcpu.r[13] = fproc.heap().allocZeroed(8192) + 8192;
+        const bool resumedQuietly = hvmDeliverGuestFault(fproc, fcpu);
+        std::string later;
+        try { fproc.callGuest(fcpu, *fproc.lookupSymbol("_raise"), {6}); } catch (const std::exception& e) { later = e.what(); }
+        if (later.find("crash handler") != std::string::npos) std::printf("    later raise said: %s\n", later.c_str());
+        check(!resumed && raised.find("the app raised signal 11 after") != std::string::npos &&
+              raised.find("after its own crash handler caught a bad memory access at 0x00000010 (NULL pointer) at ") != std::string::npos &&
+              resumedQuietly && recovered == 1 && later.find("the app raised signal 6") != std::string::npos &&
+              later.find("crash handler") == std::string::npos,
+              "a signal raised by the app's crash handler reports the fault the handler caught; a fault the handler recovered from is forgotten");
     }
 
     // 2f. OpenGL ES 1.1 & 2.0 + CAEAGLLayer + EAGLContext + Compositor
@@ -5761,6 +6590,19 @@ int runFullSubsystemTests() {
         const uint32_t readCount = call("__ZNSi4readEPci", {ifstreamObj, ifstreamReadBuf, 17});
         const std::string ifstreamReadStr = proc.readCString(ifstreamReadBuf);
         call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEED1Ev", {ifstreamObj});
+        // `delete stream` on a heap ifstream goes through the vtable's deleting destructor
+        // (Flight Control's file manager): the file closes and the block is freed.
+        {
+            const uint32_t heapStream = proc.heap().allocZeroed(520);
+            call("__ZNSt14basic_ifstreamIcSt11char_traitsIcEEC1EPKcSt13_Ios_Openmode", {heapStream, cpath, 8});
+            const uint32_t probe = proc.heap().allocZeroed(8);
+            const bool readable = call("__ZNSi4readEPci", {heapStream, probe, 5}) == heapStream && proc.readCString(probe) == "Hello";
+            const uint32_t deleting = proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(heapStream) + 4);
+            bool threw = false;
+            try { proc.callGuest(cpu, deleting, {heapStream}); } catch (const std::exception&) { threw = true; }
+            check(readable && !threw && proc.heap().blockSize(heapStream) == 0,
+                  "libstdc++ ifstream: the virtual deleting destructor closes the file and frees the stream");
+        }
         std::filesystem::remove(tmpPath);
         check(opened != 0 && isOpen && fd >= 0 && written == 17 && closed && readBytes == 17 && readStr == "Hello basic_file!" &&
               readCount == ifstreamObj && ifstreamReadStr == "Hello basic_file!",
@@ -6359,6 +7201,139 @@ int runFullSubsystemTests() {
         }
         audioCall("_AudioFileClose", {fileID});
         std::filesystem::remove(filePath);
+        // An MP3 file is presented as its compressed packets, one MPEG frame each, and decoded
+        // by an AudioQueue created with the file's format. FMOD decodes Unity games' music this
+        // way; shown decoded PCM instead, it gave up and the games were silent (Subway Surfers).
+        // The fixture's layout is in ToneMp3.inc: tag 58, Info frame 208, then 21 packets.
+        {
+            const size_t mp3Size = sizeof kToneMp3;
+            Audio::Mp3Packets index;
+            const bool indexed = Audio::indexMp3(kToneMp3, mp3Size, index);
+            const bool layout = indexed && index.sampleRate == 44100 && index.channels == 2 && index.framesPerPacket == 1152 &&
+                                index.packets.size() == 21 && index.dataOffset == 266 && index.dataBytes == 4388 && index.maxPacketSize == 209 &&
+                                index.packets[0] == std::pair<uint32_t, uint32_t>(266, 208) && index.packets[1] == std::pair<uint32_t, uint32_t>(474, 209) &&
+                                index.packets[20] == std::pair<uint32_t, uint32_t>(4654 - 209, 209);
+            Audio::Mp3Packets cut, none;
+            const bool cutShort = Audio::indexMp3(kToneMp3, mp3Size - 100, cut) && cut.packets.size() == 20;   // the last frame is incomplete
+            std::vector<uint8_t> noise(4096);
+            for (size_t i = 0; i < noise.size(); ++i) noise[i] = uint8_t(i * 37 + 11);
+            const bool rejects = !Audio::indexMp3(noise.data(), noise.size(), none) && !Audio::indexMp3(kToneMp3, 40, none);
+            check(layout && cutShort && rejects,
+                  "indexMp3 skips the ID3 tag and the Info frame, lists each MPEG frame as a packet, and rejects data that is not MP3");
+
+            // Packet by packet, and with one packet split across two calls: the same samples.
+            std::vector<int16_t> whole, split;
+            auto a = Audio::mp3StreamNew(), b = Audio::mp3StreamNew();
+            int rate = 0;
+            for (const auto& [off, size] : index.packets) rate = std::max(rate, Audio::mp3StreamDecode(*a, kToneMp3 + off, size, whole));
+            for (size_t i = 0; i < index.packets.size(); ++i) {
+                const auto& [off, size] = index.packets[i];
+                if (i == 5) { Audio::mp3StreamDecode(*b, kToneMp3 + off, 100, split); Audio::mp3StreamDecode(*b, kToneMp3 + off + 100, size - 100, split); }
+                else Audio::mp3StreamDecode(*b, kToneMp3 + off, size, split);
+            }
+            int peak = 0;
+            for (size_t i = 4 * 1152 * 2; i < whole.size(); ++i) peak = std::max(peak, std::abs(int(whole[i])));
+            // 21 frames of 1152; a decoder may give nothing for the first while its bit reservoir fills.
+            const size_t frames = whole.size() / 2;
+            const bool decoded = rate == 44100 && frames >= 20 * 1152 && frames <= 21 * 1152 && frames % 1152 == 0 &&
+                                 peak > 2600 && peak < 3000 && whole == split;     // 4096 / sqrt(2) = 2896 before encoding; ffmpeg's decoder gives 2766
+            if (!decoded) std::printf("    mp3 stream: rate %d frames %zu peak %d same %d\n", rate, frames, peak, whole == split);
+            check(decoded, "mp3StreamDecode decodes packets as they arrive, across a packet split in two, to the tone's amplitude");
+
+            const std::string mp3Path = proc.homePath() + "/tone-test.mp3";
+            { std::ofstream file(mp3Path, std::ios::binary); file.write(reinterpret_cast<const char*>(kToneMp3), std::streamsize(mp3Size)); }
+            const auto mp3URL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, mp3Path)}));
+            const uint32_t io = proc.heap().allocZeroed(128), fmt = proc.heap().allocZeroed(48), data = proc.heap().allocZeroed(1024), descs = proc.heap().allocZeroed(64);
+            const uint32_t opened = audioCall("_AudioFileOpenURL", {mp3URL, 1, 0, io});
+            const uint32_t mp3File = proc.mem().read<uint32_t>(io);
+            auto prop = [&](uint32_t id, uint32_t size, uint32_t out) { proc.mem().write<uint32_t>(io + 4, size); return audioCall("_AudioFileGetProperty", {mp3File, id, io + 4, out}); };
+            const uint32_t dfmt = prop(0x64666D74, 40, fmt);
+            const bool format = dfmt == 0 && proc.mem().read<double>(fmt) == 44100.0 && proc.mem().read<uint32_t>(fmt + 8) == 0x2E6D7033 &&
+                                proc.mem().read<uint32_t>(fmt + 16) == 0 && proc.mem().read<uint32_t>(fmt + 20) == 1152 && proc.mem().read<uint32_t>(fmt + 28) == 2;
+            const uint32_t listInfo = audioCall("_AudioFileGetPropertyInfo", {mp3File, 0x666C7374, io + 8, 0});
+            const uint32_t list = prop(0x666C7374, 48, io + 16);
+            const bool formatList = listInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 48 && list == 0 &&
+                                    proc.mem().read<uint32_t>(io + 16 + 8) == 0x2E6D7033 && proc.mem().read<uint32_t>(io + 16 + 40) == 0x00650002;
+            prop(0x70636E74, 8, io + 72); prop(0x706B7562, 4, io + 80); prop(0x62636E74, 8, io + 88); prop(0x706E666F, 16, io + 96);
+            const bool counts = proc.mem().read<uint64_t>(io + 72) == 21 && proc.mem().read<uint32_t>(io + 80) == 209 &&
+                                proc.mem().read<uint64_t>(io + 88) == 4388 && proc.mem().read<uint64_t>(io + 96) == 21 * 1152;
+            // three packets from the start: 208 + 209 + 209 bytes, each described
+            proc.mem().write<uint32_t>(io + 4, 0);
+            proc.mem().write<uint32_t>(io + 8, 3);
+            const uint32_t read3 = audioCall("_AudioFileReadPackets", {mp3File, 0, io + 4, descs, 0, 0, io + 8, data});
+            const bool three = read3 == 0 && proc.mem().read<uint32_t>(io + 8) == 3 && proc.mem().read<uint32_t>(io + 4) == 626 &&
+                               std::memcmp(proc.mem().host(data), kToneMp3 + 266, 626) == 0 &&
+                               proc.mem().read<uint64_t>(descs) == 0 && proc.mem().read<uint32_t>(descs + 12) == 208 &&
+                               proc.mem().read<uint64_t>(descs + 16) == 208 && proc.mem().read<uint32_t>(descs + 28) == 209 &&
+                               proc.mem().read<uint64_t>(descs + 32) == 417 && proc.mem().read<uint32_t>(descs + 44) == 209;
+            // AudioFileReadPacketData stops at the room it is given: 300 bytes hold one packet
+            proc.mem().write<uint32_t>(io + 4, 300);
+            proc.mem().write<uint32_t>(io + 8, 3);
+            audioCall("_AudioFileReadPacketData", {mp3File, 0, io + 4, descs, 1, 0, io + 8, data});
+            const bool bounded = proc.mem().read<uint32_t>(io + 8) == 1 && proc.mem().read<uint32_t>(io + 4) == 209 &&
+                                 std::memcmp(proc.mem().host(data), kToneMp3 + 474, 209) == 0;
+            // past the end: no packets
+            proc.mem().write<uint32_t>(io + 8, 2);
+            audioCall("_AudioFileReadPackets", {mp3File, 0, io + 4, descs, 21, 0, io + 8, data});
+            const bool atEnd = proc.mem().read<uint32_t>(io + 8) == 0 && proc.mem().read<uint32_t>(io + 4) == 0;
+            if (!(opened == 0 && format && formatList && counts && three && bounded && atEnd))
+                std::printf("    mp3 file: open %x format %d list %d counts %d three %d bounded %d end %d\n", opened, format, formatList, counts, three, bounded, atEnd);
+            check(opened == 0 && format && formatList && counts && three && bounded && atEnd,
+                  "AudioFile presents an MP3 as compressed packets: format, format list, counts, and packet reads with descriptions");
+
+            // The app's side of FMOD's decode: a queue in the file's format, one packet per
+            // buffer, rendered offline to 16-bit stereo.
+            const uint32_t outs = proc.heap().allocZeroed(64), dst = proc.heap().allocZeroed(40), ts = proc.heap().allocZeroed(64);
+            proc.mem().write<double>(dst, 44100.0);
+            proc.mem().write<uint32_t>(dst + 8, 0x6C70636D);
+            proc.mem().write<uint32_t>(dst + 12, 0x0C);
+            for (uint32_t o : {16u, 24u}) proc.mem().write<uint32_t>(dst + o, 4);
+            proc.mem().write<uint32_t>(dst + 20, 1);
+            proc.mem().write<uint32_t>(dst + 28, 2);
+            proc.mem().write<uint32_t>(dst + 32, 16);
+            audioCall("_AudioQueueNewOutput", {fmt, 0, 0, 0, 0, 0, outs});
+            const uint32_t q = proc.mem().read<uint32_t>(outs);
+            audioCall("_AudioQueueAllocateBuffer", {q, 1152 * 4, outs + 4});
+            const uint32_t outBuf = proc.mem().read<uint32_t>(outs + 4);
+            audioCall("_AudioQueueSetOfflineRenderFormat", {q, dst, 0});
+            audioCall("_AudioQueueStart", {q, 0});
+            for (uint32_t i = 0; i < 8; ++i) {
+                audioCall("_AudioQueueAllocateBuffer", {q, 209, outs + 8});
+                const uint32_t packet = proc.mem().read<uint32_t>(outs + 8);
+                const auto& [off, size] = index.packets[i];
+                std::memcpy(proc.mem().host(proc.mem().read<uint32_t>(packet + 4)), kToneMp3 + off, size);
+                proc.mem().write<uint32_t>(packet + 8, size);
+                audioCall("_AudioQueueEnqueueBuffer", {q, packet, 0, 0});
+            }
+            uint32_t rendered = 0;
+            int queuePeak = 0;
+            for (int pass = 0; pass < 10; ++pass) {
+                audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 1152});
+                const uint32_t got = proc.mem().read<uint32_t>(outBuf + 8) / 4;
+                const uint32_t pcm = proc.mem().read<uint32_t>(outBuf + 4);
+                if (rendered >= 4 * 1152)
+                    for (uint32_t i = 0; i < got * 2; ++i) queuePeak = std::max(queuePeak, std::abs(int(proc.mem().read<int16_t>(pcm + i * 2))));
+                rendered += got;
+            }
+            audioCall("_AudioQueueDispose", {q, 1});
+            // ExtAudioFile over the same AudioFile decodes it: its length is the decoded frame count
+            // (21 packets of 1152, less whatever the first frame's missing bit reservoir costs).
+            const uint32_t wrapped = audioCall("_ExtAudioFileWrapAudioFileID", {mp3File, 0, io});
+            const uint32_t ext = proc.mem().read<uint32_t>(io);
+            proc.mem().write<uint32_t>(io + 4, 8);
+            audioCall("_ExtAudioFileGetProperty", {ext, 0x2366726D /* #frm */, io + 4, io + 8});
+            const uint64_t extFrames = proc.mem().read<uint64_t>(io + 8);
+            if (!(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152)) std::printf("    ext wrap: status %x frames %llu\n", wrapped, (unsigned long long)extFrames);
+            check(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152,
+                  "ExtAudioFileWrapAudioFileID on an MP3 AudioFile decodes it and reports its frames");
+            audioCall("_ExtAudioFileDispose", {ext});
+            audioCall("_AudioFileClose", {mp3File});
+            std::filesystem::remove(mp3Path);
+            // 8 packets: 7 or 8 frames of 1152 decoded; the resampler holds back the last sample.
+            const bool queueOk = rendered >= 7 * 1152 - 2 && rendered <= 8 * 1152 && queuePeak > 2600 && queuePeak < 3000;
+            if (!queueOk) std::printf("    mp3 queue: rendered %u peak %d\n", rendered, queuePeak);
+            check(queueOk, "an AudioQueue in MP3 format decodes enqueued packets: offline render returns the tone");
+        }
         // Recording: AudioFileCreateWithURL + AudioFileWriteBytes + close, then the file plays back
         // (Talking Larry / John record the player's voice this way). CAF, WAV and AIFF.
         {
@@ -6516,6 +7491,82 @@ int runFullSubsystemTests() {
                   "AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM");
             // CoreAudio's I/O thread has a 512 KB stack; Smash Hit's callback needs over 256 KB.
             check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
+        }
+
+        // An AUGraph with a mixer feeding the output (Unreal Engine 3 sound effects): each mixer
+        // input has its own callback, asked with its input number, and a disabled input is not asked.
+        {
+            std::atomic<int> calls0{0}, calls1{0}, calls2{0};
+            uint32_t busSeen0 = 99, busSeen1 = 99, frames1 = 0;
+            const auto cb = proc.registerHostFunction("hvm_test_aug_input", [&](Ctx& cx) {
+                const uint32_t bus = cx.cpu.r[3];
+                const uint32_t frames = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
+                const uint32_t abl = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 4);
+                if (cx.cpu.r[0] == 100) { ++calls0; busSeen0 = bus; }
+                else if (cx.cpu.r[0] == 101) { ++calls1; busSeen1 = bus; frames1 = frames; }
+                else ++calls2;
+                cx.cpu.r[0] = 0;
+                if (!abl || cx.mem.read<uint32_t>(abl) != 1) return;
+                const uint32_t data = cx.mem.read<uint32_t>(abl + 12);
+                // input 1 is 22050 Hz mono, the others the default 44100 Hz stereo
+                const uint32_t samples = bus == 1 ? frames : frames * 2;
+                if (!data || cx.mem.read<uint32_t>(abl + 8) < samples * 2) return;
+                for (uint32_t i = 0; i < samples; ++i) cx.mem.write<int16_t>(data + i * 2, 9000);
+            });
+            const uint32_t scratch = proc.heap().allocZeroed(128);
+            const uint32_t descAt = scratch, outAt = scratch + 24, cbAt = scratch + 40, fmtAt = scratch + 48;
+            callAT("_NewAUGraph", {outAt});
+            const uint32_t graph = proc.mem().read<uint32_t>(outAt);
+            const uint32_t mixerDesc[5] = {0x61756D78 /*aumx*/, 0x3364656D /*3dem*/, 0x6170706C, 0, 0};
+            const uint32_t outDesc[5] = {0x61756F75 /*auou*/, 0x72696F63 /*rioc*/, 0x6170706C, 0, 0};
+            proc.mem().copyIn(descAt, mixerDesc, 20);
+            callAT("_AUGraphAddNode", {graph, descAt, outAt});
+            const uint32_t mixerNode = proc.mem().read<uint32_t>(outAt);
+            proc.mem().copyIn(descAt, outDesc, 20);
+            callAT("_AUGraphAddNode", {graph, descAt, outAt});
+            const uint32_t outNode = proc.mem().read<uint32_t>(outAt);
+            callAT("_AUGraphGetNodeCount", {graph, outAt});
+            const uint32_t nodeCount = proc.mem().read<uint32_t>(outAt);
+            callAT("_AUGraphOpen", {graph});
+            callAT("_AUGraphNodeInfo", {graph, mixerNode, 0, outAt});
+            const uint32_t mixer = proc.mem().read<uint32_t>(outAt);
+            callAT("_AUGraphConnectNodeInput", {graph, mixerNode, 0, outNode, 0});
+            // input 0: AUGraphSetNodeInputCallback; inputs 1 and 2: the mixer unit's own property
+            proc.mem().write<uint32_t>(cbAt, cb);
+            proc.mem().write<uint32_t>(cbAt + 4, 100);
+            callAT("_AUGraphSetNodeInputCallback", {graph, mixerNode, 0, cbAt});
+            proc.mem().write<uint32_t>(cbAt + 4, 101);
+            callAT("_AudioUnitSetProperty", {mixer, 23, 1, 1, cbAt, 8});
+            proc.mem().write<uint32_t>(cbAt + 4, 102);
+            callAT("_AudioUnitSetProperty", {mixer, 23, 1, 2, cbAt, 8});
+            proc.mem().write<double>(fmtAt, 22050.0);
+            const uint32_t mono[8] = {0x6C70636D, 0x0C, 2, 1, 2, 1, 16, 0};
+            proc.mem().copyIn(fmtAt + 8, mono, 32);
+            const uint32_t fmtStatus = uint32_t(callAT("_AudioUnitSetProperty", {mixer, 8, 1, 1, fmtAt, 40}));
+            proc.mem().write<uint32_t>(outAt, 40);
+            callAT("_AudioUnitGetProperty", {mixer, 8, 1, 1, scratch + 88, outAt});
+            const bool formatReadBack = proc.mem().read<double>(scratch + 88) == 22050.0 && proc.mem().read<uint32_t>(scratch + 88 + 28) == 1;
+            const float off = 0.0f;
+            uint32_t offBits;
+            std::memcpy(&offBits, &off, 4);
+            callAT("_AudioUnitSetParameter", {mixer, 5 /*k3DMixerParam_Enable*/, 1, 2, offBits, 0});
+            callAT("_AUGraphInitialize", {graph});
+            callAT("_AUGraphIsRunning", {graph, outAt});
+            const bool runningBefore = proc.mem().read<uint8_t>(outAt) != 0;
+            renderedFrames(4096);
+            callAT("_AUGraphStart", {graph});
+            for (int i = 0; i < 100 && (!calls0 || !calls1); ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
+            callAT("_AUGraphIsRunning", {graph, outAt});
+            const bool runningAfter = proc.mem().read<uint8_t>(outAt) != 0;
+            const size_t mixed = renderedFrames(1024);
+            callAT("_AUGraphStop", {graph});
+            callAT("_DisposeAUGraph", {graph});
+            check(graph != 0 && mixer != 0 && nodeCount == 2 && fmtStatus == 0 && calls0 > 0 && calls1 > 0 && busSeen0 == 0 && busSeen1 == 1,
+                  "AUGraphStart pulls every mixer input from its own callback, with its input number");
+            check(frames1 > 200 && frames1 < 240, "a 22050 Hz mixer input is asked for 22050 Hz worth of frames");
+            check(calls2 == 0, "a mixer input disabled with k3DMixerParam_Enable is not pulled");
+            check(formatReadBack, "a mixer input reads back the stream format set on it");
+            check(mixed > 0 && !runningBefore && runningAfter, "the mixer inputs are audible, and AUGraphIsRunning follows start");
         }
 
         // OpenGL ES 1.1 Fixed-Function + 2D Texture + glDrawElements test
@@ -7833,7 +8884,9 @@ int runFullSubsystemTests() {
                 proc.mem().write<uint32_t>(bAddr + 16, desc);
                 r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
                 proc.heap().free(bAddr); // callback must hold a copied block
-                Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
+                // Other ready work can end one runOnce before discovery's timer.
+                // Keep pumping within the same 50 ms completion budget.
+                Foundation::mainRunLoop(proc).runUntil(cpu, Foundation::now() + 0.05);
                 proc.heap().free(desc);
 
                 check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
@@ -8923,6 +9976,7 @@ int runFullSubsystemTests() {
             "    \"framesPresented\": 0,\n"
             "    \"avgFrameMs\": 0,\n"
             "    \"avgCompositeMs\": 0,\n"
+            "    \"presentWaitMs\": 0,\n"
             "    \"maxFrameMs\": 0,\n"
             "    \"slowFrames\": 0,\n"
             "    \"p50FrameMs\": 0,\n"
@@ -9189,6 +10243,33 @@ int runFullSubsystemTests() {
             start = true;
             coldClass.join(); coldNative.join();
             check(coldOK, "cold class and native bundle lookups synchronize main-bundle publication");
+            {
+                // iOS gives every thread its own autorelease pool stack. Two host
+                // threads that are not guest threads must not share the main
+                // thread's ThreadState. Main still has `pool` open (one mark), so
+                // a shared stack would hand these threads tokens 2 and 3. Their
+                // own fresh stacks each start at token 1. Turns are sequenced so
+                // the check itself never touches one vector from two threads.
+                ObjC::ThreadState* const mainState = &ObjC::threadState(ap);
+                std::atomic<int> turn{0};
+                ObjC::ThreadState* seen[2] = {nullptr, nullptr};
+                uint32_t tokens[2] = {0, 0};
+                auto probe = [&](int k) {
+                    CPU::Cpu probeCPU;
+                    while (turn != k) std::this_thread::yield();
+                    seen[k] = &ObjC::threadState(ap);
+                    tokens[k] = ar.poolPush();
+                    ++turn;
+                    while (turn != 3 - k) std::this_thread::yield();   // thread 1 pops first (turn 2), then thread 0 (turn 3)
+                    ar.poolPop(probeCPU, tokens[k]);
+                    ++turn;
+                };
+                std::thread first(probe, 0), second(probe, 1);
+                first.join(); second.join();
+                check(seen[0] && seen[1] && seen[0] != seen[1] && seen[0] != mainState && seen[1] != mainState &&
+                      tokens[0] == 1 && tokens[1] == 1 && &ObjC::threadState(ap) == mainState,
+                      "host threads that are not guest threads get their own autorelease pool stacks");
+            }
             check(lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc" &&
                   lookup("Texture.tfc", "") == lookup("Texture") &&
                   lookup("Texture", ".tfc") == lookup("Texture") &&
@@ -9409,6 +10490,41 @@ int runFullSubsystemTests() {
             check(rootEscape && lookup("Texture") == bundle + "/CookedIPhone/Texture.tfc",
                   "cached installation boundary rejects replacing the entire bundle with an external symlink");
             ar.poolPop(acpu, pool);
+        }
+        {
+            // A host thread that is not a guest thread of either Process keeps a
+            // separate autorelease pool stack per Process. Push a pool in A,
+            // autorelease an object there, push and pop a pool in B, then pop A.
+            // The object starts at retain count 1, is retained once (2) and
+            // autoreleased; popping A's pool must release it back to 1. A
+            // single per-thread slot replaced on the switch to B would leave
+            // A's pop with nothing to drain, and the count would stay 2.
+            ProcessConfig cfgA, cfgB;
+            cfgA.homePath = home; cfgA.bundlePath = bundle;
+            cfgB.homePath = home; cfgB.bundlePath = bundle;
+            Process procA(cfgA);
+            Process procB(cfgB);
+            auto& rA = ObjC::rt(procA);
+            auto& rB = ObjC::rt(procB);
+            const ObjC::id obj = rA.createInstance(rA.getClass("NSObject"));
+            rA.rootRetain(obj);
+            const uint32_t before = rA.retainCount(obj);
+            uint32_t tokenA = 0, tokenB = 0, afterB = 0, afterA = 0;
+            std::thread host([&] {
+                CPU::Cpu hostCPU;
+                tokenA = rA.poolPush();
+                rA.autorelease(hostCPU, obj);
+                tokenB = rB.poolPush();
+                rB.poolPop(hostCPU, tokenB);
+                afterB = rA.retainCount(obj);
+                rA.poolPop(hostCPU, tokenA);
+                afterA = rA.retainCount(obj);
+            });
+            host.join();
+            if (!(before == 2 && tokenA == 1 && tokenB == 1 && afterB == 2 && afterA == 1))
+                std::printf("    per-process pools: before %u tokenA %u tokenB %u afterB %u afterA %u\n", before, tokenA, tokenB, afterB, afterA);
+            check(before == 2 && tokenA == 1 && tokenB == 1 && afterB == 2 && afterA == 1,
+                  "a host thread keeps a separate autorelease pool stack for each Process it calls into");
         }
         {
             ProcessConfig lateCfg;
@@ -10063,6 +11179,51 @@ int runFullSubsystemTests() {
             static void useProgram(uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
             static void bindFramebuffer(uint32_t, uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
             static void bindTexture(uint32_t, uint32_t t) { if (t >= 99) errors().push_back(0x0500); }
+            static void texImage2D(uint32_t, int32_t, int32_t f, int32_t, int32_t, int32_t, uint32_t, uint32_t type, const void*) {
+                // Like an ES 3 driver: the unsized depth-stencil format is refused, the sized one accepted.
+                // Like the phone's driver: BGRA is not an internal format, and half floats have their ES 3 name only.
+                ++texUploads();
+                if (f == 0x84F9 || f == 0x7777 || (f == 0x88F0 && refuseSized()) || type == 0x8D61) errors().push_back(0x0502);
+                else if (f == 0x80E1) errors().push_back(0x0500);
+                else { lastInternalFormat() = f; lastType() = type; }
+            }
+            static uint32_t& lastType() { static uint32_t t = 0; return t; }
+            static int& texUploads() { static int n = 0; return n; }
+            static int32_t& lastInternalFormat() { static int32_t f = 0; return f; }
+            static bool& refuseSized() { static bool r = false; return r; }
+            static void texSubImage2D(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t f, uint32_t type, const void*) {
+                if (f == 0x84F9) errors().push_back(0x0500);
+                else if (type == 0x8D61) errors().push_back(0x0502);
+                else lastType() = type;
+            }
+            // Buffer objects, with the iOS driver's rule that glBufferData refuses a mapped buffer.
+            struct Buffer { std::vector<uint8_t> data; bool mapped = false; };
+            static std::map<uint32_t, Buffer>& buffers() { static std::map<uint32_t, Buffer> b; return b; }
+            static uint32_t& boundArray() { static uint32_t b = 0; return b; }
+            static void bindBuffer(uint32_t target, uint32_t name) { if (target == 0x8892) boundArray() = name; }
+            static void bufferData(uint32_t, intptr_t size, const void* data, uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!boundArray() || b.mapped) { errors().push_back(0x0502); return; }
+                b.data.assign(size_t(size), 0);
+                if (data) std::memcpy(b.data.data(), data, size_t(size));
+            }
+            static void* mapBufferRange(uint32_t, intptr_t offset, intptr_t, uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!boundArray() || b.mapped) { errors().push_back(0x0502); return nullptr; }
+                b.mapped = true;
+                return b.data.data() + offset;
+            }
+            static uint8_t unmapBuffer(uint32_t) {
+                Buffer& b = buffers()[boundArray()];
+                if (!b.mapped) { errors().push_back(0x0502); return 0; }
+                b.mapped = false;
+                return 1;
+            }
+            static void getBufferParameteriv(uint32_t, uint32_t pname, int32_t* out) {
+                const Buffer& b = buffers()[boundArray()];
+                *out = pname == 0x8764 ? int32_t(b.data.size()) : pname == 0x88BC ? int32_t(b.mapped) : 0;
+            }
+            static void getIntegerv(uint32_t pname, int32_t* out) { *out = pname == 0x8894 ? int32_t(boundArray()) : 0; }
         };
         struct ErrPlatform final : HostGL::Platform {
             std::mutex mu;
@@ -10084,6 +11245,14 @@ int runFullSubsystemTests() {
                 if (s == "glUseProgram") return reinterpret_cast<void*>(&FakeGL::useProgram);
                 if (s == "glBindFramebuffer") return reinterpret_cast<void*>(&FakeGL::bindFramebuffer);
                 if (s == "glBindTexture") return reinterpret_cast<void*>(&FakeGL::bindTexture);
+                if (s == "glTexImage2D") return reinterpret_cast<void*>(&FakeGL::texImage2D);
+                if (s == "glTexSubImage2D") return reinterpret_cast<void*>(&FakeGL::texSubImage2D);
+                if (s == "glBindBuffer") return reinterpret_cast<void*>(&FakeGL::bindBuffer);
+                if (s == "glBufferData") return reinterpret_cast<void*>(&FakeGL::bufferData);
+                if (s == "glMapBufferRange") return reinterpret_cast<void*>(&FakeGL::mapBufferRange);
+                if (s == "glUnmapBuffer") return reinterpret_cast<void*>(&FakeGL::unmapBuffer);
+                if (s == "glGetBufferParameteriv") return reinterpret_cast<void*>(&FakeGL::getBufferParameteriv);
+                if (s == "glGetIntegerv") return reinterpret_cast<void*>(&FakeGL::getIntegerv);
                 return nullptr;
             }
         };
@@ -10137,6 +11306,143 @@ int runFullSubsystemTests() {
             for (const auto& line : eproc.glErrorLog()) std::printf("    gl log: %s\n", line.c_str());
         check(mainErr == 0x0500 && mainLines == 1 && firstArgs,
               "the GL trace logs the first failing call of each kind with its arguments, and the guest still sees the error");
+        // A hand-written GL function (glTexImage2D) checks its own error: the log names it,
+        // not the next generated call (glBindTexture(GL_TEXTURE_2D, 0) once took the blame).
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        const uint32_t savedSp = ecpu.r[13];
+        ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;   // room for the five stack arguments
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x7777, 4, 4, 0, 0x7777, 0x1401, 0});
+        ecpu.r[13] = savedSp;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glBindTexture"), {0x0DE1, 0});
+        const uint32_t texErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        bool texNamed = false, bindBlamed = false;
+        for (const auto& line : eproc.glErrorLog()) {
+            texNamed = texNamed || (line.rfind("glTexImage2D(", 0) == 0 && line.find("-> 0x0502") != std::string::npos);
+            bindBlamed = bindBlamed || (line.rfind("glBindTexture(", 0) == 0 && line.find("-> 0x0502") != std::string::npos);
+        }
+        if (!(texErr == 0x0502 && texNamed && !bindBlamed))
+            for (const auto& line : eproc.glErrorLog()) std::printf("    gl log: %s\n", line.c_str());
+        check(texErr == 0x0502 && texNamed && !bindBlamed,
+              "a hand-written GL function's error is logged under its own name, and the guest still sees it");
+        // A depth-stencil texture asked for the ES 2 way (unsized) on a driver that only takes the
+        // sized format: the runtime asks again with DEPTH24_STENCIL8 and the guest sees no error
+        // (Minecraft: Story Mode's framebuffer was incomplete on the phone). If the driver refuses
+        // both, the guest gets the first error.
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        FakeGL::lastInternalFormat() = 0;
+        ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        const uint32_t depthErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        const int32_t depthFormat = FakeGL::lastInternalFormat();
+        FakeGL::refuseSized() = true;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexImage2D"), {0x0DE1, 0, 0x84F9, 4, 4, 0, 0x84F9, 0x84FA, 0});
+        const uint32_t bothErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        const uint32_t bothErrAgain = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        FakeGL::refuseSized() = false;
+        ecpu.r[13] = savedSp;
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        if (!(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0))
+            std::printf("    depth texture: err %x format %x both %x again %x\n", depthErr, depthFormat, bothErr, bothErrAgain);
+        check(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0,
+              "an unsized depth-stencil texture the driver refuses is created with the sized format; refused twice, the guest sees the error once");
+        // Texture formats the phone's driver refuses in the form old iOS took them (a refused
+        // upload leaves a texture that samples black):
+        //  - BGRA as the internal format (Goat Simulator's HUD, Crossy Road): asked again as RGBA,
+        //    and later uploads go straight to the accepted form;
+        //  - half-float RGBA by its OES type (Minecraft: Story Mode's 3D scenes): asked again as
+        //    RGBA16F with the ES 3 type, which glTexSubImage2D then uses too.
+        {
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+            ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
+            auto gl = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol(n), a)); };
+            while (gl("_glGetError", {})) {}
+            FakeGL::lastInternalFormat() = 0;
+            gl("_glTexImage2D", {0x0DE1, 0, 0x80E1, 512, 512, 0, 0x80E1, 0x1401, 0});
+            const uint32_t bgraErr = gl("_glGetError", {});
+            const int32_t bgraFormat = FakeGL::lastInternalFormat();
+            const int before = FakeGL::texUploads();
+            gl("_glTexImage2D", {0x0DE1, 0, 0x80E1, 64, 64, 0, 0x80E1, 0x1401, 0});
+            const int secondCalls = FakeGL::texUploads() - before;
+            const uint32_t bgraErr2 = gl("_glGetError", {});
+            FakeGL::lastInternalFormat() = 0;
+            FakeGL::lastType() = 0;
+            gl("_glTexImage2D", {0x0DE1, 0, 0x1908, 1024, 1, 0, 0x1908, 0x8D61, 0});
+            const uint32_t halfErr = gl("_glGetError", {});
+            const int32_t halfFormat = FakeGL::lastInternalFormat();
+            const uint32_t halfType = FakeGL::lastType();
+            FakeGL::lastType() = 0;
+            gl("_glTexSubImage2D", {0x0DE1, 0, 0, 0, 1024, 1, 0x1908, 0x8D61, 0});
+            const uint32_t subErr = gl("_glGetError", {});
+            const uint32_t subType = FakeGL::lastType();
+            ecpu.r[13] = savedSp;
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+            if (!(bgraErr == 0 && bgraFormat == 0x1908 && secondCalls == 1 && bgraErr2 == 0))
+                std::printf("    bgra: err %x format %x second calls %d err %x\n", bgraErr, bgraFormat, secondCalls, bgraErr2);
+            check(bgraErr == 0 && bgraFormat == 0x1908 && secondCalls == 1 && bgraErr2 == 0,
+                  "a BGRA texture the driver refuses with a BGRA internal format is created as RGBA; the next one is asked once");
+            if (!(halfErr == 0 && halfFormat == 0x881A && halfType == 0x140B && subErr == 0 && subType == 0x140B))
+                std::printf("    half float: err %x format %x type %x sub err %x type %x\n", halfErr, halfFormat, halfType, subErr, subType);
+            check(halfErr == 0 && halfFormat == 0x881A && halfType == 0x140B && subErr == 0 && subType == 0x140B,
+                  "a half-float texture the driver refuses by its OES type is created as RGBA16F, and updated with the ES 3 type");
+        }
+        // Two buffers mapped through the same target, then unmapped in the other order (Clumsy
+        // Ninja's vertex setup). Each unmap must write its own data to its own buffer and end the
+        // driver's mapping, or the next glBufferData is refused, as it was on the phone.
+        {
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+            auto gl = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol(n), a)); };
+            while (gl("_glGetError", {})) {}
+            gl("_glBindBuffer", {0x8892, 10});
+            gl("_glBufferData", {0x8892, 8, 0, 0x88E8});
+            const uint32_t mapA = gl("_glMapBufferOES", {0x8892, 0x88B9});
+            gl("_glBindBuffer", {0x8892, 9});
+            gl("_glBufferData", {0x8892, 4, 0, 0x88E8});
+            const uint32_t mapB = gl("_glMapBufferOES", {0x8892, 0x88B9});
+            if (mapA) std::memcpy(eproc.mem().host(mapA), "AAAAAAAA", 8);
+            if (mapB) std::memcpy(eproc.mem().host(mapB), "BBBB", 4);
+            gl("_glBindBuffer", {0x8892, 10});
+            const bool unmapA = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 1;
+            gl("_glBindBuffer", {0x8892, 9});
+            const bool unmapB = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 1;
+            const auto& bufs = FakeGL::buffers();
+            const bool contents = bufs.at(10).data == std::vector<uint8_t>(8, 'A') && bufs.at(9).data == std::vector<uint8_t>(4, 'B');
+            const uint32_t fresh = eproc.heap().allocZeroed(4);
+            std::memcpy(eproc.mem().host(fresh), "CCCC", 4);
+            gl("_glBufferData", {0x8892, 4, fresh, 0x88E4});
+            const uint32_t afterErr = gl("_glGetError", {});
+            // glBufferData on a buffer the app left mapped ends the mapping; a late unmap reports
+            // failure and writes nothing.
+            FakeGL::buffers()[11] = {};
+            gl("_glBindBuffer", {0x8892, 11});
+            gl("_glBufferData", {0x8892, 4, 0, 0x88E8});
+            gl("_glMapBufferOES", {0x8892, 0x88B9});
+            FakeGL::buffers()[11].mapped = false;   // what a real driver's glBufferData does to the old mapping
+            gl("_glBufferData", {0x8892, 4, fresh, 0x88E4});
+            const bool lateUnmap = (gl("_glUnmapBufferOES", {0x8892}) & 0xFF) == 0 && FakeGL::buffers()[11].data == std::vector<uint8_t>(4, 'C');
+            while (gl("_glGetError", {})) {}
+            gl("_glBindBuffer", {0x8892, 0});
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+            if (!(mapA && mapB && mapA != mapB && unmapA && unmapB && contents && afterErr == 0 && lateUnmap))
+                std::printf("    mapped buffers: maps %x %x unmap %d %d contents %d err %x late %d\n", mapA, mapB, unmapA, unmapB, contents, afterErr, lateUnmap);
+            check(mapA && mapB && mapA != mapB && unmapA && unmapB && contents && afterErr == 0 && lateUnmap,
+                  "two buffers mapped on one target each get their own data back on unmap, and glBufferData works afterwards");
+        }
+        // glTexSubImage2D has no check of its own: HG_BEGIN's check on return names it.
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+        ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glTexSubImage2D"), {0x0DE1, 0, 0, 0, 4, 4, 0x84F9, 0x84FA, 0});
+        ecpu.r[13] = savedSp;
+        eproc.callGuest(ecpu, *eproc.lookupSymbol("_glBindTexture"), {0x0DE1, 0});
+        const uint32_t subErr = uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol("_glGetError"), {}));
+        er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+        bool subNamed = false, subBindBlamed = false;
+        for (const auto& line : eproc.glErrorLog()) {
+            subNamed = subNamed || (line.rfind("glTexSubImage2D(", 0) == 0 && line.find("-> 0x0500") != std::string::npos);
+            subBindBlamed = subBindBlamed || (line.rfind("glBindTexture(3553, 0)", 0) == 0 && line.find("-> 0x0500") != std::string::npos);
+        }
+        check(subErr == 0x0500 && subNamed && !subBindBlamed,
+              "HG_BEGIN checks a hand-written GL function on return: its error is not blamed on the next call");
     }
 
     // PR #167: fixed-size heap objects share writable pages, so a successful
