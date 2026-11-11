@@ -601,7 +601,7 @@ int32_t wsbXsputn(Ctx& x, GuestPtr sb, GuestPtr s, int32_t n) {
         if (pp && pp < e && e - pp >= 4) {
             const uint32_t take = std::min<uint32_t>((e - pp) / 4, uint32_t(n - put));
             need(x, s + uint32_t(put) * 4, uint64_t(take) * 4, Memory::kProtRead, "wstreambuf::xsputn source");
-            need(x, pp, uint64_t(take) * 4, Memory::kProtRW, "wstreambuf::xsputn put area");
+            need(x, pp, uint64_t(take) * 4, Memory::kProtWrite, "wstreambuf::xsputn put area");
             std::memmove(x.mem.host(pp), x.mem.host(s + uint32_t(put) * 4), size_t(take) * 4);
             wr(x, sb + kPptr, pp + take * 4);
             put += int32_t(take);

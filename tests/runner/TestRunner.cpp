@@ -7368,6 +7368,9 @@ int runFullSubsystemTests() {
             const uint32_t mono[8] = {0x6C70636D, 0x0C, 2, 1, 2, 1, 16, 0};
             proc.mem().copyIn(fmtAt + 8, mono, 32);
             const uint32_t fmtStatus = uint32_t(callAT("_AudioUnitSetProperty", {mixer, 8, 1, 1, fmtAt, 40}));
+            proc.mem().write<uint32_t>(outAt, 40);
+            callAT("_AudioUnitGetProperty", {mixer, 8, 1, 1, scratch + 88, outAt});
+            const bool formatReadBack = proc.mem().read<double>(scratch + 88) == 22050.0 && proc.mem().read<uint32_t>(scratch + 88 + 28) == 1;
             const float off = 0.0f;
             uint32_t offBits;
             std::memcpy(&offBits, &off, 4);
@@ -7387,6 +7390,7 @@ int runFullSubsystemTests() {
                   "AUGraphStart pulls every mixer input from its own callback, with its input number");
             check(frames1 > 200 && frames1 < 240, "a 22050 Hz mixer input is asked for 22050 Hz worth of frames");
             check(calls2 == 0, "a mixer input disabled with k3DMixerParam_Enable is not pulled");
+            check(formatReadBack, "a mixer input reads back the stream format set on it");
             check(mixed > 0 && !runningBefore && runningAfter, "the mixer inputs are audible, and AUGraphIsRunning follows start");
         }
 

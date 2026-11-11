@@ -1571,7 +1571,7 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t scope, uint32
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(uid);
     if (it == ATS(x).units.end() || !data) return -50;
-    if (propId == 2 /* kAudioUnitProperty_MakeConnection: {source unit, source output, this input} */) {
+    if (propId == 1 /* kAudioUnitProperty_MakeConnection: {source unit, source output, this input} */) {
         if (size < 12) return -50;
         const uint32_t src = x.mem.read<uint32_t>(data);
         if (it->second.isMixer()) return 0;   // a unit feeding one mixer input: not played
@@ -1614,7 +1614,9 @@ int32_t au_getProp(Ctx& x, uint32_t unit, uint32_t prop, uint32_t scope, uint32_
     const uint32_t size = x.mem.read<uint32_t>(ioDataSize);
     if (prop == 8 /* kAudioUnitProperty_StreamFormat */) {
         if (size >= 40) {
-            const AudioUnitInstance& u = it->second;
+            // A mixer input reads back the format set on it.
+            const bool input = it->second.isMixer() && scope == 1 && element < 64;
+            const AudioUnitInstance& u = input ? auBus(st, it->second, element) : it->second;
             x.mem.write<double>(outData, u.sampleRate);
             x.mem.write<uint32_t>(outData + 8, 0x6c70636d /* 'lpcm' */);
             x.mem.write<uint32_t>(outData + 12, u.formatFlags);
@@ -2622,7 +2624,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_start>("_AudioOutputUnitStart");
     p.def<&au_stop>("_AudioOutputUnitStop");
     p.def<&au_setProp>("_AudioUnitSetProperty");
-    p.def<&au_getProp>("_AudioUnitGetProperty");
+    supportDef<&au_getProp>(p, "_AudioUnitGetProperty", SupportStatus::Approx, "Stream format (per mixer input) and maximum frames per slice; other properties are left untouched");
     p.def<&au_setParam>("_AudioUnitSetParameter");
     p.def<&au_getParam>("_AudioUnitGetParameter");
     p.def<&au_render>("_AudioUnitRender");
