@@ -396,7 +396,10 @@ final class RunModel {
     func dismissKeyboard(focusId: UInt64) { session?.dismissKeyboard(forFocus: focusId) }
 
     func touch(_ phase: HVMTouchPhase, at p: CGPoint, finger: Int) {
-        guard phase == .cancelled || inputEnabled else { return }
+        // A finger that is already down always gets its end, even if input closed meanwhile
+        // (a movie shown before the first frame ended while it was held).
+        let lifting = (phase == .ended || phase == .cancelled) && activeTouches[finger] != nil
+        guard lifting || phase == .cancelled || inputEnabled else { return }
         guard phase == .began || activeTouches[finger] != nil else { return }
         if phase == .ended || phase == .cancelled { activeTouches[finger] = nil }
         else { activeTouches[finger] = p }

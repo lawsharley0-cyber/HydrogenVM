@@ -1473,7 +1473,9 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
         using Clock = std::chrono::steady_clock;
         const auto now = Clock::now();
         const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
-        if (const int64_t until = st.pacer.next(nowNs)) {
+        int64_t until = 0;
+        { std::lock_guard<std::mutex> lk(st.mu); until = st.pacer.next(nowNs); }   // two threads may present
+        if (until) {
             std::this_thread::sleep_until(Clock::time_point(std::chrono::duration_cast<Clock::duration>(std::chrono::nanoseconds(until))));
             p.perf().presentWaitNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - now).count());
         }
