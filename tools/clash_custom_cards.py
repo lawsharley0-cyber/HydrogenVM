@@ -1,16 +1,90 @@
 """Build private custom-card CSV overlays without changing bundled assets.
 
-This is definition-generation infrastructure, not an in-game card forge. The
-guest still needs a durable registry, loader routing and native ownership/UI.
-Inputs must come from the pinned bundle; no client data is distributed here.
+Build-time append templates and the FGR1 definition-registry codec support the
+freestanding guest Card Forge. Inputs must come from the pinned bundle; no
+client data is distributed here. The phone needs no Python or host game server.
 """
 import csv
 import hashlib
 import io
 import json
+import struct
 from pathlib import Path
 
 MAX_CUSTOM_CARDS = 16
+FORGE_TABLES = ('res/csv_logic/characters.csv', 'res/csv_logic/buildings.csv',
+                'res/csv_logic/spells_characters.csv', 'res/csv_logic/spells_buildings.csv',
+                'res/csv_logic/projectiles.csv', 'res/csv_client/texts.csv')
+
+
+def fnv(data):
+    result = 2166136261
+    for byte in data:
+        result = ((result ^ byte) * 16777619) & 0xffffffff
+    return result
+
+
+def encode_registry(registry, previous=None):
+    """Encode FGR1; no file represents an empty guest registry."""
+    cards = validate_registry(registry, previous)
+    if not cards:
+        raise ValueError('An empty registry is represented by absence, not a replacement file')
+    body = b''.join(struct.pack('<II100s', c['baseCardId'], len(c['name'].encode('utf-8')), c['name'].encode('utf-8')) for c in cards)
+    header = struct.pack('<4I', 0x31524746, 1, len(cards), fnv(body))
+    return header + struct.pack('<I', fnv(header)) + body
+
+
+def decode_registry(data, previous=None):
+    if len(data) < 20:
+        raise ValueError('Truncated FGR1 header')
+    magic, version, count, body_hash, header_hash = struct.unpack_from('<5I', data)
+    if magic != 0x31524746 or version != 1 or not 1 <= count <= MAX_CUSTOM_CARDS or len(data) != 20 + count*108 or fnv(data[:16]) != header_hash or fnv(data[20:]) != body_hash:
+        raise ValueError('Invalid FGR1 registry extent/checksums')
+    cards = []
+    for slot in range(count):
+        base, size, name = struct.unpack_from('<II100s', data, 20+slot*108)
+        if not 1 <= size <= 96 or any(name[size:]):
+            raise ValueError('Invalid FGR1 name extent/padding')
+        cards.append(dict(slot=slot, baseCardId=base, name=name[:size].decode('utf-8')))
+    registry = dict(version=1, cards=cards)
+    validate_registry(registry, previous)
+    return registry
+
+
+def guest_header(bundle, entries):
+    """Private append templates for a freestanding guest; never distribute CSVs.
+
+    Derive templates through the same reference generator used by the authored
+    fixtures, avoiding a second independent CSV parser on the phone.
+    """
+    originals = {path: (Path(bundle)/path).read_bytes() for path in FORGE_TABLES}
+    lines = ['struct ForgeBlueprint {unsigned id; const char *rows[6];};',
+             'static const char *forge_table_paths[6]={' + ','.join(json.dumps(p) for p in FORGE_TABLES) + '};',
+             'static const unsigned forge_source_sizes[6]={' + ','.join(str(len(originals[p])) for p in FORGE_TABLES) + '};',
+             'static const unsigned forge_source_hashes[6]={' + ','.join(str(fnv(originals[p]))+'u' for p in FORGE_TABLES) + '};']
+    counts = [len(Table(bundle, 'logic', t).groups) for t in ('spells_characters', 'spells_buildings')]
+    lines.append('static const unsigned forge_group_counts[2]={' + ','.join(map(str, counts)) + '};')
+    lines.append('static const struct ForgeBlueprint forge_blueprints[GUEST_MOD_UNIT_COUNT]={')
+    tokens = {'ModLabCard_0000': '@CARD@', 'ModLabUnit_0000': '@UNIT@',
+              'ModLabShot_0000': '@SHOT@', 'TID_MODLAB_0000': '@TID@', 'FORGE_NAME_TOKEN': '@NAME@'}
+    for entry in entries:
+        overlays, _ = generate_overlays(bundle, dict(version=1, cards=[dict(slot=0, baseCardId=entry['cardId'], name='FORGE_NAME_TOKEN')]))
+        rows = []
+        for path in FORGE_TABLES:
+            suffix = overlays.get(path, originals[path])[len(originals[path]):]
+            if suffix and not originals[path].endswith(b'\n'):
+                assert suffix.startswith(b'\r\n')
+                suffix = suffix[2:]
+            text = suffix.decode('utf-8')
+            if '@' in text:
+                raise ValueError('Reserved template delimiter in original CSV')
+            for name, token in tokens.items():
+                text = text.replace(name, token)
+            if len(text.encode()) + text.count('@NAME@') * 194 > 65536:
+                raise ValueError('Custom row template exceeds guest bound')
+            rows.append(json.dumps(text, ensure_ascii=False))
+        lines.append('{' + str(entry['cardId']) + ',{' + ','.join(rows) + '}},')
+    return '\n'.join(lines + ['};']) + '\n'
 
 
 class Table:

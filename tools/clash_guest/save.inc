@@ -34,6 +34,7 @@ static u32 checksum(const u8 *bytes,u32 size) {
     for(u32 i=0;i<size;++i)value=(value^bytes[i])*16777619u;
     return value;
 }
+#include "forge.inc"
 #include "reward_sources.inc"
 #include "clock.inc"
 #include "clan_state.inc"
@@ -51,7 +52,7 @@ static void write_save(void) {
 #endif
     if(saved_size<avatar_offset+8 || saved_size>sizeof saved_home)
         fail("GuestOffline: invalid native checkpoint extent");
-    u32 header[4]={0x31475243u,saved_size,avatar_offset,checksum(saved_home,saved_size)};
+    u32 header[4]={forge_loaded_count?0x32475243u:0x31475243u,saved_size,avatar_offset,checksum(saved_home,saved_size)};
     void *file=CALL(s_open,void*,(const char*,const char*))(temporary_path,"wb");
     if(!file)fail("GuestOffline: cannot create checkpoint");
     int valid=CALL(s_write,u32,(const void*,u32,u32,void*))(header,1,sizeof header,file)==sizeof header;
@@ -60,6 +61,7 @@ static void write_save(void) {
     if(!saved_epoch)fail("GuestOffline: checkpoint has no accounted clock");
     clock[3]=checksum((const u8*)clock,12);
     valid=valid && CALL(s_write,u32,(const void*,u32,u32,void*))(clock,1,sizeof clock,file)==sizeof clock;
+    write_forge_link(file,header[3]);
     // A parent marker distinguishes a migrated donor/tombstone from a legacy
     // clan with no donor. Removing the entire trailing GDN1 must not reseed it.
     clan_expects_donor=donor_size!=0;
@@ -101,6 +103,7 @@ static void write_save(void) {
 }
 static void load_guest_home(void) {
     if(save_initialized)return;
+    forge_prepare_tables();
     s_getenv=symbol("getenv");s_open=symbol("fopen");s_read=symbol("fread");
     s_write=symbol("fwrite");s_flush=symbol("fflush");s_fileno=symbol("fileno");
     s_sync=symbol("fsync");s_close=symbol("fclose");s_rename=symbol("rename");s_error=symbol("__error");
@@ -122,16 +125,20 @@ static void load_guest_home(void) {
     } else {
         u32 header[4];
         if(CALL(s_read,u32,(void*,u32,u32,void*))(header,1,sizeof header,file)!=sizeof header ||
-           header[0]!=0x31475243u || header[1]>sizeof saved_home ||
+           (header[0]!=0x31475243u && header[0]!=0x32475243u) || header[1]>sizeof saved_home ||
            header[2]>header[1] || header[1]-header[2]<8)
             fail("GuestOffline: invalid checkpoint header; original file retained");
         saved_size=header[1];avatar_offset=header[2];
         int valid=CALL(s_read,u32,(void*,u32,u32,void*))(saved_home,1,saved_size,file)==saved_size;
+        int saw_forge=0;
         int saw_clock=0,saw_journal=0,saw_clan=0,saw_chat=0,saw_mail=0,saw_request=0,saw_friendly=0,saw_donor=0,saw_inventory=0,saw_npc_request=0,saw_community=0,saw_opponent=0;
         for(;;) {
             u32 tag,extra=CALL(s_read,u32,(void*,u32,u32,void*))(&tag,1,4,file);
             if(!extra)break;
             if(extra!=4)fail("GuestOffline: truncated checkpoint extension; original file retained");
+            if(tag==0x31434746u && !saw_forge && header[0]==0x32475243u) {
+                read_forge_link(file,tag,header[3]);saw_forge=1;continue;
+            }
             if(tag==0x31545247u && !saw_clock) {
                 u32 clock[4]={tag,0,0,0};
                 if(CALL(s_read,u32,(void*,u32,u32,void*))(clock+1,1,12,file)!=12 || !clock[1] ||
@@ -183,6 +190,7 @@ static void load_guest_home(void) {
             saw_journal=1;
         }
         int closed=CALL(s_close,int,(void*))(file);
+        if(header[0]==0x32475243u && !saw_forge)fail("Card Forge: checkpoint definition link missing; game save retained");
         if(clan_expects_donor && !saw_donor)
             fail("GuestOffline: required donor record missing; original retained");
         if(clan_expects_donor_inventory && !saw_inventory)

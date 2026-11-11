@@ -103,6 +103,7 @@ struct VCData : ObjC::HostObject {
 };
 
 struct TextInputRequest;
+struct PhotoPickerRequest;
 
 // Per-process UIKit state.
 struct UIState {
@@ -152,6 +153,10 @@ struct UIState {
     std::vector<id> eaglLayers;
     // on-screen keyboard (#303)
     std::function<void(const TextInputRequest&)> textInputObserver;   // guarded by inputMu
+    std::function<void(const PhotoPickerRequest&)> photoPickerObserver; // guarded by inputMu
+    id activePhotoPicker = 0; // retained until dismissal
+    uint64_t photoRequestId = 0;
+    bool photoResultDelivered = false;
     uint64_t textFocusId = 0;   // bumped each time a text field becomes first responder
     uint64_t textAckSeq = 0;    // the host edit sequence number the guest has processed
 };
@@ -179,6 +184,14 @@ struct TextInputEvent {
 void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&)> observer);
 void submitTextInput(Process& p, TextInputEvent ev);
 void customKeyboardFocus(Ctx& x, id responder, bool active);
+// Native photo selection; callbacks carry an epoch unique across process instances.
+struct PhotoPickerRequest { bool active = false; uint64_t requestId = 0; };
+void setPhotoPickerObserver(Process& p, std::function<void(const PhotoPickerRequest&)> observer);
+void submitPhotoPickerResult(Process& p, uint64_t requestId, std::vector<uint8_t> imageData);
+bool presentPhotoPicker(Ctx& x, id controller);
+void dismissPhotoPicker(Ctx& x, id controller);
+void registerPhotoPicker(Process& p, ObjC::Runtime& r);
+
 inline UIState& ui(Ctx& x) { return ui(x.proc); }
 
 // ---- layers (QuartzCore.cpp)

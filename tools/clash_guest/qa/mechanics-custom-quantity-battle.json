@@ -1,0 +1,214 @@
+{
+  "name": "Known equipped custom Knight fixture: count two, normal deployment and natural result",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "modlab",
+      "expected": "modlab",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "spawns",
+      "expected": "spawns",
+      "actions": [
+        {
+          "tap": [
+            200,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "custom-knight",
+      "expected": "custom-knight",
+      "actions": [
+        {
+          "tap": [
+            30,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "enable",
+      "expected": "enable",
+      "actions": [
+        {
+          "tap": [
+            160,
+            120
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "count1",
+      "expected": "count1",
+      "actions": [
+        {
+          "tap": [
+            294,
+            168
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "count2",
+      "expected": "count2",
+      "actions": [
+        {
+          "tap": [
+            294,
+            168
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "scroll",
+      "expected": "Apply controls below visible fields",
+      "actions": [
+        {
+          "drag": [
+            125,
+            465,
+            125,
+            230
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "save",
+      "expected": "save",
+      "actions": [
+        {
+          "tap": [
+            84,
+            335
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close",
+      "expected": "close",
+      "actions": [
+        {
+          "tap": [
+            275,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close-settings",
+      "expected": "close-settings",
+      "actions": [
+        {
+          "tap": [
+            287,
+            203
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "battle",
+      "expected": "battle",
+      "actions": [
+        {
+          "tap": [
+            160,
+            365
+          ]
+        }
+      ],
+      "settleSeconds": 15
+    },
+    {
+      "id": "select",
+      "expected": "select",
+      "actions": [
+        {
+          "tap": [
+            100,
+            500
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "deploy",
+      "expected": "deploy",
+      "actions": [
+        {
+          "tap": [
+            245,
+            335
+          ]
+        }
+      ],
+      "settleSeconds": 10
+    },
+    {
+      "id": "combat",
+      "expected": "combat",
+      "actions": [],
+      "settleSeconds": 35
+    },
+    {
+      "id": "result",
+      "expected": "result",
+      "actions": [],
+      "settleSeconds": 125
+    },
+    {
+      "id": "return",
+      "expected": "return",
+      "actions": [
+        {
+          "tap": [
+            160,
+            500
+          ]
+        }
+      ],
+      "settleSeconds": 6
+    }
+  ]
+}

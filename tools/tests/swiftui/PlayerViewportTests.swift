@@ -5,6 +5,29 @@ import CoreFoundation
 
 final class PlayerViewportTests: XCTestCase {
     @MainActor
+    func testPhotoDeliveryAndDismissalRequireTheActiveRequest() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        let model = RunModel(app: InstalledApp(dataDir: root, bundleDir: root, title: "Photo test"))
+        model.start(keepGoing: false)
+        defer { model.teardown() }
+        let session = try XCTUnwrap(PlayerProbe.shared.session)
+        session.onPhotoPicker?(HVMPhotoPickerRequest(active: true, requestId: 7))
+        XCTAssertEqual(model.photoPicker?.id, 7)
+        session.onPhotoPicker?(HVMPhotoPickerRequest(active: false, requestId: 6))
+        XCTAssertEqual(model.photoPicker?.id, 7)
+        model.finishPhoto(Data([1, 2]), requestId: 6)
+        XCTAssertTrue(session.submittedPhotos.isEmpty)
+        model.finishPhoto(nil, requestId: 7)
+        XCTAssertEqual(session.submittedPhotos.count, 1)
+        XCTAssertEqual(session.submittedPhotos.first?.id, 7)
+        XCTAssertNil(session.submittedPhotos.first?.data)
+        session.onPhotoPicker?(HVMPhotoPickerRequest(active: false, requestId: 7))
+        XCTAssertNil(model.photoPicker)
+        model.finishPhoto(Data([3]), requestId: 7)
+        XCTAssertEqual(session.submittedPhotos.count, 1)
+    }
+
+    @MainActor
     func testSyntheticFrameCounterAdvancesOncePerDelivery() {
         let session = HVMSession(bundlePath: "/synthetic/app", homePath: "/synthetic/home")
         XCTAssertEqual(session.framesPresented, 0)

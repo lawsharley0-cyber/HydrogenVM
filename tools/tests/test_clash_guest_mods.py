@@ -29,6 +29,8 @@ class ModLabTests(unittest.TestCase):
 #include <errno.h>
 typedef unsigned int u32;typedef unsigned char u8;
 #define GUEST_MOD_UNIT_COUNT 2
+#define FORGE_MAX_CARDS 16u
+static u32 forge_loaded_count=0;
 #define FIELD(p,n) (*(u32*)((char*)(p)+(n)))
 #define API_puts puts
 #define CALL(address,result,args) ((result (*)args)(address))
@@ -94,6 +96,8 @@ int main(int argc,char **argv){
 #include <string.h>
 typedef unsigned int u32;
 #define GUEST_MOD_UNIT_COUNT 2
+#define FORGE_MAX_CARDS 16u
+static u32 forge_loaded_count=1;
 #define FIELD(p,n) (*(u32*)((char*)(p)+(n)))
 #define API_puts puts
 #define CALL(address,result,args) ((result (*)args)(address))
@@ -106,9 +110,9 @@ int guest_original_mod_damage(void *p,int level){return 50+level;}
 int guest_original_mod_shot_damage(void *p,int level){return 40+level;}
 #define CHECK(c) do{if(!(c)){fprintf(stderr,"line %d\n",__LINE__);return 3;}}while(0)
 int main(void){
- u32 unit[2][160]={0},shot[2][160]={0};
- for(u32 i=0;i<2;++i){mod_units[i]=unit[i];mod_shots[i]=shot[i];
-  for(u32 j=0;j<6;++j){mod_original[i][j]=j==1||j==2?1000:100;}
+ u32 unit[3][160]={0},shot[3][160]={0};
+ for(u32 i=0;i<3;++i){mod_units[i]=unit[i];mod_shots[i]=shot[i];
+  for(u32 j=0;j<6;++j){mod_original[i][j]=j==3?(i==1?0x3f5eb852u:0x3f800000u):(j==1||j==2?1000:100);}
   for(u32 f=0;f<MOD_FIELDS;++f)mod_records[i].value[f]=100;
  }
  mod_ready=mod_enabled=1;
@@ -116,17 +120,22 @@ int main(void){
  for(u32 f=0;f<8;++f)mod_records[0].value[f]=values[f];
  for(int repeat=0;repeat<3;++repeat){mod_apply_units();
   CHECK(FIELD(unit[0],0x150)==125 && FIELD(unit[0],0x154)==500 && FIELD(unit[0],0x1bc)==2000);
-  CHECK(FIELD(unit[0],0x1cc)==150 && FIELD(shot[0],0x74)==200 && FIELD(unit[0],0x15c)==125);
-  CHECK(FIELD(unit[1],0x150)==100 && FIELD(shot[1],0x74)==100);
+  CHECK(FIELD(unit[0],0x1cc)==0x3fc00000u && FIELD(shot[0],0x74)==200 && FIELD(unit[0],0x15c)==125);
+  CHECK(FIELD(unit[1],0x150)==100 && FIELD(shot[1],0x74)==100 && FIELD(unit[1],0x1cc)==0x3f5eb852u);
   CHECK(guest_mod_health(unit[0],5)==210 && guest_mod_damage(unit[0],2)==78);
   CHECK(guest_mod_shot_damage(shot[0],2)==63 && guest_mod_health(unit[1],5)==105);
  }
+ // A custom definition has its own statistics, independently of its original.
+ mod_records[2].value[MOD_MOVE]=175;mod_records[2].value[MOD_HEALTH]=250;
+ mod_apply_units();CHECK(FIELD(unit[2],0x150)==175 && guest_mod_health(unit[2],5)==262); // floor(105 * 250 / 100)
+ CHECK(FIELD(unit[0],0x150)==125 && guest_mod_health(unit[0],5)==210 && FIELD(unit[1],0x150)==100);
  // Friendly battles and original training use the original native statistics.
  battle_started=1;arena_battle=0;mod_apply_units();
  CHECK(FIELD(unit[0],0x150)==100 && FIELD(unit[0],0x154)==1000 && guest_mod_health(unit[0],5)==105);
- arena_battle=1;mod_apply_units();CHECK(FIELD(unit[0],0x150)==125);
+ CHECK(FIELD(unit[2],0x150)==100 && guest_mod_health(unit[2],5)==105);
+ arena_battle=1;mod_apply_units();CHECK(FIELD(unit[0],0x150)==125 && FIELD(unit[2],0x150)==175);
  committed_wins=6;mod_apply_units();CHECK(FIELD(unit[0],0x150)==100 && guest_mod_damage(unit[0],2)==52);
- committed_wins=7;mod_enabled=0;mod_apply_units();CHECK(FIELD(unit[0],0x1cc)==100);
+ committed_wins=7;mod_enabled=0;mod_apply_units();CHECK(FIELD(unit[0],0x1cc)==0x3f800000u);
  return 0;
 }
 ''')
@@ -134,6 +143,34 @@ int main(void){
             self.assertEqual(p.returncode,0,p.stderr)
             p=subprocess.run([str(exe)],capture_output=True,text=True)
             self.assertEqual(p.returncode,0,p.stderr)
+
+
+    @unittest.skipUnless(shutil.which('clang'),'C compiler unavailable')
+    def test_binary32_troop_size_and_invalid_native_representations(self):
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d)/'size.c';exe=Path(d)/'size'
+            source.write_text(r'''
+#include <stdio.h>
+#include <stdlib.h>
+typedef unsigned int u32;
+static void fail(const char *why){fprintf(stderr,"%s\n",why);exit(2);}
+#include "mods_math.inc"
+int main(int argc,char **argv){
+ if(argc!=3)return 3;
+ printf("%08x\n",mod_scaled_size((u32)strtoul(argv[1],0,16),(u32)strtoul(argv[2],0,10)));
+ return 0;
+}
+''')
+            p=subprocess.run(['clang','-std=c11','-O2','-I'+str(ROOT/'tools/clash_guest'),str(source),'-o',str(exe)],capture_output=True,text=True)
+            self.assertEqual(p.returncode,0,p.stderr)
+            # Native Knight 1.0 and Archer 0.87, plus the editor's size limits.
+            for bits,percent,expected in [(0x3f800000,125,0x3fa00000),(0x3f5eb852,200,0x3fdeb852),(0x3f800000,25,0x3e800000),(0x3f800000,400,0x40800000),(0,125,0)]:
+                p=subprocess.run([str(exe),f'{bits:x}',str(percent)],capture_output=True,text=True)
+                self.assertEqual((p.returncode,p.stdout),(0,f'{expected:08x}\n'),p.stderr)
+            # Reject negative, infinity, NaN, overflowing size and bad percentages.
+            for bits,percent in [(0xbf800000,125),(0x7f800000,125),(0x7fc00001,125),(0x7f7fffff,400),(0x3f800000,24),(0x3f800000,401)]:
+                p=subprocess.run([str(exe),f'{bits:x}',str(percent)],capture_output=True,text=True)
+                self.assertEqual(p.returncode,2,p.stdout)
 
     def test_catalog_uses_original_spell_ids_for_building_and_shared_units(self):
         data={'characters':[dict(Name='Knight',Projectile=''),dict(Name='Archer',Projectile='Arrow')],

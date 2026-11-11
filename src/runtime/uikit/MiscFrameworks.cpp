@@ -123,15 +123,6 @@ void later(Ctx& x, id keep, double delay, std::function<void(Ctx&)> fn) {
     });
 }
 
-// ---- UIImagePickerController: no camera or photo library available.
-bool ip_sourceAvailable(Ctx&, id, SEL, int32_t) { return false; }
-id ip_mediaTypes(Ctx&, id, SEL, int32_t) { return 0; }
-bool ip_cameraAvailable(Ctx&, id, SEL, int32_t) { return false; }
-void ip_ignoreInt(Ctx&, id, SEL, int32_t) {}
-void ip_ignoreObj(Ctx&, id, SEL, id) {}
-void ip_ignoreBool(Ctx&, id, SEL, bool) {}
-int32_t ip_zero(Ctx&, id, SEL) { return 0; }
-
 // ---- CLLocationManager: location services are off. Updates fail with kCLErrorDenied.
 struct LocData : ObjC::HostObject { id delegate = 0; };
 id loc_delegate(Ctx& x, id self, SEL) { return rt(x).host<LocData>(self).delegate; }
@@ -301,17 +292,7 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
         .m<&vc_presentMovie>("presentMoviePlayerViewControllerAnimated:", "v@:@")
         .m<&vc_dismissMovie>("dismissMoviePlayerViewControllerAnimated", "v@:");
 
-    ObjC::ClassBuilder ip = r.defineClass("UIImagePickerController", "UINavigationController");
-    ip.cm<&ip_sourceAvailable>("isSourceTypeAvailable:", "c@:i").cm<&ip_mediaTypes>("availableMediaTypesForSourceType:", "@@:i")
-      .cm<&ip_cameraAvailable>("isCameraDeviceAvailable:", "c@:i").cm<&ip_cameraAvailable>("isFlashAvailableForCameraDevice:", "c@:i")
-      .m<&ip_ignoreInt>("setSourceType:", "v@:i").m<&ip_zero>("sourceType", "i@:").m<&ip_ignoreObj>("setMediaTypes:", "v@:@")
-      .m<&ip_ignoreBool>("setAllowsEditing:", "v@:c").m<&ip_ignoreBool>("setAllowsImageEditing:", "v@:c")
-      .m<&ip_ignoreInt>("setCameraDevice:", "v@:i").m<&ip_ignoreBool>("setShowsCameraControls:", "v@:c")
-      .m<&ip_ignoreObj>("setCameraOverlayView:", "v@:@").m<&ip_ignoreInt>("setVideoQuality:", "v@:i");
-    for (const char* n : {"_UIImagePickerControllerOriginalImage", "_UIImagePickerControllerEditedImage", "_UIImagePickerControllerMediaType",
-                          "_UIImagePickerControllerCropRect", "_UIImagePickerControllerMediaURL", "_UIImagePickerControllerReferenceURL",
-                          "_UIImagePickerControllerMediaMetadata"})
-        p.mem().write<uint32_t>(p.defineDataBlock(n, 4), Foundation::constString(p, n + 1));
+    registerPhotoPicker(p, r);
 
     ObjC::ClassBuilder lm = r.defineClass("CLLocationManager", "NSObject");
     lm.cm<&locc_no>("locationServicesEnabled", "c@:").cm<&locc_no>("headingAvailable", "c@:")

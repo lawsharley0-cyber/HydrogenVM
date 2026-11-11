@@ -1,0 +1,202 @@
+{
+  "name": "Separate post-training default profile: Apply all Archer fields at 125 percent",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "editor",
+      "expected": "editor",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "archer",
+      "expected": "archer",
+      "actions": [
+        {
+          "tap": [
+            288,
+            274
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "enable",
+      "expected": "enable",
+      "actions": [
+        {
+          "tap": [
+            160,
+            316
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "move",
+      "expected": "move",
+      "actions": [
+        {
+          "tap": [
+            292,
+            360
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "attack",
+      "expected": "attack",
+      "actions": [
+        {
+          "tap": [
+            292,
+            403
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "load",
+      "expected": "load",
+      "actions": [
+        {
+          "tap": [
+            292,
+            446
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "size",
+      "expected": "size",
+      "actions": [
+        {
+          "tap": [
+            292,
+            489
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "scroll",
+      "expected": "scroll",
+      "actions": [
+        {
+          "drag": [
+            160,
+            465,
+            160,
+            190
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "shot",
+      "expected": "shot",
+      "actions": [
+        {
+          "tap": [
+            292,
+            257
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "health",
+      "expected": "health",
+      "actions": [
+        {
+          "tap": [
+            292,
+            300
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "damage",
+      "expected": "damage",
+      "actions": [
+        {
+          "tap": [
+            292,
+            343
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "range",
+      "expected": "range",
+      "actions": [
+        {
+          "tap": [
+            292,
+            386
+          ]
+        }
+      ],
+      "settleSeconds": 1
+    },
+    {
+      "id": "apply",
+      "expected": "apply",
+      "actions": [
+        {
+          "tap": [
+            84,
+            447
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close",
+      "expected": "close",
+      "actions": [
+        {
+          "tap": [
+            275,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

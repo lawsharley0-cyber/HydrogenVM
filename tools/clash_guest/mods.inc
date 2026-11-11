@@ -1,14 +1,21 @@
 #include "mods_math.inc"
+#ifdef GUEST_MECH_CARD_COUNT
+static void mech_restore(void),mech_apply(void);
+static void *mech_active_shot(void*,void*);
+static u32 mech_shot_base(void*,u32);
+#endif
 struct ModRecord {u32 value[MOD_FIELDS];};
-static struct ModRecord mod_records[GUEST_MOD_UNIT_COUNT];
-static void *mod_units[GUEST_MOD_UNIT_COUNT],*mod_shots[GUEST_MOD_UNIT_COUNT];
-static u32 mod_original[GUEST_MOD_UNIT_COUNT][6],mod_enabled,mod_ready,mod_selected,mod_applied;
+#define MOD_UNIT_CAPACITY (GUEST_MOD_UNIT_COUNT+FORGE_MAX_CARDS)
+static u32 mod_count(void){return GUEST_MOD_UNIT_COUNT+forge_loaded_count;}
+static struct ModRecord mod_records[MOD_UNIT_CAPACITY];
+static void *mod_units[MOD_UNIT_CAPACITY],*mod_shots[MOD_UNIT_CAPACITY];
+static u32 mod_original[MOD_UNIT_CAPACITY][6],mod_enabled,mod_ready,mod_selected,mod_applied;
 static int mod_profile_rejected,mod_reset_requested;
 static char mod_status[128],mod_path[512];
 static const u32 mod_offsets[6]={0x150,0x154,0x1bc,0x1cc,0x74,0x15c};
 static void mod_message(const char *s) {u32 n=0;while(s[n]&&n<127){mod_status[n]=s[n];++n;}mod_status[n]=0;}
 static void mod_reject_profile(void) {
-    for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)for(u32 f=0;f<MOD_FIELDS;++f)mod_records[i].value[f]=100;
+    for(u32 i=0;i<mod_count();++i)for(u32 f=0;f<MOD_FIELDS;++f)mod_records[i].value[f]=100;
     mod_enabled=mod_selected=0;mod_ready=mod_profile_rejected=1;
     mod_message("Saved modifiers rejected. Reset draft.");
     CALL(API_puts,int,(const char*))("Mod Lab: optional profile rejected; retained, mods disabled");
@@ -16,31 +23,51 @@ static void mod_reject_profile(void) {
 static int mod_allowed(void) {return save_initialized && logged_in && committed_wins>=7;}
 static int mod_effective(void) {return mod_ready && mod_enabled && mod_allowed() && (!battle_started || arena_battle);}
 static void mod_restore(void) {
+#ifdef GUEST_MECH_CARD_COUNT
+    mech_restore();
+#endif
     mod_applied=0;
     if(!mod_ready)return;
-    for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)for(u32 j=0;j<6;++j) {
+    for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
         void *p=j==4?mod_shots[i]:mod_units[i];if(p)FIELD(p,mod_offsets[j])=mod_original[i][j];
     }
 }
 static void mod_apply_units(void) {
-    mod_restore();mod_applied=1;if(!mod_effective())return;
-    for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)for(u32 j=0;j<6;++j) {
+    mod_restore();
+#ifdef GUEST_MECH_CARD_COUNT
+    mech_apply();
+#endif
+    mod_applied=1;if(!mod_effective())return;
+    for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
         u32 field=j==5?MOD_RANGE:j;void *p=j==4?mod_shots[i]:mod_units[i];
+        u32 base=mod_original[i][j];
+#ifdef GUEST_MECH_CARD_COUNT
+        if(j==4){p=mech_active_shot(mod_units[i],p);base=mech_shot_base(p,base);}
+#endif
         if(p && mod_records[i].value[field]!=100)
-            FIELD(p,mod_offsets[j])=mod_scaled(mod_original[i][j],mod_records[i].value[field],j==1||j==2);
+            FIELD(p,mod_offsets[j])=j==3?mod_scaled_size(base,mod_records[i].value[field]):
+                mod_scaled(base,mod_records[i].value[field],j==1||j==2);
     }
 }
 static void *mod_data(const char *name,u32 address) {
     if(!*name)return 0;u32 text[5];CALL(0x18dcf9,void,(void*,const char*))(text,name);
     void *p=CALL(address,void*,(void*,void*))(text,0);CALL(0x18db2d,void,(void*))(text);return p;
 }
+static u32 mod_card_id(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].cardId:forge_ids[i-GUEST_MOD_UNIT_COUNT];}
+static const char *mod_name(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].name:forge_records[i-GUEST_MOD_UNIT_COUNT].name;}
+static const char *mod_shot_name(u32 i,char out[24]) {
+    if(i<GUEST_MOD_UNIT_COUNT)return mod_unit_defs[i].projectile;
+    u32 slot=i-GUEST_MOD_UNIT_COUNT;const struct ForgeBlueprint *bp=forge_blueprint(forge_records[slot].base);
+    if(!bp || !bp->rows[4][0])return "";
+    forge_identifier(out,"ModLabShot_",slot);return out;
+}
 static void mod_initialize(void) {
     if(mod_ready)return;
-    for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i) {
+    for(u32 i=0;i<mod_count();++i) {
         for(u32 f=0;f<MOD_FIELDS;++f)mod_records[i].value[f]=100;
-        void *spell=CALL(0xb821d,void*,(int))((int)mod_unit_defs[i].cardId);
+        void *spell=CALL(0xb821d,void*,(int))((int)mod_card_id(i));
         mod_units[i]=spell?CALL(0x75399,void*,(void*))(spell):0;
-        mod_shots[i]=mod_data(mod_unit_defs[i].projectile,0xba141);
+        char shot[24];mod_shots[i]=mod_data(mod_shot_name(i,shot),0xba141);
         if(!mod_units[i])fail("Mod Lab: pinned unit reference missing");
         for(u32 j=0;j<6;++j){void *p=j==4?mod_shots[i]:mod_units[i];mod_original[i][j]=p?FIELD(p,mod_offsets[j]):0;}
     }
@@ -48,13 +75,13 @@ static void mod_initialize(void) {
     void *file=CALL(s_open,void*,(const char*,const char*))(mod_path,"rb");
     if(file) {
         u32 h[7];int ok=CALL(s_read,u32,(void*,u32,u32,void*))(h,1,sizeof h,file)==sizeof h;
-        ok=ok && h[0]==0x31444f4du && h[1]==1 && h[2]>0 && h[2]<=GUEST_MOD_UNIT_COUNT && h[3]<=1 && h[4]<h[2] && h[6]==checksum((const u8*)h,24);
+        ok=ok && h[0]==0x31444f4du && h[1]==1 && h[2]>0 && h[2]<=mod_count() && h[3]<=1 && h[4]<h[2] && h[6]==checksum((const u8*)h,24);
         u32 bytes=ok?h[2]*sizeof *mod_records:0;
         ok=ok && CALL(s_read,u32,(void*,u32,u32,void*))(mod_records,1,bytes,file)==bytes;
         u8 extra;ok=ok && !CALL(s_read,u32,(void*,u32,u32,void*))( &extra,1,1,file);
         ok=ok && !CALL(symbol("ferror"),int,(void*))(file);
         int closed=CALL(s_close,int,(void*))(file);if(!ok || closed || h[5]!=checksum((const u8*)mod_records,bytes)){mod_reject_profile();return;}
-        for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)for(u32 f=0;f<MOD_FIELDS;++f)
+        for(u32 i=0;i<mod_count();++i)for(u32 f=0;f<MOD_FIELDS;++f)
             if(!mod_percent_valid(f,mod_records[i].value[f])){mod_reject_profile();return;}
         mod_enabled=h[3];mod_selected=h[4];
     } else if(*CALL(s_error,int*,(void))()!=2){mod_reject_profile();return;}
@@ -73,10 +100,11 @@ static int mod_archive_rejected(void) {
 }
 static void mod_save(void) {
     char temp[520];path_append(temp,mod_path,".tmp",sizeof temp);
-    u32 h[7]={0x31444f4du,1,GUEST_MOD_UNIT_COUNT,mod_enabled,mod_selected,checksum((const u8*)mod_records,sizeof mod_records),0};h[6]=checksum((const u8*)h,24);
+    u32 bytes=mod_count()*sizeof *mod_records;
+    u32 h[7]={0x31444f4du,1,mod_count(),mod_enabled,mod_selected,checksum((const u8*)mod_records,bytes),0};h[6]=checksum((const u8*)h,24);
     void *f=CALL(s_open,void*,(const char*,const char*))(temp,"wb");if(!f)fail("Mod Lab: cannot open profile checkpoint");
     int ok=CALL(s_write,u32,(const void*,u32,u32,void*))(h,1,sizeof h,f)==sizeof h &&
-        CALL(s_write,u32,(const void*,u32,u32,void*))(mod_records,1,sizeof mod_records,f)==sizeof mod_records &&
+        CALL(s_write,u32,(const void*,u32,u32,void*))(mod_records,1,bytes,f)==bytes &&
         CALL(s_flush,int,(void*))(f)==0;
     int fd=CALL(s_fileno,int,(void*))(f);ok=ok && fd>=0 && !CALL(s_sync,int,(int))(fd);
     int closed=CALL(s_close,int,(void*))(f);
@@ -124,8 +152,12 @@ static int mod_currency(u32 gold,u32 gems) {
 extern int guest_original_mod_health(void*,int),guest_original_mod_damage(void*,int),guest_original_mod_shot_damage(void*,int);
 static int mod_stat(void *data,int value,int field,int shot) {
     if(!mod_effective() || value<=0)return value;
-    for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)if((shot?mod_shots[i]:mod_units[i])==data && mod_records[i].value[field]!=100)
-        return (int)mod_scaled((u32)value,mod_records[i].value[field],0);
+    for(u32 i=0;i<mod_count();++i){void *p=shot?mod_shots[i]:mod_units[i];
+#ifdef GUEST_MECH_CARD_COUNT
+        if(shot)p=mech_active_shot(mod_units[i],p);
+#endif
+        if(p==data && mod_records[i].value[field]!=100)return (int)mod_scaled((u32)value,mod_records[i].value[field],0);
+    }
     return value;
 }
 int guest_mod_health(void *p,int level){return mod_stat(p,guest_original_mod_health(p,level),MOD_HEALTH,0);}

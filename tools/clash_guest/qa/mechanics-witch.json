@@ -1,0 +1,312 @@
+{
+  "name": "Post-training default mechanics: Witch summons four Goblins and fires FireballSpell",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "modlab",
+      "expected": "modlab",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "spawns",
+      "expected": "spawns",
+      "actions": [
+        {
+          "tap": [
+            200,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "next0",
+      "expected": "next0",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "next1",
+      "expected": "next1",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "next2",
+      "expected": "next2",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "next3",
+      "expected": "next3",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "next4",
+      "expected": "next4",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "next5",
+      "expected": "next5",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "next6",
+      "expected": "next6",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "enable",
+      "expected": "enable",
+      "actions": [
+        {
+          "tap": [
+            160,
+            120
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "count4",
+      "expected": "count4",
+      "actions": [],
+      "settleSeconds": 1
+    },
+    {
+      "id": "summon-count0",
+      "expected": "summon-count0",
+      "actions": [
+        {
+          "tap": [
+            294,
+            211
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "summon-count1",
+      "expected": "summon-count1",
+      "actions": [
+        {
+          "tap": [
+            294,
+            211
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "summon-count2",
+      "expected": "summon-count2",
+      "actions": [
+        {
+          "tap": [
+            294,
+            211
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "summon-count3",
+      "expected": "summon-count3",
+      "actions": [
+        {
+          "tap": [
+            294,
+            211
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "summon-type0",
+      "expected": "summon-type0",
+      "actions": [
+        {
+          "tap": [
+            294,
+            254
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "summon-type1",
+      "expected": "summon-type1",
+      "actions": [
+        {
+          "tap": [
+            294,
+            254
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "summon-type2",
+      "expected": "summon-type2",
+      "actions": [
+        {
+          "tap": [
+            294,
+            254
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "projectile",
+      "expected": "projectile",
+      "actions": [
+        {
+          "tap": [
+            294,
+            297
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "scroll",
+      "expected": "Apply controls below visible fields",
+      "actions": [
+        {
+          "drag": [
+            125,
+            465,
+            125,
+            230
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "save",
+      "expected": "save",
+      "actions": [
+        {
+          "tap": [
+            84,
+            335
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close",
+      "expected": "close",
+      "actions": [
+        {
+          "tap": [
+            275,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close-settings",
+      "expected": "close-settings",
+      "actions": [
+        {
+          "tap": [
+            287,
+            203
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

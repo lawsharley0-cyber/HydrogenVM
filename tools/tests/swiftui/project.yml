@@ -24,6 +24,7 @@ targets:
       - ../../../app/HydrogenVM/PlayerOrientation.swift
       - ../../../app/HydrogenVM/PlayerViewport.swift
       - ../../../app/HydrogenVM/GameKeyboard.swift
+      - ../../../app/HydrogenVM/GamePhotoPicker.swift
       - ../../../app/HydrogenVM/FileBrowser.swift
       - ../../../app/HydrogenVM/RecentSaveFiles.swift
       - ../../../app/HydrogenVM/BinaryEditor.swift
@@ -39,6 +40,7 @@ targets:
     dependencies:
       - sdk: libsqlite3.tbd
       - sdk: libz.tbd
+      - sdk: PhotosUI.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM.EditorHarness

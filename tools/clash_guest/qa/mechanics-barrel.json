@@ -1,0 +1,215 @@
+{
+  "name": "Post-training default mechanics: Barrel impact count four, Goblin type",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "modlab",
+      "expected": "modlab",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "spawns",
+      "expected": "spawns",
+      "actions": [
+        {
+          "tap": [
+            200,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "barrel",
+      "expected": "barrel",
+      "actions": [
+        {
+          "tap": [
+            30,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "enable",
+      "expected": "enable",
+      "actions": [
+        {
+          "tap": [
+            160,
+            120
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "impact-count0",
+      "expected": "impact-count0",
+      "actions": [
+        {
+          "tap": [
+            294,
+            340
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "impact-count1",
+      "expected": "impact-count1",
+      "actions": [
+        {
+          "tap": [
+            294,
+            340
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "impact-count2",
+      "expected": "impact-count2",
+      "actions": [
+        {
+          "tap": [
+            294,
+            340
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "impact-count3",
+      "expected": "impact-count3",
+      "actions": [
+        {
+          "tap": [
+            294,
+            340
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "impact-type0",
+      "expected": "impact-type0",
+      "actions": [
+        {
+          "tap": [
+            294,
+            383
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "impact-type1",
+      "expected": "impact-type1",
+      "actions": [
+        {
+          "tap": [
+            294,
+            383
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "impact-type2",
+      "expected": "impact-type2",
+      "actions": [
+        {
+          "tap": [
+            294,
+            383
+          ]
+        }
+      ],
+      "settleSeconds": 0.5
+    },
+    {
+      "id": "scroll",
+      "expected": "Apply controls below visible fields",
+      "actions": [
+        {
+          "drag": [
+            125,
+            465,
+            125,
+            230
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "save",
+      "expected": "save",
+      "actions": [
+        {
+          "tap": [
+            84,
+            335
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close",
+      "expected": "close",
+      "actions": [
+        {
+          "tap": [
+            275,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close-settings",
+      "expected": "close-settings",
+      "actions": [
+        {
+          "tap": [
+            287,
+            203
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

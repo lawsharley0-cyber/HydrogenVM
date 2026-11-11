@@ -1,5 +1,7 @@
 # HydrogenVM: handoff for Grok Bot (2026-10-24)
 
+November 8 current: [CARD_FORGE_2026-11-08.md](clash-royale/CARD_FORGE_2026-11-08.md) records the working guest creator/loader, CRG2+FGR1 save contract, 59 focused tests, native creation/tuning/Use/battle/relaunch and save-preserving corruption guards. Branch `codex/clash-forge-runtime` starts at main `588eebb`; #366/#381 were closed and integrated through #382. Preserve newer engine/audio fixes. Main runtime gates: 682 fulltest/26 Test Lab. Phone creation and remaining mod/visual/performance work stay unqualified. Keyboard accessory follow-up is #390; its inherited skipped test must run before a Done claim.
+
 > **SUPERSEDED for priorities and work order (2026-10-30): read [docs/PLAN.md](PLAN.md) first.** Everything below is reference only (machine layout, run recipes, architecture notes, per-game history). If anything here disagrees with PLAN.md, PLAN.md wins.
 
 ## Current continuation — 2026-10-26

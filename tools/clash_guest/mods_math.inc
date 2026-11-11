@@ -14,6 +14,17 @@ static u32 mod_scaled(u32 base,u32 percent,int inverse) {
     if(base && a>0xffffffffu/base)fail("Mod Lab: scaled value overflow");
     u32 n=mod_div(base*a,b);return base && !n?1:n;
 }
+// LogicCharacterData::getScale reads IEEE-754 binary32, unlike the integer
+// movement/timing caches. Preserve its representation on apply and restore.
+static u32 mod_scaled_size(u32 bits,u32 percent) {
+    if((bits&0x80000000u) || (bits&0x7f800000u)==0x7f800000u || !mod_percent_valid(MOD_SIZE,percent))
+        fail("Mod Lab: invalid native size");
+    union {u32 bits;float value;} scale;scale.bits=bits;
+    scale.value=scale.value*((float)percent/100.0f);
+    if((scale.bits&0x7f800000u)==0x7f800000u)
+        fail("Mod Lab: native size overflow");
+    return scale.bits;
+}
 static int mod_parse_number(const char *s,u32 *out) {
     if(!s || !*s || !out)return 0;u32 n=0;
     for(u32 i=0;s[i];++i){if(i>=9 || s[i]<'0' || s[i]>'9')return 0;n=n*10u+(u32)(s[i]-'0');}
