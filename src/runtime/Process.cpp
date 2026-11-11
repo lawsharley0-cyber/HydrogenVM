@@ -1530,7 +1530,8 @@ std::string Process::crashClues(CPU::Exit why, uint32_t insn, bool thumb) const 
             out += "  last files opened (latest last):\n";
             for (auto it = opened.rbegin(); it != opened.rend(); ++it) {
                 char sizes[96];
-                std::snprintf(sizes, sizeof sizes, " (%lld bytes, %lld read)", (long long)(*it)->size, (long long)(*it)->bytesRead);
+                // "at least": single-character reads are published in 4 KB steps, positioned reads not at all
+                std::snprintf(sizes, sizeof sizes, " (%lld bytes, at least %lld read)", (long long)(*it)->size, (long long)(*it)->bytesRead);
                 out += "    " + (*it)->api + " " + (*it)->path + sizes + "\n";
             }
         }

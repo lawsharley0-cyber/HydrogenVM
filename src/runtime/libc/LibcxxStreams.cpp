@@ -47,6 +47,8 @@ struct LibcxxStreamState {
     uint32_t ctypeId = 0, codecvtId = 0;       // std::ctype<char>::id, std::codecvt<char, char, mbstate_t>::id
     uint32_t ctypeVptr = 0, codecvtVptr = 0;
     uint32_t ctype = 0, codecvt = 0;           // the "C" locale's facets, made on first use
+    uint32_t wctypeId = 0, wctypeVptr = 0, wctype = 0;   // std::ctype<wchar_t>
+    uint32_t wideSbVptr = 0;                   // basic_streambuf<wchar_t>'s own vtable
     uint32_t locale = 0;                       // the classic locale's implementation object
     std::mutex mu;                             // two threads can make their first stream call together
 };
@@ -406,6 +408,15 @@ uint32_t facetFor(Ctx& x, uint32_t id) {
         }
         return s.ctype;
     }
+    if (id && id == s.wctypeId) {
+        if (!s.wctype) {
+            const uint32_t f = x.proc.heap().allocZeroed(8);
+            wr(x, f, s.wctypeVptr);
+            wr(x, f + 4, 1);
+            s.wctype = f;
+        }
+        return s.wctype;
+    }
     if (id && id == s.codecvtId) {
         if (!s.codecvt) {
             const uint32_t f = x.proc.heap().allocZeroed(8);
@@ -484,6 +495,148 @@ void sortU64(Ctx& x, GuestPtr first, GuestPtr last, GuestPtr) {
     std::memcpy(x.mem.host(first), v.data(), size_t(n) * 8);
 }
 [[noreturn]] void throwOutOfRange(Ctx&, GuestPtr) { throw std::runtime_error("std::__1::out_of_range"); }
+
+// ---- wide streams (wchar_t is 32 bits). The same layouts as the char classes; characters are
+// 4 bytes and end-of-file is -1. Terraria formats numbers into a wostringstream.
+uint32_t runeMask(Ctx& x, uint32_t c) {
+    if (c > 127) return 0;
+    const auto rune = x.proc.lookupSymbol("__DefaultRuneLocale");
+    return rune ? rd(x, *rune + kRuneTypeOff + c * 4) : 0;
+}
+// ctype<wchar_t> in the "C" locale: ASCII classification and case, widen and narrow by value.
+bool wcIs(Ctx& x, GuestPtr, uint32_t mask, uint32_t c) { return (runeMask(x, c) & mask) != 0; }
+uint32_t wcIsRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high, GuestPtr vec) {
+    need(x, low, span(low, high), Memory::kProtRead, "ctype<wchar_t>::is source");
+    need(x, vec, span(low, high), Memory::kProtRW, "ctype<wchar_t>::is masks");
+    for (uint32_t p = low; p + 4 <= high; p += 4, vec += 4) wr(x, vec, runeMask(x, rd(x, p)));
+    return high;
+}
+uint32_t wcScanIs(Ctx& x, GuestPtr, uint32_t mask, GuestPtr low, GuestPtr high) {
+    need(x, low, span(low, high), Memory::kProtRead, "ctype<wchar_t>::scan_is range");
+    for (uint32_t p = low; p + 4 <= high; p += 4) if (runeMask(x, rd(x, p)) & mask) return p;
+    return high;
+}
+uint32_t wcScanNot(Ctx& x, GuestPtr, uint32_t mask, GuestPtr low, GuestPtr high) {
+    need(x, low, span(low, high), Memory::kProtRead, "ctype<wchar_t>::scan_not range");
+    for (uint32_t p = low; p + 4 <= high; p += 4) if (!(runeMask(x, rd(x, p)) & mask)) return p;
+    return high;
+}
+uint32_t wcToupper(Ctx&, GuestPtr, uint32_t c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }
+uint32_t wcTolower(Ctx&, GuestPtr, uint32_t c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+uint32_t wcToupperRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high) {
+    need(x, low, span(low, high), Memory::kProtRW, "ctype<wchar_t>::toupper range");
+    for (uint32_t p = low; p + 4 <= high; p += 4) wr(x, p, wcToupper(x, 0, rd(x, p)));
+    return high;
+}
+uint32_t wcTolowerRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high) {
+    need(x, low, span(low, high), Memory::kProtRW, "ctype<wchar_t>::tolower range");
+    for (uint32_t p = low; p + 4 <= high; p += 4) wr(x, p, wcTolower(x, 0, rd(x, p)));
+    return high;
+}
+uint32_t wcWiden(Ctx&, GuestPtr, uint32_t c) { return c & 0xFF; }
+uint32_t wcWidenRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high, GuestPtr to) {
+    need(x, low, span(low, high), Memory::kProtRead, "ctype<wchar_t>::widen source");
+    need(x, to, span(low, high) * 4, Memory::kProtRW, "ctype<wchar_t>::widen destination");
+    for (uint32_t p = low; p < high; ++p, to += 4) wr(x, to, x.mem.read<uint8_t>(p));
+    return high;
+}
+uint32_t wcNarrow(Ctx&, GuestPtr, uint32_t c, uint32_t dflt) { return c < 128 ? c : (dflt & 0xFF); }
+uint32_t wcNarrowRange(Ctx& x, GuestPtr, GuestPtr low, GuestPtr high, uint32_t dflt, GuestPtr to) {
+    need(x, low, span(low, high), Memory::kProtRead, "ctype<wchar_t>::narrow source");
+    need(x, to, span(low, high) / 4, Memory::kProtRW, "ctype<wchar_t>::narrow destination");
+    for (uint32_t p = low; p + 4 <= high; p += 4, ++to) x.mem.write<uint8_t>(to, uint8_t(wcNarrow(x, 0, rd(x, p), dflt)));
+    return high;
+}
+
+// basic_streambuf<wchar_t>: the base class's own members. A derived class in the app
+// (wstringbuf) overrides underflow, overflow and the seeks.
+uint32_t wsbCtor(Ctx& x, GuestPtr sb) {
+    for (uint32_t i = 0; i < 32; i += 4) wr(x, sb + i, 0);
+    wr(x, sb, St(x).wideSbVptr);
+    wr(x, sb + 4, classicLocale(x));
+    return sb;
+}
+uint32_t wsbSelf(Ctx&, GuestPtr sb) { return sb; }                    // destructor; setbuf returns this
+uint32_t wsbSetbuf(Ctx&, GuestPtr sb, GuestPtr, int32_t) { return sb; }
+int32_t wsbZero(Ctx&, GuestPtr) { return 0; }                         // sync, showmanyc
+void wsbImbue(Ctx&, GuestPtr, GuestPtr) {}
+int32_t wsbEof(Ctx&, GuestPtr) { return kEofChar; }                   // underflow, overflow, pbackfail on the base
+int32_t wsbEofChar(Ctx&, GuestPtr, uint32_t) { return kEofChar; }
+void wsbBadPos(Ctx& x) {                                              // seekoff, seekpos on the base: position -1
+    const uint32_t ret = x.cpu.r[0];
+    for (uint32_t i = 0; i < 128; i += 4) wr(x, ret + i, 0);
+    x.mem.write<uint64_t>(ret + 128, uint64_t(int64_t(-1)));
+}
+int32_t wsbUflow(Ctx& x, GuestPtr sb) {
+    if (vcall(x, sb, sUnderflow, {}) == kEofChar) return kEofChar;
+    const uint32_t g = rd(x, sb + kGptr);
+    wr(x, sb + kGptr, g + 4);
+    return int32_t(rd(x, g));
+}
+int32_t wsbXsgetn(Ctx& x, GuestPtr sb, GuestPtr s, int32_t n) {
+    int32_t got = 0;
+    while (got < n) {
+        const uint32_t g = rd(x, sb + kGptr), e = rd(x, sb + kEgptr);
+        if (g && g < e) {
+            const uint32_t take = std::min<uint32_t>((e - g) / 4, uint32_t(n - got));
+            need(x, s + uint32_t(got) * 4, uint64_t(take) * 4, Memory::kProtRW, "wstreambuf::xsgetn destination");
+            std::memmove(x.mem.host(s + uint32_t(got) * 4), x.mem.host(g), size_t(take) * 4);
+            wr(x, sb + kGptr, g + take * 4);
+            got += int32_t(take);
+            continue;
+        }
+        const int32_t c = vcall(x, sb, sUflow, {});
+        if (c == kEofChar) break;
+        wr(x, s + uint32_t(got++) * 4, uint32_t(c));
+    }
+    return got;
+}
+constexpr uint32_t kPptr = 24, kEpptr = 28;
+int32_t wsbXsputn(Ctx& x, GuestPtr sb, GuestPtr s, int32_t n) {
+    int32_t put = 0;
+    while (put < n) {
+        const uint32_t pp = rd(x, sb + kPptr), e = rd(x, sb + kEpptr);
+        if (pp && pp < e) {
+            const uint32_t take = std::min<uint32_t>((e - pp) / 4, uint32_t(n - put));
+            need(x, s + uint32_t(put) * 4, uint64_t(take) * 4, Memory::kProtRead, "wstreambuf::xsputn source");
+            std::memmove(x.mem.host(pp), x.mem.host(s + uint32_t(put) * 4), size_t(take) * 4);
+            wr(x, sb + kPptr, pp + take * 4);
+            put += int32_t(take);
+            continue;
+        }
+        if (vcall(x, sb, sOverflow, {rd(x, s + uint32_t(put) * 4)}) == kEofChar) break;
+        ++put;
+    }
+    return put;
+}
+// wostream << int: the digits of the narrow formatter, widened, padded with the wide fill.
+uint32_t wo_int(Ctx& x, GuestPtr os, int32_t v) {
+    const uint32_t ios = iosOf(x, os);
+    if (rd(x, ios + kState)) return os;
+    flushTie(x, ios);
+    size_t prefix = 0;
+    const std::string digits = hvmIosFormatInt(rd(x, ios + kFlags), v, true, 32, prefix);
+    std::vector<uint32_t> wide(digits.begin(), digits.end());
+    const int32_t w = int32_t(rd(x, ios + kWidth));
+    wr(x, ios + kWidth, 0);
+    if (w > 0 && size_t(w) > wide.size()) {
+        const int32_t f = int32_t(rd(x, ios + kFill));
+        const size_t count = size_t(w) - wide.size();
+        const uint32_t adj = rd(x, ios + kFlags) & (fLeft | fRight | fInternal);
+        const size_t at = adj == fLeft ? wide.size() : adj == fInternal ? prefix : 0;
+        wide.insert(wide.begin() + std::ptrdiff_t(at), count, f == kEofChar ? uint32_t(' ') : uint32_t(f));
+    }
+    const uint32_t sb = rd(x, ios + kBuf), bytes = uint32_t(wide.size()) * 4;
+    const uint32_t tmp = sb ? x.proc.heap().alloc(bytes) : 0;
+    bool ok = false;
+    if (tmp) {
+        struct Free { Ctx& x; uint32_t p; ~Free() { x.proc.heap().free(p); } } release{x, tmp};
+        std::memcpy(x.mem.host(tmp), wide.data(), bytes);
+        ok = vcall(x, sb, sXsputn, {tmp, uint32_t(wide.size())}) == int32_t(wide.size());
+    }
+    if (!ok) iosSetstate(x, ios, kBad | kFail);
+    return os;
+}
 
 } // namespace
 
@@ -627,6 +780,50 @@ void registerLibcxxStreams(Process& p) {
         uint32_t i = 0;
         for (uint32_t v : {vtIo + 12, ctorIs + 12, ctorIs + 32, ctorOs + 12, ctorOs + 32, vtIo + 52, vtIo + 32})
             p.mem().write<uint32_t>(vtt + 4 * i++, v);
+    }
+
+    // wide streams
+    {
+        const std::string W = "IwNS_11char_traitsIwEEE";
+        s.wctypeId = p.defineDataBlock("__ZNSt3__15ctypeIwE2idE", 8);
+        s.wctypeVptr = vtable("__ZTVNSt3__15ctypeIwEE",
+            {fD1, fD0, fZero,
+             p.def<&wcIs>("__ZNKSt3__15ctypeIwE5do_isEmw"), p.def<&wcIsRange>("__ZNKSt3__15ctypeIwE5do_isEPKwS3_Pm"),
+             p.def<&wcScanIs>("__ZNKSt3__15ctypeIwE10do_scan_isEmPKwS3_"), p.def<&wcScanNot>("__ZNKSt3__15ctypeIwE11do_scan_notEmPKwS3_"),
+             p.def<&wcToupper>("__ZNKSt3__15ctypeIwE10do_toupperEw"), p.def<&wcToupperRange>("__ZNKSt3__15ctypeIwE10do_toupperEPwPKw"),
+             p.def<&wcTolower>("__ZNKSt3__15ctypeIwE10do_tolowerEw"), p.def<&wcTolowerRange>("__ZNKSt3__15ctypeIwE10do_tolowerEPwPKw"),
+             p.def<&wcWiden>("__ZNKSt3__15ctypeIwE8do_widenEc"), p.def<&wcWidenRange>("__ZNKSt3__15ctypeIwE8do_widenEPKcS3_Pw"),
+             p.def<&wcNarrow>("__ZNKSt3__15ctypeIwE9do_narrowEwc"), p.def<&wcNarrowRange>("__ZNKSt3__15ctypeIwE9do_narrowEPKwS3_cPw")});
+        const std::string SB = "NSt3__115basic_streambuf" + W;
+        p.def<&wsbCtor>("__Z" + SB + "C1Ev");
+        p.def<&wsbCtor>("__Z" + SB + "C2Ev");
+        const uint32_t sbD1 = p.def<&wsbSelf>("__Z" + SB + "D1Ev");
+        p.def<&wsbSelf>("__Z" + SB + "D2Ev");
+        const uint32_t sbD0 = p.registerHostFunction("std::__1::wstreambuf deleting destructor", [](Ctx& x) { if (x.cpu.r[0]) x.proc.heap().free(x.cpu.r[0]); });
+        const uint32_t sbSeek = p.registerHostFunction("std::__1::wstreambuf seek (base)", wsbBadPos);
+        const uint32_t sbEof = p.registerHostFunction("std::__1::wstreambuf underflow (base)", [](Ctx& x) { x.cpu.r[0] = uint32_t(kEofChar); });
+        const uint32_t sbZero = supportDef<&wsbZero>(p, "__Z" + SB + "4syncEv", SupportStatus::Real, "The base wstreambuf has nothing to synchronise: 0, as in libc++");
+        s.wideSbVptr = vtable("__ZTV" + SB + "E",
+            {sbD1, sbD0, supportDef<&wsbImbue>(p, "__Z" + SB + "5imbueERKNS_6localeE", SupportStatus::Real, "The base wstreambuf ignores a locale change, as in libc++"), p.def<&wsbSetbuf>("__Z" + SB + "6setbufEPwi"),
+             sbSeek, sbSeek, sbZero, supportDef<&wsbZero>(p, "__Z" + SB + "9showmanycEv", SupportStatus::Real, "The base wstreambuf knows of no characters beyond its get area: 0, as in libc++"),
+             p.def<&wsbXsgetn>("__Z" + SB + "6xsgetnEPwi"), sbEof, p.def<&wsbUflow>("__Z" + SB + "5uflowEv"), sbEof,
+             p.def<&wsbXsputn>("__Z" + SB + "6xsputnEPKwi"), sbEof});
+        const std::string WOS = "NSt3__113basic_ostream" + W, WIS = "NSt3__113basic_istream" + W;
+        p.def<&osSentryCtor>("__Z" + WOS + "6sentryC1ERS3_");
+        p.def<&osSentryCtor>("__Z" + WOS + "6sentryC2ERS3_");
+        p.def<&osSentryDtor>("__Z" + WOS + "6sentryD1Ev");
+        p.def<&osSentryDtor>("__Z" + WOS + "6sentryD2Ev");
+        p.def<&wo_int>("__Z" + WOS + "lsEi");
+        p.def<&wo_int>("__Z" + WOS + "lsEl");
+        for (const std::string& cls : {WIS, WOS}) {
+            p.def<&streamDtor>("__Z" + cls + "D1Ev");
+            p.def<&streamDtor>("__Z" + cls + "D2Ev");
+            p.def<&streamDtorDelete>("__Z" + cls + "D0Ev");
+            p.def<&streamDtor>("__ZTv0_n12_" + cls + "D1Ev");
+            p.def<&streamDtorDelete>("__ZTv0_n12_" + cls + "D0Ev");
+        }
+        p.def<&streamDtor>("__ZNSt3__19basic_ios" + W + "D2Ev");
+        p.def<&streamDtor>("__ZNSt3__19basic_ios" + W + "D1Ev");
     }
 
     p.def<&sortU64>("__ZNSt3__16__sortIRNS_6__lessIyyEEPyEEvT0_S5_T_");

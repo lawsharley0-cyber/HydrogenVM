@@ -123,7 +123,7 @@ def run_game(hvm, app, seconds, tap=None):
         if tap:
             cmd += ["--tap", tap]
         try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=seconds + 90)
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=seconds + 90, check=False)
         except subprocess.TimeoutExpired:
             return None
         try:
@@ -189,13 +189,18 @@ def main(argv=None):
 
     # A game that fails beside three others gets a second run on its own, for twice as long:
     # the bench shares one machine, and a slow start is not a regression.
+    retried = []
     if not args.record:
         for g in todo:
             got = results.get(g["folder"])
             if got == "skipped" or not evaluate(g, got):
                 continue
-            again = run_game(args.hvm, find_app(args.apps, g["folder"]), g.get("seconds", default_seconds) * 2, g.get("tap"))
+            app = find_app(args.apps, g["folder"])
+            if app is None:
+                continue
+            again = run_game(args.hvm, app, g.get("seconds", default_seconds) * 2, g.get("tap"))
             if not evaluate(g, again):
+                retried.append(g["name"])
                 print("retry %s passed on its own (first run: %s)" % (g["name"], "; ".join(evaluate(g, got))))
                 results[g["folder"]] = again
 
@@ -210,7 +215,10 @@ def main(argv=None):
             new = expectation(g, got)
             if new is None:
                 entries.pop(g["folder"], None)
-                print("----  %s does not launch; not listed" % g["name"])
+                if got is not None and not got["crashed"] and got["frames"] > 0 and got["lit"] is None:
+                    print("----  %s ran, but its screenshot could not be read (is Pillow installed?); not listed" % g["name"])
+                else:
+                    print("----  %s does not launch; not listed" % g["name"])
                 continue
             entries[g["folder"]] = new
         if not g.get("frames") and args.record:
@@ -229,10 +237,16 @@ def main(argv=None):
         # Only games with something expected of them: a folder that was not run this time
         # (--only) or does not launch is not an entry.
         manifest["games"] = listed(entries.values())
-        with open(args.manifest, "w") as f:
+        # Written beside the list and moved into place, so an interrupted run leaves the old list.
+        tmp = args.manifest + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(manifest, f, indent=2, sort_keys=True)
             f.write("\n")
+        os.replace(tmp, args.manifest)
     print("%d passed, %d failed, %d skipped" % (passed, failed, skipped))
+    if retried:
+        # Not a failure, but not nothing either: a game that only passes alone is worth a look.
+        print("warning: %d passed only on a second run alone: %s" % (len(retried), ", ".join(sorted(retried))))
     if skipped and not passed and not failed:
         print("nothing was checked: no listed game was found under --apps")
         return 2

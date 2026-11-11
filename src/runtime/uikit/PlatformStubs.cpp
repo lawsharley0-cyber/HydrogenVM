@@ -1128,7 +1128,11 @@ int32_t eaf_openURL(Ctx& x, uint32_t url, GuestPtr out) {
 int32_t eaf_wrap(Ctx& x, uint32_t afid, bool, GuestPtr out) {
     auto& st = ATS(x);
     if (!st.files.count(afid) || !out) return -50;
-    x.mem.write<uint32_t>(out, newExtFile(x, st.files[afid].decoded));
+    AudioFileInstance& af = st.files[afid];
+    // ExtAudioFile hands out decoded audio. An MP3 AudioFile holds only its packets until now.
+    if (af.mp3 && af.decoded.stereoPcm.empty()) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
+    if (af.decoded.stereoPcm.empty()) return 1954115647;   // 'typ?' nothing this file's audio can be decoded to
+    x.mem.write<uint32_t>(out, newExtFile(x, af.decoded));
     return 0;
 }
 int32_t eaf_dispose(Ctx& x, uint32_t id) {

@@ -2362,7 +2362,7 @@ int runFullSubsystemTests() {
             const size_t m2 = fc.find("open /app/missing2.xnb: No such file or directory"), m7 = fc.find("open /app/missing7.xnb: No such file or directory");
             check(fc.find("files the app could not open (latest last):") != std::string::npos &&
                   fc.find("missing1.xnb") == std::string::npos && m2 != std::string::npos && m7 != std::string::npos && m2 < m7 &&   // the last six, oldest first
-                  fc.find("fopen /app/Content/Manifest.xnb (1234 bytes, 100 read)") != std::string::npos,
+                  fc.find("fopen /app/Content/Manifest.xnb (1234 bytes, at least 100 read)") != std::string::npos,
                   "crash clues list the last six files the app could not open and the last files it opened, with sizes");
             check(Process(ProcessConfig{}).crashClues(CPU::Exit::MemFault, 0, true).find("files") == std::string::npos,
                   "crash clues say nothing about files when the app touched none");
@@ -4592,6 +4592,32 @@ int runFullSubsystemTests() {
         if (calls != want) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
         check(calls == want && touchesInEndEvent == 2 && stationaryOthers == 1,
               "each touch event delivers only the finger that changed; fingers held still are stationary, not begun or moved again");
+        // A view can enable multi-touch by overriding the getter instead of setting the property
+        // (Minecraft's EAGLView): a second finger on it is delivered. Without either, the second
+        // finger on the same view is not.
+        {
+            auto overrideCls = r.defineClass("HVMTouchGetterView", "HVMTouchLogView");
+            overrideCls.method("isMultipleTouchEnabled", [](Ctx& rx) { rx.cpu.r[0] = 1; }, "c@:");
+            for (const bool byGetter : {true, false}) {
+                r.send(cpu, pad, "setHidden:", {1});
+                const ObjC::id v = UIKit::sendRect(cx, ObjC::id(r.send(cpu, byGetter ? overrideCls.cls() : logCls.cls(), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+                r.send(cpu, win, "addSubview:", {v});
+                calls.clear();
+                seen.clear();
+                touch(TP::Began, 50, 400, 11);
+                touch(TP::Began, 250, 100, 12);
+                touch(TP::Moved, 240, 110, 12);
+                touch(TP::Ended, 240, 110, 12);
+                touch(TP::Ended, 50, 400, 11);
+                const std::vector<std::string> both = {"began:A", "began:B", "moved:B", "ended:B", "ended:A"}, one = {"began:A", "ended:A"};
+                if (calls != (byGetter ? both : one)) { std::printf("    getter %d touch calls:", byGetter); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+                check(calls == (byGetter ? both : one),
+                      byGetter ? "a view that overrides -isMultipleTouchEnabled receives a second finger"
+                               : "a view without multi-touch receives only its first finger");
+                r.send(cpu, v, "removeFromSuperview");
+                r.send(cpu, pad, "setHidden:", {0});
+            }
+        }
         // A finger that lifts while the app ignores interaction events is forgotten, so the
         // same finger works again afterwards (it used to stay "down" forever).
         calls.clear();
@@ -4891,6 +4917,50 @@ int runFullSubsystemTests() {
                   "libc++ vtable and VTT for std::iostream: base offsets, a write through the ostream half, delete through basic_ios");
         }
 
+        // Wide streams (Terraria formats "Gender (1/9)" through a wostringstream; with no
+        // ctype<wchar_t> facet it crashed when a character was created). wchar_t is 4 bytes.
+        {
+            const uint32_t wid = sym("__ZNSt3__15ctypeIwE2idE");
+            const uint32_t wct = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, wid});
+            const bool wfacet = wct && virt(wct, 11, {' '}) == ' ' && virt(wct, 7, {'q'}) == 'Q' && virt(wct, 9, {'Q'}) == 'q' &&
+                                virt(wct, 13, {0x263A, '?'}) == '?' && virt(wct, 13, {'z', '?'}) == 'z' &&
+                                (virt(wct, 3, {0x4000, ' '}) & 0xFF) == 1 && (virt(wct, 3, {0x4000, 'a'}) & 0xFF) == 0 &&
+                                (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, wid}) & 0xFF) == 1;
+            const char* WSB = "__ZNSt3__115basic_streambufIwNS_11char_traitsIwEEE";
+            const uint32_t wsb = proc.heap().allocZeroed(32), warea = proc.heap().allocZeroed(64);
+            call((std::string(WSB) + "C2Ev").c_str(), {wsb});
+            m.write<uint32_t>(wsb + 20, warea); m.write<uint32_t>(wsb + 24, warea); m.write<uint32_t>(wsb + 28, warea + 64);
+            const uint32_t wst = makeStream(wsb);
+            m.write<uint32_t>(wst + 4 + 76, 0xFFFFFFFFu);                         // fill not yet widened: a space
+            const char* WOS = "__ZNSt3__113basic_ostreamIwNS_11char_traitsIwEEElsEi";
+            call(WOS, {wst, uint32_t(-42)});
+            m.write<uint32_t>(wst + 4 + 12, 4);                                   // width 4
+            m.write<uint32_t>(wst + 4 + 76, '*');
+            call(WOS, {wst, 7});
+            const uint32_t wantWide[7] = {'-', '4', '2', '*', '*', '*', '7'};
+            const bool wrote = m.read<uint32_t>(wsb + 24) == warea + 28 && std::memcmp(m.host(warea), wantWide, 28) == 0 &&
+                               m.read<uint32_t>(wst + 4 + 12) == 0 && m.read<uint32_t>(wst + 4 + 16) == 0;
+            // the put area is full after 9 more characters: 16 fit, the rest is refused and the stream goes bad|fail
+            call(WOS, {wst, 123456789});
+            call(WOS, {wst, 5});
+            const bool full = m.read<uint32_t>(wsb + 24) == warea + 64 && m.read<uint32_t>(warea + 60) == '9' && m.read<uint32_t>(wst + 4 + 16) == 5;
+            // reading: xsgetn copies whole characters out of the get area and stops at its end
+            const uint32_t rsb = proc.heap().allocZeroed(32), rarea = proc.heap().allocZeroed(16), rout = proc.heap().allocZeroed(32);
+            call((std::string(WSB) + "C2Ev").c_str(), {rsb});
+            const uint32_t src4[3] = {'a', 0x263A, 'c'};
+            std::memcpy(m.host(rarea), src4, 12);
+            m.write<uint32_t>(rsb + 8, rarea); m.write<uint32_t>(rsb + 12, rarea); m.write<uint32_t>(rsb + 16, rarea + 12);
+            // (the base class's uflow asks underflow, which has nothing to offer: end of file. A get
+            // area is read directly, by sbumpc inlined in the app or by xsgetn here.)
+            const uint32_t baseUflow = call((std::string(WSB) + "5uflowEv").c_str(), {rsb});
+            const uint32_t took = call((std::string(WSB) + "6xsgetnEPwi").c_str(), {rsb, rout, 5});
+            const bool readBack = baseUflow == 0xFFFFFFFFu && took == 3 && m.read<uint32_t>(rout) == 'a' && m.read<uint32_t>(rout + 4) == 0x263A &&
+                                  m.read<uint32_t>(rout + 8) == 'c' && m.read<uint32_t>(rsb + 12) == rarea + 12;
+            if (!(wfacet && wrote && full && readBack)) std::printf("    wide streams: facet %d wrote %d full %d read %d\n", wfacet, wrote, full, readBack);
+            check(wfacet && wrote && full && readBack,
+                  "libc++ wide streams: ctype<wchar_t>, wostream << int with width and fill, a full buffer, and wstreambuf reads");
+        }
+
         // std::__sort for unsigned long long
         const uint32_t arr = proc.heap().allocZeroed(24);
         const uint64_t vals[3] = {3, 1ull << 40, 2};
@@ -5037,6 +5107,16 @@ int runFullSubsystemTests() {
               "CoreText font trait keys imported by an app are string constants, not nil");
         // dlsym is not answered from the naming rule: an app probing for a symbol must not be told it exists
         check(proc.resolveMissingSymbol("_kCTFontWidthTrait") == 0, "the CoreText trait rule applies to imports only, not to dlsym");
+    }
+
+    // A failed stat through the guest call is part of the file history in the crash clues.
+    {
+        const uint32_t missingPath = proc.heap().allocZeroed(64), statOut = proc.heap().allocZeroed(128);
+        std::memcpy(proc.mem().host(missingPath), "/no/such/dir/Manifest.xnb", 26);
+        const int32_t statResult = int32_t(uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_stat"), {missingPath, statOut})));
+        check(statResult == -1 && proc.mem().read<uint32_t>(proc.currentThread().errnoAddr) == ENOENT &&
+              proc.crashClues(CPU::Exit::MemFault, 0, true).find("stat /no/such/dir/Manifest.xnb: No such file or directory") != std::string::npos,
+              "a stat that fails is recorded: -1, ENOENT, and the path in the crash clues");
     }
 
     // An app with its own crash reporter catches the real fault and raises the signal again.
@@ -7065,6 +7145,17 @@ int runFullSubsystemTests() {
                 rendered += got;
             }
             audioCall("_AudioQueueDispose", {q, 1});
+            // ExtAudioFile over the same AudioFile decodes it: its length is the decoded frame count
+            // (21 packets of 1152, less whatever the first frame's missing bit reservoir costs).
+            const uint32_t wrapped = audioCall("_ExtAudioFileWrapAudioFileID", {mp3File, 0, io});
+            const uint32_t ext = proc.mem().read<uint32_t>(io);
+            proc.mem().write<uint32_t>(io + 4, 8);
+            audioCall("_ExtAudioFileGetProperty", {ext, 0x2366726D /* #frm */, io + 4, io + 8});
+            const uint64_t extFrames = proc.mem().read<uint64_t>(io + 8);
+            if (!(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152)) std::printf("    ext wrap: status %x frames %llu\n", wrapped, (unsigned long long)extFrames);
+            check(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152,
+                  "ExtAudioFileWrapAudioFileID on an MP3 AudioFile decodes it and reports its frames");
+            audioCall("_ExtAudioFileDispose", {ext});
             audioCall("_AudioFileClose", {mp3File});
             std::filesystem::remove(mp3Path);
             // 8 packets: 7 or 8 frames of 1152 decoded; the resampler holds back the last sample.

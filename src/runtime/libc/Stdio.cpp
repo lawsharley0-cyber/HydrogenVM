@@ -215,6 +215,7 @@ int32_t f_fgetc(Ctx& x, GuestPtr fp) {
     if (!f->unget.empty()) { const int c = uint8_t(f->unget.back()); f->unget.pop_back(); return c; }
     const int c = std::fgetc(f->f);
     if (c == EOF) f->eof = true;
+    else if ((++f->bytesRead & 0xFFF) == 0) x.proc.updateFileRead(f->fileHandle, f->bytesRead);   // counted; published every 4 KB
     return c;
 }
 int32_t f_srget(Ctx& x, GuestPtr fp) { return f_fgetc(x, fp); }

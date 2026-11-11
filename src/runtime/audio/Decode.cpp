@@ -445,6 +445,9 @@ bool decodeMp3(DecodedAudio& out, const uint8_t* data, size_t n) {
         if (data[5] & 0x10) off += 10;   // footer
     }
     if (off >= n) return false;
+    // Start at the first audio frame: a Xing/Info frame describes the stream and decodes to
+    // 26 ms of silence that is not part of it.
+    if (Mp3Packets index; indexMp3(data, n, index)) off = index.dataOffset;
     auto dec = std::make_unique<mp3dec_t>();
     mp3dec_init(dec.get());
     std::vector<int16_t> pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);
