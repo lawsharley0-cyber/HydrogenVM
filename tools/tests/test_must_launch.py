@@ -73,6 +73,13 @@ class Record(unittest.TestCase):
         self.assertEqual((new["frames"], new["sound"]), (120, True))
 
 
+class Listed(unittest.TestCase):
+    def test_a_folder_that_was_not_run_is_not_written(self):
+        entries = [{"name": "b", "folder": "b", "frames": 3}, {"name": "A", "folder": "a", "frames": 9},
+                   {"name": "unrun", "folder": "unrun"}]
+        self.assertEqual([g["name"] for g in must_launch.listed(entries)], ["A", "b"])
+
+
 class Measure(unittest.TestCase):
     def test_reads_the_runner_report(self):
         report = {"crashed": False, "perf": {"framesPresented": 71}, "mixer": {"audibleFrames": 1091584}, "signature": None}

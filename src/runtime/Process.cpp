@@ -658,7 +658,7 @@ void Process::addMissingSymbolResolver(MissingSymbolResolver fn) {
     missingResolvers_.push_back(std::move(fn));
 }
 
-uint32_t Process::resolveMissingSymbol(const std::string& name) {
+uint32_t Process::resolveMissingSymbol(const std::string& name, MissingSymbolMode mode) {
     std::lock_guard<std::mutex> resolutionLock(resolutionMu_);
     {
         std::lock_guard<std::mutex> lk(symMu_);
@@ -666,7 +666,7 @@ uint32_t Process::resolveMissingSymbol(const std::string& name) {
         if (it != symbols_.end()) return it->second;
     }
     for (auto& r : missingResolvers_)
-        if (uint32_t a = r(name, MissingSymbolMode::DynamicLookup)) { defineData(name, a); return a; }
+        if (uint32_t a = r(name, mode)) { defineData(name, a); return a; }
     return 0;
 }
 

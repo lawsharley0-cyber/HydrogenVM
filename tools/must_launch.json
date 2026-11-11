@@ -163,10 +163,11 @@
     },
     {
       "folder": "Subway_Surfers_1_41_0",
-      "frames": 8,
+      "frames": 344,
       "name": "Subway_Surfers_1_41_0",
       "picture": true,
-      "sound": false
+      "seconds": 75,
+      "sound": true
     },
     {
       "folder": "Talking_Bacteria_John_John__John_1.0",
