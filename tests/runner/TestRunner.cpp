@@ -4035,6 +4035,20 @@ int runFullSubsystemTests() {
         const ObjC::id view = ObjC::id(r.send(cpu, vc, "view"));
         const UIKit::LayerData& vl = UIKit::layerData(cx, UIKit::viewLayer(cx, view));
         const bool rotatedBounds = vl.bounds.w > vl.bounds.h;     // the root view is laid out for landscape
+        // An app whose Info.plist lists landscape only is never turned to portrait: not by a
+        // controller that accepts portrait only, and not by setStatusBarOrientation: (Minecraft PE's
+        // keyboard turned the whole game to portrait and left it there).
+        landscapeOk = false;
+        u.statusBarOrientation = 3;
+        u.plistLandscapeOnly = true;
+        const ObjC::id winL = makeWindow();
+        const ObjC::id vcL = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, rotCls.cls(), r.selAlloc)), r.selInit));
+        r.send(cpu, winL, "setRootViewController:", {vcL});
+        const bool staysAtRoot = u.statusBarOrientation == 3;
+        r.send(cpu, u.app ? u.app : r.createInstance(r.getClass("UIApplication")), "setStatusBarOrientation:", {1});
+        const bool staysWhenAsked = u.statusBarOrientation == 3 && !u.orientationSetByApp;
+        u.plistLandscapeOnly = false;
+        check(staysAtRoot && staysWhenAsked, "an app that lists landscape only in Info.plist is never turned to portrait");
         // The app's own choice wins.
         landscapeOk = false;
         u.statusBarOrientation = 3;
@@ -4369,6 +4383,111 @@ int runFullSubsystemTests() {
         r.send(cpu, field, "resignFirstResponder");
         r.send(cpu, input, "resignFirstResponder");
         UIKit::setTextInputObserver(proc, nullptr);
+    }
+
+    // GL presents are held to the display rate by a schedule of deadlines. A game driven by the
+    // 60 Hz frame loop is never held (it was, and ran at 50-55 fps on the phone); a game that
+    // presents in a tight loop gets exactly one present per period however late each sleep wakes.
+    {
+        const int64_t ms = 1'000'000;
+        HostGL::PresentPacer grid;
+        int held = 0;
+        int64_t t = 5 * ms;
+        for (int i = 0; i < 600; ++i) {
+            // one present per 16.667 ms frame, give or take 0.8 ms
+            const int64_t at = t + (i % 3 - 1) * (ms * 8 / 10);
+            if (grid.next(at)) ++held;
+            t += 16'666'667;
+        }
+        HostGL::PresentPacer loop;
+        int64_t now = 5 * ms, first = 0, last = 0;
+        int presents = 0;
+        for (int i = 0; i < 600; ++i) {
+            const int64_t until = loop.next(now);
+            if (until) now = until + ms + ms / 2;   // every sleep wakes 1.5 ms late
+            if (!first) first = now;
+            last = now;
+            ++presents;
+            now += ms;                              // 1 ms of work, then the next present
+        }
+        const double period = double(last - first) / double(presents - 1) / double(ms);
+        if (!(held == 0 && period > 16.4 && period < 16.6)) std::printf("    pacing: held %d period %.3f ms\n", held, period);
+        check(held == 0, "a game paced by the 60 Hz frame loop is never held at present");
+        check(period > 16.4 && period < 16.6, "a tight render loop presents once per period, however late its sleeps wake");
+    }
+
+    // Video is played by the host: MPMoviePlayerController hands it the file and stays "playing"
+    // until the host says the movie ended (Goat Simulator's logo, Minion Rush's loading video).
+    // Without a host player the movie finishes at once, as before.
+    {
+        const std::string moviePath = proc.homePath() + "/intro-test.mp4";
+        { std::ofstream file(moviePath, std::ios::binary); file << "not really a movie"; }
+        const auto url = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, moviePath)}));
+        auto newPlayer = [&] {
+            return ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("MPMoviePlayerController"), r.selAlloc)), "initWithContentURL:", {url}));
+        };
+        auto state = [&](ObjC::id player) { return uint32_t(r.send(cpu, player, "playbackState")); };
+        // Runs the main loop for up to a second, or until the condition holds.
+        auto spin = [&](const std::function<bool()>& done) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            while (!done() && std::chrono::steady_clock::now() < deadline) {
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        };
+        auto settle = [&] { const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(120); spin([&] { return std::chrono::steady_clock::now() >= until; }); };
+        const auto plain = newPlayer();
+        r.send(cpu, plain, "play");
+        const bool playsFirst = state(plain) == 1;
+        spin([&] { return state(plain) == 0; });
+        const bool finishesAlone = playsFirst && state(plain) == 0;
+        std::vector<UIKit::MovieRequest> requests;
+        UIKit::setMovieObserver(proc, [&](const UIKit::MovieRequest& q) { requests.push_back(q); });
+        const auto hosted = newPlayer();
+        r.send(cpu, hosted, "play");
+        settle();
+        const bool asked = requests.size() == 1 && requests[0].active && requests[0].requestId && requests[0].hostPath == proc.hostPath(moviePath);
+        const bool stillPlaying = state(hosted) == 1;
+        UIKit::movieFinished(proc, requests.empty() ? 0 : requests[0].requestId + 1000);   // an answer for another movie
+        settle();
+        const bool ignoresStranger = state(hosted) == 1;
+        UIKit::movieFinished(proc, requests.empty() ? 0 : requests[0].requestId);
+        spin([&] { return state(hosted) == 0; });
+        const bool ended = state(hosted) == 0 && requests.size() == 2 && !requests[1].active &&
+                           requests[1].requestId == requests[0].requestId;
+        // The game stops a movie itself (a tap to skip): the host is told to take it down.
+        const auto skipped = newPlayer();
+        r.send(cpu, skipped, "play");
+        r.send(cpu, skipped, "stop");
+        settle();
+        const bool stopped = requests.size() == 4 && requests[2].active && !requests[3].active && requests[3].requestId == requests[2].requestId &&
+                             state(skipped) == 0;
+        // An AVPlayer on a video file goes the same way; replacing its item takes the video down.
+        const size_t before = requests.size();
+        const auto av = ObjC::id(r.send(cpu, r.getClass("AVPlayer"), "playerWithURL:", {url}));
+        r.send(cpu, av, "play");
+        settle();
+        const bool avAsked = requests.size() == before + 1 && requests.back().active;
+        const uint64_t avId = requests.back().requestId;
+        r.send(cpu, av, "replaceCurrentItemWithPlayerItem:", {0});
+        const bool avReplaced = requests.size() == before + 2 && !requests.back().active && requests.back().requestId == avId;
+        // Starting a second movie while one plays ends the first (its player is let go).
+        const auto first = newPlayer(), second = newPlayer();
+        r.send(cpu, first, "play");
+        r.send(cpu, second, "play");
+        settle();
+        const bool replacedFirst = state(second) == 1 && requests.size() == before + 5 && !requests[before + 3].active;
+        r.send(cpu, second, "stop");
+        settle();
+        UIKit::setMovieObserver(proc, nullptr);
+        check(avAsked && avReplaced, "an AVPlayer's video file is handed to the host, and replacing its item takes it down");
+        check(replacedFirst, "a second movie replaces the one that is playing");
+        if (!(asked && stillPlaying && ignoresStranger && ended && stopped))
+            std::printf("    movie: asked %d playing %d stranger %d ended %d stopped %d requests %zu\n", asked, stillPlaying, ignoresStranger, ended, stopped, requests.size());
+        check(finishesAlone, "without a host player a movie finishes at once");
+        check(asked && stillPlaying, "a movie file is handed to the host and stays playing");
+        check(ignoresStranger && ended, "the movie ends when the host reports its own request finished, and the host is told to take it down");
+        check(stopped, "a movie the game stops is taken down on the host");
     }
 
     // Photo-library presentation is a shared host service, with guest-main-loop delivery.
@@ -9799,6 +9918,7 @@ int runFullSubsystemTests() {
             "    \"framesPresented\": 0,\n"
             "    \"avgFrameMs\": 0,\n"
             "    \"avgCompositeMs\": 0,\n"
+            "    \"presentWaitMs\": 0,\n"
             "    \"maxFrameMs\": 0,\n"
             "    \"slowFrames\": 0,\n"
             "    \"p50FrameMs\": 0,\n"

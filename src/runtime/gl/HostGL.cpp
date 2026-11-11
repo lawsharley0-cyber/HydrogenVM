@@ -78,7 +78,7 @@ struct State {
     std::atomic<int> presents{0};                                                  // direct presents so far
     uint64_t drawsAtPresent = 0;                                                   // glTrace: perf().glDraws at the last present
     std::atomic<bool> toldReadback{false};
-    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
+    PresentPacer pacer;                                                            // keeps presents at the display rate
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -1472,10 +1472,13 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     {
         using Clock = std::chrono::steady_clock;
         const auto now = Clock::now();
-        const auto minGap = std::chrono::microseconds(16400);
-        if (st.lastPresent.time_since_epoch().count() && now - st.lastPresent < minGap)
-            std::this_thread::sleep_for(minGap - (now - st.lastPresent));
-        st.lastPresent = Clock::now();
+        const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        int64_t until = 0;
+        { std::lock_guard<std::mutex> lk(st.mu); until = st.pacer.next(nowNs); }   // two threads may present
+        if (until) {
+            std::this_thread::sleep_until(Clock::time_point(std::chrono::duration_cast<Clock::duration>(std::chrono::nanoseconds(until))));
+            p.perf().presentWaitNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - now).count());
+        }
     }
     if (st.platform->presentDirect(hc->handle, d.layer)) {
         direct = true;

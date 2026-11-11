@@ -3066,6 +3066,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         float rate = 0.0f, volume = 1.0f;
         int32_t actionAtItemEnd = 0;
         bool muted = false;
+        uint64_t hostMovie = 0;   // the host is playing this player's video file
     };
     auto notifyFinish = [](Ctx& x, id self) {
         auto* d = rt(x).hostIf<AVPlayerData>(self);
@@ -3110,15 +3111,37 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         x.cpu.r[0] = d ? d->currentItem : 0;
     }, "@@:");
     avPlayer.method("replaceCurrentItemWithPlayerItem:", [prepareItem](Ctx& x) {
-        auto& d = rt(x).host<AVPlayerData>(x.cpu.r[0]);
-        const id next = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        const id player = x.cpu.r[0], nextItem = x.cpu.r[2];
+        // The video the host is playing belongs to the item being replaced.
+        if (const uint64_t movie = rt(x).host<AVPlayerData>(player).hostMovie) UIKit::stopHostMovie(x, movie);
+        auto& d = rt(x).host<AVPlayerData>(player);
+        const id next = nextItem ? rt(x).retain(x.cpu, nextItem) : 0;
         if (d.currentItem) rt(x).release(x.cpu, d.currentItem);
         d.currentItem = next;
         prepareItem(x,next);
     }, "v@:@");
     avPlayer.method("play", [notifyFinish](Ctx& x) {
         const id self = x.cpu.r[0];
-        rt(x).host<AVPlayerData>(self).rate = 1.0f;
+        auto& d = rt(x).host<AVPlayerData>(self);
+        d.rate = 1.0f;
+        if (d.hostMovie) return;   // already playing on the host
+        // A video file is played by the host, and the item ends when the host says so.
+        std::string hostPath;
+        const id asset = d.currentItem ? id(rt(x).send(x.cpu, d.currentItem, "asset")) : 0;
+        const id url = asset && rt(x).respondsTo(asset, rt(x).sel("URL")) ? id(rt(x).send(x.cpu, asset, "URL")) : 0;
+        if (UIKit::hostMovieFile(x, url, hostPath)) {
+            const id item = rt(x).retain(x.cpu, d.currentItem);
+            rt(x).retain(x.cpu, self);
+            const uint64_t movie = UIKit::startHostMovie(x, hostPath, [self, item](Ctx& cx, bool finished) {
+                if (auto* pd = rt(cx).hostIf<AVPlayerData>(self)) { pd->hostMovie = 0; if (finished) pd->rate = 0.0f; }
+                if (finished) Foundation::postNotification(cx, "AVPlayerItemDidPlayToEndTimeNotification", item);
+                rt(cx).release(cx.cpu, item);
+                rt(cx).release(cx.cpu, self);
+            });
+            if (movie) { rt(x).host<AVPlayerData>(self).hostMovie = movie; return; }
+            rt(x).release(x.cpu, item);
+            rt(x).release(x.cpu, self);
+        }
         notifyFinish(x, self);
     }, "v@:");
     avPlayer.method("pause", [](Ctx& x) { rt(x).host<AVPlayerData>(x.cpu.r[0]).rate = 0.0f; }, "v@:");

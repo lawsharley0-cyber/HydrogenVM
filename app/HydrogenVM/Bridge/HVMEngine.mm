@@ -411,6 +411,10 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 - (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId;
 @end
 
+@interface HVMMovieRequest ()
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId path:(NSString *)path;
+@end
+
 @interface HVMTextInputRequest ()
 - (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q;
 @end
@@ -559,6 +563,16 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                     if (s && s.onPhotoPicker) s.onPhotoPicker(req);
                 });
             });
+            RT::UIKit::setMovieObserver(*proc, [weakSelf](const RT::UIKit::MovieRequest &q) {
+                NSString *path = [NSString stringWithUTF8String:q.hostPath.c_str()] ?: @"";
+                HVMMovieRequest *req = [[HVMMovieRequest alloc] initWithActive:q.active requestId:q.requestId path:path];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    HVMSession *s = weakSelf;
+                    if (s && s.onMovie) s.onMovie(req);
+                    // Nobody to show it (a batch test run): the movie is over at once.
+                    else if (s && req.active) [s movieFinished:req.requestId];
+                });
+            });
             startAudio(core, proc->mixerPtr());
             if (!core->stopRequested) {
                 proc->load();
@@ -656,6 +670,25 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     return p ? double(p->perf().frameTimes.percentile(95)) / 1e6 : 0;
 }
 
+- (NSDictionary<NSString *, NSNumber *> *)perfDetail {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return @{};
+    auto& pf = p->perf();
+    const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - pf.origin).count();
+    const uint64_t frames = pf.frames.load(), insns = p->guestInstructions();
+    return @{
+        @"wallSeconds": @(wall), @"guestMIPS": @(wall > 0 ? double(insns) / 1e6 / wall : 0),
+        @"frames": @(frames), @"framesPresented": @(pf.framesPresented.load()),
+        @"avgFrameMs": @(frames ? double(pf.frameNs.load()) / 1e6 / double(frames) : 0),
+        @"p50FrameMs": @(double(pf.frameTimes.percentile(50)) / 1e6),
+        @"p95FrameMs": @(double(pf.frameTimes.percentile(95)) / 1e6),
+        @"p99FrameMs": @(double(pf.frameTimes.percentile(99)) / 1e6),
+        @"maxFrameMs": @(double(pf.maxFrameNs.load()) / 1e6), @"slowFrames": @(pf.slowFrames.load()),
+        @"compositeMs": @(double(pf.compositeNs.load()) / 1e6), @"presentWaitMs": @(double(pf.presentWaitNs.load()) / 1e6),
+    };
+}
+
 - (NSInteger)interfaceOrientation {
     std::shared_ptr<RT::Process> p;
     { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
@@ -740,6 +773,14 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     RT::UIKit::submitPhotoPickerResult(*p, requestId, std::move(data));
 }
 
+- (void)movieFinished:(uint64_t)requestId {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return;
+    RT::UIKit::movieFinished(*p, requestId);
+}
+
 - (void)submitTextInput:(RT::UIKit::TextInputEvent)ev {
     if (!_core->ready) return;
     std::shared_ptr<RT::Process> p;
@@ -795,6 +836,13 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 @implementation HVMPhotoPickerRequest
 - (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId {
     if ((self = [super init])) { _active = active; _requestId = requestId; }
+    return self;
+}
+@end
+
+@implementation HVMMovieRequest
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId path:(NSString *)path {
+    if ((self = [super init])) { _active = active; _requestId = requestId; _path = [path copy]; }
     return self;
 }
 @end

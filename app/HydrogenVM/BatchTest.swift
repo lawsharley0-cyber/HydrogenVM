@@ -120,6 +120,8 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
     var diagnostics: BatchDiagnostics? = nil
     /// GPU runs with GL tracing: the first distinct GL errors, "call -> 0xCODE [main|worker]".
     var glErrorLog: [String]? = nil
+    /// Where the time went (HVMSession.perfDetail), last snapshot before the game stopped.
+    var perfDetail: [String: Double]? = nil
 
     var worstCheck: BatchCheck.Status? {
         guard let checks else { return nil }
@@ -368,6 +370,7 @@ final class BatchTestRunner {
     @ObservationIgnored private var lastTotalPresented: UInt64 = 0
     /// Engine counters, copied every second while the game runs (they vanish when it stops).
     @ObservationIgnored private var lastDiag: BatchDiagnostics?
+    @ObservationIgnored private var lastPerfDetail: [String: Double] = [:]
     @ObservationIgnored private var lastGLErrors: [String] = []
     @ObservationIgnored private var missingLines: [String] = []
     @ObservationIgnored private var audioDecodeFailures: [String] = []
@@ -535,6 +538,7 @@ final class BatchTestRunner {
         lastP95 = 0
         lastTotalPresented = 0
         lastDiag = nil
+        lastPerfDetail = [:]
         lastGLErrors = []
         missingLines = []
         audioDecodeFailures = []
@@ -626,6 +630,7 @@ final class BatchTestRunner {
                         self.lastP95 = s.frameTimeP95Milliseconds
                         if presented > 0 { self.lastTotalPresented = presented }
                         if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
+                        self.lastPerfDetail = s.perfDetail.mapValues { $0.doubleValue }
                         self.lastGLErrors = s.glErrorLog   // this session's log; reset per game
                     }
                 }
@@ -872,6 +877,7 @@ final class BatchTestRunner {
             var finished = appResult
             finished.checks = checks
             finished.diagnostics = self.lastDiag
+            if !self.lastPerfDetail.isEmpty { finished.perfDetail = self.lastPerfDetail }
             if !self.lastGLErrors.isEmpty { finished.glErrorLog = self.lastGLErrors }
             if isCrashed, let bundle = self.activeSession?.crashBundle, let data = bundle.data(using: .utf8),
                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let files = json["fileHistory"],
@@ -1040,6 +1046,7 @@ final class BatchTestRunner {
                     "fps": r.perf.fps,
                     "frameTimeP95Ms": r.perf.frameTimeP95Ms
                 ],
+                "perfDetail": r.perfDetail ?? [:],
                 "frame": [
                     "signal": r.frame.signal,
                     "thumbnailPath": r.frame.thumbnailPath ?? ""

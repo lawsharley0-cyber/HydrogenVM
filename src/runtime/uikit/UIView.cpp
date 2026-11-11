@@ -694,7 +694,19 @@ void w_setRoot(Ctx& x, id self, SEL, id vc) {
     const int want = u.initialOrientation;
     int chosen = u.statusBarOrientation;
     if (controllerSupports(x, vc, want)) chosen = want;
-    else for (int o : {1, 3, 4, 2}) if (controllerSupports(x, vc, o)) { chosen = o; break; }
+    else for (int o : {1, 3, 4, 2}) {
+        if (!controllerSupports(x, vc, o)) continue;
+        if (u.plistLandscapeOnly && o <= 2) {
+            // A controller that accepts portrait only, in an app that lists landscape only: iOS
+            // keeps the app in landscape. Choosing portrait here turned the whole game and left
+            // it there (a controller shown for Minecraft PE's keyboard).
+            x.proc.logf(LogLevel::Info, "Orientation: stays %s (root view controller %s accepts portrait only, but the app's Info.plist allows landscape only)",
+                        orientationName(u.statusBarOrientation), rt(x).objectClassName(vc).c_str());
+            continue;
+        }
+        chosen = o;
+        break;
+    }
     changeOrientation(x, chosen, vc, "setRootViewController:");
     VC(x, vc).modalStyle = 0;
     const id view = id(rt(x).send(x.cpu, vc, "view"));
