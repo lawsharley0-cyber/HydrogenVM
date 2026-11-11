@@ -11001,15 +11001,22 @@ int runFullSubsystemTests() {
             static void useProgram(uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
             static void bindFramebuffer(uint32_t, uint32_t) { if (std::this_thread::get_id() != mainId()) errors().push_back(0x0502); }
             static void bindTexture(uint32_t, uint32_t t) { if (t >= 99) errors().push_back(0x0500); }
-            static void texImage2D(uint32_t, int32_t, int32_t f, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void*) {
+            static void texImage2D(uint32_t, int32_t, int32_t f, int32_t, int32_t, int32_t, uint32_t, uint32_t type, const void*) {
                 // Like an ES 3 driver: the unsized depth-stencil format is refused, the sized one accepted.
-                if (f == 0x84F9 || f == 0x7777 || (f == 0x88F0 && refuseSized())) errors().push_back(0x0502);
-                else lastInternalFormat() = f;
+                // Like the phone's driver: BGRA is not an internal format, and half floats have their ES 3 name only.
+                ++texUploads();
+                if (f == 0x84F9 || f == 0x7777 || (f == 0x88F0 && refuseSized()) || type == 0x8D61) errors().push_back(0x0502);
+                else if (f == 0x80E1) errors().push_back(0x0500);
+                else { lastInternalFormat() = f; lastType() = type; }
             }
+            static uint32_t& lastType() { static uint32_t t = 0; return t; }
+            static int& texUploads() { static int n = 0; return n; }
             static int32_t& lastInternalFormat() { static int32_t f = 0; return f; }
             static bool& refuseSized() { static bool r = false; return r; }
-            static void texSubImage2D(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t f, uint32_t, const void*) {
+            static void texSubImage2D(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t f, uint32_t type, const void*) {
                 if (f == 0x84F9) errors().push_back(0x0500);
+                else if (type == 0x8D61) errors().push_back(0x0502);
+                else lastType() = type;
             }
             // Buffer objects, with the iOS driver's rule that glBufferData refuses a mapped buffer.
             struct Buffer { std::vector<uint8_t> data; bool mapped = false; };
@@ -11161,6 +11168,46 @@ int runFullSubsystemTests() {
             std::printf("    depth texture: err %x format %x both %x again %x\n", depthErr, depthFormat, bothErr, bothErrAgain);
         check(depthErr == 0 && depthFormat == 0x88F0 && bothErr == 0x0502 && bothErrAgain == 0,
               "an unsized depth-stencil texture the driver refuses is created with the sized format; refused twice, the guest sees the error once");
+        // Texture formats the phone's driver refuses in the form old iOS took them (a refused
+        // upload leaves a texture that samples black):
+        //  - BGRA as the internal format (Goat Simulator's HUD, Crossy Road): asked again as RGBA,
+        //    and later uploads go straight to the accepted form;
+        //  - half-float RGBA by its OES type (Minecraft: Story Mode's 3D scenes): asked again as
+        //    RGBA16F with the ES 3 type, which glTexSubImage2D then uses too.
+        {
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {context});
+            ecpu.r[13] = eproc.heap().allocZeroed(4096) + 4096;
+            auto gl = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(eproc.callGuest(ecpu, *eproc.lookupSymbol(n), a)); };
+            while (gl("_glGetError", {})) {}
+            FakeGL::lastInternalFormat() = 0;
+            gl("_glTexImage2D", {0x0DE1, 0, 0x80E1, 512, 512, 0, 0x80E1, 0x1401, 0});
+            const uint32_t bgraErr = gl("_glGetError", {});
+            const int32_t bgraFormat = FakeGL::lastInternalFormat();
+            const int before = FakeGL::texUploads();
+            gl("_glTexImage2D", {0x0DE1, 0, 0x80E1, 64, 64, 0, 0x80E1, 0x1401, 0});
+            const int secondCalls = FakeGL::texUploads() - before;
+            const uint32_t bgraErr2 = gl("_glGetError", {});
+            FakeGL::lastInternalFormat() = 0;
+            FakeGL::lastType() = 0;
+            gl("_glTexImage2D", {0x0DE1, 0, 0x1908, 1024, 1, 0, 0x1908, 0x8D61, 0});
+            const uint32_t halfErr = gl("_glGetError", {});
+            const int32_t halfFormat = FakeGL::lastInternalFormat();
+            const uint32_t halfType = FakeGL::lastType();
+            FakeGL::lastType() = 0;
+            gl("_glTexSubImage2D", {0x0DE1, 0, 0, 0, 1024, 1, 0x1908, 0x8D61, 0});
+            const uint32_t subErr = gl("_glGetError", {});
+            const uint32_t subType = FakeGL::lastType();
+            ecpu.r[13] = savedSp;
+            er.send(ecpu, ObjC::id(ctxCls), "setCurrentContext:", {0});
+            if (!(bgraErr == 0 && bgraFormat == 0x1908 && secondCalls == 1 && bgraErr2 == 0))
+                std::printf("    bgra: err %x format %x second calls %d err %x\n", bgraErr, bgraFormat, secondCalls, bgraErr2);
+            check(bgraErr == 0 && bgraFormat == 0x1908 && secondCalls == 1 && bgraErr2 == 0,
+                  "a BGRA texture the driver refuses with a BGRA internal format is created as RGBA; the next one is asked once");
+            if (!(halfErr == 0 && halfFormat == 0x881A && halfType == 0x140B && subErr == 0 && subType == 0x140B))
+                std::printf("    half float: err %x format %x type %x sub err %x type %x\n", halfErr, halfFormat, halfType, subErr, subType);
+            check(halfErr == 0 && halfFormat == 0x881A && halfType == 0x140B && subErr == 0 && subType == 0x140B,
+                  "a half-float texture the driver refuses by its OES type is created as RGBA16F, and updated with the ES 3 type");
+        }
         // Two buffers mapped through the same target, then unmapped in the other order (Clumsy
         // Ninja's vertex setup). Each unmap must write its own data to its own buffer and end the
         // driver's mapping, or the next glBufferData is refused, as it was on the phone.
