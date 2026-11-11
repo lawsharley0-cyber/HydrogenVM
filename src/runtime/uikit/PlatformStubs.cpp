@@ -555,7 +555,11 @@ int32_t aq_dispose(Ctx& x, uint32_t qid, bool) {
         micRelease(x, q);
         if (q.timeStamp) x.proc.heap().free(q.timeStamp);
         if (q.voice) MX(x.proc).release(q.voice);
-        for (const auto& b : q.buffers) if (b.guestAddr) x.proc.heap().free(b.guestAddr);
+        for (const auto& b : q.buffers) {
+            if (!b.guestAddr) continue;
+            if (const uint32_t descs = x.mem.read<uint32_t>(b.guestAddr + 20)) x.proc.heap().free(descs);   // its packet descriptions
+            x.proc.heap().free(b.guestAddr);
+        }
         st.queues.erase(qid);
     }
     return 0;
