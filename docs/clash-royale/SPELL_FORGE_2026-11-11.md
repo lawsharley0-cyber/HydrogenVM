@@ -22,4 +22,4 @@ Release guest SHA-256: `c699cd7aa973f54f620670b094582a11fb9239e3aa0204b07d86fa65
 
 ## Next
 
-Extend effect isolation to Arrows by assigning both projectile names, preserving the native distinction between the decorative and damaging shot. Then cover area-object spells and test their secondary effects in native battles. Keep Mirror's dynamic copied-card behavior separate. The other sandbox systems remain on the [roadmap](SANDBOX_ROADMAP_2026-11-10.md).
+Custom music is the next milestone. After the music editor, extend effect isolation to Arrows by assigning both projectile names, preserving the native distinction between the decorative and damaging shot. Then cover area-object spells and test their secondary effects in native battles. Keep Mirror's dynamic copied-card behavior separate. The other sandbox systems remain on the [roadmap](SANDBOX_ROADMAP_2026-11-10.md).

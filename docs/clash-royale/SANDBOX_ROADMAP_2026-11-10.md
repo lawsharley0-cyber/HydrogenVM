@@ -9,6 +9,26 @@ Hydrogen is an alpha ARMv7 interpreter/runtime; shared engine changes may be
 needed. Preserve original seven-trainer names, decks, AI and tutorial sequence.
 Advanced opponent-AI refinement remains deferred. Keep earned saves intact.
 
+## Next milestone — custom music
+
+The first playable milestone is a Music editor in Mod Lab. Pick one local track from iPhone Files, preview it, assign it to the home menu, close and relaunch offline, then restore the original menu rotation. Listen to both music and sound effects during the check. Cancelling the picker or selecting an unreadable track should preserve the current assignment.
+
+The pinned 2.1306.1 music.csv groups three entries under MenuMusic. BattleMusic has three entries and shares its first filename with TutorialMusic. Scope overrides to the selected context so an arena music choice preserves the original training soundtrack. Confirm the actual playback route in Hydrogen before implementing file substitution.
+
+- Import user-supplied audio through the iPhone Files picker/share/import flow.
+  Begin with local, unprotected audio files; streaming-service catalog access
+  does not provide reusable audio bytes or permission to bypass protection.
+- Assign music to home/menu, arena/battle, victory and defeat; custom sound
+  effects can follow as a separate feature.
+- Named playlists, shuffle/sequential order, looping, track preview, independent
+  music/effects volume, mute and restore original soundtrack.
+- Copy imports into the guest's persistent Documents content store, preserving
+  original archive music and surviving guest updates; reference by stable IDs.
+- Validate supported codecs with actual decoding/audio tests, interruption/resume,
+  app lifecycle and save/relaunch. Avoid loading huge tracks fully into memory.
+  Keep this compatible with the shared Hydrogen audio engine and report its bugs
+  separately; a nonempty captured waveform is not listening-based qualification.
+
 ## Phase 1: dedicated spell editor — current
 
 Existing Mod Lab catalogs favor troops/buildings and spawning spells. Add a
@@ -75,22 +95,6 @@ assertion suppression, blind offset writes or save resets.
   capturing RNG/time and other relevant state; reusing a seed alone is not proof.
 - Spawn/effect execution budgets and recursion bounds for predictable performance.
 
-## Custom music — owner addition November 10
-
-- Import user-supplied audio through the iPhone Files picker/share/import flow.
-  Begin with local, unprotected audio files; streaming-service catalog access
-  does not provide reusable audio bytes or permission to bypass protection.
-- Assign music to home/menu, arena/battle, victory and defeat; custom sound
-  effects can follow as a separate feature.
-- Named playlists, shuffle/sequential order, looping, track preview, independent
-  music/effects volume, mute and restore original soundtrack.
-- Copy imports into the guest's persistent Documents content store, preserving
-  original archive music and surviving guest updates; reference by stable IDs.
-- Validate supported codecs with actual decoding/audio tests, interruption/resume,
-  app lifecycle and save/relaunch. Avoid loading huge tracks fully into memory.
-  Keep this compatible with the shared Hydrogen audio engine and report its bugs
-  separately; a nonempty captured waveform is not listening-based qualification.
-
 ## Research references and design adaptations
 
 These sources establish the other games' systems. The Clash features above are
@@ -110,8 +114,4 @@ our proposals, not claims that these games contain every listed adaptation.
   conditions/chains and reusable saved arrangements.
 - [WorldBox](https://www.superworldbox.com/): populate, observe and intervene.
 
-Recommended order: spell editing → custom spell clones/templates → battle
-testbench → presets/import/export → visual behavior composition. Custom music
-is recorded as a separate owner-requested addition; no priority above spells
-was requested. Actual implementation/qualification belongs in stage-specific
-evidence documents and PR updates, not inferred from this roadmap.
+After custom music, resume Arrows and area-effect spell clones, followed by the battle testbench, preset and pack sharing, and visual behavior composition. Record playable results in the stage handoffs.

@@ -1,5 +1,7 @@
 # HydrogenVM — handoff (2026-10-20)
 
+November 11 priority. Build [custom music](clash-royale/SANDBOX_ROADMAP_2026-11-10.md#next-milestone--custom-music) before Arrows. Start with Files import, menu playback, offline relaunch and restore.
+
 November 11. [Custom spell creation](clash-royale/SPELL_FORGE_2026-11-11.md) covers Fireball and Rocket clones, private projectiles, Photos icons and native validation.
 
 November 11. [Mod Lab workshop](clash-royale/MOD_WORKSHOP_2026-11-11.md) covers editor navigation, spell templates, mutation, preset exchange and the native comparison harness.
