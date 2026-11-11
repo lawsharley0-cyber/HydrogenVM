@@ -113,6 +113,25 @@ fingers can be down at once (hold a move button with one, look around with anoth
 A line whose finger field is not a whole number from 0 to 10 is rejected and logged as invalid.
 No socket or guest networking is involved.
 
+## Must-launch check before a phone build
+
+Every game that works has to keep working. `tools/must_launch.json` lists the games that
+reach their title screen on the desktop bench, with the frames each must present and
+whether it plays sound. Before a build goes to a phone:
+
+```sh
+tools/must_launch.py --apps ~/bench/apps            # all listed games, about 5 minutes
+tools/must_launch.py --apps ~/bench/apps --only subway --only retry
+```
+
+It fails if a listed game crashes, shows a black screen, presents too few frames, or has
+gone silent. A game whose folder is missing is reported as skipped, never as passed.
+
+After a fix makes another game launch, add it with `--record`. Recording only adds games
+or raises what is expected of them; a listed game that now fails keeps its entry, so a
+regression cannot be recorded away. The games are private files, so this runs where the
+games are, not in CI.
+
 ## Verification and current game limit
 
 The local runtime suite passes **79 checks**. The viewer smoke test receives live

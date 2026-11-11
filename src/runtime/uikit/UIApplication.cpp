@@ -227,8 +227,11 @@ void deliverPendingInput(Ctx& x) {
             td.timestamp = ht.time;
             const id event0 = 0;
             id view = hitTest(x, window, td.loc, event0);
-            // a view that isn't multi-touch only gets one touch at a time
-            if (view && !viewData(x, view).multipleTouch) {
+            // A view that isn't multi-touch only gets one touch at a time. The view is asked, as
+            // UIKit asks it: Minecraft's EAGLView never sets the property, it overrides
+            // -isMultipleTouchEnabled to return YES. Read from the stored flag, its second
+            // finger was dropped and the player could not look around while walking.
+            if (view && !(uint32_t(r.send(x.cpu, view, "isMultipleTouchEnabled")) & 0xFF)) {
                 for (auto& at : u.activeTouches) if (at.view == view) { view = 0; break; }
             }
             td.view = view ? r.retain(x.cpu, view) : 0;

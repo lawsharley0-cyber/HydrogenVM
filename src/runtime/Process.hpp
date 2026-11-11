@@ -309,7 +309,8 @@ public:
     enum class MissingSymbolMode { Import, DynamicLookup };
     using MissingSymbolResolver = std::function<uint32_t(const std::string&, MissingSymbolMode)>;
     void addMissingSymbolResolver(MissingSymbolResolver fn);
-    uint32_t resolveMissingSymbol(const std::string& name);
+    // `mode` says who is asking: dlsym (the default), or the loader binding an app's import.
+    uint32_t resolveMissingSymbol(const std::string& name, MissingSymbolMode mode = MissingSymbolMode::DynamicLookup);
     // Register a host function without exporting a symbol (method IMPs, …).
     uint32_t registerHostFunction(const std::string& debugName, HostFn fn);
 

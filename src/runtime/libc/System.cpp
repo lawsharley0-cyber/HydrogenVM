@@ -668,7 +668,13 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
 }
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
+    const std::string gp = x.proc.readCString(path);
+    if (::stat(x.proc.hostPath(gp).c_str(), &st) < 0) {
+        const int e = errno;
+        x.proc.recordFileOpen(gp, "stat", e, -1, 0, false);   // shown with a crash: files the app did not find
+        errno = e;
+        return failD<int32_t>(x);
+    }
     storeStat(x, out, st);
     return 0;
 }

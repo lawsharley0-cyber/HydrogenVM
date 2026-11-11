@@ -219,6 +219,7 @@ int runC(const std::string& elf, const std::string& expectedPath) {
 #include "runtime/Support.hpp"
 #include "runtime/FrameHistogram.hpp"
 #include "runtime/audio/Audio.hpp"
+#include "ToneMp3.inc"
 #include "AudioOutput.hpp"
 #include <functional>
 #include <map>
@@ -2351,6 +2352,21 @@ int runFullSubsystemTests() {
         const uint32_t okFn = proc.defineFunction("_test_returns_object", [](Ctx& x) { x.cpu.r[0] = 0x1234; });
         proc.callGuest(cpu, okFn, {});
         proc.callGuest(cpu, nilFn, {});
+        // files the app failed to open, and the last it opened, are part of the clues
+        {
+            Process fp(ProcessConfig{});
+            for (int i = 0; i < 8; ++i) fp.recordFileOpen("/app/missing" + std::to_string(i) + ".xnb", "open", ENOENT, -1, 0, false);
+            const uint64_t h = fp.recordFileOpen("/app/Content/Manifest.xnb", "fopen", 0, 1234, 0, true);
+            fp.updateFileRead(h, 100);
+            const std::string fc = fp.crashClues(CPU::Exit::MemFault, 0, true);
+            const size_t m2 = fc.find("open /app/missing2.xnb: No such file or directory"), m7 = fc.find("open /app/missing7.xnb: No such file or directory");
+            check(fc.find("files the app could not open (latest last):") != std::string::npos &&
+                  fc.find("missing1.xnb") == std::string::npos && m2 != std::string::npos && m7 != std::string::npos && m2 < m7 &&   // the last six, oldest first
+                  fc.find("fopen /app/Content/Manifest.xnb (1234 bytes, at least 100 read)") != std::string::npos,
+                  "crash clues list the last six files the app could not open and the last files it opened, with sizes");
+            check(Process(ProcessConfig{}).crashClues(CPU::Exit::MemFault, 0, true).find("files") == std::string::npos,
+                  "crash clues say nothing about files when the app touched none");
+        }
         const std::string nullClues = proc.crashClues(CPU::Exit::MemFault, 0, true);
         const bool listed = nullClues.find("_test_returns_object -> 0x00001234") != std::string::npos &&
                             nullClues.find("_test_returns_nothing -> 0x00000000") != std::string::npos &&
@@ -4576,6 +4592,32 @@ int runFullSubsystemTests() {
         if (calls != want) { std::printf("    touch calls:"); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
         check(calls == want && touchesInEndEvent == 2 && stationaryOthers == 1,
               "each touch event delivers only the finger that changed; fingers held still are stationary, not begun or moved again");
+        // A view can enable multi-touch by overriding the getter instead of setting the property
+        // (Minecraft's EAGLView): a second finger on it is delivered. Without either, the second
+        // finger on the same view is not.
+        {
+            auto overrideCls = r.defineClass("HVMTouchGetterView", "HVMTouchLogView");
+            overrideCls.method("isMultipleTouchEnabled", [](Ctx& rx) { rx.cpu.r[0] = 1; }, "c@:");
+            for (const bool byGetter : {true, false}) {
+                r.send(cpu, pad, "setHidden:", {1});
+                const ObjC::id v = UIKit::sendRect(cx, ObjC::id(r.send(cpu, byGetter ? overrideCls.cls() : logCls.cls(), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480});
+                r.send(cpu, win, "addSubview:", {v});
+                calls.clear();
+                seen.clear();
+                touch(TP::Began, 50, 400, 11);
+                touch(TP::Began, 250, 100, 12);
+                touch(TP::Moved, 240, 110, 12);
+                touch(TP::Ended, 240, 110, 12);
+                touch(TP::Ended, 50, 400, 11);
+                const std::vector<std::string> both = {"began:A", "began:B", "moved:B", "ended:B", "ended:A"}, one = {"began:A", "ended:A"};
+                if (calls != (byGetter ? both : one)) { std::printf("    getter %d touch calls:", byGetter); for (const auto& c : calls) std::printf(" %s", c.c_str()); std::printf("\n"); }
+                check(calls == (byGetter ? both : one),
+                      byGetter ? "a view that overrides -isMultipleTouchEnabled receives a second finger"
+                               : "a view without multi-touch receives only its first finger");
+                r.send(cpu, v, "removeFromSuperview");
+                r.send(cpu, pad, "setHidden:", {0});
+            }
+        }
         // A finger that lifts while the app ignores interaction events is forgotten, so the
         // same finger works again afterwards (it used to stay "down" forever).
         calls.clear();
@@ -4875,6 +4917,50 @@ int runFullSubsystemTests() {
                   "libc++ vtable and VTT for std::iostream: base offsets, a write through the ostream half, delete through basic_ios");
         }
 
+        // Wide streams (Terraria formats "Gender (1/9)" through a wostringstream; with no
+        // ctype<wchar_t> facet it crashed when a character was created). wchar_t is 4 bytes.
+        {
+            const uint32_t wid = sym("__ZNSt3__15ctypeIwE2idE");
+            const uint32_t wct = call("__ZNKSt3__16locale9use_facetERNS0_2idE", {loc, wid});
+            const bool wfacet = wct && virt(wct, 11, {' '}) == ' ' && virt(wct, 7, {'q'}) == 'Q' && virt(wct, 9, {'Q'}) == 'q' &&
+                                virt(wct, 13, {0x263A, '?'}) == '?' && virt(wct, 13, {'z', '?'}) == 'z' &&
+                                (virt(wct, 3, {0x4000, ' '}) & 0xFF) == 1 && (virt(wct, 3, {0x4000, 'a'}) & 0xFF) == 0 &&
+                                (call("__ZNKSt3__16locale9has_facetERNS0_2idE", {loc, wid}) & 0xFF) == 1;
+            const char* WSB = "__ZNSt3__115basic_streambufIwNS_11char_traitsIwEEE";
+            const uint32_t wsb = proc.heap().allocZeroed(32), warea = proc.heap().allocZeroed(64);
+            call((std::string(WSB) + "C2Ev").c_str(), {wsb});
+            m.write<uint32_t>(wsb + 20, warea); m.write<uint32_t>(wsb + 24, warea); m.write<uint32_t>(wsb + 28, warea + 64);
+            const uint32_t wst = makeStream(wsb);
+            m.write<uint32_t>(wst + 4 + 76, 0xFFFFFFFFu);                         // fill not yet widened: a space
+            const char* WOS = "__ZNSt3__113basic_ostreamIwNS_11char_traitsIwEEElsEi";
+            call(WOS, {wst, uint32_t(-42)});
+            m.write<uint32_t>(wst + 4 + 12, 4);                                   // width 4
+            m.write<uint32_t>(wst + 4 + 76, '*');
+            call(WOS, {wst, 7});
+            const uint32_t wantWide[7] = {'-', '4', '2', '*', '*', '*', '7'};
+            const bool wrote = m.read<uint32_t>(wsb + 24) == warea + 28 && std::memcmp(m.host(warea), wantWide, 28) == 0 &&
+                               m.read<uint32_t>(wst + 4 + 12) == 0 && m.read<uint32_t>(wst + 4 + 16) == 0;
+            // the put area is full after 9 more characters: 16 fit, the rest is refused and the stream goes bad|fail
+            call(WOS, {wst, 123456789});
+            call(WOS, {wst, 5});
+            const bool full = m.read<uint32_t>(wsb + 24) == warea + 64 && m.read<uint32_t>(warea + 60) == '9' && m.read<uint32_t>(wst + 4 + 16) == 5;
+            // reading: xsgetn copies whole characters out of the get area and stops at its end
+            const uint32_t rsb = proc.heap().allocZeroed(32), rarea = proc.heap().allocZeroed(16), rout = proc.heap().allocZeroed(32);
+            call((std::string(WSB) + "C2Ev").c_str(), {rsb});
+            const uint32_t src4[3] = {'a', 0x263A, 'c'};
+            std::memcpy(m.host(rarea), src4, 12);
+            m.write<uint32_t>(rsb + 8, rarea); m.write<uint32_t>(rsb + 12, rarea); m.write<uint32_t>(rsb + 16, rarea + 12);
+            // (the base class's uflow asks underflow, which has nothing to offer: end of file. A get
+            // area is read directly, by sbumpc inlined in the app or by xsgetn here.)
+            const uint32_t baseUflow = call((std::string(WSB) + "5uflowEv").c_str(), {rsb});
+            const uint32_t took = call((std::string(WSB) + "6xsgetnEPwi").c_str(), {rsb, rout, 5});
+            const bool readBack = baseUflow == 0xFFFFFFFFu && took == 3 && m.read<uint32_t>(rout) == 'a' && m.read<uint32_t>(rout + 4) == 0x263A &&
+                                  m.read<uint32_t>(rout + 8) == 'c' && m.read<uint32_t>(rsb + 12) == rarea + 12;
+            if (!(wfacet && wrote && full && readBack)) std::printf("    wide streams: facet %d wrote %d full %d read %d\n", wfacet, wrote, full, readBack);
+            check(wfacet && wrote && full && readBack,
+                  "libc++ wide streams: ctype<wchar_t>, wostream << int with width and fill, a full buffer, and wstreambuf reads");
+        }
+
         // std::__sort for unsigned long long
         const uint32_t arr = proc.heap().allocZeroed(24);
         const uint64_t vals[3] = {3, 1ull << 40, 2};
@@ -5006,6 +5092,31 @@ int runFullSubsystemTests() {
         thread.self = savedSelf; thread.errnoAddr = savedErrno; cpu.tpidruro = savedTp;
         check(created == 0 && key >= 256 && key < 768 && setOk && inlineRead && functionRead && selfSlot && errnoClear && outOfRange,
               "pthread_setspecific stores in the slot the thread register points at, where inlined pthread_getspecific reads; key 768 is EINVAL");
+    }
+
+    // CoreText's font trait keys bind to string constants when an app imports them. They were
+    // missing data (nil), and Crossy Road stopped on "setObject:forKey: key cannot be nil".
+    {
+        auto keyText = [&](const char* symbol) -> std::string {
+            const uint32_t cell = proc.resolveMissingSymbol(symbol, Process::MissingSymbolMode::Import);
+            const uint32_t str = cell ? proc.mem().read<uint32_t>(cell) : 0;
+            return str ? Foundation::utf8(cx, str) : std::string("(nil)");
+        };
+        check(keyText("_kCTFontSymbolicTrait") == "kCTFontSymbolicTrait" && keyText("_kCTFontWeightTrait") == "kCTFontWeightTrait" &&
+              keyText("_kCTFontSlantTrait") == "kCTFontSlantTrait",
+              "CoreText font trait keys imported by an app are string constants, not nil");
+        // dlsym is not answered from the naming rule: an app probing for a symbol must not be told it exists
+        check(proc.resolveMissingSymbol("_kCTFontWidthTrait") == 0, "the CoreText trait rule applies to imports only, not to dlsym");
+    }
+
+    // A failed stat through the guest call is part of the file history in the crash clues.
+    {
+        const uint32_t missingPath = proc.heap().allocZeroed(64), statOut = proc.heap().allocZeroed(128);
+        std::memcpy(proc.mem().host(missingPath), "/no/such/dir/Manifest.xnb", 26);
+        const int32_t statResult = int32_t(uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_stat"), {missingPath, statOut})));
+        check(statResult == -1 && proc.mem().read<uint32_t>(proc.currentThread().errnoAddr) == ENOENT &&
+              proc.crashClues(CPU::Exit::MemFault, 0, true).find("stat /no/such/dir/Manifest.xnb: No such file or directory") != std::string::npos,
+              "a stat that fails is recorded: -1, ENOENT, and the path in the crash clues");
     }
 
     // An app with its own crash reporter catches the real fault and raises the signal again.
@@ -6919,6 +7030,139 @@ int runFullSubsystemTests() {
         }
         audioCall("_AudioFileClose", {fileID});
         std::filesystem::remove(filePath);
+        // An MP3 file is presented as its compressed packets, one MPEG frame each, and decoded
+        // by an AudioQueue created with the file's format. FMOD decodes Unity games' music this
+        // way; shown decoded PCM instead, it gave up and the games were silent (Subway Surfers).
+        // The fixture's layout is in ToneMp3.inc: tag 58, Info frame 208, then 21 packets.
+        {
+            const size_t mp3Size = sizeof kToneMp3;
+            Audio::Mp3Packets index;
+            const bool indexed = Audio::indexMp3(kToneMp3, mp3Size, index);
+            const bool layout = indexed && index.sampleRate == 44100 && index.channels == 2 && index.framesPerPacket == 1152 &&
+                                index.packets.size() == 21 && index.dataOffset == 266 && index.dataBytes == 4388 && index.maxPacketSize == 209 &&
+                                index.packets[0] == std::pair<uint32_t, uint32_t>(266, 208) && index.packets[1] == std::pair<uint32_t, uint32_t>(474, 209) &&
+                                index.packets[20] == std::pair<uint32_t, uint32_t>(4654 - 209, 209);
+            Audio::Mp3Packets cut, none;
+            const bool cutShort = Audio::indexMp3(kToneMp3, mp3Size - 100, cut) && cut.packets.size() == 20;   // the last frame is incomplete
+            std::vector<uint8_t> noise(4096);
+            for (size_t i = 0; i < noise.size(); ++i) noise[i] = uint8_t(i * 37 + 11);
+            const bool rejects = !Audio::indexMp3(noise.data(), noise.size(), none) && !Audio::indexMp3(kToneMp3, 40, none);
+            check(layout && cutShort && rejects,
+                  "indexMp3 skips the ID3 tag and the Info frame, lists each MPEG frame as a packet, and rejects data that is not MP3");
+
+            // Packet by packet, and with one packet split across two calls: the same samples.
+            std::vector<int16_t> whole, split;
+            auto a = Audio::mp3StreamNew(), b = Audio::mp3StreamNew();
+            int rate = 0;
+            for (const auto& [off, size] : index.packets) rate = std::max(rate, Audio::mp3StreamDecode(*a, kToneMp3 + off, size, whole));
+            for (size_t i = 0; i < index.packets.size(); ++i) {
+                const auto& [off, size] = index.packets[i];
+                if (i == 5) { Audio::mp3StreamDecode(*b, kToneMp3 + off, 100, split); Audio::mp3StreamDecode(*b, kToneMp3 + off + 100, size - 100, split); }
+                else Audio::mp3StreamDecode(*b, kToneMp3 + off, size, split);
+            }
+            int peak = 0;
+            for (size_t i = 4 * 1152 * 2; i < whole.size(); ++i) peak = std::max(peak, std::abs(int(whole[i])));
+            // 21 frames of 1152; a decoder may give nothing for the first while its bit reservoir fills.
+            const size_t frames = whole.size() / 2;
+            const bool decoded = rate == 44100 && frames >= 20 * 1152 && frames <= 21 * 1152 && frames % 1152 == 0 &&
+                                 peak > 2600 && peak < 3000 && whole == split;     // 4096 / sqrt(2) = 2896 before encoding; ffmpeg's decoder gives 2766
+            if (!decoded) std::printf("    mp3 stream: rate %d frames %zu peak %d same %d\n", rate, frames, peak, whole == split);
+            check(decoded, "mp3StreamDecode decodes packets as they arrive, across a packet split in two, to the tone's amplitude");
+
+            const std::string mp3Path = proc.homePath() + "/tone-test.mp3";
+            { std::ofstream file(mp3Path, std::ios::binary); file.write(reinterpret_cast<const char*>(kToneMp3), std::streamsize(mp3Size)); }
+            const auto mp3URL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, mp3Path)}));
+            const uint32_t io = proc.heap().allocZeroed(128), fmt = proc.heap().allocZeroed(48), data = proc.heap().allocZeroed(1024), descs = proc.heap().allocZeroed(64);
+            const uint32_t opened = audioCall("_AudioFileOpenURL", {mp3URL, 1, 0, io});
+            const uint32_t mp3File = proc.mem().read<uint32_t>(io);
+            auto prop = [&](uint32_t id, uint32_t size, uint32_t out) { proc.mem().write<uint32_t>(io + 4, size); return audioCall("_AudioFileGetProperty", {mp3File, id, io + 4, out}); };
+            const uint32_t dfmt = prop(0x64666D74, 40, fmt);
+            const bool format = dfmt == 0 && proc.mem().read<double>(fmt) == 44100.0 && proc.mem().read<uint32_t>(fmt + 8) == 0x2E6D7033 &&
+                                proc.mem().read<uint32_t>(fmt + 16) == 0 && proc.mem().read<uint32_t>(fmt + 20) == 1152 && proc.mem().read<uint32_t>(fmt + 28) == 2;
+            const uint32_t listInfo = audioCall("_AudioFileGetPropertyInfo", {mp3File, 0x666C7374, io + 8, 0});
+            const uint32_t list = prop(0x666C7374, 48, io + 16);
+            const bool formatList = listInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 48 && list == 0 &&
+                                    proc.mem().read<uint32_t>(io + 16 + 8) == 0x2E6D7033 && proc.mem().read<uint32_t>(io + 16 + 40) == 0x00650002;
+            prop(0x70636E74, 8, io + 72); prop(0x706B7562, 4, io + 80); prop(0x62636E74, 8, io + 88); prop(0x706E666F, 16, io + 96);
+            const bool counts = proc.mem().read<uint64_t>(io + 72) == 21 && proc.mem().read<uint32_t>(io + 80) == 209 &&
+                                proc.mem().read<uint64_t>(io + 88) == 4388 && proc.mem().read<uint64_t>(io + 96) == 21 * 1152;
+            // three packets from the start: 208 + 209 + 209 bytes, each described
+            proc.mem().write<uint32_t>(io + 4, 0);
+            proc.mem().write<uint32_t>(io + 8, 3);
+            const uint32_t read3 = audioCall("_AudioFileReadPackets", {mp3File, 0, io + 4, descs, 0, 0, io + 8, data});
+            const bool three = read3 == 0 && proc.mem().read<uint32_t>(io + 8) == 3 && proc.mem().read<uint32_t>(io + 4) == 626 &&
+                               std::memcmp(proc.mem().host(data), kToneMp3 + 266, 626) == 0 &&
+                               proc.mem().read<uint64_t>(descs) == 0 && proc.mem().read<uint32_t>(descs + 12) == 208 &&
+                               proc.mem().read<uint64_t>(descs + 16) == 208 && proc.mem().read<uint32_t>(descs + 28) == 209 &&
+                               proc.mem().read<uint64_t>(descs + 32) == 417 && proc.mem().read<uint32_t>(descs + 44) == 209;
+            // AudioFileReadPacketData stops at the room it is given: 300 bytes hold one packet
+            proc.mem().write<uint32_t>(io + 4, 300);
+            proc.mem().write<uint32_t>(io + 8, 3);
+            audioCall("_AudioFileReadPacketData", {mp3File, 0, io + 4, descs, 1, 0, io + 8, data});
+            const bool bounded = proc.mem().read<uint32_t>(io + 8) == 1 && proc.mem().read<uint32_t>(io + 4) == 209 &&
+                                 std::memcmp(proc.mem().host(data), kToneMp3 + 474, 209) == 0;
+            // past the end: no packets
+            proc.mem().write<uint32_t>(io + 8, 2);
+            audioCall("_AudioFileReadPackets", {mp3File, 0, io + 4, descs, 21, 0, io + 8, data});
+            const bool atEnd = proc.mem().read<uint32_t>(io + 8) == 0 && proc.mem().read<uint32_t>(io + 4) == 0;
+            if (!(opened == 0 && format && formatList && counts && three && bounded && atEnd))
+                std::printf("    mp3 file: open %x format %d list %d counts %d three %d bounded %d end %d\n", opened, format, formatList, counts, three, bounded, atEnd);
+            check(opened == 0 && format && formatList && counts && three && bounded && atEnd,
+                  "AudioFile presents an MP3 as compressed packets: format, format list, counts, and packet reads with descriptions");
+
+            // The app's side of FMOD's decode: a queue in the file's format, one packet per
+            // buffer, rendered offline to 16-bit stereo.
+            const uint32_t outs = proc.heap().allocZeroed(64), dst = proc.heap().allocZeroed(40), ts = proc.heap().allocZeroed(64);
+            proc.mem().write<double>(dst, 44100.0);
+            proc.mem().write<uint32_t>(dst + 8, 0x6C70636D);
+            proc.mem().write<uint32_t>(dst + 12, 0x0C);
+            for (uint32_t o : {16u, 24u}) proc.mem().write<uint32_t>(dst + o, 4);
+            proc.mem().write<uint32_t>(dst + 20, 1);
+            proc.mem().write<uint32_t>(dst + 28, 2);
+            proc.mem().write<uint32_t>(dst + 32, 16);
+            audioCall("_AudioQueueNewOutput", {fmt, 0, 0, 0, 0, 0, outs});
+            const uint32_t q = proc.mem().read<uint32_t>(outs);
+            audioCall("_AudioQueueAllocateBuffer", {q, 1152 * 4, outs + 4});
+            const uint32_t outBuf = proc.mem().read<uint32_t>(outs + 4);
+            audioCall("_AudioQueueSetOfflineRenderFormat", {q, dst, 0});
+            audioCall("_AudioQueueStart", {q, 0});
+            for (uint32_t i = 0; i < 8; ++i) {
+                audioCall("_AudioQueueAllocateBuffer", {q, 209, outs + 8});
+                const uint32_t packet = proc.mem().read<uint32_t>(outs + 8);
+                const auto& [off, size] = index.packets[i];
+                std::memcpy(proc.mem().host(proc.mem().read<uint32_t>(packet + 4)), kToneMp3 + off, size);
+                proc.mem().write<uint32_t>(packet + 8, size);
+                audioCall("_AudioQueueEnqueueBuffer", {q, packet, 0, 0});
+            }
+            uint32_t rendered = 0;
+            int queuePeak = 0;
+            for (int pass = 0; pass < 10; ++pass) {
+                audioCall("_AudioQueueOfflineRender", {q, ts, outBuf, 1152});
+                const uint32_t got = proc.mem().read<uint32_t>(outBuf + 8) / 4;
+                const uint32_t pcm = proc.mem().read<uint32_t>(outBuf + 4);
+                if (rendered >= 4 * 1152)
+                    for (uint32_t i = 0; i < got * 2; ++i) queuePeak = std::max(queuePeak, std::abs(int(proc.mem().read<int16_t>(pcm + i * 2))));
+                rendered += got;
+            }
+            audioCall("_AudioQueueDispose", {q, 1});
+            // ExtAudioFile over the same AudioFile decodes it: its length is the decoded frame count
+            // (21 packets of 1152, less whatever the first frame's missing bit reservoir costs).
+            const uint32_t wrapped = audioCall("_ExtAudioFileWrapAudioFileID", {mp3File, 0, io});
+            const uint32_t ext = proc.mem().read<uint32_t>(io);
+            proc.mem().write<uint32_t>(io + 4, 8);
+            audioCall("_ExtAudioFileGetProperty", {ext, 0x2366726D /* #frm */, io + 4, io + 8});
+            const uint64_t extFrames = proc.mem().read<uint64_t>(io + 8);
+            if (!(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152)) std::printf("    ext wrap: status %x frames %llu\n", wrapped, (unsigned long long)extFrames);
+            check(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152,
+                  "ExtAudioFileWrapAudioFileID on an MP3 AudioFile decodes it and reports its frames");
+            audioCall("_ExtAudioFileDispose", {ext});
+            audioCall("_AudioFileClose", {mp3File});
+            std::filesystem::remove(mp3Path);
+            // 8 packets: 7 or 8 frames of 1152 decoded; the resampler holds back the last sample.
+            const bool queueOk = rendered >= 7 * 1152 - 2 && rendered <= 8 * 1152 && queuePeak > 2600 && queuePeak < 3000;
+            if (!queueOk) std::printf("    mp3 queue: rendered %u peak %d\n", rendered, queuePeak);
+            check(queueOk, "an AudioQueue in MP3 format decodes enqueued packets: offline render returns the tone");
+        }
         // Recording: AudioFileCreateWithURL + AudioFileWriteBytes + close, then the file plays back
         // (Talking Larry / John record the player's voice this way). CAF, WAV and AIFF.
         {
