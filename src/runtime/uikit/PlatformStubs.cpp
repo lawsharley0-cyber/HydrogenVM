@@ -2591,7 +2591,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aq_flush>("_AudioQueueFlush");
     supportDef<&aq_reset>(p, "_AudioQueueReset", SupportStatus::Approx,
                           "Drops queued audio (mixer voice, recorder or offline queue); buffers are not handed back");
-    p.def<&aq_dispose>("_AudioQueueDispose");
+    supportDef<&aq_dispose>(p, "_AudioQueueDispose", SupportStatus::Real, "Stops the queue and frees its buffers, their packet descriptions and its voice");
     p.def<&aq_setParam>("_AudioQueueSetParameter");
     p.def<&aq_getParam>("_AudioQueueGetParameter");
     p.def<&aq_offlineRender>("_AudioQueueOfflineRender");
