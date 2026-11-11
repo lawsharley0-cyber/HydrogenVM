@@ -29,6 +29,7 @@ constexpr uint32_t kFramebuffer = 0x8D40, kFramebufferBinding = 0x8CA6;
 constexpr uint32_t kReadFramebuffer = 0x8CA8, kDrawFramebuffer = 0x8CA9;
 constexpr uint32_t kReadFramebufferBinding = 0x8CAA, kDrawFramebufferBinding = 0x8CA6;
 constexpr uint32_t kColorAttachment0 = 0x8CE0, kRgba8 = 0x8058, kRgba = 0x1908, kBgra = 0x80E1;
+constexpr uint32_t kHalfFloatOes = 0x8D61, kHalfFloat = 0x140B;
 constexpr uint32_t kUnsignedByte = 0x1401, kPackAlignment = 0x0D05;
 constexpr uint32_t kRenderbufferWidth = 0x8D42, kRenderbufferHeight = 0x8D43;
 constexpr uint32_t kFbAttachmentObjectType = 0x8CD0, kFbAttachmentObjectName = 0x8CD1;
@@ -639,24 +640,48 @@ void hg_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_
 void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalformat, int32_t width, int32_t height,
                      int32_t border, uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexImage2D)
-    if (format == kBgra && internalformat == int32_t(kRgba) && !hc->desktop) internalformat = int32_t(kBgra);
-    // Depth textures. ES 2 names them by the unsized format (OES_depth_texture,
-    // OES_packed_depth_stencil); an ES 3 driver wants the sized one and answers
-    // INVALID_OPERATION otherwise, leaving the framebuffer they attach to incomplete
-    // (Minecraft: Story Mode on the phone, all black). Ask as the guest did; if the
-    // driver refuses, ask again with the sized format for the same data.
-    int32_t sized = 0;
-    if (internalformat == 0x84F9 /*DEPTH_STENCIL*/ && type == 0x84FA /*UNSIGNED_INT_24_8*/) sized = 0x88F0;        // DEPTH24_STENCIL8
-    else if (internalformat == 0x1902 /*DEPTH_COMPONENT*/ && type == 0x1403 /*UNSIGNED_SHORT*/) sized = 0x81A5;    // DEPTH_COMPONENT16
-    else if (internalformat == 0x1902 && type == 0x1405 /*UNSIGNED_INT*/) sized = 0x81A6;                          // DEPTH_COMPONENT24
-    if (sized && !hc->desktop && hc->fn.glGetError) {
+    // Formats an iOS 5-9 driver took by their ES 2 names and a newer driver may refuse. The call
+    // is made as the guest made it; if the driver refuses, it is made again in the form below.
+    //  - Depth textures (OES_depth_texture, OES_packed_depth_stencil): the sized format.
+    //    Minecraft: Story Mode on the phone was all black without it.
+    //  - BGRA pixels: Apple's driver wants internal format RGBA, others BGRA. Unreal Engine 3
+    //    and Unity both pass BGRA for both; the phone answered INVALID_ENUM and the texture
+    //    stayed empty (Goat Simulator's black HUD).
+    //  - Half-float and float textures (OES_texture_half_float, OES_texture_float): the sized
+    //    format, and for half floats the ES 3 type. Story Mode's 3D scenes render into these.
+    // What a context accepted is remembered, so only the first such upload is asked twice.
+    int32_t altInternal = 0;
+    uint32_t altType = type;
+    enum { None, Depth, Bgra, HalfFloat, Float } kind = None;
+    if (internalformat == 0x84F9 /*DEPTH_STENCIL*/ && type == 0x84FA /*UNSIGNED_INT_24_8*/) { kind = Depth; altInternal = 0x88F0; }       // DEPTH24_STENCIL8
+    else if (internalformat == 0x1902 /*DEPTH_COMPONENT*/ && type == 0x1403 /*UNSIGNED_SHORT*/) { kind = Depth; altInternal = 0x81A5; }  // DEPTH_COMPONENT16
+    else if (internalformat == 0x1902 && type == 0x1405 /*UNSIGNED_INT*/) { kind = Depth; altInternal = 0x81A6; }                        // DEPTH_COMPONENT24
+    else if (format == kBgra && (internalformat == int32_t(kRgba) || internalformat == int32_t(kBgra))) {
+        kind = Bgra;
+        altInternal = internalformat == int32_t(kRgba) ? int32_t(kBgra) : int32_t(kRgba);
+        if (hc->desktop) { internalformat = int32_t(kRgba); kind = None; }   // desktop GL has no BGRA internal format
+        else if (hc->bgraInternal) { internalformat = hc->bgraInternal; kind = None; }
+    } else if (type == kHalfFloatOes && (internalformat == int32_t(kRgba) || internalformat == 0x1907 /*RGB*/)) {
+        kind = HalfFloat;
+        altInternal = internalformat == int32_t(kRgba) ? 0x881A /*RGBA16F*/ : 0x881B /*RGB16F*/;
+        altType = kHalfFloat;
+        if (hc->halfFloatSized == 1) { internalformat = altInternal; type = altType; kind = None; }
+        else if (hc->halfFloatSized == 0) kind = None;
+    } else if (type == 0x1406 /*FLOAT*/ && (internalformat == int32_t(kRgba) || internalformat == 0x1907)) {
+        kind = Float;
+        altInternal = internalformat == int32_t(kRgba) ? 0x8814 /*RGBA32F*/ : 0x8815 /*RGB32F*/;
+        if (hc->floatSized == 1) { internalformat = altInternal; kind = None; }
+        else if (hc->floatSized == 0) kind = None;
+    }
+    if (kind != None && !hc->desktop && hc->fn.glGetError) {
         const uint32_t pending = hc->fn.glGetError();   // the guest's own earlier error, kept for it
         if (pending && !hc->guestError) hc->guestError = pending;
         hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
         const uint32_t refused = hc->fn.glGetError();
+        bool usedAlt = false;
         if (refused) {
             for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
-            hc->fn.glTexImage2D(target, level, sized, width, height, border, format, type, HG_PTR(x, pixels));
+            hc->fn.glTexImage2D(target, level, altInternal, width, height, border, format, altType, HG_PTR(x, pixels));
             if (hc->fn.glGetError()) {   // neither form: the guest sees the first refusal
                 for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
                 if (!hc->guestError) hc->guestError = refused;
@@ -664,21 +689,42 @@ void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalfor
                 if (hgDebug || hc->trace) {
                     char code[16];
                     std::snprintf(code, sizeof code, "0x%04x", refused);
-                    x.proc.noteGLError(std::string("glTexImage2D -> ") + code + (hc->implicitWorker ? " [worker]" : " [main]"),
+                    // Keyed by format and type, so each refused kind of texture is reported.
+                    x.proc.noteGLError(std::string("glTexImage2D ") + hgArgs(uint32_t(internalformat), format, type) + " -> " + code + (hc->implicitWorker ? " [worker]" : " [main]"),
                                        "glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) +
-                                       ") -> " + code + (hc->implicitWorker ? " [worker]" : " [main]") + " (the sized depth format was refused too)");
+                                       ") -> " + code + (hc->implicitWorker ? " [worker]" : " [main]") + " (the other form of this format was refused too)");
                 }
+                return;
             }
+            usedAlt = true;
         }
+        if (kind == Bgra) hc->bgraInternal = usedAlt ? altInternal : internalformat;
+        else if (kind == HalfFloat) hc->halfFloatSized = usedAlt ? 1 : 0;
+        else if (kind == Float) hc->floatSized = usedAlt ? 1 : 0;
         return;
     }
     hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
-    if (hgDebug || hc->trace)
-        hgAfter(x, hc, "glTexImage2D", [&] { return hgArgs(target, level, internalformat, width, height, border, format, type, pixels); });
+    if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, "GL glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) + ")");
+    if ((hgDebug || hc->trace) && hc->fn.glGetError) {
+        // A refused upload leaves a texture that samples black: report each format and type once,
+        // not only the first refused upload.
+        const uint32_t e = hc->fn.glGetError();
+        if (e) {
+            if (!hc->guestError) hc->guestError = e;
+            x.proc.perf().glErrors++;
+            char code[16];
+            std::snprintf(code, sizeof code, "0x%04x", e);
+            x.proc.noteGLError(std::string("glTexImage2D ") + hgArgs(uint32_t(internalformat), format, type) + " -> " + code + (hc->implicitWorker ? " [worker]" : " [main]"),
+                               "glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) + ") -> " + code +
+                               (hc->implicitWorker ? " [worker]" : " [main]"));
+        }
+    }
 }
 void hg_glTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t width, int32_t height,
                         uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexSubImage2D)
+    // A half-float texture created in its sized form takes the ES 3 name of the type.
+    if (type == kHalfFloatOes && hc->halfFloatSized == 1) type = kHalfFloat;
     hc->fn.glTexSubImage2D(target, level, xo, yo, width, height, format, type, HG_PTR(x, pixels));
 }
 
