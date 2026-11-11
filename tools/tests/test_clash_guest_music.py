@@ -23,6 +23,7 @@ typedef unsigned int u32;
 typedef unsigned char u8;
 #define CALL(address,result,args) ((result (*)args)(address))
 #define API_puts puts
+static const char music_loop_csv[]="authored menu CSV";
 static void fail(const char *why){fprintf(stderr,"%s",why);exit(4);}
 static uintptr_t symbol(const char *name){
 #define MAP(n,f) if(!strcmp(name,n))return (uintptr_t)f
@@ -43,6 +44,64 @@ static u32 checksum(const u8 *bytes,u32 count){
 
 @unittest.skipUnless(shutil.which("clang"), "C compiler required")
 class MusicTests(unittest.TestCase):
+    def test_menu_loop_overlay_preserves_other_contexts(self):
+        import csv
+        import io
+        import json
+        from clash_music_catalog import header
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            file = root / "res/csv_client/music.csv"
+            file.parent.mkdir(parents=True)
+            rows = [["Name", "Loop", "PlayCount", "FadeOutTimeSec", "DurationSec"],
+                    ["String", "boolean", "int", "int", "int"],
+                    ["TutorialMusic", "true", "", "", ""],
+                    ["MenuMusic", "", "2", "30", "96"],
+                    ["", "", "2", "30", "96"], ["", "", "2", "30", "96"],
+                    ["BattleMusic", "true", "", "", ""]]
+            with file.open("w", newline="") as stream:
+                csv.writer(stream).writerows(rows)
+            encoded = header(root).split("=", 1)[1].strip().removesuffix(";")
+            actual = list(csv.reader(io.StringIO(json.loads(encoded))))
+            self.assertEqual(actual[:3], rows[:3])
+            self.assertEqual(actual[-1], rows[-1])
+            self.assertEqual(actual[3:6], [["MenuMusic", "true", "2", "0", "96"],
+                                         ["", "true", "2", "0", "96"], ["", "true", "2", "0", "96"]])
+
+    def test_duration_is_bounded_before_decode(self):
+        import wave
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def wav(name, seconds):
+                path = root / name
+                with wave.open(str(path), "wb") as stream:
+                    stream.setparams((1, 2, 1000, 0, "NONE", "not compressed"))
+                    stream.writeframes(bytes(seconds * 1000 * 2))
+                return path
+            short = wav("short.wav", 180)
+            long = wav("long.wav", 181)
+            frame = bytes.fromhex("fffb9000") + bytes(413)
+            (root / "short.mp3").write_bytes(frame * 6890)
+            (root / "long.mp3").write_bytes(frame * 6891)
+            (root / "bad.mp3").write_bytes(b"ID3" + bytes(10))
+            preamble = PREAMBLE.replace('MAP("mkdir",mkdir);', 'MAP("fseek",fseek); MAP("mkdir",mkdir);')
+            module = (ROOT / "tools/clash_guest/music_limits.inc").read_text()
+            code = preamble + "\nstatic u32 mod_div(u32 a,u32 b){return a/b;}\n" + module
+            code += r'''
+int main(int argc,char **argv){
+    FILE *f=fopen(argv[1],"rb");fseek(f,0,SEEK_END);u32 size=ftell(f);fclose(f);
+    return music_duration_bound(argv[1],size)?0:1;
+}
+'''
+            source = root / "probe.c"
+            source.write_text(code)
+            executable = root / "probe"
+            subprocess.run(["clang", "-w", "-fno-builtin", str(source), "-o", str(executable)], check=True)
+            for file, expected in [(short, 0), (long, 1), (root / "short.mp3", 0),
+                                   (root / "long.mp3", 1), (root / "bad.mp3", 1)]:
+                result = subprocess.run([str(executable), str(file)])
+                self.assertEqual(result.returncode, expected, file.name)
+
     def test_native_assignment_reader_and_menu_scope(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

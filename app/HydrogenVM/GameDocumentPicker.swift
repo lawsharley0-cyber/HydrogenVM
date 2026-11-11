@@ -19,8 +19,6 @@ struct GameDocumentPicker: UIViewControllerRepresentable {
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let completion: (String?) -> Void
         private var finished = false
-        private var importedCopy: URL?
-        deinit { if let importedCopy { try? FileManager.default.removeItem(at: importedCopy) } }
         init(completion: @escaping (String?) -> Void) { self.completion = completion }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             finish(nil)
@@ -40,7 +38,6 @@ struct GameDocumentPicker: UIViewControllerRepresentable {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 let target = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension)
                 try FileManager.default.copyItem(at: url, to: target)
-                importedCopy = target
                 finish(target.path)
             } catch {
                 finish(nil)

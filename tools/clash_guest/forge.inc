@@ -140,6 +140,9 @@ static void forge_prepare_tables(void) {
 }
 void *guest_forge_fopen(const char *path,const char *mode) {
     if(path && mode && (forge_equal(mode,"r") || forge_equal(mode,"rb"))) {
+#ifdef GUEST_MUSIC_LAB
+        int music_handled=0;void *music_csv=music_csv_redirect(path,mode,&music_handled);if(music_handled)return music_csv;
+#endif
         u32 length=forge_length(path);
 #ifdef GUEST_ART_SOURCE_TOKEN
         forge_initialize();art_initialize();int handled=0;void *art=art_redirect(path,mode,&handled);if(handled)return art;

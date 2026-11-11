@@ -128,6 +128,8 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
         from clash_spell_catalog import header as spell_header
         header.write(spell_header(build_dir/'source'/app_root))
         header.write('#define GUEST_MUSIC_LAB 1\n')
+        from clash_music_catalog import header as music_header
+        header.write(music_header(build_dir/'source'/app_root))
         header.write(forge_header(build_dir/'source'/app_root,entries,spell_clones=True))
         from clash_art_templates import header as art_header
         header.write(art_header(build_dir/'source'/app_root,entries))

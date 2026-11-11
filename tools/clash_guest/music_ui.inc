@@ -1,3 +1,4 @@
+#include "music_limits.inc"
 static u32 music_panel,music_picker,music_player,music_candidate_bytes,music_candidate_hash;
 static char music_candidate[560];
 static void music_status(const char *text){mod_message(text);mod_text(mod_status_label,mod_status);}
@@ -46,8 +47,8 @@ static void music_picked(u32 self,u32 selector,u32 picker,u32 url){
     (void)self;(void)selector;
     u32 path=mod_send0(url,"path");const char *text=path?(const char*)mod_send0(path,"UTF8String"):0;
     u32 bytes,hash;
-    if(!text || forge_length(text)>=sizeof music_candidate || !music_validate(text,&bytes,&hash)){
-        music_status("Choose WAV or MP3, up to 8 MB.");music_dismiss(picker);return;
+    if(!text || forge_length(text)>=sizeof music_candidate || !music_validate(text,&bytes,&hash) || !music_duration_bound(text,bytes)){
+        music_status("Use PCM WAV / MP3 within the limits.");music_dismiss(picker);return;
     }
     u32 error=0,player=CALL(mod_msg,u32,(u32,u32,u32,u32*))(mod_send0(mod_class("AVAudioPlayer"),"alloc"),mod_sel("initWithContentsOfURL:error:"),url,&error);
     double duration=player?CALL(mod_msg,double,(u32,u32))(player,mod_sel("duration")):0;
@@ -75,7 +76,7 @@ static void music_open(void){
         mod_button(music_panel,"Stop",382,(ModRect){164,106,144,42});
         mod_button(music_panel,"Use for menu",383,(ModRect){12,166,296,46});
         mod_button(music_panel,"Restore original music",384,(ModRect){12,226,296,46});
-        mod_label(music_panel,"WAV or MP3. Up to 8 MB / 3 minutes.",(ModRect){12,292,296,28},12);
+        mod_label(music_panel,"PCM WAV / MP3. 8 MB / 3 minutes.",(ModRect){12,292,296,28},12);
         mod_label(music_panel,"Restart Clash after changing music.",(ModRect){12,326,296,28},12);
     }
     mod_send1(music_panel,"setHidden:",0);

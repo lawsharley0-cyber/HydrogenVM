@@ -11,7 +11,7 @@ Advanced opponent-AI refinement remains deferred. Keep earned saves intact.
 
 ## Next milestone — custom music
 
-The first playable milestone is a Music editor in Mod Lab. Pick one local track from iPhone Files, preview it, assign it to the home menu, close and relaunch offline, then restore the original menu rotation. Listen to both music and sound effects during the check. Cancelling the picker or selecting an unreadable track should preserve the current assignment.
+The [menu music implementation](CUSTOM_MUSIC_2026-11-11.md) now supplies the Music editor, Files bridge, PCM WAV/MP3 import, preview, a persistent menu assignment and restore. Native signal/cancellation/rejection checks and the compiled host package are recorded in its handoff. Physical iPhone listening and Files presentation remain open. Battle/result assignments and playlists follow.
 
 The pinned 2.1306.1 music.csv groups three entries under MenuMusic. BattleMusic has three entries and shares its first filename with TutorialMusic. Scope overrides to the selected context so an arena music choice preserves the original training soundtrack. Confirm the actual playback route in Hydrogen before implementing file substitution.
 

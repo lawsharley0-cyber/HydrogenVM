@@ -16,6 +16,17 @@ static int music_check(const char *path,u32 bytes,u32 expected){
     u8 extra;ok=ok && !CALL(symbol("fread"),u32,(void*,u32,u32,void*))(&extra,1,1,f) && !CALL(symbol("ferror"),int,(void*))(f);
     int closed=CALL(symbol("fclose"),int,(void*))(f);return ok && !closed && hash==expected;
 }
+static int music_loop_table(void){
+    char path[560],temporary[570];
+    path_append(path,music_folder,"/menu.csv",sizeof path);path_append(temporary,path,".tmp",sizeof temporary);
+    void *file=CALL(symbol("fopen"),void*,(const char*,const char*))(temporary,"wb");if(!file)return 0;
+    u32 bytes=sizeof music_loop_csv-1;
+    int ok=CALL(symbol("fwrite"),u32,(const void*,u32,u32,void*))(music_loop_csv,1,bytes,file)==bytes;
+    int flushed=CALL(symbol("fflush"),int,(void*))(file),fd=CALL(symbol("fileno"),int,(void*))(file);
+    ok=ok && !flushed && fd>=0 && !CALL(symbol("fsync"),int,(int))(fd);
+    int closed=CALL(symbol("fclose"),int,(void*))(file);
+    return ok && !closed && !CALL(symbol("rename"),int,(const char*,const char*))(temporary,path);
+}
 static void music_initialize(void){
     if(music_ready)return;music_ready=1;
     path_append(music_folder,CALL(symbol("getenv"),const char*,(const char*))("HOME"),"/Documents/ClashMusic-v1",sizeof music_folder);
@@ -27,6 +38,7 @@ static void music_initialize(void){
     ok=ok && !closed && h[0]==0x3143554du && h[4]==checksum((u8*)h,16);
     if(ok && h[1]){
         music_path(music_file,h[1]);ok=music_check(music_file,h[2],h[3]);
+        if(ok)ok=music_loop_table();
         if(ok){music_generation=h[1];music_bytes=h[2];music_hash=h[3];}
     }
     if(!ok)CALL(API_puts,int,(const char*))("Music Lab: rejected assignment retained; original menu music used");
@@ -57,4 +69,14 @@ int guest_music_audio_open(u32 url,int permission,u32 hint,u32 *out){
 }
 int guest_music_ext_open(u32 url,u32 *out){
     return CALL(symbol("ExtAudioFileOpenURL"),int,(u32,u32*))(music_url(url),out);
+}
+static void *music_csv_redirect(const char *path,const char *mode,int *handled){
+    const char *suffix="res/csv_client/music.csv";
+    u32 size=0,n=0;while(suffix[size])++size;while(path[n])++n;
+    if(n<size || (n>size && path[n-size-1]!='/'))return 0;
+    for(u32 i=0;i<size;++i)if(path[n-size+i]!=suffix[i])return 0;
+    music_initialize();if(!music_generation)return 0;
+    char dest[560];path_append(dest,music_folder,"/menu.csv",sizeof dest);*handled=1;
+    CALL(API_puts,int,(const char*))("Music Lab: using native menu loop");
+    return CALL(symbol("fopen"),void*,(const char*,const char*))(dest,mode);
 }
