@@ -125,6 +125,8 @@ def build(source, output, build_dir, profile_saves=False, probe_donation_actors=
         header.write(mod_catalog_header(entries))
         from clash_mechanics_catalog import header as mechanics_header
         header.write(mechanics_header(build_dir/'source'/app_root))
+        from clash_spell_catalog import header as spell_header
+        header.write(spell_header(build_dir/'source'/app_root))
         header.write(forge_header(build_dir/'source'/app_root,entries))
         from clash_art_templates import header as art_header
         header.write(art_header(build_dir/'source'/app_root,entries))

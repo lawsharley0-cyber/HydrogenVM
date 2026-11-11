@@ -1,4 +1,8 @@
 #include "mods_math.inc"
+#ifdef GUEST_SPELL_COUNT
+static void spell_initialize(void),spell_restore(void),spell_apply(void);
+static int spell_damage(void*,int,int*);
+#endif
 #ifdef GUEST_MECH_CARD_COUNT
 static void mech_restore(void),mech_apply(void);
 static void *mech_active_shot(void*,void*);
@@ -23,6 +27,9 @@ static void mod_reject_profile(void) {
 static int mod_allowed(void) {return save_initialized && logged_in && committed_wins>=7;}
 static int mod_effective(void) {return mod_ready && mod_enabled && mod_allowed() && (!battle_started || arena_battle);}
 static void mod_restore(void) {
+#ifdef GUEST_SPELL_COUNT
+    spell_restore();
+#endif
 #ifdef GUEST_MECH_CARD_COUNT
     mech_restore();
 #endif
@@ -33,12 +40,15 @@ static void mod_restore(void) {
     }
 }
 static void mod_apply_units(void) {
+#ifdef GUEST_SPELL_COUNT
+    spell_initialize();
+#endif
     mod_restore();
 #ifdef GUEST_MECH_CARD_COUNT
     mech_apply();
 #endif
-    mod_applied=1;if(!mod_effective())return;
-    for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
+    mod_applied=1;
+    if(mod_effective())for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
         u32 field=j==5?MOD_RANGE:j;void *p=j==4?mod_shots[i]:mod_units[i];
         u32 base=mod_original[i][j];
 #ifdef GUEST_MECH_CARD_COUNT
@@ -48,6 +58,9 @@ static void mod_apply_units(void) {
             FIELD(p,mod_offsets[j])=j==3?mod_scaled_size(base,mod_records[i].value[field]):
                 mod_scaled(base,mod_records[i].value[field],j==1||j==2);
     }
+#ifdef GUEST_SPELL_COUNT
+    spell_apply();
+#endif
 }
 static void *mod_data(const char *name,u32 address) {
     if(!*name)return 0;u32 text[5];CALL(0x18dcf9,void,(void*,const char*))(text,name);
@@ -162,4 +175,10 @@ static int mod_stat(void *data,int value,int field,int shot) {
 }
 int guest_mod_health(void *p,int level){return mod_stat(p,guest_original_mod_health(p,level),MOD_HEALTH,0);}
 int guest_mod_damage(void *p,int level){return mod_stat(p,guest_original_mod_damage(p,level),MOD_DAMAGE,0);}
-int guest_mod_shot_damage(void *p,int level){return mod_stat(p,guest_original_mod_shot_damage(p,level),MOD_DAMAGE,1);}
+int guest_mod_shot_damage(void *p,int level){
+    int raw=guest_original_mod_shot_damage(p,level);
+#ifdef GUEST_SPELL_COUNT
+    int handled=0,value=spell_damage(p,raw,&handled);if(handled)return value;
+#endif
+    return mod_stat(p,raw,MOD_DAMAGE,1);
+}

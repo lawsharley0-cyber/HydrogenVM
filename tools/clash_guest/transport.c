@@ -138,6 +138,9 @@ static void reply(void *messaging,int kind,int version,const u8 *bytes,u32 size)
 #include "mechanics.inc"
 #endif
 #include "forge_grant.inc"
+#ifdef GUEST_SPELL_COUNT
+#include "spells.inc"
+#endif
 #include "mods_ui.inc"
 static void refresh_saved_arena(void) {
     // Recover already-earned saves captured before the native post-setter

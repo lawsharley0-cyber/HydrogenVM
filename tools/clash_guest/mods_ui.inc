@@ -66,11 +66,19 @@ static void mod_ui_refresh(int stats) {
 #endif
 #ifdef GUEST_MECH_CARD_COUNT
 #include "mechanics_ui.inc"
+#ifdef GUEST_SPELL_COUNT
+#include "spells_ui.inc"
+#endif
 #endif
 static void mod_close(void){mod_send1(mod_window,"endEditing:",1);mod_send1(mod_window,"setHidden:",1);if(mod_old_window)mod_send0(mod_old_window,"makeKeyAndVisible");}
 static void mod_action(u32 self,u32 selector,u32 sender) {
     (void)self;(void)selector;int tag=(int)mod_send0(sender,"tag");
     if(tag==10){mod_close();return;}
+#ifdef GUEST_SPELL_COUNT
+    if(tag==41){spell_ui_open();return;}
+    if(tag>=300 && tag<=345){spell_ui_action(tag);return;}
+    if(tag==40 && spell_panel)mod_send1(spell_panel,"setHidden:",1);
+#endif
 #ifdef GUEST_MECH_CARD_COUNT
     if(tag==40 || tag>=400){mech_ui_action(tag);return;}
 #endif
@@ -130,6 +138,9 @@ static void mod_action(u32 self,u32 selector,u32 sender) {
 static void mod_ui_open(void) {
     if(!mod_allowed()){mod_message("Mod Lab unlocks after the seven trainers.");return;}
     mod_initialize();
+#ifdef GUEST_SPELL_COUNT
+    if(spell_panel)mod_send1(spell_panel,"setHidden:",1);
+#endif
 #ifdef GUEST_ART_SOURCE_TOKEN
     if(photo_panel)mod_send1(photo_panel,"setHidden:",1);
 #endif
@@ -163,6 +174,9 @@ static void mod_ui_open(void) {
         mod_button(scroll,"-10",22,(ModRect){204,74,48,32});mod_button(scroll,"+10",23,(ModRect){258,74,50,32});
         mod_button(scroll,"Save balances",24,(ModRect){12,118,296,34});
         mod_label(scroll,"Unit blueprints",(ModRect){12,168,200,26},18);
+#ifdef GUEST_SPELL_COUNT
+        mod_button(scroll,"Spells",41,(ModRect){220,168,88,30});
+#endif
         mod_button(scroll,"<",12,(ModRect){12,204,40,32});mod_unit_label=mod_label(scroll,"",(ModRect){60,204,198,32},17);mod_button(scroll,">",13,(ModRect){268,204,40,32});
         mod_toggle=mod_button(scroll,"",11,(ModRect){12,246,296,32});
         const char *names[MOD_FIELDS]={"Move speed %","Attack speed %","Windup speed %","Troop size %","Shot speed %","Health %","Damage %","Attack range %"};
