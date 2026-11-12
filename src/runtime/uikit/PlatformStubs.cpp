@@ -393,7 +393,9 @@ int32_t aq_addPropertyListener(Ctx& x, uint32_t qid, uint32_t prop, uint32_t pro
     auto it = st.queues.find(qid);
     if (it == st.queues.end()) return -50;
     audioTrace("AudioQueueAddPropertyListener", qid, prop);
-    if (proc && it->second.listeners.size() < 64) it->second.listeners.push_back({prop, proc, userData});
+    if (!proc) return -50;
+    if (it->second.listeners.size() >= 64) return -108;   // no room: the caller must not wait for a notice that never comes
+    it->second.listeners.push_back({prop, proc, userData});
     return 0;
 }
 int32_t aq_removePropertyListener(Ctx& x, uint32_t qid, uint32_t prop, uint32_t proc, uint32_t userData) {
@@ -587,7 +589,7 @@ int32_t aq_stop(Ctx& x, uint32_t qid, bool immediate) {
     auto& q = ATS(x).queues[qid];
     // Not immediate: the sound already queued plays to its end, and the queue stops then
     // (aqPump). Stopping at once cut a Talking game's answer off after its first buffer.
-    if (!immediate && !q.input && !q.offline && q.running && q.pump && MX(x.proc).queuedCount(q.voice) != 0) {
+    if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
         q.draining = true;
         return 0;
     }
@@ -617,7 +619,7 @@ int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate) {
     if (st.queues.count(qid)) {
         auto& q = st.queues[qid];
         // Not immediate: the queue goes away once what is queued has played.
-        if (!immediate && !q.input && !q.offline && q.running && q.pump && MX(x.proc).queuedCount(q.voice) != 0) {
+        if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
             q.draining = q.disposeWhenDrained = true;
             return 0;
         }

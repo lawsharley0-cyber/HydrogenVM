@@ -7576,7 +7576,27 @@ int runFullSubsystemTests() {
             callAT("_AudioQueueStop", {q, 1});
             for (int i = 0; i < 5; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
             check(notified == 2 && isRunning() == 0, "a removed audio queue listener is not called, and an immediate stop stops at once");
-            callAT("_AudioQueueDispose", {q, 1});
+            // AudioQueueDispose(queue, false) on a playing queue: the sound finishes, the listener
+            // hears the stop, and only then is the queue gone.
+            callAT("_AudioQueueAddPropertyListener", {q, 0x6171726E, lisCb, 78});
+            {
+                callAT("_AudioQueueAllocateBuffer", {q, 2206, outAt + 8});
+                const uint32_t buf = proc.mem().read<uint32_t>(outAt + 8), data = proc.mem().read<uint32_t>(buf + 4);
+                for (uint32_t k = 0; k < 1103; ++k) proc.mem().write<int16_t>(data + k * 2, 9000);
+                proc.mem().write<uint32_t>(buf + 8, 2206);
+                callAT("_AudioQueueEnqueueBuffer", {q, buf, 0, 0});
+            }
+            const int finishedBefore = finished;
+            callAT("_AudioQueueStart", {q, 0});
+            callAT("_AudioQueueDispose", {q, 0});
+            const uint32_t aliveWhilePlaying = isRunning();
+            for (int i = 0; i < 200 && notified < 4; ++i) {
+                heard += renderedFrames(1024);
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            }
+            const uint32_t gone = uint32_t(callAT("_AudioQueueAddPropertyListener", {q, 0x6171726E, lisCb, 79}));
+            check(aliveWhilePlaying == 1 && finished == finishedBefore + 1 && notified == 4 && noticeUd == 78 && gone != 0,
+                  "AudioQueueDispose without inImmediate plays what is queued, reports the stop, then frees the queue");
             (void)heard;
         }
 
