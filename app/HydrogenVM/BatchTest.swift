@@ -1247,9 +1247,21 @@ final class BatchTestRunner {
         if let names = try? fm.contentsOfDirectory(atPath: playLogs.path(percentEncoded: false)) {
             let out = root.appending(path: "play-logs", directoryHint: .isDirectory)
             try fm.createDirectory(at: out, withIntermediateDirectories: true)
-            for name in names where name.hasSuffix(".log") {
-                guard let data = try? Data(contentsOf: playLogs.appending(path: name)) else { continue }
-                try? data.suffix(1_500_000).write(to: out.appending(path: name))
+            var skipped: [String] = []
+            for name in names.sorted() where name.hasSuffix(".log") {
+                do {
+                    // Only the tail is read: a long session's log can be far larger than the cut.
+                    let handle = try FileHandle(forReadingFrom: playLogs.appending(path: name))
+                    defer { try? handle.close() }
+                    let size = try handle.seekToEnd()
+                    try handle.seek(toOffset: size > 1_500_000 ? size - 1_500_000 : 0)
+                    try (handle.readToEnd() ?? Data()).write(to: out.appending(path: name))
+                } catch {
+                    skipped.append("\(name): \(error.localizedDescription)")
+                }
+            }
+            if !skipped.isEmpty {
+                try? skipped.joined(separator: "\n").write(to: out.appending(path: "skipped.txt"), atomically: true, encoding: .utf8)
             }
         }
         return root

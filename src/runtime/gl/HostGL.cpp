@@ -1341,8 +1341,10 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
         }
         Drawable& d = st.drawables[key];
         d.layer = layer;
-        d.width = width;
-        d.height = height;
+        if (ok || oldW <= 0) {   // a refused request leaves the drawable the size it still has
+            d.width = width;
+            d.height = height;
+        }
         // The platform may now show this layer through a new host layer, which has never been
         // told where the drawable sits (and the compositor only reports a placement that
         // changed). Say it again, scaled to the new drawable. Without this a game that makes

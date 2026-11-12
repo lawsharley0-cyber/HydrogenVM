@@ -361,18 +361,7 @@ uint32_t s_UTF8String(Ctx& x, id self, SEL) { return utf8Pointer(x, self); }
 std::string cStringBytes(const std::u16string& s, uint32_t enc, bool* ok, uint32_t* unit) {
     *unit = 1;
     if (enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE) { *unit = 2; return encodeBytes(s, enc == kNSUnicode ? uint32_t(kNSUTF16LE) : enc, false, ok); }
-    if (enc == kNSUTF32 || enc == 0x9C000100u /* UTF-32LE */ || enc == 0x98000100u /* UTF-32BE */) {
-        *unit = 4;
-        if (ok) *ok = true;
-        std::string out;
-        for (size_t i = 0; i < s.size(); ++i) {
-            uint32_t c = s[i];
-            if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (s[i + 1] - 0xDC00); ++i; }
-            if (enc == 0x98000100u) { out += char(c >> 24); out += char(c >> 16); out += char(c >> 8); out += char(c); }
-            else { out += char(c); out += char(c >> 8); out += char(c >> 16); out += char(c >> 24); }
-        }
-        return out;
-    }
+    if (enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE) { *unit = 4; return encodeBytes(s, enc == kNSUTF32 ? uint32_t(kNSUTF32LE) : enc, false, ok); }
     return encodeBytes(s, enc, false, ok);
 }
 uint32_t s_cStringUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
@@ -383,7 +372,7 @@ uint32_t s_cStringUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     if (!ok) return 0;
     if (unit == 1) return x.proc.allocCString(b);
     const uint32_t buf = x.proc.heap().allocZeroed(uint32_t(b.size()) + unit);   // like an autoreleased buffer
-    if (!b.empty()) x.mem.copyIn(buf, b.data(), b.size());
+    if (buf && !b.empty()) x.mem.copyIn(buf, b.data(), b.size());
     return buf;
 }
 bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc) {
@@ -397,7 +386,7 @@ bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc
 }
 bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }
 uint32_t s_lengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; const std::string b = encodeBytes(sv(x, self), enc, false, &ok); return ok ? uint32_t(b.size()) : 0; }
-uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode ? 2 : 1); }
+uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE ? 2 : enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE ? 4 : 1); }
 id s_dataUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     bool ok = true;
     const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
@@ -912,6 +901,17 @@ std::string encodeBytes(const std::u16string& s, uint32_t enc, bool lossy, bool*
         case kNSUnicode: { std::string out("\xFF\xFE", 2); for (char16_t c : s) { out += char(c & 0xFF); out += char(c >> 8); } return out; }
         case kNSUTF16LE: { std::string out; for (char16_t c : s) { out += char(c & 0xFF); out += char(c >> 8); } return out; }
         case kNSUTF16BE: { std::string out; for (char16_t c : s) { out += char(c >> 8); out += char(c & 0xFF); } return out; }
+        case kNSUTF32: case kNSUTF32LE: case kNSUTF32BE: {   // plain UTF-32 is an external form: it starts with a mark
+            std::string out;
+            if (enc == kNSUTF32) out.assign("\xFF\xFE\x00\x00", 4);
+            for (size_t i = 0; i < s.size(); ++i) {
+                uint32_t c = s[i];
+                if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (s[i + 1] - 0xDC00); ++i; }
+                if (enc == kNSUTF32BE) { out += char(c >> 24); out += char(c >> 16); out += char(c >> 8); out += char(c); }
+                else { out += char(c); out += char(c >> 8); out += char(c >> 16); out += char(c >> 24); }
+            }
+            return out;
+        }
         case kNSASCII: {
             std::string out;
             for (char16_t c : s) { if (c >= 0x80) { if (!lossy) { if (ok) *ok = false; return {}; } out += '?'; } else out += char(c); }

@@ -7484,6 +7484,9 @@ int runFullSubsystemTests() {
             const bool utf16 = wide && proc.mem().read<uint16_t>(wide) == 'L' && proc.mem().read<uint16_t>(wide + 2) == 'a' && proc.mem().read<uint16_t>(wide + 4) == 0;
             const uint32_t w32 = uint32_t(sr.send(cpu, str, "cStringUsingEncoding:", {0x9C000100u /* UTF-32LE */}));
             const bool utf32 = w32 && proc.mem().read<uint32_t>(w32) == 'L' && proc.mem().read<uint32_t>(w32 + 4) == 'a' && proc.mem().read<uint32_t>(w32 + 8) == 0;
+            const uint32_t len32 = uint32_t(sr.send(cpu, str, "lengthOfBytesUsingEncoding:", {0x9C000100u}));
+            const bool can32 = (uint32_t(sr.send(cpu, str, "canBeConvertedToEncoding:", {0x9C000100u})) & 0xFF) != 0;
+            check(len32 == 8 && can32, "UTF-32 byte lengths and conversion checks match what getCString: writes");
             const uint32_t out = proc.heap().allocZeroed(16);
             std::memset(proc.mem().host(out), 0x55, 16);
             const bool fits = (uint32_t(sr.send(cpu, str, "getCString:maxLength:encoding:", {out, 6, 10})) & 0xFF) != 0;

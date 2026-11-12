@@ -21,7 +21,7 @@ using ObjC::rt;
 enum : uint32_t {
     kNSASCII = 1, kNSNextStep = 2, kNSJapaneseEUC = 3, kNSUTF8 = 4, kNSISOLatin1 = 5, kNSNonLossyASCII = 7,
     kNSShiftJIS = 8, kNSUnicode = 10, kNSWindowsCP1252 = 12, kNSMacOSRoman = 30,
-    kNSUTF16BE = 0x90000100, kNSUTF16LE = 0x94000100, kNSUTF32 = 0x8C000100,
+    kNSUTF16BE = 0x90000100, kNSUTF16LE = 0x94000100, kNSUTF32 = 0x8C000100, kNSUTF32BE = 0x98000100, kNSUTF32LE = 0x9C000100,
 };
 
 // ---- strings
