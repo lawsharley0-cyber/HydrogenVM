@@ -540,7 +540,9 @@ void drawImage(Surface& dst, const Image& img, const Affine& m, const Clip& clip
         if (bilinear) {
             cx0.resize(size_t(n)); cx1.resize(size_t(n)); cw.resize(size_t(n));
             for (int i = 0; i < n; ++i) {
-                const float fx = sxs[size_t(i)] - 0.5f;
+                // Columns outside the image are skipped when drawing; clamped here so the
+                // conversion to int stays defined for any scale.
+                const float fx = std::clamp(sxs[size_t(i)], -1.0f, float(iw) + 1.0f) - 0.5f;
                 const int ix = int(std::floor(fx));
                 cx0[size_t(i)] = std::clamp(ix, 0, iw - 1);
                 cx1[size_t(i)] = std::clamp(ix + 1, 0, iw - 1);

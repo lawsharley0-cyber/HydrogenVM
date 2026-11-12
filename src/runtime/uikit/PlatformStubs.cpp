@@ -13,6 +13,7 @@
 #include <array>
 #include <fstream>
 #include <map>
+#include <set>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -631,7 +632,7 @@ int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate) {
     if (st.queues.count(qid)) {
         auto& q = st.queues[qid];
         // Not immediate: the queue goes away once what is queued has played.
-        if (!immediate && !q.input && !q.offline && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
+        if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
             q.draining = q.disposeWhenDrained = true;
             return 0;
         }
@@ -1656,7 +1657,9 @@ void auChainUnits(AudioToolboxState& st, uint32_t uid, int depth, std::vector<ui
     }
     for (uint32_t f : feeders) {
         auto fu = st.units.find(f);
-        if (fu != st.units.end() && fu->second.isMixer()) auChainUnits(st, f, depth + 1, out);
+        if (fu == st.units.end()) continue;
+        if (fu->second.isMixer()) auChainUnits(st, f, depth + 1, out);
+        else if (!fu->second.notifies.empty()) out.push_back(f);
     }
 }
 // Calls a unit's render notifications: proc(userData, &flags, &timeStamp, bus, frames, buffers),
@@ -1668,7 +1671,7 @@ void auNotify(Ctx& x, AudioToolboxState& st, uint32_t uid, uint32_t action) {
     const uint32_t frames = std::clamp<uint32_t>(uint32_t(std::lround(u.sampleRate * 0.01)), 1, 4096);
     if (!auPrepareBuffers(x, u, frames)) return;
     const uint32_t flags = u.actionFlags, ts = u.timeStamp, abl = u.bufferList;
-    if (action == 8) u.sampleTime += frames;
+    if (action == 8 && !u.renderCallback) u.sampleTime += frames;   // a pumped unit's render already advanced it
     const std::vector<AudioUnitInstance::Notify> list = u.notifies;   // a notification may remove itself
     for (const auto& n : list) {
         if (!st.units.count(uid) || x.proc.stopping()) return;
@@ -1692,6 +1695,7 @@ void au_thread(Ctx& x, uint32_t uid) {
             for (uint32_t n : notified) auNotify(x, st, n, 4);
             it = st.units.find(uid);
             if (it == st.units.end()) return;   // a notification disposed the output unit
+            if (!it->second.running) notified.clear();   // ...or stopped it: no render, no post-render notice
             if (it->second.running && it->second.renderCallback) auPump(x.proc, x.cpu, uid);
             else if (it->second.running) {
                 // Fed by a mixer: each enabled input is pulled from its own callback and played as
@@ -1944,9 +1948,11 @@ std::vector<uint32_t> augOutputs(AudioToolboxState& st, uint32_t graph) {
     std::vector<uint32_t> out;
     auto it = st.graphs.find(graph);
     if (it == st.graphs.end()) return out;
+    std::set<uint32_t> fed;   // units feeding a mixer input: that mixer renders them
+    for (const auto& [uid, unit] : st.units) if (unit.feeder) fed.insert(unit.feeder);
     for (uint32_t n : it->second.nodes) {
         auto u = st.units.find(n);
-        if (u != st.units.end() && !u->second.isMixer() && (u->second.renderCallback || u->second.source)) out.push_back(n);
+        if (u != st.units.end() && !u->second.isMixer() && !fed.count(n) && (u->second.renderCallback || u->second.source)) out.push_back(n);
     }
     return out;
 }

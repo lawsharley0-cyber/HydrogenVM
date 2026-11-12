@@ -37,6 +37,8 @@ int main() {
         const auto r = registry.find(name);
         check(r && r->status == SupportStatus::Stub && !r->provenance.empty(), name);
     }
+    const auto notify = registry.find("_AudioUnitAddRenderNotify");
+    check(notify && notify->status == SupportStatus::Approx && !notify->provenance.empty(), "AudioUnitAddRenderNotify is labelled approximate");
     const auto playable = registry.find("-[AVAsset isPlayable]");
     check(playable && playable->kind == SupportKind::InstanceMethod &&
           playable->status == SupportStatus::Stub, "AVAsset playable metadata");
