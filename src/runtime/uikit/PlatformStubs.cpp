@@ -1498,7 +1498,10 @@ void auPauseFeeders(Ctx& x, AudioToolboxState& st, uint32_t mixer, int depth) {
     for (const auto& [element, bus] : m->second.buses) buses.push_back(bus);
     for (uint32_t bus : buses) {
         auto b = st.units.find(bus);
-        if (b == st.units.end() || !b->second.feeder) continue;
+        if (b == st.units.end()) continue;
+        b->second.running = false;   // an input with its own callback (a nested mixer's inputs too)
+        if (b->second.voice) MX(x.proc).setPaused(b->second.voice, true);
+        if (!b->second.feeder) continue;
         auto f = st.units.find(b->second.feeder);
         if (f == st.units.end()) continue;
         if (f->second.isMixer()) { auPauseFeeders(x, st, f->first, depth + 1); continue; }

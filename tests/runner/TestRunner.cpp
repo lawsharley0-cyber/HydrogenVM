@@ -7714,7 +7714,7 @@ int runFullSubsystemTests() {
             for (int i = 0; i < 100 && fed.load() < fedAtRemove + 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
             const bool cyclesAfterRemove = fed.load() >= fedAtRemove + 3;
             callAT("_AudioOutputUnitStop", {rio});
-            renderedFrames(8192);   // whatever was queued before the stop
+            for (int i = 0; i < 10; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);   // a render thread that would still pump
             const size_t afterStop = renderedFrames(4096);
             check(fed > 0 && heard > 0, "a mixer input connected to a converter unit plays the converter's callback");
             check(afterStop == 0, "stopping the output silences the converters its mixer renders");
