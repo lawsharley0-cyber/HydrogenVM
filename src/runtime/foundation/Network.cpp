@@ -35,8 +35,6 @@ id retainObj(Ctx& x, id o) { return o ? R(x).retain(x.cpu, o) : 0; }
 
 // ---------------------------------------------------- SystemConfiguration ---
 uint32_t scr_create(Ctx& x, uint32_t, GuestPtr) {
-    // Intentionally simulating network availability to satisfy legacy apps.
-    // We always report as reachable, instead of offline, because many apps stall if there's no network.
     return ObjC::rt(x).createInstance(ObjC::rt(x).nsObject);
 }
 uint32_t scr_createWithAddress(Ctx& x, uint32_t a, GuestPtr p) { return scr_create(x, a, p); }
@@ -44,9 +42,12 @@ uint32_t scr_createPair(Ctx& x, uint32_t a, GuestPtr p, GuestPtr) { return scr_c
 bool scr_getFlags(Ctx& x, uint32_t ref, GuestPtr flags) {
     if (!ref) return false;
     if (flags) {
-        // Intentionally simulate network availability to satisfy apps checking reachability
-        constexpr uint32_t kSCNetworkReachabilityFlagsReachable = 0x2;
-        x.mem.write<uint32_t>(flags, kSCNetworkReachabilityFlagsReachable);
+        // Not reachable: nothing leaves the emulator, so this is the truth, and it is what an
+        // offline iPhone says. Saying "reachable" while every request fails left games waiting
+        // forever for downloads (Minion Rush polled for its content index for minutes instead
+        // of showing its "no Internet connection" message). Geometry Dash, the game the
+        // "reachable" answer was added for, starts the same either way.
+        x.mem.write<uint32_t>(flags, 0);
     }
     return true;
 }
@@ -459,8 +460,8 @@ void registerNetwork(Process& p, ObjC::Runtime& r) {
     p.def<&scr_create>("_SCNetworkReachabilityCreateWithName");
     p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
     p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
-    supportDef<&scr_getFlags>(p, "_SCNetworkReachabilityGetFlags", SupportStatus::Stub,
-        "Fabricates Reachable for any non-null reference; does not inspect network state");
+    supportDef<&scr_getFlags>(p, "_SCNetworkReachabilityGetFlags", SupportStatus::Real,
+        "Reports not reachable for any non-null reference: the emulator has no outbound network");
     p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
     p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
     p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");

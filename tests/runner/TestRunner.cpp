@@ -6787,8 +6787,10 @@ int runFullSubsystemTests() {
         const uint32_t ref1 = call("_SCNetworkReachabilityCreateWithName", {0, proc.allocCString("apple.com")});
         const uint32_t flagsOut = proc.heap().allocZeroed(4);
         const uint32_t getFlagsOk1 = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
-        check(ref1 != 0 && getFlagsOk1 == 1 && proc.mem().read<uint32_t>(flagsOut) == 2,
-              "SCNetworkReachabilityGetFlags returns success and 0x2 (Reachable)");
+        proc.mem().write<uint32_t>(flagsOut, 0xFFFFFFFFu);
+        const uint32_t getFlagsOk1b = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(ref1 != 0 && getFlagsOk1 == 1 && getFlagsOk1b == 1 && proc.mem().read<uint32_t>(flagsOut) == 0,
+              "SCNetworkReachabilityGetFlags succeeds and reports not reachable (no outbound network)");
 
         const uint32_t getFlagsOkRepeated = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
         check(getFlagsOkRepeated == 1, "SCNetworkReachabilityGetFlags repeated queries work");
