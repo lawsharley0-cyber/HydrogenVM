@@ -1512,8 +1512,9 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     }
     const auto callStart = std::chrono::steady_clock::now();
     const bool shown = st.platform->presentDirect(hc->handle, d.layer);
-    p.perf().presentCalls += 1;
-    p.perf().presentCallNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - callStart).count());
+    const auto callEnd = std::chrono::steady_clock::now();
+    p.perf().presentCalls += 1;   // every attempt, shown or not
+    p.perf().presentCallNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(callEnd - callStart).count());
     if (shown) {
         direct = true;
         ++st.presents;

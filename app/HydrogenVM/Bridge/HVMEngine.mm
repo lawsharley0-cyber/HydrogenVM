@@ -749,9 +749,10 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         @"maxFrameMs": @(double(pf.maxFrameNs.load()) / 1e6), @"slowFrames": @(pf.slowFrames.load()),
         @"compositeMs": @(double(pf.compositeNs.load()) / 1e6), @"presentWaitMs": @(double(pf.presentWaitNs.load()) / 1e6),
         // GL presents (more than frames means a game presents twice a frame) and the time the
-        // driver took to take them; guest instructions per frame shows how much game code runs.
+        // driver took to take them; guest instructions per present shows how much game code runs
+        // for each frame the game renders (frame hooks run at 60 Hz whatever the game's rate).
         @"presentCalls": @(pf.presentCalls.load()), @"presentCallMs": @(double(pf.presentCallNs.load()) / 1e6),
-        @"guestInstructionsPerFrame": @(frames ? double(insns) / double(frames) : 0),
+        @"guestInstructionsPerPresent": @(pf.presentCalls.load() ? double(insns) / double(pf.presentCalls.load()) : 0),
     };
 }
 
