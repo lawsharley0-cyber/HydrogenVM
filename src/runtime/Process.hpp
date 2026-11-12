@@ -529,6 +529,11 @@ private:
     std::deque<float> mic_;
     double micRate_ = 48000, micPos_ = 0;
     int micUsers_ = 0;
+    // Recording diagnostics for the run log: the loudest sample since the last report, the frames
+    // received and the frames the app asked for that had not arrived yet.
+    float micPeak_ = 0;
+    uint64_t micReceived_ = 0, micStarved_ = 0;
+    std::chrono::steady_clock::time_point micReported_{};
     mutable std::mutex fileRingMu_;
     mutable std::deque<FileRecord> fileRing_;
     uint64_t nextFileHandle_ = 0;

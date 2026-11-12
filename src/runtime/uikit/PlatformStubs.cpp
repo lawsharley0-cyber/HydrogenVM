@@ -142,6 +142,15 @@ struct AudioUnitInstance {
     // An output unit fed by another unit instead of a callback (AUGraphConnectNodeInput,
     // kAudioUnitProperty_MakeConnection): the unit it pulls from.
     uint32_t source = 0;
+    // For a mixer input: the unit connected to it (kAudioUnitProperty_MakeConnection on the
+    // mixer), a converter with its own callback or another mixer.
+    uint32_t feeder = 0;
+    // AudioUnitAddRenderNotify: called before and after every render cycle of the chain this
+    // unit is in. Apps do their sound bookkeeping there (Plants vs. Zombies starts and
+    // connects its sound effects from it).
+    struct Notify { uint32_t proc, userData; };
+    std::vector<Notify> notifies;
+    bool inputFormatSet = false;   // a converter: its input format (what its callback gives) is known
     // For a mixer input: its element number (the callback's inBusNumber) and mix settings.
     uint32_t busNumber = 0;
     bool enabled = true;
@@ -560,7 +569,10 @@ int32_t aq_start(Ctx& x, uint32_t qid, GuestPtr) {
     auto& q = ATS(x).queues[qid];
     const bool wasRunning = q.running;
     q.running = true;
-    q.draining = q.disposeWhenDrained = false;
+    // A stop asked for before the start (AudioQueueStop(queue, false) right after the last
+    // buffer, then AudioQueueStart: how Talking Larry plays its answer) still ends the queue
+    // once what is queued has played.
+    if (!q.draining) q.disposeWhenDrained = false;
     if (!wasRunning) aqNotifyLater(x.proc, qid, kAqIsRunning);
     if (q.input) {
         q.last = std::chrono::steady_clock::now();
@@ -589,8 +601,8 @@ int32_t aq_stop(Ctx& x, uint32_t qid, bool immediate) {
     auto& q = ATS(x).queues[qid];
     // Not immediate: the sound already queued plays to its end, and the queue stops then
     // (aqPump). Stopping at once cut a Talking game's answer off after its first buffer.
-    if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
-        q.draining = true;
+    if (!immediate && !q.input && !q.offline && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
+        q.draining = true;   // also before the queue has started: it stops after playing what is queued
         return 0;
     }
     const bool wasRunning = q.running;
@@ -619,7 +631,7 @@ int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate) {
     if (st.queues.count(qid)) {
         auto& q = st.queues[qid];
         // Not immediate: the queue goes away once what is queued has played.
-        if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
+        if (!immediate && !q.input && !q.offline && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
             q.draining = q.disposeWhenDrained = true;
             return 0;
         }
@@ -1406,6 +1418,7 @@ int32_t ac_instanceNew(Ctx& x, uint32_t component, GuestPtr outUnit) {
     st.units[uid].id = uid;
     if (component >= 1 && component <= st.components.size())
         for (int i = 0; i < 5; ++i) st.units[uid].desc[i] = st.components[component - 1][size_t(i)];
+    audioTrace("AudioComponentInstanceNew", uid, (uint64_t(st.units[uid].desc[0]) << 32) | st.units[uid].desc[1]);
     x.mem.write<uint32_t>(outUnit, uid);
     return 0;
 }
@@ -1467,6 +1480,7 @@ std::vector<uint32_t> auSourceBuses(AudioToolboxState& st, const AudioUnitInstan
 // Stack of the thread that calls an AudioUnit render callback (CoreAudio I/O thread size).
 constexpr uint32_t kAudioRenderStack = 512u << 10;
 int32_t au_init(Ctx& x, uint32_t uid) {
+    audioTrace("AudioUnitInitialize", uid);
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(uid);
@@ -1600,6 +1614,68 @@ void auPump(Process& p, CPU::Cpu& c, uint32_t uid) {
     }
     MX(p).enqueue(u.voice, sharePcm(stereo), int(std::lround(u.sampleRate)), u.nextTag++);
 }
+// Plays a mixer's inputs: each enabled input is pulled from its callback, or from the unit
+// connected to it, into a host voice of its own, so the host mixer does the resampling, gain
+// and panning. An input fed by another mixer plays that mixer's inputs.
+void auPumpMixerInputs(Ctx& x, AudioToolboxState& st, uint32_t mixer, int depth) {
+    auto m = st.units.find(mixer);
+    if (m == st.units.end() || depth > 3) return;
+    std::vector<uint32_t> buses;
+    for (const auto& [element, bus] : m->second.buses) buses.push_back(bus);
+    for (uint32_t bus : buses) {
+        auto b = st.units.find(bus);
+        if (b == st.units.end() || !b->second.enabled) continue;
+        if (b->second.renderCallback) {
+            if (!b->second.voice) b->second.voice = MX(x.proc).createStream(auVoiceParams(b->second));
+            if (!b->second.running) { b->second.running = true; MX(x.proc).setPaused(b->second.voice, false); }
+            auPump(x.proc, x.cpu, bus);
+            continue;
+        }
+        auto f = b->second.feeder ? st.units.find(b->second.feeder) : st.units.end();
+        if (f == st.units.end()) continue;
+        if (f->second.isMixer()) { auPumpMixerInputs(x, st, f->first, depth + 1); continue; }
+        if (!f->second.renderCallback) continue;
+        const Audio::VoiceParams params = auVoiceParams(b->second);   // the input's gain and pan
+        if (!f->second.voice) f->second.voice = MX(x.proc).createStream(params);
+        else MX(x.proc).setParams(f->second.voice, params);
+        if (!f->second.running) { f->second.running = true; MX(x.proc).setPaused(f->second.voice, false); }
+        auPump(x.proc, x.cpu, f->first);
+    }
+}
+// The units of an output unit's chain that asked for render notifications: the output unit
+// itself, the mixer feeding it and the mixers feeding that.
+void auChainUnits(AudioToolboxState& st, uint32_t uid, int depth, std::vector<uint32_t>& out) {
+    auto it = st.units.find(uid);
+    if (it == st.units.end() || depth > 4) return;
+    if (!it->second.notifies.empty()) out.push_back(uid);
+    if (it->second.source) auChainUnits(st, it->second.source, depth + 1, out);
+    std::vector<uint32_t> feeders;
+    for (const auto& [element, bus] : it->second.buses) {
+        auto b = st.units.find(bus);
+        if (b != st.units.end() && b->second.feeder) feeders.push_back(b->second.feeder);
+    }
+    for (uint32_t f : feeders) {
+        auto fu = st.units.find(f);
+        if (fu != st.units.end() && fu->second.isMixer()) auChainUnits(st, f, depth + 1, out);
+    }
+}
+// Calls a unit's render notifications: proc(userData, &flags, &timeStamp, bus, frames, buffers),
+// with kAudioUnitRenderAction_PreRender (4) or _PostRender (8) in the flags.
+void auNotify(Ctx& x, AudioToolboxState& st, uint32_t uid, uint32_t action) {
+    auto it = st.units.find(uid);
+    if (it == st.units.end() || it->second.notifies.empty()) return;
+    AudioUnitInstance& u = it->second;
+    const uint32_t frames = std::clamp<uint32_t>(uint32_t(std::lround(u.sampleRate * 0.01)), 1, 4096);
+    if (!auPrepareBuffers(x, u, frames)) return;
+    const uint32_t flags = u.actionFlags, ts = u.timeStamp, abl = u.bufferList;
+    if (action == 8) u.sampleTime += frames;
+    const std::vector<AudioUnitInstance::Notify> list = u.notifies;   // a notification may remove itself
+    for (const auto& n : list) {
+        if (!st.units.count(uid) || x.proc.stopping()) return;
+        x.mem.write<uint32_t>(flags, action);
+        x.proc.callGuest(x.cpu, n.proc, {n.userData, flags, ts, 0, frames, abl});
+    }
+}
 void au_thread(Ctx& x, uint32_t uid) {
     // RemoteIO has real-time deadlines independent of the app's main run loop.
     // A guest thread gives its callback a real CPU context without letting a
@@ -1611,19 +1687,20 @@ void au_thread(Ctx& x, uint32_t uid) {
             std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
             auto it = st.units.find(uid);
             if (it == st.units.end()) return;
+            std::vector<uint32_t> notified;
+            if (it->second.running) auChainUnits(st, uid, 0, notified);
+            for (uint32_t n : notified) auNotify(x, st, n, 4);
+            it = st.units.find(uid);
+            if (it == st.units.end()) return;   // a notification disposed the output unit
             if (it->second.running && it->second.renderCallback) auPump(x.proc, x.cpu, uid);
             else if (it->second.running) {
                 // Fed by a mixer: each enabled input is pulled from its own callback and played as
                 // its own voice, so the host mixer does the resampling, gain and panning.
-                for (uint32_t bus : auSourceBuses(st, it->second)) {
-                    auto b = st.units.find(bus);
-                    if (b == st.units.end() || !b->second.enabled || !b->second.renderCallback) continue;
-                    if (!b->second.voice) b->second.voice = MX(x.proc).createStream(auVoiceParams(b->second));
-                    if (!b->second.running) { b->second.running = true; MX(x.proc).setPaused(b->second.voice, false); }
-                    auPump(x.proc, x.cpu, bus);
-                    if (st.units.find(uid) == st.units.end()) return;   // a callback disposed the output unit
-                }
+                auPumpMixerInputs(x, st, it->second.source, 0);
+                if (st.units.find(uid) == st.units.end()) return;   // a callback disposed the output unit
             }
+            for (uint32_t n : notified) auNotify(x, st, n, 8);
+            if (st.units.find(uid) == st.units.end()) return;
         }
         next += std::chrono::milliseconds(10);
         const auto now = std::chrono::steady_clock::now();
@@ -1651,11 +1728,18 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t scope, uint32
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(uid);
+    audioTrace("AudioUnitSetProperty", uid, (uint64_t(propId) << 32) | (uint64_t(scope & 0xFF) << 16) | (element & 0xFFFF));
     if (it == ATS(x).units.end() || !data) return -50;
     if (propId == 1 /* kAudioUnitProperty_MakeConnection: {source unit, source output, this input} */) {
         if (size < 12) return -50;
         const uint32_t src = x.mem.read<uint32_t>(data);
-        if (it->second.isMixer()) return 0;   // a unit feeding one mixer input: not played
+        if (it->second.isMixer()) {
+            // One mixer input fed by a unit: a converter with its own callback (Plants vs. Zombies
+            // plays every sound effect this way) or another mixer.
+            if (element >= 64) return -10877;   // kAudioUnitErr_InvalidElement
+            auBus(st, it->second, element).feeder = st.units.count(src) && src != uid ? src : 0;
+            return 0;
+        }
         it->second.source = st.units.count(src) ? src : 0;
         return 0;
     }
@@ -1673,6 +1757,10 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t scope, uint32
         if (size < 40) return -50;
         const Asbd a = readAsbd(x, data);
         const uint32_t bps = a.bits / 8;
+        // A converter's callback gives audio in its input format; its output format is the
+        // host mixer's business.
+        const bool converter = !u.isMixer() && u.desc[0] == 0x61756663;   // 'aufc'
+        if (converter && scope != 1 && u.inputFormatSet) return 0;
         if (a.formatID != 0x6C70636D || a.framesPerPacket != 1 || !(a.flags & 8) ||
             a.sampleRate < 1000 || a.sampleRate > 192000 || a.channels < 1 || a.channels > 8 ||
             !(a.bits == 8 || a.bits == 16 || a.bits == 24 || a.bits == 32 || ((a.flags & 1) && a.bits == 64)) ||
@@ -1682,11 +1770,13 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t scope, uint32
         u.bytesPerFrame = a.bytesPerFrame;
         u.channels = a.channels;
         u.bits = a.bits;
+        if (converter && scope == 1) u.inputFormatSet = true;
         auReleaseBuffers(x, u);
     }
     return 0;
 }
 int32_t au_getProp(Ctx& x, uint32_t unit, uint32_t prop, uint32_t scope, uint32_t element, GuestPtr outData, GuestPtr ioDataSize) {
+    audioTrace("AudioUnitGetProperty", unit, (uint64_t(prop) << 32) | (uint64_t(scope & 0xFF) << 16) | (element & 0xFFFF));
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(unit);
@@ -1724,6 +1814,7 @@ int32_t au_setParam(Ctx& x, uint32_t uid, uint32_t param, uint32_t scope, uint32
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(uid);
+    audioTrace("AudioUnitSetParameter", uid, (uint64_t(param) << 32) | (uint64_t(scope & 0xFF) << 16) | (element & 0xFFFF));
     if (it == st.units.end()) return -50;
     if (!it->second.isMixer() || scope != 1 /* kAudioUnitScope_Input */ || element >= 64 || !std::isfinite(value)) return 0;
     const bool threeD = it->second.desc[1] != 0x6D636D78;   // not 'mcmx'
@@ -1757,6 +1848,25 @@ int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFram
             if (ptr && sz) std::memset(x.mem.host(ptr), 0, std::min<uint32_t>(sz, nFrames * 8));
         }
     }
+    return 0;
+}
+int32_t au_addRenderNotify(Ctx& x, uint32_t uid, uint32_t proc, uint32_t userData) {
+    audioTrace("AudioUnitAddRenderNotify", uid, proc);
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.units.find(uid);
+    if (it == st.units.end() || !proc) return -50;
+    if (it->second.notifies.size() >= 16) return -10868;   // kAudioUnitErr_TooManyFramesToProcess stands in for "no room"
+    it->second.notifies.push_back({proc, userData});
+    return 0;
+}
+int32_t au_removeRenderNotify(Ctx& x, uint32_t uid, uint32_t proc, uint32_t userData) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.units.find(uid);
+    if (it == st.units.end()) return -50;
+    auto& v = it->second.notifies;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const auto& n) { return n.proc == proc && n.userData == userData; }), v.end());
     return 0;
 }
 int32_t aug_new(Ctx& x, GuestPtr outGraph) {
@@ -2767,9 +2877,9 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aug_ok1>("_AUGraphClearConnections");
     p.def<&aug_getIndNode>("_AUGraphGetIndNode");
     supportDef<&aug_getNodeCount>(p, "_AUGraphGetNodeCount", SupportStatus::Real, "Counts the nodes added to the graph");
-    supportDef<&aug_ok3>(p, "_AudioUnitAddRenderNotify", SupportStatus::Stub,
-        "Returns noErr without registering or invoking the render notification");
-    p.def<&aug_ok3>("_AudioUnitRemoveRenderNotify");
+    supportDef<&au_addRenderNotify>(p, "_AudioUnitAddRenderNotify", SupportStatus::Approx,
+        "Called before and after each 10 ms render cycle of a running output chain, with a silent buffer");
+    supportDef<&au_removeRenderNotify>(p, "_AudioUnitRemoveRenderNotify", SupportStatus::Real, "Removes a registered render notification");
 
     // OpenAL
     p.def<&alc_openDevice>("_alcOpenDevice");

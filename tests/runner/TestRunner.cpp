@@ -7622,6 +7622,64 @@ int runFullSubsystemTests() {
             check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
         }
 
+        // RemoteIO <- multichannel mixer <- converter units with their own callbacks, wired with
+        // kAudioUnitProperty_MakeConnection, plus a render notification on the output unit:
+        // Plants vs. Zombies plays every sound effect this way and starts them from the notification.
+        {
+            std::atomic<int> fed{0}, pre{0}, post{0};
+            const auto feedCb = proc.registerHostFunction("hvm_test_au_converter_feed", [&](Ctx& cx) {
+                const uint32_t frames = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
+                const uint32_t abl = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 4);
+                if (!abl || cx.mem.read<uint32_t>(abl) != 1) return;
+                const uint32_t data = cx.mem.read<uint32_t>(abl + 12);
+                for (uint32_t i = 0; data && i < frames * 2; ++i) cx.mem.write<int16_t>(data + i * 2, 9000);
+                ++fed;
+            });
+            const auto notifyCb = proc.registerHostFunction("hvm_test_au_render_notify", [&](Ctx& cx) {
+                const uint32_t flags = cx.mem.read<uint32_t>(cx.cpu.r[1]);
+                if (flags & 4) ++pre;
+                if (flags & 8) ++post;
+            });
+            const uint32_t m = proc.heap().allocZeroed(128);
+            auto unitOf = [&](uint32_t type, uint32_t sub) {
+                proc.mem().write<uint32_t>(m, type);
+                proc.mem().write<uint32_t>(m + 4, sub);
+                proc.mem().write<uint32_t>(m + 8, 0x6170706C);   // 'appl'
+                const uint32_t comp = uint32_t(callAT("_AudioComponentFindNext", {0, m}));
+                callAT("_AudioComponentInstanceNew", {comp, m + 32});
+                return proc.mem().read<uint32_t>(m + 32);
+            };
+            const uint32_t rio = unitOf(0x61756F75 /* auou */, 0x72696F63 /* rioc */);
+            const uint32_t mixer = unitOf(0x61756D78 /* aumx */, 0x6D636D78 /* mcmx */);
+            const uint32_t conv = unitOf(0x61756663 /* aufc */, 0x636F6E76 /* conv */);
+            // A converter's input format is what its callback gives; its output side is left alone.
+            const uint32_t fmt = m + 40;
+            proc.mem().write<double>(fmt, 22050.0);
+            const uint32_t lpcm[8] = {0x6C70636D, 0x0C, 4, 1, 4, 2, 16, 0};
+            proc.mem().copyIn(fmt + 8, lpcm, 32);
+            callAT("_AudioUnitSetProperty", {conv, 8, 1, 0, fmt, 40});
+            proc.mem().write<uint32_t>(m + 96, feedCb);
+            callAT("_AudioUnitSetProperty", {conv, 23, 1, 0, m + 96, 8});
+            // mixer input 3 <- converter, RemoteIO <- mixer
+            proc.mem().write<uint32_t>(m + 104, conv); proc.mem().write<uint32_t>(m + 108, 0); proc.mem().write<uint32_t>(m + 112, 3);
+            callAT("_AudioUnitSetProperty", {mixer, 1, 1, 3, m + 104, 12});
+            proc.mem().write<uint32_t>(m + 104, mixer); proc.mem().write<uint32_t>(m + 112, 0);
+            callAT("_AudioUnitSetProperty", {rio, 1, 1, 0, m + 104, 12});
+            const uint32_t added = uint32_t(callAT("_AudioUnitAddRenderNotify", {rio, notifyCb, 5}));
+            callAT("_AudioUnitInitialize", {rio});
+            callAT("_AudioOutputUnitStart", {rio});
+            for (int i = 0; i < 100 && (!fed || !post); ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
+            const size_t heard = renderedFrames(2048);
+            callAT("_AudioUnitRemoveRenderNotify", {rio, notifyCb, 5});
+            const int postAfterRemove = post.load();
+            for (int i = 0; i < 5; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
+            callAT("_AudioOutputUnitStop", {rio});
+            check(fed > 0 && heard > 0, "a mixer input connected to a converter unit plays the converter's callback");
+            check(added == 0 && pre > 0 && post > 0 && post.load() <= postAfterRemove + 1,
+                  "AudioUnitAddRenderNotify is called before and after each render cycle, and stops when removed");
+            for (uint32_t u : {conv, mixer, rio}) callAT("_AudioComponentInstanceDispose", {u});
+        }
+
         // A buffer asked for with no packet descriptions still has room for them (PvZ copies one
         // per frame of its music between buffers and crashed on a null pointer).
         {

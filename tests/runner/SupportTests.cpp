@@ -33,7 +33,7 @@ int main() {
                             "_glIsQueryEXT", "_glIsQuery", "_glBeginQueryEXT", "_glBeginQuery",
                             "_glEndQueryEXT", "_glEndQuery", "_glGetQueryivEXT", "_glGetQueryiv",
                             "_glGetQueryObjectuivEXT", "_glGetQueryObjectuiv",
-                            "_AudioUnitAddRenderNotify", "_SCNetworkReachabilityGetFlags"}) {
+                            "_SCNetworkReachabilityGetFlags"}) {
         const auto r = registry.find(name);
         check(r && r->status == SupportStatus::Stub && !r->provenance.empty(), name);
     }
