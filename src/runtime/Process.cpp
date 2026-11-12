@@ -1814,6 +1814,9 @@ void Process::microphoneUser(bool start) {
 // ------------------------------------------------------------ diagnostics ---
 
 uint64_t Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead, bool isOpen) {
+    // HVM_FILE_TRACE=1: every open and lookup on stderr (bench diagnosis of what an app loads).
+    static const bool trace = std::getenv("HVM_FILE_TRACE") != nullptr;
+    if (trace) std::fprintf(stderr, "[file-trace] %s %s -> %s%lld\n", api.c_str(), path.c_str(), hostResult ? "errno " : "size ", (long long)(hostResult ? hostResult : size));
     std::lock_guard<std::mutex> lk(fileRingMu_);
     if (fileRing_.size() >= 32) fileRing_.pop_front();
     const uint64_t h = ++nextFileHandle_;

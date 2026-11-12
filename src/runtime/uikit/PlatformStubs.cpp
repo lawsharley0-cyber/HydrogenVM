@@ -1489,6 +1489,23 @@ int32_t au_init(Ctx& x, uint32_t uid) {
     it->second.initialized = true;
     return 0;
 }
+// Pauses the units a mixer renders: its inputs' voices and the units connected to its inputs
+// (converters with queued sound, nested mixers), without starting anything.
+void auPauseFeeders(Ctx& x, AudioToolboxState& st, uint32_t mixer, int depth) {
+    auto m = st.units.find(mixer);
+    if (m == st.units.end() || depth > 3) return;
+    std::vector<uint32_t> buses;
+    for (const auto& [element, bus] : m->second.buses) buses.push_back(bus);
+    for (uint32_t bus : buses) {
+        auto b = st.units.find(bus);
+        if (b == st.units.end() || !b->second.feeder) continue;
+        auto f = st.units.find(b->second.feeder);
+        if (f == st.units.end()) continue;
+        if (f->second.isMixer()) { auPauseFeeders(x, st, f->first, depth + 1); continue; }
+        f->second.running = false;
+        if (f->second.voice) MX(x.proc).setPaused(f->second.voice, true);
+    }
+}
 int32_t au_stop(Ctx& x, uint32_t uid) {
     audioTrace("AudioOutputUnitStop", uid);
     auto& st = ATS(x);
@@ -1502,6 +1519,8 @@ int32_t au_stop(Ctx& x, uint32_t uid) {
         b.running = false;
         if (b.voice) MX(x.proc).setPaused(b.voice, true);
     }
+    if (it->second.source) auPauseFeeders(x, st, it->second.source, 0);
+    if (it->second.isMixer()) auPauseFeeders(x, st, uid, 0);
     return 0;
 }
 int32_t au_uninit(Ctx& x, uint32_t uid) {
@@ -1669,7 +1688,10 @@ void auNotify(Ctx& x, AudioToolboxState& st, uint32_t uid, uint32_t action) {
     if (it == st.units.end() || it->second.notifies.empty()) return;
     AudioUnitInstance& u = it->second;
     const uint32_t frames = std::clamp<uint32_t>(uint32_t(std::lround(u.sampleRate * 0.01)), 1, 4096);
-    if (!auPrepareBuffers(x, u, frames)) return;
+    // After a render of the unit's own callback, the post-render notice sees what was rendered
+    // and that render's time stamp: the buffers are left as the render filled them.
+    const bool rendered = action == 8 && u.renderCallback && u.bufferList;
+    if (!rendered && !auPrepareBuffers(x, u, frames)) return;
     const uint32_t flags = u.actionFlags, ts = u.timeStamp, abl = u.bufferList;
     if (action == 8 && !u.renderCallback) u.sampleTime += frames;   // a pumped unit's render already advanced it
     const std::vector<AudioUnitInstance::Notify> list = u.notifies;   // a notification may remove itself

@@ -7712,7 +7712,10 @@ int runFullSubsystemTests() {
             for (int i = 0; i < 100 && fed.load() < fedAtRemove + 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
             const bool cyclesAfterRemove = fed.load() >= fedAtRemove + 3;
             callAT("_AudioOutputUnitStop", {rio});
+            renderedFrames(8192);   // whatever was queued before the stop
+            const size_t afterStop = renderedFrames(4096);
             check(fed > 0 && heard > 0, "a mixer input connected to a converter unit plays the converter's callback");
+            check(afterStop == 0, "stopping the output silences the converters its mixer renders");
             check(added == 0 && pre > 0 && post > 0 && order.load() == 2 && cyclesAfterRemove && post.load() <= postAfterRemove + 1,
                   "AudioUnitAddRenderNotify is called before and after each render cycle, and stops when removed");
             for (uint32_t u : {conv, mixer, rio}) callAT("_AudioComponentInstanceDispose", {u});
