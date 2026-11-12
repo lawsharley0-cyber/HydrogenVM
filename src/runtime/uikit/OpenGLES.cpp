@@ -1021,15 +1021,22 @@ GuestPtr gl_getString(Ctx& x, uint32_t name) {
         case GL_RENDERER: return x.proc.internCString("Apple A6 GPU (HydrogenVM)");
         case GL_VERSION: return x.proc.internCString(api == 1 ? "OpenGL ES-CM 1.1 Apple A6" : "OpenGL ES 2.0 Apple A6");
         case GL_SHADING_LANGUAGE_VERSION: return x.proc.internCString("OpenGL ES GLSL ES 1.00");
-        case GL_EXTENSIONS:
-            return x.proc.internCString(
+        case GL_EXTENSIONS: {
+            std::string list =
                 "GL_OES_framebuffer_object GL_OES_rgb8_rgba8 GL_OES_texture_npot "
                 "GL_EXT_texture_format_BGRA8888 GL_OES_vertex_array_object "
                 "GL_OES_mapbuffer GL_OES_draw_texture GL_OES_point_sprite "
                 "GL_OES_point_size_array GL_IMG_texture_compression_pvrtc "
                 "GL_APPLE_framebuffer_multisample GL_EXT_discard_framebuffer "
                 "GL_OES_depth24 GL_OES_stencil8 GL_OES_packed_depth_stencil "
-                "GL_OES_standard_derivatives");
+                "GL_OES_standard_derivatives";
+            // Depth textures, as every iPhone GPU of the era offers, when the host driver draws
+            // (the software renderer has none). A game that finds no depth texture support
+            // may have no other way to build a render target: Minion Rush's intro scene, which
+            // renders into one, stayed an empty box.
+            if (HostGL::enabled(x.proc)) list += " GL_OES_depth_texture";
+            return x.proc.internCString(list);
+        }
         default: return 0;
     }
 }

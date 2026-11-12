@@ -7526,6 +7526,60 @@ int runFullSubsystemTests() {
             check(room, "an audio queue buffer asked for without packet descriptions still has room for one per frame");
         }
 
+        // AudioQueueStop(queue, false) lets what is queued play to its end, and the queue's
+        // IsRunning listener hears about the start and the real stop (the Talking games wait for
+        // it before they listen again; stopping at once cut their answer short).
+        {
+            int finished = 0, notified = 0, finishedAtStopNotice = -1;
+            uint32_t noticeProp = 0, noticeUd = 0;
+            const auto outCb = proc.registerHostFunction("hvm_test_aq_drain_out", [&](Ctx&) { ++finished; });
+            const auto lisCb = proc.registerHostFunction("hvm_test_aq_drain_listener", [&](Ctx& cx) {
+                noticeUd = cx.cpu.r[0]; noticeProp = cx.cpu.r[2];
+                if (++notified == 2) finishedAtStopNotice = finished;
+            });
+            const uint32_t outAt = proc.heap().allocZeroed(64);
+            const uint32_t fmt = proc.heap().allocZeroed(40);
+            proc.mem().write<double>(fmt, 22050.0);
+            const uint32_t lpcm[8] = {0x6C70636D, 0x0C, 2, 1, 2, 1, 16, 0};
+            proc.mem().copyIn(fmt + 8, lpcm, 32);
+            callAT("_AudioQueueNewOutput", {fmt, outCb, 0, 0, 0, 0, outAt});
+            const uint32_t q = proc.mem().read<uint32_t>(outAt);
+            callAT("_AudioQueueAddPropertyListener", {q, 0x6171726E, lisCb, 77});
+            for (uint32_t i = 0; i < 2; ++i) {
+                callAT("_AudioQueueAllocateBuffer", {q, 2206, outAt + 8});
+                const uint32_t buf = proc.mem().read<uint32_t>(outAt + 8), data = proc.mem().read<uint32_t>(buf + 4);
+                for (uint32_t k = 0; k < 1103; ++k) proc.mem().write<int16_t>(data + k * 2, 9000);
+                proc.mem().write<uint32_t>(buf + 8, 2206);
+                callAT("_AudioQueueEnqueueBuffer", {q, buf, 0, 0});
+            }
+            callAT("_AudioQueueStart", {q, 0});
+            callAT("_AudioQueueStop", {q, 0});
+            auto isRunning = [&] {
+                proc.mem().write<uint32_t>(outAt + 16, 4);
+                callAT("_AudioQueueGetProperty", {q, 0x6171726E, outAt + 12, outAt + 16});
+                return proc.mem().read<uint32_t>(outAt + 12);
+            };
+            const uint32_t runningWhileQueued = isRunning();
+            size_t heard = 0;
+            for (int i = 0; i < 200 && notified < 2; ++i) {
+                heard += renderedFrames(1024);
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            }
+            const uint32_t runningAfter = isRunning();
+            check(runningWhileQueued == 1 && finished == 2 && finishedAtStopNotice == 2 && runningAfter == 0,
+                  "AudioQueueStop without inImmediate plays what is queued before the queue stops");
+            check(notified == 2 && noticeProp == 0x6171726E && noticeUd == 77,
+                  "an audio queue's IsRunning listener is told when it starts and when it has stopped");
+            // Removed, a listener hears nothing; an immediate stop is still immediate.
+            callAT("_AudioQueueRemovePropertyListener", {q, 0x6171726E, lisCb, 77});
+            callAT("_AudioQueueStart", {q, 0});
+            callAT("_AudioQueueStop", {q, 1});
+            for (int i = 0; i < 5; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            check(notified == 2 && isRunning() == 0, "a removed audio queue listener is not called, and an immediate stop stops at once");
+            callAT("_AudioQueueDispose", {q, 1});
+            (void)heard;
+        }
+
         // An AUGraph with a mixer feeding the output (Unreal Engine 3 sound effects): each mixer
         // input has its own callback, asked with its input number, and a disabled input is not asked.
         {
@@ -8917,7 +8971,7 @@ int runFullSubsystemTests() {
                 proc.mem().write<uint32_t>(bAddr + 16, desc);
                 r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
                 proc.heap().free(bAddr); // callback must hold a copied block
-                Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
+                for (int i = 0; i < 20 && !called; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
                 proc.heap().free(desc);
 
                 check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
