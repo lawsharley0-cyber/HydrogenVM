@@ -67,7 +67,7 @@ int hvmRunMain(int argc, char** argv) {
     std::string photoLibraryImage, documentImport;
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
-    double micVoiceAt = -1, micVoiceFor = -1;
+    double micVoiceAt = -1, micVoiceFor = -1, micNoise = 0, micFrom = 0;
     std::string sendSel;
     double sendAt = -1;
     for (int i = 2; i < argc; ++i) {
@@ -96,7 +96,10 @@ int hvmRunMain(int argc, char** argv) {
             continue;
         }
         if (!std::strcmp(argv[i], "--mic-voice") && i + 1 < argc) {
-            if (std::sscanf(argv[++i], "%lf,%lf", &micVoiceAt, &micVoiceFor) != 2) micVoiceAt = micVoiceFor = -1;
+            // START,SECONDS[,NOISE[,FROM]]: a voice for SECONDS from START; NOISE is the room's
+            // level (a phone microphone never reads exact silence); nothing arrives before FROM
+            // (a phone's microphone starts some time after the app asks for it).
+            if (std::sscanf(argv[++i], "%lf,%lf,%lf,%lf", &micVoiceAt, &micVoiceFor, &micNoise, &micFrom) < 2) micVoiceAt = micVoiceFor = -1;
             continue;
         }
         if (!std::strcmp(argv[i], "--report") && i + 1 < argc) { reportPath = argv[++i]; continue; }
@@ -448,9 +451,10 @@ int hvmRunMain(int argc, char** argv) {
                         const bool speaking = at >= micVoiceAt && at < micVoiceAt + micVoiceFor;
                         const double phase = std::fmod(at * 220.0, 1.0);
                         const double syllable = 0.5 + 0.5 * std::sin(at * 2.0 * 3.141592653589793 * 3.0);
-                        v = speaking ? float((phase * 2.0 - 1.0) * 0.6 * syllable) : 0.0f;
+                        const double noise = micNoise * (double(std::rand()) / RAND_MAX * 2.0 - 1.0);
+                        v = float((speaking ? (phase * 2.0 - 1.0) * 0.6 * syllable : 0.0) + noise);
                     }
-                    proc.pushMicrophone(chunk.data(), chunk.size(), rate);
+                    if (double(sent) / rate >= micFrom) proc.pushMicrophone(chunk.data(), chunk.size(), rate);
                 }
                 std::this_thread::sleep_for(milliseconds(5));
             }

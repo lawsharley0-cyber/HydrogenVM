@@ -1758,6 +1758,8 @@ void Process::pushMicrophone(const float* mono, size_t frames, double rate) {
     std::lock_guard<std::mutex> lk(micMu_);
     micRate_ = rate;
     mic_.insert(mic_.end(), mono, mono + frames);
+    for (size_t i = 0; i < frames; ++i) micPeak_ = std::max(micPeak_, mono[i] < 0 ? -mono[i] : mono[i]);
+    micReceived_ += frames;
     // Keep at most a second: a recording queue that fell behind starts from "now".
     const size_t cap = size_t(rate);
     if (mic_.size() > cap) { mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(mic_.size() - cap)); micPos_ = 0; }
@@ -1774,7 +1776,19 @@ void Process::pullMicrophone(float* out, size_t frames, double rate) {
             micPos_ += step;
         } else {
             out[i] = 0;   // not captured (yet): silence
+            ++micStarved_;
         }
+    }
+    // Every few seconds while the app records: what the phone's microphone delivered. Silence or
+    // a starved queue here tells a recording problem from one in the app.
+    const auto now = std::chrono::steady_clock::now();
+    if (micReported_ == std::chrono::steady_clock::time_point{}) micReported_ = now;
+    else if (now - micReported_ >= std::chrono::seconds(3)) {
+        logf(LogLevel::Info, "Microphone: %llu frames received at %.0f Hz, loudest %.3f; %llu frames asked for before they arrived",
+             (unsigned long long)micReceived_, micRate_, double(micPeak_), (unsigned long long)micStarved_);
+        micReported_ = now;
+        micPeak_ = 0;
+        micReceived_ = micStarved_ = 0;
     }
     const size_t used = std::min(mic_.size(), size_t(micPos_));
     mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(used));
@@ -1800,6 +1814,9 @@ void Process::microphoneUser(bool start) {
 // ------------------------------------------------------------ diagnostics ---
 
 uint64_t Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead, bool isOpen) {
+    // HVM_FILE_TRACE=1: every open and lookup on stderr (bench diagnosis of what an app loads).
+    static const bool trace = std::getenv("HVM_FILE_TRACE") != nullptr;
+    if (trace) std::fprintf(stderr, "[file-trace] %s %s -> %s%lld\n", api.c_str(), path.c_str(), hostResult ? "errno " : "size ", (long long)(hostResult ? hostResult : size));
     std::lock_guard<std::mutex> lk(fileRingMu_);
     if (fileRing_.size() >= 32) fileRing_.pop_front();
     const uint64_t h = ++nextFileHandle_;

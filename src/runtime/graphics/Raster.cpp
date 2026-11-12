@@ -521,6 +521,93 @@ void drawImage(Surface& dst, const Image& img, const Affine& m, const Clip& clip
         const uint8_t* p = src + (size_t(y) * size_t(iw) + size_t(x)) * 4;
         return {p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f, p[3] / 255.0f};
     };
+    // Axis-aligned (the usual case: a view's image, scaled or not): the source column of each
+    // destination column and the source row of each destination row are the same for the whole
+    // draw, so they are worked out once instead of per pixel. Same arithmetic, same results.
+    // An opaque image drawn whole and unscaled-in-colour replaces the pixel outright.
+    if (inv.b == 0 && inv.c == 0 && bpp == 4) {
+        const int n = x1 - x0;
+        std::vector<float> sxs(static_cast<size_t>(n), 0.0f);
+        for (int i = 0; i < n; ++i) sxs[size_t(i)] = inv.apply({float(x0 + i) + 0.5f, 0.5f}).x;
+        int ro, go, bo, ao;
+        channelOffsets(dst.format, ro, go, bo, ao);
+        const bool copyable = img.opaque && alpha >= 1 && !tint && mode == BlendMode::Normal && !bilinear;
+        // An opaque image scaled smoothly (a 320x480 picture on a 2x screen) in fixed point: the
+        // source pixels and weights of each column are worked out once. Within a unit of the
+        // floating-point result.
+        const bool smoothOpaque = img.opaque && alpha >= 1 && !tint && mode == BlendMode::Normal && bilinear;
+        std::vector<int> cx0, cx1, cw;
+        if (bilinear) {
+            cx0.resize(size_t(n)); cx1.resize(size_t(n)); cw.resize(size_t(n));
+            for (int i = 0; i < n; ++i) {
+                // Columns outside the image are skipped when drawing; clamped here so the
+                // conversion to int stays defined for any scale.
+                const float fx = std::clamp(sxs[size_t(i)], -1.0f, float(iw) + 1.0f) - 0.5f;
+                const int ix = int(std::floor(fx));
+                cx0[size_t(i)] = std::clamp(ix, 0, iw - 1);
+                cx1[size_t(i)] = std::clamp(ix + 1, 0, iw - 1);
+                cw[size_t(i)] = int((fx - float(ix)) * 256.0f + 0.5f);
+            }
+        }
+        for (int y = y0; y < y1; ++y) {
+            uint8_t* row = dst.data + size_t(y) * size_t(dst.stride);
+            const float sy = inv.apply({0.5f, float(y) + 0.5f}).y;
+            if (sy < 0 || sy >= float(ih)) continue;
+            for (int x = x0; x < x1; ++x) {
+                const uint8_t cm = clip.at(x, y);
+                if (!cm) continue;
+                const float sx = sxs[size_t(x - x0)];
+                if (sx < 0 || sx >= float(iw)) continue;
+                uint8_t* p = row + size_t(x) * 4;
+                if (bilinear) {
+                    const size_t i = size_t(x - x0);
+                    const float fy = sy - 0.5f;
+                    const int iy = int(std::floor(fy));
+                    const int wy = int((fy - float(iy)) * 256.0f + 0.5f);
+                    const uint8_t* r0 = src + size_t(std::clamp(iy, 0, ih - 1)) * size_t(iw) * 4;
+                    const uint8_t* r1 = src + size_t(std::clamp(iy + 1, 0, ih - 1)) * size_t(iw) * 4;
+                    const uint8_t *a = r0 + size_t(cx0[i]) * 4, *b = r0 + size_t(cx1[i]) * 4;
+                    const uint8_t *c = r1 + size_t(cx0[i]) * 4, *d = r1 + size_t(cx1[i]) * 4;
+                    const int wx = cw[i];
+                    auto mix = [&](int k) {
+                        const int top = a[k] * (256 - wx) + b[k] * wx, bottom = c[k] * (256 - wx) + d[k] * wx;
+                        return uint8_t((top * (256 - wy) + bottom * wy + 32768) >> 16);
+                    };
+                    if (smoothOpaque && cm == 255) {
+                        p[ro] = mix(0); p[go] = mix(1); p[bo] = mix(2); p[ao] = 255;
+                        continue;
+                    }
+                    Px sm{mix(0) / 255.0f, mix(1) / 255.0f, mix(2) / 255.0f, mix(3) / 255.0f};
+                    if (tint) sm = {tint->r * tint->a * sm.a, tint->g * tint->a * sm.a, tint->b * tint->a * sm.a, tint->a * sm.a};
+                    sm = {sm.r * alpha, sm.g * alpha, sm.b * alpha, sm.a * alpha};
+                    if (sm.a <= 0 && mode == BlendMode::Normal) continue;
+                    io.store(p, blend(sm, io.load(p), cm / 255.0f, mode));
+                    continue;
+                }
+                if (copyable && cm == 255) {
+                    const uint8_t* q = src + (size_t(std::min(int(sy), ih - 1)) * size_t(iw) + size_t(std::min(int(sx), iw - 1))) * 4;
+                    p[ro] = q[0]; p[go] = q[1]; p[bo] = q[2]; p[ao] = 255;
+                    continue;
+                }
+                Px s;
+                if (bilinear) {
+                    const float fx = sx - 0.5f, fy = sy - 0.5f;
+                    const int ix = int(std::floor(fx)), iy = int(std::floor(fy));
+                    const float tx = fx - float(ix), ty = fy - float(iy);
+                    const Px a = fetch(ix, iy), b = fetch(ix + 1, iy), c = fetch(ix, iy + 1), d = fetch(ix + 1, iy + 1);
+                    auto mix = [&](float p0, float q0, float r0, float t0) { return (p0 * (1 - tx) + q0 * tx) * (1 - ty) + (r0 * (1 - tx) + t0 * tx) * ty; };
+                    s = {mix(a.r, b.r, c.r, d.r), mix(a.g, b.g, c.g, d.g), mix(a.b, b.b, c.b, d.b), mix(a.a, b.a, c.a, d.a)};
+                } else {
+                    s = fetch(int(sx), int(sy));
+                }
+                if (tint) s = {tint->r * tint->a * s.a, tint->g * tint->a * s.a, tint->b * tint->a * s.a, tint->a * s.a};
+                s = {s.r * alpha, s.g * alpha, s.b * alpha, s.a * alpha};
+                if (s.a <= 0 && mode == BlendMode::Normal) continue;
+                io.store(p, blend(s, io.load(p), cm / 255.0f, mode));
+            }
+        }
+        return;
+    }
     for (int y = y0; y < y1; ++y) {
         uint8_t* row = dst.data + size_t(y) * size_t(dst.stride);
         for (int x = x0; x < x1; ++x) {

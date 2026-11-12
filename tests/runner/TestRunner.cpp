@@ -231,6 +231,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include "runtime/gl/HostGL.hpp"
 #include "runtime/foundation/Foundation.hpp"
 #include "runtime/uikit/CoreGraphics.hpp"
+#include "runtime/graphics/Graphics.hpp"
 #include "runtime/graphics/TrueType.hpp"
 #include "runtime/graphics/Shader.hpp"
 #include "TestFont.hpp"
@@ -3075,6 +3076,39 @@ int runFullSubsystemTests() {
         check(face && face->glyph('A') == 2 && face->glyph('Z') == 0 && face->ascent(20) == 16 &&
               face->descent(20) == 4 && face->advance(2, 20) == 12,
               "TrueType cmap and metrics use the original font's units per em");
+        // Image drawing: an opaque image scaled 2x smoothly (fixed-point path) stays within one step
+        // of exact bilinear interpolation; an opaque image drawn unscaled is copied exactly; a tiny
+        // horizontal scale draws nothing out of range.
+        {
+            Graphics::Image img;
+            img.width = 4; img.height = 2; img.opaque = true;
+            img.rgba.resize(4 * 2 * 4);
+            for (int y = 0; y < 2; ++y)
+                for (int x = 0; x < 4; ++x) {
+                    uint8_t* p = &img.rgba[size_t((y * 4 + x) * 4)];
+                    p[0] = uint8_t(x * 80); p[1] = uint8_t(y * 200); p[2] = 30; p[3] = 255;
+                }
+            std::vector<uint8_t> px(8 * 4 * 4, 0);
+            Graphics::Surface dst{px.data(), 8, 4, 8 * 4, Graphics::PixelFormat::RGBA, true};
+            Graphics::Clip all; all.x0 = 0; all.y0 = 0; all.x1 = 8; all.y1 = 4;
+            Graphics::drawImage(dst, img, Graphics::Affine::scale(2, 2), all, 1, true, Graphics::BlendMode::Normal, nullptr);
+            bool close = true;
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 8; ++x) {
+                    const float fx = std::clamp((x + 0.5f) / 2 - 0.5f, 0.0f, 3.0f), fy = std::clamp((y + 0.5f) / 2 - 0.5f, 0.0f, 1.0f);
+                    const float r = fx * 80, g = fy * 200;
+                    const uint8_t* p = &px[size_t((y * 8 + x) * 4)];
+                    close = close && std::fabs(p[0] - r) <= 1.01f && std::fabs(p[1] - g) <= 1.01f && p[2] == 30 && p[3] == 255;
+                }
+            std::vector<uint8_t> px2(4 * 2 * 4, 0);
+            Graphics::Surface dst2{px2.data(), 4, 2, 4 * 4, Graphics::PixelFormat::RGBA, true};
+            Graphics::Clip all2; all2.x0 = 0; all2.y0 = 0; all2.x1 = 4; all2.y1 = 2;
+            Graphics::drawImage(dst2, img, Graphics::Affine{}, all2, 1, true, Graphics::BlendMode::Normal, nullptr);
+            std::vector<uint8_t> px3(8 * 4 * 4, 7);
+            Graphics::Surface dst3{px3.data(), 8, 4, 8 * 4, Graphics::PixelFormat::RGBA, true};
+            Graphics::drawImage(dst3, img, Graphics::Affine::scale(1e-10f, 1), all, 1, true, Graphics::BlendMode::Normal, nullptr);
+            check(close && px2 == img.rgba, "image draws: smooth 2x scaling within a step of bilinear, unscaled opaque copies exactly");
+        }
         check(!Graphics::TrueTypeFont::load({0,1,0,0}) && !Graphics::TrueTypeFont::load(std::vector<uint8_t>(100,0)),
               "TrueType loading rejects truncated and invalid font headers");
         const auto data = Foundation::makeData(cx, kTestFont, sizeof kTestFont, true);
@@ -6753,8 +6787,10 @@ int runFullSubsystemTests() {
         const uint32_t ref1 = call("_SCNetworkReachabilityCreateWithName", {0, proc.allocCString("apple.com")});
         const uint32_t flagsOut = proc.heap().allocZeroed(4);
         const uint32_t getFlagsOk1 = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
-        check(ref1 != 0 && getFlagsOk1 == 1 && proc.mem().read<uint32_t>(flagsOut) == 2,
-              "SCNetworkReachabilityGetFlags returns success and 0x2 (Reachable)");
+        proc.mem().write<uint32_t>(flagsOut, 0xFFFFFFFFu);
+        const uint32_t getFlagsOk1b = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
+        check(ref1 != 0 && getFlagsOk1 == 1 && getFlagsOk1b == 1 && proc.mem().read<uint32_t>(flagsOut) == 0,
+              "SCNetworkReachabilityGetFlags succeeds and reports not reachable (no outbound network)");
 
         const uint32_t getFlagsOkRepeated = call("_SCNetworkReachabilityGetFlags", {ref1, flagsOut});
         check(getFlagsOkRepeated == 1, "SCNetworkReachabilityGetFlags repeated queries work");
@@ -7620,6 +7656,71 @@ int runFullSubsystemTests() {
                   "AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM");
             // CoreAudio's I/O thread has a 512 KB stack; Smash Hit's callback needs over 256 KB.
             check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
+        }
+
+        // RemoteIO <- multichannel mixer <- converter units with their own callbacks, wired with
+        // kAudioUnitProperty_MakeConnection, plus a render notification on the output unit:
+        // Plants vs. Zombies plays every sound effect this way and starts them from the notification.
+        {
+            std::atomic<int> fed{0}, pre{0}, post{0};
+            const auto feedCb = proc.registerHostFunction("hvm_test_au_converter_feed", [&](Ctx& cx) {
+                const uint32_t frames = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP]);
+                const uint32_t abl = cx.mem.read<uint32_t>(cx.cpu.r[CPU::kSP] + 4);
+                if (!abl || cx.mem.read<uint32_t>(abl) != 1) return;
+                const uint32_t data = cx.mem.read<uint32_t>(abl + 12);
+                for (uint32_t i = 0; data && i < frames * 2; ++i) cx.mem.write<int16_t>(data + i * 2, 9000);
+                ++fed;
+            });
+            std::atomic<int> order{0};   // 1: pre came before the input's render; 2: post came after it
+            const auto notifyCb = proc.registerHostFunction("hvm_test_au_render_notify", [&](Ctx& cx) {
+                const uint32_t flags = cx.mem.read<uint32_t>(cx.cpu.r[1]);
+                if (flags & 4) { ++pre; if (fed.load() == 0 && order.load() == 0) order = 1; }
+                if (flags & 8) { ++post; if (fed.load() > 0 && order.load() == 1) order = 2; }
+                cx.cpu.r[0] = 0;   // noErr
+            });
+            const uint32_t m = proc.heap().allocZeroed(128);
+            auto unitOf = [&](uint32_t type, uint32_t sub) {
+                proc.mem().write<uint32_t>(m, type);
+                proc.mem().write<uint32_t>(m + 4, sub);
+                proc.mem().write<uint32_t>(m + 8, 0x6170706C);   // 'appl'
+                const uint32_t comp = uint32_t(callAT("_AudioComponentFindNext", {0, m}));
+                callAT("_AudioComponentInstanceNew", {comp, m + 32});
+                return proc.mem().read<uint32_t>(m + 32);
+            };
+            const uint32_t rio = unitOf(0x61756F75 /* auou */, 0x72696F63 /* rioc */);
+            const uint32_t mixer = unitOf(0x61756D78 /* aumx */, 0x6D636D78 /* mcmx */);
+            const uint32_t conv = unitOf(0x61756663 /* aufc */, 0x636F6E76 /* conv */);
+            // A converter's input format is what its callback gives; its output side is left alone.
+            const uint32_t fmt = m + 40;
+            proc.mem().write<double>(fmt, 22050.0);
+            const uint32_t lpcm[8] = {0x6C70636D, 0x0C, 4, 1, 4, 2, 16, 0};
+            proc.mem().copyIn(fmt + 8, lpcm, 32);
+            callAT("_AudioUnitSetProperty", {conv, 8, 1, 0, fmt, 40});
+            proc.mem().write<uint32_t>(m + 96, feedCb);
+            callAT("_AudioUnitSetProperty", {conv, 23, 1, 0, m + 96, 8});
+            // mixer input 3 <- converter, RemoteIO <- mixer
+            proc.mem().write<uint32_t>(m + 104, conv); proc.mem().write<uint32_t>(m + 108, 0); proc.mem().write<uint32_t>(m + 112, 3);
+            callAT("_AudioUnitSetProperty", {mixer, 1, 1, 3, m + 104, 12});
+            proc.mem().write<uint32_t>(m + 104, mixer); proc.mem().write<uint32_t>(m + 112, 0);
+            callAT("_AudioUnitSetProperty", {rio, 1, 1, 0, m + 104, 12});
+            const uint32_t added = uint32_t(callAT("_AudioUnitAddRenderNotify", {rio, notifyCb, 5}));
+            callAT("_AudioUnitInitialize", {rio});
+            callAT("_AudioOutputUnitStart", {rio});
+            for (int i = 0; i < 100 && (!fed || !post); ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
+            const size_t heard = renderedFrames(2048);
+            callAT("_AudioUnitRemoveRenderNotify", {rio, notifyCb, 5});
+            const int postAfterRemove = post.load();
+            const int fedAtRemove = fed.load();
+            for (int i = 0; i < 100 && fed.load() < fedAtRemove + 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);
+            const bool cyclesAfterRemove = fed.load() >= fedAtRemove + 3;
+            callAT("_AudioOutputUnitStop", {rio});
+            for (int i = 0; i < 10; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.02);   // a render thread that would still pump
+            const size_t afterStop = renderedFrames(4096);
+            check(fed > 0 && heard > 0, "a mixer input connected to a converter unit plays the converter's callback");
+            check(afterStop == 0, "stopping the output silences the converters its mixer renders");
+            check(added == 0 && pre > 0 && post > 0 && order.load() == 2 && cyclesAfterRemove && post.load() <= postAfterRemove + 1,
+                  "AudioUnitAddRenderNotify is called before and after each render cycle, and stops when removed");
+            for (uint32_t u : {conv, mixer, rio}) callAT("_AudioComponentInstanceDispose", {u});
         }
 
         // A buffer asked for with no packet descriptions still has room for them (PvZ copies one

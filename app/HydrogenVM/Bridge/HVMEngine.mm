@@ -423,8 +423,12 @@ void beginCapture(const std::shared_ptr<SessionCore> &core) {
     if (!engine || core->micOn) return;
     AVAudioSession *session = AVAudioSession.sharedInstance;
     [engine stop];
+    // AllowBluetoothA2DP keeps Bluetooth headphones as the output while the phone's own
+    // microphone records; without it iOS moves a play-and-record session to the speaker.
+    // DefaultToSpeaker only replaces the earpiece, so wired headphones stay in use too.
     [session setCategory:AVAudioSessionCategoryPlayAndRecord
-             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers
+             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers |
+                         AVAudioSessionCategoryOptionAllowBluetoothA2DP | AVAudioSessionCategoryOptionAllowAirPlay
                    error:nil];
     [session setActive:YES error:nil];
     core->micOn = installMicTap(core, engine);

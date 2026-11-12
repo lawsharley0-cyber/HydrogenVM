@@ -32,11 +32,14 @@ int main() {
                             "_glGenQueriesEXT", "_glGenQueries", "_glDeleteQueriesEXT", "_glDeleteQueries",
                             "_glIsQueryEXT", "_glIsQuery", "_glBeginQueryEXT", "_glBeginQuery",
                             "_glEndQueryEXT", "_glEndQuery", "_glGetQueryivEXT", "_glGetQueryiv",
-                            "_glGetQueryObjectuivEXT", "_glGetQueryObjectuiv",
-                            "_AudioUnitAddRenderNotify", "_SCNetworkReachabilityGetFlags"}) {
+                            "_glGetQueryObjectuivEXT", "_glGetQueryObjectuiv"}) {
         const auto r = registry.find(name);
         check(r && r->status == SupportStatus::Stub && !r->provenance.empty(), name);
     }
+    const auto reach = registry.find("_SCNetworkReachabilityGetFlags");
+    check(reach && reach->status == SupportStatus::Real && !reach->provenance.empty(), "SCNetworkReachabilityGetFlags reports the real (offline) state");
+    const auto notify = registry.find("_AudioUnitAddRenderNotify");
+    check(notify && notify->status == SupportStatus::Approx && !notify->provenance.empty(), "AudioUnitAddRenderNotify is labelled approximate");
     const auto playable = registry.find("-[AVAsset isPlayable]");
     check(playable && playable->kind == SupportKind::InstanceMethod &&
           playable->status == SupportStatus::Stub, "AVAsset playable metadata");
