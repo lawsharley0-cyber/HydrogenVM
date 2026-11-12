@@ -10344,6 +10344,8 @@ int runFullSubsystemTests() {
             "    \"avgFrameMs\": 0,\n"
             "    \"avgCompositeMs\": 0,\n"
             "    \"presentWaitMs\": 0,\n"
+            "    \"presentCalls\": 0,\n"
+            "    \"presentCallMs\": 0,\n"
             "    \"maxFrameMs\": 0,\n"
             "    \"slowFrames\": 0,\n"
             "    \"p50FrameMs\": 0,\n"

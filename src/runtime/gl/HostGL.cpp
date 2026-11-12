@@ -1510,7 +1510,11 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
             p.perf().presentWaitNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - now).count());
         }
     }
-    if (st.platform->presentDirect(hc->handle, d.layer)) {
+    const auto callStart = std::chrono::steady_clock::now();
+    const bool shown = st.platform->presentDirect(hc->handle, d.layer);
+    p.perf().presentCalls += 1;
+    p.perf().presentCallNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - callStart).count());
+    if (shown) {
         direct = true;
         ++st.presents;
         if (!probe.empty()) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly" + probe);

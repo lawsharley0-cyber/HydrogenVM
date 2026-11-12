@@ -184,6 +184,9 @@ public:
         std::atomic<uint64_t> frameNs{0};         // host time inside frame hooks (input, links, layout, display, composite)
         std::atomic<uint64_t> compositeNs{0};     // of which compositing
         std::atomic<uint64_t> presentWaitNs{0};   // time GL presents waited so as not to outrun the display
+        // Every GL present the guest made, and the time the host took to take each frame
+        // (on iOS the driver can block here until the GPU has a drawable free).
+        std::atomic<uint64_t> presentCalls{0}, presentCallNs{0};
         std::atomic<uint64_t> maxFrameNs{0};
         std::atomic<uint64_t> slowFrames{0};      // frame hooks over 16.7 ms
         // ~0 until the first presented frame. 0 ns is a real measurement.

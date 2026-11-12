@@ -1964,6 +1964,8 @@ std::string perfJson(const Process::Perf& pf, double wall, uint64_t insns, uint6
     f << "    \"avgFrameMs\": " << (frames ? double(pf.frameNs.load()) / 1e6 / double(frames) : 0) << ",\n";
     f << "    \"avgCompositeMs\": " << (presented ? double(pf.compositeNs.load()) / 1e6 / double(presented) : 0) << ",\n";
     f << "    \"presentWaitMs\": " << double(pf.presentWaitNs.load()) / 1e6 << ",\n";
+    f << "    \"presentCalls\": " << pf.presentCalls.load() << ",\n";
+    f << "    \"presentCallMs\": " << double(pf.presentCallNs.load()) / 1e6 << ",\n";
     f << "    \"maxFrameMs\": " << double(pf.maxFrameNs.load()) / 1e6 << ",\n";
     f << "    \"slowFrames\": " << pf.slowFrames.load() << ",\n";
     f << "    \"p50FrameMs\": " << double(pf.frameTimes.percentile(50)) / 1e6 << ",\n";
