@@ -292,7 +292,13 @@ int32_t n_setsockopt(Ctx& x, int32_t fd, int32_t level, int32_t opt, GuestPtr va
     if (!owns(x, fd)) return failWith(x, kEBADF);
     if (len != 4 || !span(x, value, 4, Memory::kProtRead)) return failWith(x, kEINVAL);
     int v = x.mem.read<int32_t>(value), hostLevel = SOL_SOCKET, hostOpt;
-    if (level == 0 && isUdp(x, fd)) return 0;   // IPPROTO_IP (TTL, TOS, multicast): nothing to change on loopback
+    if (level == 0 && isUdp(x, fd)) {
+        // IPPROTO_IP. Offline the datagram stays on loopback, where TTL, TOS and multicast change nothing.
+        if (!internet(x)) return 0;
+        // Online they matter: apply TTL (Darwin 4) and TOS (3); anything else is not supported.
+        if (opt != 3 && opt != 4) return failWith(x, 42);
+        return ::setsockopt(fd, IPPROTO_IP, opt == 4 ? IP_TTL : IP_TOS, &v, sizeof v) < 0 ? hostFailure(x) : 0;
+    }
     if (level == 6 && opt == 1) { hostLevel = IPPROTO_TCP; hostOpt = TCP_NODELAY; }
     else if (level == 0xffff && opt == 0x20) hostOpt = SO_BROADCAST;
     else if (level == 0xffff && opt == 0x200) {
