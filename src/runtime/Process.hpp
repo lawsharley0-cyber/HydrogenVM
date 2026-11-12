@@ -43,6 +43,7 @@ struct ProcessConfig {
     bool traceCalls = false;           // log every HLE call (very slow, for debugging)
     bool threadLiveness = false;       // opt-in one-second per-thread progress evidence
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
+    bool internetAccess = false;      // per-game opt-in (player's "Allow internet" switch): real TCP/UDP and DNS
     bool offlineClash = false;        // pinned client only: session-owned local NPC service
     std::map<uint16_t,uint16_t> loopbackPortOverrides; // explicit localhost-only service routing
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1

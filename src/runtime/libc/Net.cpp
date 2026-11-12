@@ -16,6 +16,7 @@
 #include "runtime/Process.hpp"
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
+#include "runtime/Support.hpp"
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <algorithm>
@@ -25,6 +26,8 @@
 #include <chrono>
 #include <cstring>
 #include <fcntl.h>
+#include <netdb.h>
+#include <mutex>
 #include <poll.h>
 #include <thread>
 #include <unistd.h>
@@ -72,6 +75,11 @@ bool span(Ctx& x, GuestPtr ptr, uint32_t n, uint8_t prot) {
         if ((x.mem.protAt(uint32_t(a)) & prot) != prot) return false;
     return true;
 }
+bool internet(Ctx& x) { return x.proc.config().internetAccess; }
+void tellInternetOnce(Ctx& x) {
+    static std::atomic<bool> told{false};
+    if (!told.exchange(true)) x.proc.logf(LogLevel::Info, "Internet: allowed for this game (its \"Allow internet\" switch is on)");
+}
 bool isUdp(Ctx& x, int fd) { auto& s = x.proc.service<SocketState>(); std::lock_guard lock(s.mu); return s.udp.count(fd) != 0; }
 int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
     if (family == kAF_INET && type == SOCK_DGRAM && (protocol == 0 || protocol == IPPROTO_UDP)) {
@@ -82,7 +90,7 @@ int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
         std::lock_guard lock(state.mu); state.fds.insert(fd); state.udp.insert(fd);
         return fd;
     }
-    if (!x.proc.config().loopbackNetwork) return failWith(x, kENETDOWN);
+    if (!x.proc.config().loopbackNetwork && !internet(x)) return failWith(x, kENETDOWN);
     if (family != kAF_INET) return failWith(x, kEAFNOSUPPORT);
     if (type != SOCK_STREAM || (protocol != 0 && protocol != IPPROTO_TCP)) return failWith(x, 43);
     int fd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -119,6 +127,7 @@ void writeSockaddr(Ctx& x, GuestPtr addr, GuestPtr lenp, const sockaddr_in& in) 
 bool udpDestination(Ctx& x, sockaddr_in& a) {
     const uint32_t ip = ntohl(a.sin_addr.s_addr);
     if ((ip >> 24) == 127) return true;
+    if (internet(x) && ip != 0) return true;   // the player allowed this game online
     if (ip == 0 || ip == 0xFFFFFFFFu || (ip & 0xFF) == 0xFF) { a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); return true; }
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) {
@@ -133,7 +142,8 @@ int32_t n_bind(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     if (!isUdp(x, fd)) return failWith(x, 45);
     sockaddr_in a{};
     if (!readSockaddr(x, addr, len, a)) return failWith(x, kEINVAL);
-    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // never listen beyond the device
+    // Never listen beyond the device; a game allowed online may still send from any address.
+    a.sin_addr.s_addr = htonl(internet(x) && a.sin_addr.s_addr == 0 ? INADDR_ANY : INADDR_LOOPBACK);
     return ::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) < 0 ? hostFailure(x) : 0;
 }
 int32_t n_getsockname(Ctx& x, int32_t fd, GuestPtr addr, GuestPtr lenp) {
@@ -199,7 +209,10 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     inet_ntop(AF_INET, &host.sin_addr, ipBuf, sizeof(ipBuf));
     uint16_t origPort = ntohs(host.sin_port);
     x.proc.logf(LogLevel::Debug, "guest connect fd=%d to %s:%d", fd, ipBuf, origPort);
-    if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) {
+    if ((ntohl(host.sin_addr.s_addr) >> 24) != 127 && internet(x)) {
+        tellInternetOnce(x);
+        x.proc.logf(LogLevel::Info, "Internet: connecting to %s:%d", ipBuf, origPort);
+    } else if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) {
         x.proc.logf(LogLevel::Warning, "connect rejected: non-loopback %s:%d", ipBuf, origPort);
         return failWith(x, 51);
     }
@@ -279,7 +292,13 @@ int32_t n_setsockopt(Ctx& x, int32_t fd, int32_t level, int32_t opt, GuestPtr va
     if (!owns(x, fd)) return failWith(x, kEBADF);
     if (len != 4 || !span(x, value, 4, Memory::kProtRead)) return failWith(x, kEINVAL);
     int v = x.mem.read<int32_t>(value), hostLevel = SOL_SOCKET, hostOpt;
-    if (level == 0 && isUdp(x, fd)) return 0;   // IPPROTO_IP (TTL, TOS, multicast): nothing to change on loopback
+    if (level == 0 && isUdp(x, fd)) {
+        // IPPROTO_IP. Offline the datagram stays on loopback, where TTL, TOS and multicast change nothing.
+        if (!internet(x)) return 0;
+        // Online they matter: apply TTL (Darwin 4) and TOS (3); anything else is not supported.
+        if (opt != 3 && opt != 4) return failWith(x, 42);
+        return ::setsockopt(fd, IPPROTO_IP, opt == 4 ? IP_TTL : IP_TOS, &v, sizeof v) < 0 ? hostFailure(x) : 0;
+    }
     if (level == 6 && opt == 1) { hostLevel = IPPROTO_TCP; hostOpt = TCP_NODELAY; }
     else if (level == 0xffff && opt == 0x20) hostOpt = SO_BROADCAST;
     else if (level == 0xffff && opt == 0x200) {
@@ -316,12 +335,67 @@ int32_t n_getsockopt(Ctx& x, int32_t fd, int32_t level, int32_t opt, GuestPtr va
     if (hostOpt == SO_ERROR) v = darwinErrno(v);
     x.mem.write<int32_t>(value, v); x.mem.write<uint32_t>(len, 4); return 0;
 }
+// Darwin addrinfo (32 bytes): flags, family, socktype, protocol, addrlen, canonname, addr, next.
+// The real resolver, IPv4 only, for a game the player allowed online.
+int32_t internetAddrInfo(Ctx& x, GuestPtr node, GuestPtr service, GuestPtr hints, GuestPtr res) {
+    addrinfo h{}; h.ai_family = AF_INET;
+    if (hints) {
+        if (!span(x, hints, 32, Memory::kProtRead)) return 3;
+        const uint32_t flags = x.mem.read<uint32_t>(hints);
+        const int family = x.mem.read<int32_t>(hints + 4);
+        if (family && family != kAF_INET) return 5;   // EAI_FAMILY: no IPv6 sockets here
+        h.ai_socktype = x.mem.read<int32_t>(hints + 8);
+        h.ai_protocol = x.mem.read<int32_t>(hints + 12);
+        if (h.ai_socktype && h.ai_socktype != SOCK_STREAM && h.ai_socktype != SOCK_DGRAM) return 10;
+        if (flags & 1) h.ai_flags |= AI_PASSIVE;
+        if (flags & 2) h.ai_flags |= AI_CANONNAME;
+        if (flags & 4) h.ai_flags |= AI_NUMERICHOST;
+        if (flags & 0x1000) h.ai_flags |= AI_NUMERICSERV;
+    }
+    const std::string name = node ? x.proc.readCString(node, 256) : "";
+    const std::string serv = service ? x.proc.readCString(service, 64) : "";
+    if (name.empty() && serv.empty()) return 8;
+    tellInternetOnce(x);
+    addrinfo* found = nullptr;
+    const int r = ::getaddrinfo(name.empty() ? nullptr : name.c_str(), serv.empty() ? nullptr : serv.c_str(), &h, &found);
+    if (r != 0) {
+        x.proc.logf(LogLevel::Info, "Internet: could not resolve %s (%s)", name.c_str(), gai_strerror(r));
+        // Darwin EAI_*: 2 AGAIN, 4 FAIL, 8 NONAME, 9 SERVICE, 10 SOCKTYPE.
+        return r == EAI_AGAIN ? 2 : r == EAI_SERVICE ? 9 : r == EAI_SOCKTYPE ? 10 : r == EAI_FAIL ? 4 : 8;
+    }
+    auto& heap = x.proc.heap();
+    std::vector<uint32_t> owned;
+    uint32_t head = 0, prev = 0;
+    for (addrinfo* a = found; a; a = a->ai_next) {
+        if (a->ai_family != AF_INET || !a->ai_addr) continue;
+        const auto* in = reinterpret_cast<const sockaddr_in*>(a->ai_addr);
+        const int type = a->ai_socktype ? a->ai_socktype : SOCK_STREAM;
+        const uint32_t node32 = heap.allocZeroed(32), addr = heap.allocZeroed(16);
+        owned.push_back(node32); owned.push_back(addr);
+        x.mem.write<uint32_t>(node32 + 4, kAF_INET); x.mem.write<uint32_t>(node32 + 8, uint32_t(type));
+        x.mem.write<uint32_t>(node32 + 12, a->ai_protocol ? uint32_t(a->ai_protocol) : uint32_t(type == SOCK_DGRAM ? IPPROTO_UDP : IPPROTO_TCP));
+        x.mem.write<uint32_t>(node32 + 16, 16); x.mem.write<uint32_t>(node32 + 24, addr);
+        if (!head && a->ai_canonname) { const uint32_t c = x.proc.allocCString(a->ai_canonname); owned.push_back(c); x.mem.write<uint32_t>(node32 + 20, c); }
+        x.mem.write<uint8_t>(addr, 16); x.mem.write<uint8_t>(addr + 1, kAF_INET);
+        x.mem.write<uint16_t>(addr + 2, in->sin_port); x.mem.write<uint32_t>(addr + 4, in->sin_addr.s_addr);
+        if (prev) x.mem.write<uint32_t>(prev + 28, node32); else head = node32;
+        prev = node32;
+    }
+    ::freeaddrinfo(found);
+    if (!head) return 8;
+    auto& state = x.proc.service<AddrInfoState>();
+    { std::lock_guard lock(state.mu); state.allocations[head] = std::move(owned); }
+    x.mem.write<uint32_t>(res, head);
+    return 0;
+}
 // Darwin addrinfo layout differs from the host (including sockaddr length byte).
 int32_t n_getaddrinfo(Ctx& x, GuestPtr node, GuestPtr service, GuestPtr hints, GuestPtr res) {
     if (!span(x, res, 4, Memory::kProtWrite)) return 8;
     x.mem.write<uint32_t>(res, 0);
-    if (!x.proc.config().loopbackNetwork) return 8;
+    if (!x.proc.config().loopbackNetwork && !internet(x)) return 8;
     std::string name = node ? x.proc.readCString(node, 256) : "";
+    const bool aliasName = std::find(x.proc.config().loopbackAliases.begin(), x.proc.config().loopbackAliases.end(), name) != x.proc.config().loopbackAliases.end();
+    if (internet(x) && !aliasName) return internetAddrInfo(x, node, service, hints, res);
     x.proc.logf(LogLevel::Debug, "getaddrinfo node=%s", name.c_str());
     in_addr ip{};
     bool alias = std::find(x.proc.config().loopbackAliases.begin(), x.proc.config().loopbackAliases.end(), name) != x.proc.config().loopbackAliases.end();
@@ -400,6 +474,44 @@ uint32_t n_gaiStrerror(Ctx& x, int32_t e) {
     return s;
 }
 uint32_t n_nullHost(Ctx&, GuestPtr) { return 0; }
+// gethostbyname for a game the player allowed online. Darwin hostent (20 bytes): name,
+// aliases, addrtype, length, addr_list. Like the real one it returns static storage that
+// the next call overwrites; numeric and loopback names resolve without the network.
+struct HostentState {
+    explicit HostentState(Process&) {}
+    std::mutex mu;
+    uint32_t block = 0;
+};
+uint32_t n_gethostbyname(Ctx& x, GuestPtr namePtr) {
+    if (!namePtr) return 0;
+    const std::string name = x.proc.readCString(namePtr, 256);
+    std::vector<uint32_t> ips;
+    in_addr ip{};
+    if (name == "localhost") ips.push_back(htonl(INADDR_LOOPBACK));
+    else if (inet_pton(AF_INET, name.c_str(), &ip) == 1) ips.push_back(ip.s_addr);
+    else if (internet(x)) {
+        tellInternetOnce(x);
+        addrinfo h{}, *found = nullptr; h.ai_family = AF_INET; h.ai_socktype = SOCK_STREAM;
+        if (::getaddrinfo(name.c_str(), nullptr, &h, &found) == 0) {
+            for (addrinfo* a = found; a && ips.size() < 8; a = a->ai_next)
+                if (a->ai_family == AF_INET && a->ai_addr) ips.push_back(reinterpret_cast<const sockaddr_in*>(a->ai_addr)->sin_addr.s_addr);
+            ::freeaddrinfo(found);
+        } else x.proc.logf(LogLevel::Info, "Internet: could not resolve %s", name.c_str());
+    }
+    if (ips.empty()) return 0;
+    // Layout in one block: hostent 20, aliases {0} 4, addr_list 9 x 4, addresses 8 x 4, name 256.
+    auto& st = x.proc.service<HostentState>();
+    std::lock_guard lock(st.mu);
+    if (!st.block) st.block = x.proc.heap().allocZeroed(20 + 4 + 36 + 32 + 256);
+    const uint32_t b = st.block, aliases = b + 20, list = aliases + 4, addrs = list + 36, nm = addrs + 32;
+    x.mem.copyIn(nm, name.c_str(), std::min<size_t>(name.size(), 255)); x.mem.write<uint8_t>(nm + std::min<size_t>(name.size(), 255), 0);
+    x.mem.write<uint32_t>(b, nm); x.mem.write<uint32_t>(b + 4, aliases);
+    x.mem.write<uint32_t>(b + 8, kAF_INET); x.mem.write<uint32_t>(b + 12, 4); x.mem.write<uint32_t>(b + 16, list);
+    x.mem.write<uint32_t>(aliases, 0);
+    for (size_t i = 0; i < 9; ++i) x.mem.write<uint32_t>(list + uint32_t(i) * 4, i < ips.size() ? addrs + uint32_t(i) * 4 : 0);
+    for (size_t i = 0; i < ips.size(); ++i) x.mem.write<uint32_t>(addrs + uint32_t(i) * 4, ips[i]);
+    return b;
+}
 uint32_t n_nullHost3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
 // Interfaces a phone has: lo0 and en0 (Wi-Fi). Apps read en0's MAC address
 // through sysctl(NET_RT_IFLIST) (System.cpp) and fail when en0 is missing.
@@ -622,7 +734,7 @@ void registerLibcNet(Process& p) {
     p.def<&n_getaddrinfo>("_getaddrinfo");
     p.def<&n_freeaddrinfo>("_freeaddrinfo");
     p.def<&n_gaiStrerror>("_gai_strerror");
-    p.def<&n_nullHost>("_gethostbyname");
+    supportDef<&n_gethostbyname>(p, "_gethostbyname", SupportStatus::Real, "IPv4 resolver; names other than numeric/localhost resolve only when the game is allowed online");
     p.def<&n_nullHost3>("_gethostbyaddr");
     p.def<&n_ifNameToIndex>("_if_nametoindex");
     p.def<&n_inetAddr>("_inet_addr");

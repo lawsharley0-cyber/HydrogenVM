@@ -93,6 +93,9 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// A game the player is playing (not a Test All Games run). Its run log is kept under
 /// Documents/Logs/Play, apart from test logs, so a test export can include it. Takes effect at start.
 @property (nonatomic) BOOL playSession;
+/// The player's per-game "Allow internet" switch: real sockets and name lookups instead of the
+/// offline network. Off by default. Takes effect at start.
+@property (nonatomic) BOOL allowInternet;
 /// Test runs: check every GL call for errors and count draws (slower). Read the
 /// results from diagnostics (glErrors, glDraws, glEmptyPresents, glLastFrameDraws)
 /// and glErrorLog. Set before start.
