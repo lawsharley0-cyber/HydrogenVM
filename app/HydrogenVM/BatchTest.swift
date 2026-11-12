@@ -1241,6 +1241,17 @@ final class BatchTestRunner {
             if let gl = r.glErrorLog, !gl.isEmpty { text += "\n\n==== GL errors ====\n" + gl.joined(separator: "\n") }
             try text.write(to: root.appending(path: "logs/\(name).log"), atomically: true, encoding: .utf8)
         }
+        // The logs of games the player played by hand (the newest 30, each cut to its last
+        // 1.5 MB): what happened in a session a test run cannot reproduce, such as typing.
+        let playLogs = URL.documentsDirectory.appending(path: "Logs/Play", directoryHint: .isDirectory)
+        if let names = try? fm.contentsOfDirectory(atPath: playLogs.path(percentEncoded: false)) {
+            let out = root.appending(path: "play-logs", directoryHint: .isDirectory)
+            try fm.createDirectory(at: out, withIntermediateDirectories: true)
+            for name in names where name.hasSuffix(".log") {
+                guard let data = try? Data(contentsOf: playLogs.appending(path: name)) else { continue }
+                try? data.suffix(1_500_000).write(to: out.appending(path: name))
+            }
+        }
         return root
     }
 

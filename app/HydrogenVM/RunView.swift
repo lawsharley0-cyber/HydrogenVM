@@ -130,6 +130,7 @@ final class RunModel {
         guard session == nil else { return }
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
         s.keepGoing = keepGoing
+        s.playSession = true
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)

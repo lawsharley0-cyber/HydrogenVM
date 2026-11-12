@@ -109,6 +109,9 @@ public:
                 fresh.drawableProperties = layer.drawableProperties;
                 fresh.contentsScale = 1;
                 fresh.bounds = CGRectMake(0, 0, width, height);
+                // The new layer sits where the old one did until the emulator says otherwise;
+                // without its placement the shell would show a landscape game unrotated.
+                if (id placement = [layer valueForKey:HVMGLLayerUnitTransformKey]) [fresh setValue:placement forKey:HVMGLLayerUnitTransformKey];
                 ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:fresh];
                 if (ok) {
                     std::lock_guard<std::mutex> lk(mu_);

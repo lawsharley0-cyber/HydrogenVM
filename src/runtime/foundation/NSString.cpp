@@ -355,18 +355,44 @@ uint32_t utf8Pointer(Ctx& x, id self) {
     return x.proc.allocCString(u);   // guest subclass: leaks a little, like an autoreleased buffer
 }
 uint32_t s_UTF8String(Ctx& x, id self, SEL) { return utf8Pointer(x, self); }
+// The bytes of a C string in an encoding: no byte-order mark (that belongs to dataUsingEncoding:,
+// an external form), wide encodings in the machine's little-endian order, and `unit` set to the
+// size of the terminator. A mark in front made Plants vs. Zombies read 0xFF as the typed letter.
+std::string cStringBytes(const std::u16string& s, uint32_t enc, bool* ok, uint32_t* unit) {
+    *unit = 1;
+    if (enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE) { *unit = 2; return encodeBytes(s, enc == kNSUnicode ? uint32_t(kNSUTF16LE) : enc, false, ok); }
+    if (enc == kNSUTF32 || enc == 0x9C000100u /* UTF-32LE */ || enc == 0x98000100u /* UTF-32BE */) {
+        *unit = 4;
+        if (ok) *ok = true;
+        std::string out;
+        for (size_t i = 0; i < s.size(); ++i) {
+            uint32_t c = s[i];
+            if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (s[i + 1] - 0xDC00); ++i; }
+            if (enc == 0x98000100u) { out += char(c >> 24); out += char(c >> 16); out += char(c >> 8); out += char(c); }
+            else { out += char(c); out += char(c >> 8); out += char(c >> 16); out += char(c >> 24); }
+        }
+        return out;
+    }
+    return encodeBytes(s, enc, false, ok);
+}
 uint32_t s_cStringUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     if (enc == kNSUTF8 || enc == kNSASCII) return utf8Pointer(x, self);
     bool ok = true;
-    const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
+    uint32_t unit = 1;
+    const std::string b = cStringBytes(sv(x, self), enc, &ok, &unit);
     if (!ok) return 0;
-    return x.proc.allocCString(b);
+    if (unit == 1) return x.proc.allocCString(b);
+    const uint32_t buf = x.proc.heap().allocZeroed(uint32_t(b.size()) + unit);   // like an autoreleased buffer
+    if (!b.empty()) x.mem.copyIn(buf, b.data(), b.size());
+    return buf;
 }
 bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc) {
     bool ok = true;
-    const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
-    if (!ok || b.size() + 1 > max) return false;
-    x.mem.copyIn(buf, b.c_str(), b.size() + 1);
+    uint32_t unit = 1;
+    std::string b = cStringBytes(sv(x, self), enc, &ok, &unit);
+    if (!ok || b.size() + unit > max) return false;
+    b.append(unit, '\0');
+    x.mem.copyIn(buf, b.data(), b.size());
     return true;
 }
 bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }

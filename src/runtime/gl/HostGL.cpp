@@ -1325,11 +1325,39 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
     }
     p.log(LogLevel::Info, "GPU: drawable " + std::to_string(width) + "x" + std::to_string(height) + " for renderbuffer " +
                               std::to_string(rb) + (handled ? " (platform layer)" : " (RGBA8 storage)") + (ok ? "" : " FAILED"));
-    std::lock_guard<std::mutex> lk(st.mu);
-    Drawable& d = st.drawables[key2(hc->guestSharegroup, rb)];
-    d.layer = layer;
-    d.width = width;
-    d.height = height;
+    Placement again;
+    bool resend = false;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        const uint64_t key = key2(hc->guestSharegroup, rb);
+        int oldW = 0, oldH = 0;
+        // The layer's earlier drawable (this renderbuffer, or one the app deleted and made again).
+        for (auto it = st.drawables.begin(); it != st.drawables.end();) {
+            if (layer && it->second.layer == layer) {
+                oldW = it->second.width; oldH = it->second.height;
+                if (it->first != key) { it = st.drawables.erase(it); continue; }
+            }
+            ++it;
+        }
+        Drawable& d = st.drawables[key];
+        d.layer = layer;
+        d.width = width;
+        d.height = height;
+        // The platform may now show this layer through a new host layer, which has never been
+        // told where the drawable sits (and the compositor only reports a placement that
+        // changed). Say it again, scaled to the new drawable. Without this a game that makes
+        // its drawable again after launch (Minecraft PE, when its keyboard view is added) was
+        // shown unrotated, squeezed into a portrait picture, for the rest of the run.
+        auto pl = st.placed.find(layer);
+        if (ok && handled && layer && pl != st.placed.end() && oldW > 0 && oldH > 0 && width > 0 && height > 0) {
+            const float fx = float(oldW) / float(width), fy = float(oldH) / float(height);
+            pl->second.unit[0] *= fx; pl->second.unit[1] *= fx;
+            pl->second.unit[2] *= fy; pl->second.unit[3] *= fy;
+            again = pl->second;
+            resend = true;
+        }
+    }
+    if (resend) st.platform->layerGeometry(layer, again.unit);
     return ok;
 }
 

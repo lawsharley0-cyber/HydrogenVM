@@ -7444,6 +7444,56 @@ int runFullSubsystemTests() {
         callAL("_alSourcePlay", {alSrc2});
         const size_t bothFrames = renderedFrames(8192);
         check(bothFrames >= 1990 && bothFrames <= 2000, "two OpenAL sources mix; a 22.05 kHz buffer plays at the right speed");
+        // A looping source repeats its queue and never finishes a buffer (Pocket Ants' rain is one
+        // queued buffer on a looping source; it stopped after a single pass).
+        {
+            callAL("_alSourceStop", {alSrc});
+            callAL("_alSourceStop", {alSrc2});
+            renderedFrames(4096);
+            const uint32_t loopIds = proc.heap().allocZeroed(16);
+            callAL("_alGenSources", {1, loopIds});
+            const uint32_t loopSrc = proc.mem().read<uint32_t>(loopIds);
+            callAL("_alSourcei", {loopSrc, 0x1007 /* AL_LOOPING */, 1});
+            proc.mem().write<uint32_t>(loopIds + 4, alBuf);
+            callAL("_alSourceQueueBuffers", {loopSrc, 1, loopIds + 4});
+            callAL("_alSourcePlay", {loopSrc});
+            const size_t loopFrames = renderedFrames(4096);   // four passes of the 1000-frame buffer
+            callAL("_alGetSourcei", {loopSrc, 0x1010 /* AL_SOURCE_STATE */, loopIds + 8});
+            callAL("_alGetSourcei", {loopSrc, 0x1016 /* AL_BUFFERS_PROCESSED */, loopIds + 12});
+            check(loopFrames >= 4000 && proc.mem().read<int32_t>(loopIds + 8) == 0x1012 && proc.mem().read<int32_t>(loopIds + 12) == 0,
+                  "a looping OpenAL source repeats its queued buffers and finishes none of them");
+            callAL("_alSourceStop", {loopSrc});
+            callAL("_alDeleteSources", {1, loopIds});
+            renderedFrames(4096);
+        }
+        // __maskrune answers for the class asked about: code built without the inline <ctype.h>
+        // calls it for ASCII too, and "yes" to iscntrl for a letter dropped typed characters.
+        {
+            auto mask = [&](int c, uint32_t m) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("___maskrune"), {uint32_t(c), m})); };
+            check(mask('L', 0x100 /* alpha */) != 0 && mask('L', 0x200 /* cntrl */) == 0 && mask('7', 0x400 /* digit */) != 0 &&
+                  mask('7', 0x100) == 0 && mask('\n', 0x200) != 0 && mask(' ', 0x40000 /* print */) != 0 && mask(-1, 0x500) == 0 && mask(200, 0x100) == 0,
+                  "__maskrune reports only the character classes in its mask");
+        }
+        // cStringUsingEncoding: / getCString: in a wide encoding give the characters alone: no
+        // byte-order mark (Plants vs. Zombies read 0xFF as the typed letter), a wide terminator.
+        {
+            auto& sr = ObjC::rt(proc);
+            const uint32_t lit = proc.allocCString("La");
+            const ObjC::id str = ObjC::id(sr.send(cpu, ObjC::id(sr.getClass("NSString")), "stringWithUTF8String:", {lit}));
+            const uint32_t wide = uint32_t(sr.send(cpu, str, "cStringUsingEncoding:", {10 /* NSUnicodeStringEncoding */}));
+            const bool utf16 = wide && proc.mem().read<uint16_t>(wide) == 'L' && proc.mem().read<uint16_t>(wide + 2) == 'a' && proc.mem().read<uint16_t>(wide + 4) == 0;
+            const uint32_t w32 = uint32_t(sr.send(cpu, str, "cStringUsingEncoding:", {0x9C000100u /* UTF-32LE */}));
+            const bool utf32 = w32 && proc.mem().read<uint32_t>(w32) == 'L' && proc.mem().read<uint32_t>(w32 + 4) == 'a' && proc.mem().read<uint32_t>(w32 + 8) == 0;
+            const uint32_t out = proc.heap().allocZeroed(16);
+            std::memset(proc.mem().host(out), 0x55, 16);
+            const bool fits = (uint32_t(sr.send(cpu, str, "getCString:maxLength:encoding:", {out, 6, 10})) & 0xFF) != 0;
+            const bool tooSmall = (uint32_t(sr.send(cpu, str, "getCString:maxLength:encoding:", {out, 5, 10})) & 0xFF) == 0;
+            check(utf16 && utf32 && fits && tooSmall && proc.mem().read<uint16_t>(out) == 'L' && proc.mem().read<uint16_t>(out + 4) == 0 &&
+                  proc.mem().read<uint8_t>(out + 6) == 0x55,
+                  "C strings in UTF-16 and UTF-32 carry no byte-order mark and end with a wide terminator");
+            proc.heap().free(out);
+            proc.heap().free(lit);
+        }
 
         // AudioQueue test with guest ARMv7 callback
         const uint32_t aqOut = proc.heap().allocZeroed(32);
@@ -11361,6 +11411,47 @@ int runFullSubsystemTests() {
                 return nullptr;
             }
         };
+        // A game that makes its drawable again (Minecraft PE lays its GL view out anew when its
+        // keyboard view is added) is told once more where the layer sits: the host may be
+        // showing it through a new layer, and a landscape game went unrotated without it.
+        {
+            struct PlacePlatform final : HostGL::Platform {
+                std::vector<std::array<float, 6>> told;
+                int storages = 0;
+                static void getIntegerv(uint32_t pname, int32_t* out) { *out = pname == 0x8CA7 ? 1 : 0; }   // GL_RENDERBUFFER_BINDING
+                const char* name() const override { return "placement-test"; }
+                void* createContext(int, void*, bool& desktop) override { desktop = false; return new uint8_t(1); }
+                void destroyContext(void* p) override { delete static_cast<uint8_t*>(p); }
+                bool makeCurrent(void*) override { return true; }
+                void* proc(void*, const char* n) override { return std::string(n) == "glGetIntegerv" ? reinterpret_cast<void*>(&PlacePlatform::getIntegerv) : nullptr; }
+                bool drawableStorage(void*, uint32_t, int, int, bool& handled) override { handled = true; ++storages; return true; }
+                void layerGeometry(uint32_t, const float unit[6]) override { told.push_back({unit[0], unit[1], unit[2], unit[3], unit[4], unit[5]}); }
+            };
+            auto place = std::make_shared<PlacePlatform>();
+            ProcessConfig pcfg;
+            pcfg.homePath = "/tmp/hvm_gl_placement";
+            pcfg.hostGL = place;
+            Process pproc(pcfg);
+            auto& pr = ObjC::rt(pproc);
+            auto& pcpu = pproc.mainThread().cpu;
+            const ObjC::Class pctxCls = pr.getClass("EAGLContext");
+            const ObjC::id pctx = ObjC::id(pr.send(pcpu, ObjC::id(pr.send(pcpu, ObjC::id(pctxCls), pr.selAlloc)), "initWithAPI:", {2}));
+            pr.send(pcpu, ObjC::id(pctxCls), "setCurrentContext:", {pctx});
+            const uint32_t layer = 0x4242;
+            const bool first = HostGL::renderbufferStorageFromDrawable(pproc, pctx, layer, 1136, 640);
+            const float turned[6] = {0, -2, 2, 0, 0, 1136};   // a landscape game on a 640x1136 screen
+            HostGL::layerPlaced(pproc, layer, turned, 0, 0, 568, 320, 640, 1136);
+            const size_t afterPlace = place->told.size();
+            const bool second = HostGL::renderbufferStorageFromDrawable(pproc, pctx, layer, 1136, 640);
+            const bool resent = place->told.size() == afterPlace + 1 && place->told.back() == place->told[afterPlace - 1];
+            check(first && second && afterPlace == 1 && resent, "a drawable made again for the same layer is told its placement again");
+            // A different size keeps the layer's place on the screen: the unit scale follows the drawable.
+            HostGL::renderbufferStorageFromDrawable(pproc, pctx, layer, 568, 320);
+            const bool rescaled = place->told.size() == afterPlace + 2 && std::fabs(place->told.back()[1] - 2 * place->told[0][1]) < 1e-6f &&
+                                  std::fabs(place->told.back()[2] - 2 * place->told[0][2]) < 1e-6f && place->told.back()[5] == place->told[0][5];
+            check(rescaled, "a drawable made again at another size keeps its place on the screen");
+            pr.send(pcpu, ObjC::id(pctxCls), "setCurrentContext:", {0});
+        }
         FakeGL::mainId() = std::this_thread::get_id();
         auto platform = std::make_shared<ErrPlatform>();
         ProcessConfig ecfg;

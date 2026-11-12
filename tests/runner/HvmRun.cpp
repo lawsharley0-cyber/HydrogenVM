@@ -68,6 +68,8 @@ int hvmRunMain(int argc, char** argv) {
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
     double micVoiceAt = -1, micVoiceFor = -1;
+    std::string sendSel;
+    double sendAt = -1;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--run-for") && i + 1 < argc) { runFor = std::atof(argv[++i]); continue; }
         if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc) { screenshot = argv[++i]; continue; }
@@ -85,6 +87,14 @@ int hvmRunMain(int argc, char** argv) {
         // --mic-voice START,SECONDS: the microphone hears silence, except a voice-like sound
         // (a 220 Hz buzz with a syllable rhythm) for SECONDS starting START seconds in. For apps
         // that listen and answer (the Talking games) on a machine with no microphone.
+        // --send SELECTOR@SECONDS: sends a message without arguments to the app delegate's
+        // viewController (or to the delegate), to open a screen no tap reaches.
+        if (!std::strcmp(argv[i], "--send") && i + 1 < argc) {
+            std::string v = argv[++i];
+            const size_t at = v.rfind('@');
+            if (at != std::string::npos) { sendSel = v.substr(0, at); sendAt = std::atof(v.c_str() + at + 1); }
+            continue;
+        }
         if (!std::strcmp(argv[i], "--mic-voice") && i + 1 < argc) {
             if (std::sscanf(argv[++i], "%lf,%lf", &micVoiceAt, &micVoiceFor) != 2) micVoiceAt = micVoiceFor = -1;
             continue;
@@ -228,6 +238,8 @@ int hvmRunMain(int argc, char** argv) {
         uint64_t& keyboardSeq = keyboardTrack->seq;
         Runtime::UIKit::setTextInputObserver(proc, [keyboardTrack](const Runtime::UIKit::TextInputRequest& q) {
             std::lock_guard<std::mutex> lk(keyboardTrack->mu);
+            if (q.active != keyboardTrack->request.active || q.focusId != keyboardTrack->request.focusId)
+                std::fprintf(stderr, "[hvm] Keyboard: %s%s\n", q.active ? "shown for a " : "hidden", q.active ? (q.keyInput ? "key-input view" : "text field") : "");
             keyboardTrack->request = q;
         });
         auto sendText = [&](Runtime::UIKit::TextInputEvent::Kind kind, std::string text) {
@@ -437,9 +449,29 @@ int hvmRunMain(int argc, char** argv) {
                 std::this_thread::sleep_for(milliseconds(5));
             }
         });
+        std::thread sender;
+        if (!sendSel.empty() && sendAt >= 0) sender = std::thread([&] {
+            using namespace std::chrono;
+            const auto start = steady_clock::now();
+            while (!done && duration<double>(steady_clock::now() - start).count() < sendAt) std::this_thread::sleep_for(milliseconds(20));
+            if (done) return;
+            Runtime::Process* pp = &proc;
+            const std::string name = sendSel;
+            Runtime::Foundation::mainRunLoop(proc).post([pp, name](CPU::Cpu& c) {
+                auto& r = Runtime::ObjC::rt(*pp);
+                auto& u = Runtime::UIKit::ui(*pp);
+                Runtime::ObjC::id target = u.appDelegate;
+                if (target && r.respondsTo(target, r.sel("viewController")))
+                    if (auto vc = Runtime::ObjC::id(r.send(c, target, "viewController")); vc && r.respondsTo(vc, r.sel(name))) target = vc;
+                if (!target || !r.respondsTo(target, r.sel(name))) { std::fprintf(stderr, "[hvm:warn] --send: nothing responds to %s\n", name.c_str()); return; }
+                std::fprintf(stderr, "[hvm] --send: %s to %s\n", name.c_str(), r.objectClassName(target).c_str());
+                r.send(c, target, name.c_str());
+            });
+        });
         const int r = proc.run();
         done = true;
         driver.join();
+        if (sender.joinable()) sender.join();
         if (mic.joinable()) mic.join();
         audio.stop();
         if (audio.error) std::fprintf(stderr, "[hvm:warn] Desktop audio transport failed: %d\n", audio.error);

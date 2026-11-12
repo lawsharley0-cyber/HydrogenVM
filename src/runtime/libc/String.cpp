@@ -144,10 +144,31 @@ int32_t c_isgraph(Ctx&, int32_t c) { return c > 0x20 && c < 0x7F; }
 int32_t c_toupper(Ctx&, int32_t c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
 int32_t c_tolower(Ctx&, int32_t c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 int32_t c_isascii(Ctx&, int32_t c) { return (c & ~0x7F) == 0; }
+// _DefaultRuneLocale.__runetype[c]: Darwin's character class bits (_CTYPE_A ... _CTYPE_R).
+uint32_t runeType(uint32_t c) {
+    enum : uint32_t { A = 0x100, C = 0x200, D = 0x400, G = 0x800, L = 0x1000, P = 0x2000, S = 0x4000, U = 0x8000,
+                      X = 0x10000, B = 0x20000, R = 0x40000 };
+    uint32_t t = 0;
+    if (c >= 128) return t;
+    if (std::isalpha(int(c))) t |= A;
+    if (std::iscntrl(int(c))) t |= C;
+    if (std::isdigit(int(c))) t |= D | uint32_t(c - '0');
+    if (std::isgraph(int(c))) t |= G;
+    if (std::islower(int(c))) t |= L;
+    if (std::ispunct(int(c))) t |= P;
+    if (std::isspace(int(c))) t |= S;
+    if (std::isupper(int(c))) t |= U;
+    if (std::isxdigit(int(c))) { t |= X; if (!std::isdigit(int(c))) t |= uint32_t(std::tolower(int(c)) - 'a' + 10); }
+    if (c == ' ' || c == '\t') t |= B;
+    if (std::isprint(int(c))) t |= R;
+    return t;
+}
+// __maskrune(c, mask): the character's class bits that are in the mask. Code built without the
+// inline <ctype.h> calls this for every isalpha / iscntrl / isprint, ASCII included, so the
+// answer has to depend on the mask (answering "yes" to iscntrl for letters made Plants vs.
+// Zombies throw away each typed character of a name).
 int32_t c_maskrune(Ctx&, int32_t c, uint32_t mask) {
-    // Darwin <ctype.h> inlines call __maskrune for non-ASCII values only.
-    (void)mask;
-    return c >= 0 && c < 256 && std::isalpha(c) ? int32_t(mask) : 0;
+    return c >= 0 ? int32_t(runeType(uint32_t(c)) & mask) : 0;
 }
 int32_t c_toupper_l(Ctx& x, int32_t c, uint32_t) { return c_toupper(x, c); }
 int32_t c_tolower_l(Ctx& x, int32_t c, uint32_t) { return c_tolower(x, c); }
@@ -527,23 +548,8 @@ static void buildRuneLocale(Process& p) {
     auto& m = p.mem();
     m.copyIn(a, "RuneMagA", 8);
     m.copyIn(a + 8, "NONE", 5);
-    enum : uint32_t { A = 0x100, C = 0x200, D = 0x400, G = 0x800, L = 0x1000, P = 0x2000, S = 0x4000, U = 0x8000,
-                      X = 0x10000, B = 0x20000, R = 0x40000 };
     for (uint32_t c = 0; c < 256; ++c) {
-        uint32_t t = 0;
-        if (c < 128) {
-            if (std::isalpha(int(c))) t |= A;
-            if (std::iscntrl(int(c))) t |= C;
-            if (std::isdigit(int(c))) t |= D | uint32_t(c - '0');
-            if (std::isgraph(int(c))) t |= G;
-            if (std::islower(int(c))) t |= L;
-            if (std::ispunct(int(c))) t |= P;
-            if (std::isspace(int(c))) t |= S;
-            if (std::isupper(int(c))) t |= U;
-            if (std::isxdigit(int(c))) { t |= X; if (!std::isdigit(int(c))) t |= uint32_t(std::tolower(int(c)) - 'a' + 10); }
-            if (c == ' ' || c == '\t') t |= B;
-            if (std::isprint(int(c))) t |= R;
-        }
+        const uint32_t t = runeType(c);
         m.write<uint32_t>(a + kRuneTypeOff + c * 4, t);
         m.write<uint32_t>(a + kRuneTypeOff + 1024 + c * 4, c < 128 ? uint32_t(std::tolower(int(c))) : c);
         m.write<uint32_t>(a + kRuneTypeOff + 2048 + c * 4, c < 128 ? uint32_t(std::toupper(int(c))) : c);
