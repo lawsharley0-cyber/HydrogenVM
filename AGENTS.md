@@ -145,7 +145,7 @@ The integration line for this system is `main`. `docs/HANDOFF.md` now separates 
 - Do not trade a passing test, or an app the baseline already runs, for a one-off win. Prefer a fix that helps many apps over a special case for one title.
 - Do not mark a backlog row, a status line, or a bug resolved without a reproducible run that shows the new result. The issue generator (`python3 tools/hvm_compat.py issues`) is a dry run. It does not file GitHub issues.
 - Do not weaken `fulltest`, and do not change the emulator, in order to make a baseline look green. The harness records. A crash that was already in the baseline stays recorded. A new one fails the diff.
-- No FairPlay decryption. `CCCrypt` is forwarded to the host platform library (system CommonCrypto on Apple, OpenSSL on Linux); never add cipher code to the emulator. There is no general outbound network. Loopback IPv4 TCP exists only when that flag is set.
+- No FairPlay decryption. `CCCrypt` is forwarded to the host platform library (system CommonCrypto on Apple, OpenSSL on Linux); never add cipher code to the emulator. There is no general outbound network by default. Loopback IPv4 TCP exists only when that flag is set. The one exception is the owner-approved (2026-11-12, for preservation) per-game "Allow internet" switch in the app (`ProcessConfig::internetAccess`, `hvm run --internet`): off unless the player turns it on for that game, and then real IPv4 sockets and name lookups. Never turn it on by default or for a game the player did not choose.
 
 ## Where to record status
 

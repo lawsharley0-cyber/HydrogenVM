@@ -503,6 +503,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool keepGoing = _keepGoing;
     const bool useGPU = _useGPU;
     const bool playSession = _playSession;
+    const bool allowInternet = _allowInternet;
     const bool glTrace = _glTrace;
 
     auto flushLogs = [core, weakSelf]() {
@@ -537,6 +538,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             cfg.offlineClash = false;
         }
         cfg.glTrace = glTrace;
+        cfg.internetAccess = allowInternet;
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is
             // handed to the player view, which puts it under the UIKit overlay.

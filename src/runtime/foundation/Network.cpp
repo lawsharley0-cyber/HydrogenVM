@@ -47,7 +47,8 @@ bool scr_getFlags(Ctx& x, uint32_t ref, GuestPtr flags) {
         // forever for downloads (Minion Rush polled for its content index for minutes instead
         // of showing its "no Internet connection" message). Geometry Dash, the game the
         // "reachable" answer was added for, starts the same either way.
-        x.mem.write<uint32_t>(flags, 0);
+        // With the game's "Allow internet" switch on, the network is real: reachable (2).
+        x.mem.write<uint32_t>(flags, x.proc.config().internetAccess ? 2u : 0u);
     }
     return true;
 }

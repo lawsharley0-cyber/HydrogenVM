@@ -2247,6 +2247,54 @@ int runFullSubsystemTests() {
         }
         check(leaked >= 0 && ::fcntl(leaked,F_GETFD) == -1 && errno == EBADF,
               "process destruction closes retained loopback socket descriptors");
+        {
+            // The player's per-game "Allow internet" switch: real resolver, any address.
+            ProcessConfig onCfg; onCfg.homePath = "/var/tmp/hvm-internet-unit"; onCfg.internetAccess = true;
+            Process on(onCfg); auto& mem = on.mem();
+            const uint32_t block = on.heap().allocZeroed(64), hints = on.heap().allocZeroed(32);
+            mem.write<uint32_t>(hints, 4);       // AI_NUMERICHOST: no DNS needed in the test
+            mem.write<uint32_t>(hints + 8, 1);   // SOCK_STREAM
+            const int r = call(on, "_getaddrinfo", {on.allocCString("192.0.2.7"), on.allocCString("80"), hints, block});
+            const uint32_t info = mem.read<uint32_t>(block), addr = info ? mem.read<uint32_t>(info + 24) : 0;
+            in_addr want{}; inet_pton(AF_INET, "192.0.2.7", &want);
+            const bool resolved = r == 0 && addr && mem.read<uint32_t>(info + 4) == 2 && mem.read<uint32_t>(info + 8) == 1 &&
+                mem.read<uint8_t>(addr) == 16 && mem.read<uint8_t>(addr + 1) == 2 &&
+                mem.read<uint16_t>(addr + 2) == htons(80) && mem.read<uint32_t>(addr + 4) == want.s_addr;
+            call(on, "_freeaddrinfo", {info});
+            const uint32_t he = call(on, "_gethostbyname", {on.allocCString("10.1.2.3")});
+            in_addr want2{}; inet_pton(AF_INET, "10.1.2.3", &want2);
+            const uint32_t list = he ? mem.read<uint32_t>(he + 16) : 0, first = list ? mem.read<uint32_t>(list) : 0;
+            const bool hostent = he && mem.read<uint32_t>(he + 8) == 2 && mem.read<uint32_t>(he + 12) == 4 && first &&
+                mem.read<uint32_t>(first) == want2.s_addr && mem.read<uint32_t>(list + 4) == 0 &&
+                on.readCString(mem.read<uint32_t>(he)) == "10.1.2.3";
+            const int fd = call(on, "_socket", {2, 1, 0});
+            bool reached = false;
+            if (fd >= 0 && ready) {
+                // Through the real resolver and connect: the local listener is an address like any other.
+                mem.write<uint32_t>(hints, 4);
+                const int r2 = call(on, "_getaddrinfo", {on.allocCString("127.0.0.1"), on.allocCString(std::to_string(ntohs(local.sin_port)).c_str()), hints, block});
+                const uint32_t i2 = mem.read<uint32_t>(block), a2 = i2 ? mem.read<uint32_t>(i2 + 24) : 0;
+                const int c = r2 == 0 && a2 ? call(on, "_connect", {uint32_t(fd), a2, 16}) : -1;
+                pollfd p{listener, POLLIN, 0};
+                const int peer = c == 0 && ::poll(&p, 1, 1000) == 1 ? ::accept(listener, nullptr, nullptr) : -1;
+                reached = peer >= 0;
+                if (peer >= 0) ::close(peer);
+                call(on, "_close", {uint32_t(fd)});
+            }
+            const uint32_t ref = uint32_t(call(on, "_SCNetworkReachabilityCreateWithName", {0, on.allocCString("gameloft.com")}));
+            const uint32_t flagsOut = on.heap().allocZeroed(4);
+            check(ref && call(on, "_SCNetworkReachabilityGetFlags", {ref, flagsOut}) == 1 && mem.read<uint32_t>(flagsOut) == 2,
+                  "Allow internet: reachability says reachable");
+            check(resolved && hostent && fd >= 0 && reached,
+                  "Allow internet: TCP sockets open, getaddrinfo/gethostbyname return Darwin records from the host resolver, connect goes through");
+            ProcessConfig offCfg; offCfg.homePath = "/var/tmp/hvm-internet-unit-off";
+            Process off(offCfg);
+            const uint32_t b2 = off.heap().allocZeroed(16);
+            check(call(off, "_gethostbyname", {off.allocCString("example.com")}) == 0 &&
+                  call(off, "_getaddrinfo", {off.allocCString("192.0.2.7"), 0, 0, b2}) == 8 &&
+                  call(off, "_socket", {2, 1, 0}) == -1,
+                  "Without the switch a game stays offline: no name lookups, no TCP sockets");
+        }
         if (listener >= 0) ::close(listener);
     }
 

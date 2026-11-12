@@ -388,6 +388,10 @@ private struct LibraryAppRow: View {
             Button("Files", systemImage: "folder", action: browse)
             Button("Add to Home Screen", systemImage: "plus.app") { makingClip = true }
             Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
+            Toggle(isOn: Binding(get: { RunModel.allowsInternet(for: app.info.bundleIdentifier) },
+                                 set: { UserDefaults.standard.set($0, forKey: RunModel.internetKey(app.info.bundleIdentifier)) })) {
+                Label("Allow Internet", systemImage: "globe")
+            }
             Button("Reinstall", systemImage: "arrow.down.app") {
                 if storedIPAURL != nil {
                     showingReinstallConfirm = true

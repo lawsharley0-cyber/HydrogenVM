@@ -140,6 +140,7 @@ final class RunModel {
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
+        s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
         // Taller guest screen and safe-area insets, per game; both are cleared when off.
         let display = UIScreen.main.bounds.size
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -279,6 +280,14 @@ final class RunModel {
         let d = UserDefaults.standard
         if d.object(forKey: softwareRenderingKey(bundleID)) != nil { return d.bool(forKey: softwareRenderingKey(bundleID)) }
         return d.bool(forKey: "softwareRenderer")
+    }
+
+    /// Per-game "Allow internet" switch; key "internet.<bundle id>", off unless the player turns it on.
+    /// Games stay offline by default; this lets one chosen game reach its servers, e.g. to download
+    /// content it needs before those servers close (Minion Rush's DLC).
+    nonisolated static func internetKey(_ bundleID: String) -> String { "internet.\(bundleID)" }
+    nonisolated static func allowsInternet(for bundleID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: internetKey(bundleID))
     }
 
     private func syncOrientation() {
@@ -479,6 +488,7 @@ struct RunView: View {
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
     /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
     @AppStorage private var softwareRenderer: Bool
+    @AppStorage private var allowInternet: Bool
     @Environment(\.dismiss) private var dismiss
 
     init(app: InstalledApp, keepGoing: Bool) {
@@ -487,6 +497,7 @@ struct RunView: View {
         _model = State(initialValue: RunModel(app: app))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: app.info.bundleIdentifier),
                                        RunModel.softwareRenderingKey(app.info.bundleIdentifier))
+        _allowInternet = AppStorage(wrappedValue: false, RunModel.internetKey(app.info.bundleIdentifier))
         _scaleSetting = AppStorage(PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
         _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
                                        PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
@@ -828,6 +839,16 @@ struct RunView: View {
                                 .font(.caption)
                         }
                         .accessibilityIdentifier("player-gpu-rendering")
+
+                        Toggle(isOn: $allowInternet) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Allow internet for this game (next launch)")
+                                    .font(.caption)
+                                Text("Lets it reach its own servers, e.g. to download levels.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityIdentifier("player-allow-internet")
 
                         // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
                         virtualScreenControls
