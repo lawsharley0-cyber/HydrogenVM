@@ -2142,7 +2142,9 @@ void ap_stop(Ctx& x, id self, SEL) {
 }
 bool ap_prepare(Ctx& x, id self, SEL) {
     const auto& d = PD(x, self);
-    return d.pcm && !d.pcm->empty() && !d.decoded.silent;
+    // A format this host cannot decode still prepares (it plays silence): games written for a
+    // device that could decode it stop loading when told no (Age of Defenders on the bench).
+    return d.pcm && !d.pcm->empty();
 }
 bool ap_isPlaying(Ctx& x, id self, SEL) { return PD(x, self).playing; }
 float ap_volume(Ctx& x, id self, SEL) { return PD(x, self).volume; }
