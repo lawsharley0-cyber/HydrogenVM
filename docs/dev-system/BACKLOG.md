@@ -288,6 +288,12 @@ Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
 
 ## P2
 
+- UX-4 (Group E, owner requested 2026-11-06): simplify the library, expose app actions,
+  organize settings and add a gesture-free player control entry. Files: LibraryView.swift,
+  LibrarySettingsView.swift, RunView.swift. Validate search, destructive confirmations,
+  import/deep links, Dynamic Type, VoiceOver and player controls on iPhone. Windows
+  source review only until macOS compilation and device checks are recorded.
+
 - UAR-002 asset I/O (Group D plus libc file opens; impact 2, severity 2,
   complexity 2, score 2): bounded bundle resource lookup caching and best-effort
   UE3 asset read-ahead, with isolated path/descriptor regressions. Investigation

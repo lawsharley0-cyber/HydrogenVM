@@ -141,19 +141,23 @@ struct AppIcon: View {
 }
 
 struct LibraryView: View {
-    @AppStorage("keepIpaForReinstall") private var keepIpaForReinstall = true
-    /// Default display mode for games that have no setting of their own (PlayerSettings).
-    @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleMode = PlayerScaleMode.fit.rawValue
-    @AppStorage("hvm.zombies") private var zombies = false
-    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
+    @State private var searchText = ""
+    @State private var showingSettings = false
     @State private var store = LibraryStore()
     @State private var pickingFile = false
     @State private var running: InstalledApp?
     @State private var browsing: InstalledApp?
     @State private var keepGoing = false
-    @State private var testingAllGames = false
     /// A `hydrogenvm://run/<id>` link (Home Screen icon) waiting to be opened.
     @State private var router = LaunchRouter.shared
+
+    private var filteredApps: [InstalledApp] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return store.apps.filter {
+            query.isEmpty || $0.title.localizedStandardContains(query)
+                || $0.info.bundleIdentifier.localizedStandardContains(query)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -161,27 +165,39 @@ struct LibraryView: View {
                 if router.pending != nil {
                     // A Home Screen link is opening a game: stay black, never flash the library.
                     Color.black.ignoresSafeArea()
-                } else if store.apps.isEmpty && store.importing.isEmpty {
-                    ContentUnavailableView {
-                        Label("No apps yet", systemImage: "shippingbox")
-                    } description: {
-                        Text("Import a decrypted 32-bit .ipa (iOS 3–10). You can also drop .ipa files into HydrogenVM's folder in the Files app.")
-                    } actions: {
-                        Button("Import .ipa") { pickingFile = true }.buttonStyle(.borderedProminent)
-                    }
                 } else {
                     List {
+                        Section {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Label("HYDROGEN", systemImage: "square.stack.3d.up.fill")
+                                    .font(.caption.weight(.bold)).foregroundStyle(.tint)
+                                Text(store.apps.isEmpty ? "A new home for your classic apps." : "Your classics, together.")
+                                    .font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                                Text(store.apps.isEmpty
+                                     ? "Add a compatible 32-bit IPA from Files to get started."
+                                     : "Choose an app to play, or open its menu for files and more.")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                                Button("Import app", systemImage: "plus.circle.fill") { pickingFile = true }
+                                    .buttonStyle(.borderedProminent).controlSize(.large)
+                                    .foregroundStyle(Color(.systemBackground))
+                                    .accessibilityHint("Choose one or more IPA files from Files")
+                            }
+                            .padding(.vertical, 10)
+                        }
+                        .listRowBackground(Color.accentColor.opacity(0.08))
                         if !store.importing.isEmpty {
                             Section("Importing") {
                                 ForEach(store.importing, id: \.self) { name in
-                                    HStack { ProgressView(); Text(name).padding(.leading, 8) }
+                                    HStack { ProgressView().accessibilityHidden(true); Text("Importing \(name)").padding(.leading, 8) }
+                                        .accessibilityElement(children: .combine)
                                 }
                             }
                         }
-                        Section {
-                            ForEach(store.apps) { app in
+                        Section("Your apps · \(filteredApps.count)") {
+                            ForEach(filteredApps) { app in
                                 LibraryAppRow(app: app) {
                                     if app.info.runnable { running = app }
+                                    else { router.message = "\(app.title) cannot run here: \(app.info.problem.isEmpty ? "This app is unsupported." : app.info.problem)" }
                                 } browse: {
                                     browsing = app
                                 } reset: {
@@ -192,32 +208,27 @@ struct LibraryView: View {
                                     store.importIPA(at: url)
                                 }
                             }
-                            .onDelete { idx in idx.map { store.apps[$0] }.forEach(store.delete) }
+                            if filteredApps.isEmpty && !store.apps.isEmpty {
+                                ContentUnavailableView.search(text: searchText)
+                            }
+                        }
+                        if store.apps.isEmpty {
+                            Section("Before you import") {
+                                Label("Supports compatible 32-bit ARMv7 apps", systemImage: "app.badge.checkmark")
+                                Label("Encrypted and 64-bit-only apps cannot run", systemImage: "info.circle")
+                                Text("Compatibility varies by app. You can also add IPA files to HydrogenVM’s folder in Files, then pull to refresh.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .refreshable { store.refresh() }
                 }
             }
-            .navigationTitle("HydrogenVM")
+            .navigationTitle("Library")
+            .searchable(text: $searchText, prompt: "Find an app")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu("Options", systemImage: "gearshape") {
-                        Button("Test All Games", systemImage: "play.grid.2x2") {
-                            testingAllGames = true
-                        }
-                        Divider()
-                        Toggle("Continue past missing functions", isOn: $keepGoing)
-                        Toggle("Keep .ipa for reinstall", isOn: $keepIpaForReinstall)
-                        Toggle("Show debug overlay while playing", isOn: $showDebugOverlay)
-                        Text("Off: nothing of HydrogenVM is drawn over a game. Hold three fingers on the screen for a moment to open pause, volume, log and quit.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        Picker("Default display mode", selection: $defaultScaleMode) {
-                            ForEach(PlayerScaleMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode.rawValue)
-                            }
-                        }
-                        Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
-                    }
+                    Button("Settings", systemImage: "gearshape") { showingSettings = true }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Import", systemImage: "plus") { pickingFile = true }
@@ -291,8 +302,8 @@ struct LibraryView: View {
             .sheet(item: $browsing) { app in
                 FileBrowserView(app: app)
             }
-            .sheet(isPresented: $testingAllGames) {
-                BatchTestView(installedApps: store.apps)
+            .sheet(isPresented: $showingSettings) {
+                LibrarySettingsView(keepGoing: $keepGoing, installedApps: store.apps)
             }
         }
     }
@@ -351,6 +362,8 @@ private struct LibraryAppRow: View {
     @State private var verifyError: String? = nil
     @State private var showingVerifyError = false
     @State private var makingClip = false
+    @State private var confirmingReset = false
+    @State private var confirmingDelete = false
 
     private var storedIPAURL: URL? {
         guard let appSupport = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return nil }
@@ -376,27 +389,37 @@ private struct LibraryAppRow: View {
     }
 
     var body: some View {
-        Button(action: open) {
-            AppRow(app: app)
+        HStack(spacing: 8) {
+            Button(action: open) {
+                AppRow(app: app)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(app.info.runnable ? "Launches this app" : "Explains why this app cannot run")
+            Menu {
+                appActions
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title2)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Actions for \(app.title)")
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 6)
         .swipeActions(edge: .leading) {
             Button("Files", systemImage: "folder", action: browse)
                 .tint(.blue)
         }
-        .contextMenu {
-            Button("Files", systemImage: "folder", action: browse)
-            Button("Add to Home Screen", systemImage: "plus.app") { makingClip = true }
-            Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
-            Button("Reinstall", systemImage: "arrow.down.app") {
-                if storedIPAURL != nil {
-                    showingReinstallConfirm = true
-                } else {
-                    showingReinstallMissing = true
-                }
-            }
-            Button("Reset App Data", systemImage: "arrow.counterclockwise", action: reset)
-            Button("Delete", systemImage: "trash", role: .destructive, action: delete)
+        .contextMenu { appActions }
+        .confirmationDialog("Reset data for \(app.title)?", isPresented: $confirmingReset, titleVisibility: .visible) {
+            Button("Reset app data", role: .destructive, action: reset)
+        } message: {
+            Text("This removes this app’s saves and settings. It cannot be undone.")
+        }
+        .confirmationDialog("Delete \(app.title)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete app and data", role: .destructive, action: delete)
+        } message: {
+            Text("This removes the app, its saves and its stored IPA. It cannot be undone.")
         }
         .confirmationDialog("Reinstall \(app.title)?", isPresented: $showingReinstallConfirm, titleVisibility: .visible) {
             Button("Reinstall", role: .destructive) {
@@ -435,6 +458,20 @@ private struct LibraryAppRow: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var appActions: some View {
+        Button("Files", systemImage: "folder", action: browse)
+        Button("Add to Home Screen", systemImage: "plus.app") { makingClip = true }
+        Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
+        Button("Reinstall", systemImage: "arrow.down.app") {
+            if storedIPAURL != nil { showingReinstallConfirm = true }
+            else { showingReinstallMissing = true }
+        }
+        Divider()
+        Button("Reset app data", systemImage: "arrow.counterclockwise", role: .destructive) { confirmingReset = true }
+        Button("Delete app", systemImage: "trash", role: .destructive) { confirmingDelete = true }
+    }
 }
 
 struct AppRow: View {
@@ -442,43 +479,42 @@ struct AppRow: View {
 
     private var statusBadge: (text: String, color: Color, icon: String) {
         if app.info.runnable {
-            return ("Ready · ARMv7", .green, "checkmark.circle.fill")
+            return ("32-bit · Tap to launch", .primary, "play.circle.fill")
         } else if app.info.encrypted {
-            return ("Encrypted · FairPlay Unsupported", .orange, "lock.fill")
+            return ("Encrypted · Unsupported", .primary, "lock.fill")
         } else if app.info.problem.localizedCaseInsensitiveContains("64") {
-            return ("64-Bit Only · Unsupported", .red, "xmark.octagon.fill")
+            return ("64-bit only · Unsupported", .primary, "xmark.octagon.fill")
         } else {
             let desc = app.info.problem.isEmpty ? "Unsupported" : app.info.problem
-            return (desc, .orange, "exclamationmark.triangle.fill")
+            return (desc, .primary, "exclamationmark.triangle.fill")
         }
     }
 
     var body: some View {
-        HStack(spacing: 14) {
-            AppIcon(path: app.info.iconPath)
+        HStack(alignment: .top, spacing: 14) {
+            AppIcon(path: app.info.iconPath).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(app.title).font(.headline)
                 Text([app.info.version.isEmpty ? nil : "v\(app.info.version)",
-                      app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+",
-                      app.info.bundleIdentifier].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                      app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+"].compactMap { $0 }.joined(separator: " · "))
+                    .font(.subheadline).foregroundStyle(.secondary)
 
                 let badge = statusBadge
                 HStack(spacing: 4) {
                     Image(systemName: badge.icon)
                         .font(.caption2)
                     Text(badge.text)
-                        .font(.caption2.weight(.semibold))
+                        .font(.caption.weight(.semibold))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(badge.color.opacity(0.15), in: Capsule())
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8))
                 .foregroundStyle(badge.color)
             }
             Spacer()
-            if app.info.runnable { Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(.tint) }
+            if app.info.runnable { Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(.tint).accessibilityHidden(true) }
         }
         .contentShape(.rect)
-        .opacity(app.info.runnable ? 1 : 0.85)
+        .accessibilityElement(children: .combine)
     }
 }
