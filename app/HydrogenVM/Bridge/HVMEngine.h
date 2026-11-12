@@ -46,6 +46,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly) uint64_t requestId;
 @end
 
+@interface HVMDocumentPickerRequest : HVMPhotoPickerRequest
+@property (nonatomic, readonly, copy) NSArray<NSString *> *types;
+@end
+
 /// A video file the game wants played (active), or one to take down (not active).
 @interface HVMMovieRequest : NSObject
 @property (nonatomic, readonly) BOOL active;
@@ -132,6 +136,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 
 /// A guest text field gained or lost focus, or its text changed behind the keyboard (main queue).
 @property (nonatomic, copy, nullable) void (^onTextInput)(HVMTextInputRequest *request);
+@property (nonatomic, copy, nullable) void (^onDocumentPicker)(HVMDocumentPickerRequest *request);
+- (void)submitDocument:(nullable NSString *)sourcePath requestId:(uint64_t)requestId;
 @property (nonatomic, copy, nullable) void (^onPhotoPicker)(HVMPhotoPickerRequest *request);
 - (void)submitPhoto:(nullable NSData *)imageData requestId:(uint64_t)requestId;
 /// The game plays or stops a video; the host shows it over the game (main queue).

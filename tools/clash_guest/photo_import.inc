@@ -70,13 +70,16 @@ static void photo_finished(u32 self,u32 selector,u32 picker,u32 info){
     else photo_status("No image selected. Previous art kept.");photo_dismiss(picker);
 }
 static void photo_cancelled(u32 self,u32 selector,u32 picker){(void)self;(void)selector;photo_status("Photo selection cancelled. Art kept.");photo_dismiss(picker);}
-static void photo_choose(u32 kind){
+static void photo_choose_slot(u32 slot,u32 kind){
     if(photo_pending){photo_status("Preparing the previous photo...");return;}
     void *home,*avatar;if(!mod_home(&home,&avatar)){photo_status("Return home and finish pending rewards.");return;}
     if(!mod_send1(mod_class("UIImagePickerController"),"isSourceTypeAvailable:",0)){photo_status("Update Hydrogen to enable Photos.");return;}
-    photo_slot=mod_selected-GUEST_MOD_UNIT_COUNT;photo_kind=kind;
+    photo_slot=slot;photo_kind=kind;
     photo_picker=mod_send0(mod_send0(mod_class("UIImagePickerController"),"alloc"),"init");mod_send1(photo_picker,"setSourceType:",0);mod_send1(photo_picker,"setDelegate:",mod_target);mod_send1(photo_picker,"setAllowsEditing:",0);
     u32 presenter=mod_send0(mod_window,"rootViewController");CALL(mod_msg,void,(u32,u32,u32,u32,u32))(presenter,mod_sel("presentViewController:animated:completion:"),photo_picker,1,0);
+}
+static void photo_choose(u32 kind){
+    if(mod_selected>=GUEST_MOD_UNIT_COUNT)photo_choose_slot(FORGE_UNIT_SLOT(mod_selected-GUEST_MOD_UNIT_COUNT),kind);
 }
 static void photo_open(void){
     if(mod_selected<GUEST_MOD_UNIT_COUNT){photo_status("Select a custom card first.");return;}

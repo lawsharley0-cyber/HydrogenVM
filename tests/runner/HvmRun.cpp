@@ -64,7 +64,7 @@ int hvmRunMain(int argc, char** argv) {
     std::vector<LifeEvent> lifeEvents;
     std::string screenshot, reportPath, frameFile, inputFile;
     int audioFd = -1;
-    std::string photoLibraryImage;
+    std::string photoLibraryImage, documentImport;
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
     double micVoiceAt = -1, micVoiceFor = -1;
@@ -101,6 +101,7 @@ int hvmRunMain(int argc, char** argv) {
         }
         if (!std::strcmp(argv[i], "--report") && i + 1 < argc) { reportPath = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--frame-file") && i + 1 < argc) { frameFile = argv[++i]; continue; }
+        if (!std::strcmp(argv[i], "--document-import") && i+1<argc) { documentImport=argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--photo-library-image") && i+1<argc) { photoLibraryImage=argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--input-file") && i + 1 < argc) { inputFile = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--audio-fd") && i + 1 < argc) {
@@ -214,6 +215,11 @@ int hvmRunMain(int argc, char** argv) {
         EntryTrace entryTrace;
         Runtime::Process proc(cfg);
         entryTrace.attach(proc);
+        if (!documentImport.empty()) {
+            Runtime::UIKit::setDocumentPickerObserver(proc, [&proc, documentImport](const Runtime::UIKit::DocumentPickerRequest& q) {
+                if (q.active) Runtime::UIKit::submitDocumentPickerResult(proc, q.requestId, documentImport == "cancel" ? "" : documentImport);
+            });
+        }
         if(!photoLibraryImage.empty()) {
             Runtime::UIKit::setPhotoPickerObserver(proc,[&proc,photoLibraryImage](const Runtime::UIKit::PhotoPickerRequest& q){
                 if(!q.active)return;

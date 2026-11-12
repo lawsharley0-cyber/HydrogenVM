@@ -1,4 +1,9 @@
+#include "forge_slots.inc"
 #include "mods_math.inc"
+#ifdef GUEST_SPELL_COUNT
+static void spell_initialize(void),spell_restore(void),spell_apply(void);
+static int spell_damage(void*,int,int*);
+#endif
 #ifdef GUEST_MECH_CARD_COUNT
 static void mech_restore(void),mech_apply(void);
 static void *mech_active_shot(void*,void*);
@@ -6,7 +11,7 @@ static u32 mech_shot_base(void*,u32);
 #endif
 struct ModRecord {u32 value[MOD_FIELDS];};
 #define MOD_UNIT_CAPACITY (GUEST_MOD_UNIT_COUNT+FORGE_MAX_CARDS)
-static u32 mod_count(void){return GUEST_MOD_UNIT_COUNT+forge_loaded_count;}
+static u32 mod_count(void){return GUEST_MOD_UNIT_COUNT+forge_unit_count;}
 static struct ModRecord mod_records[MOD_UNIT_CAPACITY];
 static void *mod_units[MOD_UNIT_CAPACITY],*mod_shots[MOD_UNIT_CAPACITY];
 static u32 mod_original[MOD_UNIT_CAPACITY][6],mod_enabled,mod_ready,mod_selected,mod_applied;
@@ -23,6 +28,9 @@ static void mod_reject_profile(void) {
 static int mod_allowed(void) {return save_initialized && logged_in && committed_wins>=7;}
 static int mod_effective(void) {return mod_ready && mod_enabled && mod_allowed() && (!battle_started || arena_battle);}
 static void mod_restore(void) {
+#ifdef GUEST_SPELL_COUNT
+    spell_restore();
+#endif
 #ifdef GUEST_MECH_CARD_COUNT
     mech_restore();
 #endif
@@ -33,12 +41,15 @@ static void mod_restore(void) {
     }
 }
 static void mod_apply_units(void) {
+#ifdef GUEST_SPELL_COUNT
+    spell_initialize();
+#endif
     mod_restore();
 #ifdef GUEST_MECH_CARD_COUNT
     mech_apply();
 #endif
-    mod_applied=1;if(!mod_effective())return;
-    for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
+    mod_applied=1;
+    if(mod_effective())for(u32 i=0;i<mod_count();++i)for(u32 j=0;j<6;++j) {
         u32 field=j==5?MOD_RANGE:j;void *p=j==4?mod_shots[i]:mod_units[i];
         u32 base=mod_original[i][j];
 #ifdef GUEST_MECH_CARD_COUNT
@@ -48,16 +59,19 @@ static void mod_apply_units(void) {
             FIELD(p,mod_offsets[j])=j==3?mod_scaled_size(base,mod_records[i].value[field]):
                 mod_scaled(base,mod_records[i].value[field],j==1||j==2);
     }
+#ifdef GUEST_SPELL_COUNT
+    spell_apply();
+#endif
 }
 static void *mod_data(const char *name,u32 address) {
     if(!*name)return 0;u32 text[5];CALL(0x18dcf9,void,(void*,const char*))(text,name);
     void *p=CALL(address,void*,(void*,void*))(text,0);CALL(0x18db2d,void,(void*))(text);return p;
 }
-static u32 mod_card_id(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].cardId:forge_ids[i-GUEST_MOD_UNIT_COUNT];}
-static const char *mod_name(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].name:forge_records[i-GUEST_MOD_UNIT_COUNT].name;}
+static u32 mod_card_id(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].cardId:forge_ids[FORGE_UNIT_SLOT(i-GUEST_MOD_UNIT_COUNT)];}
+static const char *mod_name(u32 i){return i<GUEST_MOD_UNIT_COUNT?mod_unit_defs[i].name:forge_records[FORGE_UNIT_SLOT(i-GUEST_MOD_UNIT_COUNT)].name;}
 static const char *mod_shot_name(u32 i,char out[24]) {
     if(i<GUEST_MOD_UNIT_COUNT)return mod_unit_defs[i].projectile;
-    u32 slot=i-GUEST_MOD_UNIT_COUNT;const struct ForgeBlueprint *bp=forge_blueprint(forge_records[slot].base);
+    u32 slot=FORGE_UNIT_SLOT(i-GUEST_MOD_UNIT_COUNT);const struct ForgeBlueprint *bp=forge_blueprint(forge_records[slot].base);
     if(!bp || !bp->rows[4][0])return "";
     forge_identifier(out,"ModLabShot_",slot);return out;
 }
@@ -162,4 +176,10 @@ static int mod_stat(void *data,int value,int field,int shot) {
 }
 int guest_mod_health(void *p,int level){return mod_stat(p,guest_original_mod_health(p,level),MOD_HEALTH,0);}
 int guest_mod_damage(void *p,int level){return mod_stat(p,guest_original_mod_damage(p,level),MOD_DAMAGE,0);}
-int guest_mod_shot_damage(void *p,int level){return mod_stat(p,guest_original_mod_shot_damage(p,level),MOD_DAMAGE,1);}
+int guest_mod_shot_damage(void *p,int level){
+    int raw=guest_original_mod_shot_damage(p,level);
+#ifdef GUEST_SPELL_COUNT
+    int handled=0,value=spell_damage(p,raw,&handled);if(handled)return value;
+#endif
+    return mod_stat(p,raw,MOD_DAMAGE,1);
+}

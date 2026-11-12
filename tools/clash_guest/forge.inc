@@ -6,11 +6,15 @@ static u32 forge_count,forge_loaded_count,forge_ready,forge_generated,forge_ids[
 static u32 f_open,f_read,f_write,f_close,f_error,f_errno,f_flush,f_fileno,f_sync,f_rename,f_free;
 static char forge_path[512],forge_cache[512];
 static char forge_render[65536];
+#ifdef GUEST_FORGE_SPELLS
+static u32 forge_unit_slots[FORGE_MAX_CARDS],forge_unit_count;
+static u32 forge_spell_slots[FORGE_MAX_CARDS],forge_spell_count;
+#endif
 #ifdef GUEST_ART_SOURCE_TOKEN
 #include "forge_art.inc"
 #endif
 static const struct ForgeBlueprint *forge_blueprint(u32 id) {
-    for(u32 i=0;i<GUEST_MOD_UNIT_COUNT;++i)if(forge_blueprints[i].id==id)return &forge_blueprints[i];
+    for(u32 i=0;i<sizeof forge_blueprints/sizeof *forge_blueprints;++i)if(forge_blueprints[i].id==id)return &forge_blueprints[i];
     return 0;
 }
 static void forge_initialize(void) {
@@ -34,8 +38,15 @@ static void forge_initialize(void) {
         for(u32 i=0;i<forge_count;++i)if(!forge_record_valid(&forge_records[i]) || !forge_blueprint(forge_records[i].base))
             fail("Card Forge: invalid required definition; registry and game save retained");
     } else if(*CALL(f_errno,int*,(void))()!=2)fail("Card Forge: cannot read definitions; game save retained");
-    u32 seen[2]={0,0};
-    for(u32 i=0;i<forge_count;++i){u32 kind=forge_records[i].base>=27000000u;forge_ids[i]=(kind?27000000u:26000000u)+forge_group_counts[kind]+seen[kind]++;}
+    u32 seen[3]={0};
+    for(u32 i=0;i<forge_count;++i){
+        u32 kind=forge_records[i].base>=28000000u?2:forge_records[i].base>=27000000u;
+        forge_ids[i]=26000000u+kind*1000000u+forge_group_counts[kind]+seen[kind]++;
+#ifdef GUEST_FORGE_SPELLS
+        if(kind==2)forge_spell_slots[forge_spell_count++]=i;
+        else forge_unit_slots[forge_unit_count++]=i;
+#endif
+    }
     forge_loaded_count=forge_count;forge_ready=1;
 }
 static int forge_finish(void *file) {
@@ -79,7 +90,7 @@ static void forge_generate(const char *bundle_prefix) {
 #endif
     if(CALL(symbol("mkdir"),int,(const char*,int))(forge_cache,0700) && *CALL(f_errno,int*,(void))()!=17)
         fail("Card Forge: cannot create table cache; game save retained");
-    for(u32 table=0;table<6;++table) {
+    for(u32 table=0;table<sizeof forge_table_paths/sizeof *forge_table_paths;++table) {
         char source[768],dest[768],temp[780];path_append(source,bundle_prefix,forge_table_paths[table],sizeof source);
         const char *leaf=forge_table_paths[table];for(const char *p=leaf;*p;++p)if(*p=='/')leaf=p+1;
         char suffix[80];path_append(suffix,"/",leaf,sizeof suffix);path_append(dest,forge_cache,suffix,sizeof dest);path_append(temp,dest,".tmp",sizeof temp);
@@ -98,6 +109,11 @@ static void forge_generate(const char *bundle_prefix) {
             const struct ForgeBlueprint *bp=forge_blueprint(forge_records[slot].base);u32 bytes=0;
             const char *row=bp?bp->rows[table]:0;
 #ifdef GUEST_ART_SOURCE_TOKEN
+            #ifdef GUEST_FORGE_SPELLS
+            if(bp && forge_records[slot].base>=28000000u){
+                if(table==6 && (art_flags[slot]&1))row=forge_spell_icons[(bp-forge_blueprints)-GUEST_MOD_UNIT_COUNT];
+            }else
+#endif
             if(bp && table<4 && art_flags[slot]){
                 u32 index=0;while(index<GUEST_MOD_UNIT_COUNT && forge_blueprints[index].id!=forge_records[slot].base)++index;
                 if(index>=GUEST_MOD_UNIT_COUNT)fail("Card Forge: custom art blueprint missing");
@@ -124,11 +140,14 @@ static void forge_prepare_tables(void) {
 }
 void *guest_forge_fopen(const char *path,const char *mode) {
     if(path && mode && (forge_equal(mode,"r") || forge_equal(mode,"rb"))) {
+#ifdef GUEST_MUSIC_LAB
+        int music_handled=0;void *music_csv=music_csv_redirect(path,mode,&music_handled);if(music_handled)return music_csv;
+#endif
         u32 length=forge_length(path);
 #ifdef GUEST_ART_SOURCE_TOKEN
         forge_initialize();art_initialize();int handled=0;void *art=art_redirect(path,mode,&handled);if(handled)return art;
 #endif
-        for(u32 i=0;i<6;++i) {
+        for(u32 i=0;i<sizeof forge_table_paths/sizeof *forge_table_paths;++i) {
             u32 n=forge_length(forge_table_paths[i]);
             if(length<n || (length>n && path[length-n-1]!='/') || !forge_equal(path+length-n,forge_table_paths[i]))continue;
             forge_initialize();if(!forge_loaded_count)break;

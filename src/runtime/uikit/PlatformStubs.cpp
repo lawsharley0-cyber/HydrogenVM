@@ -2140,7 +2140,12 @@ void ap_stop(Ctx& x, id self, SEL) {
     d.paused = false;
     if (d.timer) d.timer->valid = false;
 }
-bool ap_prepare(Ctx&, id, SEL) { return true; }
+bool ap_prepare(Ctx& x, id self, SEL) {
+    const auto& d = PD(x, self);
+    // A format this host cannot decode still prepares (it plays silence): games written for a
+    // device that could decode it stop loading when told no (Age of Defenders on the bench).
+    return d.pcm && !d.pcm->empty();
+}
 bool ap_isPlaying(Ctx& x, id self, SEL) { return PD(x, self).playing; }
 float ap_volume(Ctx& x, id self, SEL) { return PD(x, self).volume; }
 void ap_setVolume(Ctx& x, id self, SEL, float v) { PlayerData& d = PD(x, self); d.volume = std::clamp(v, 0.0f, 1.0f); if (d.voice) MX(x.proc).setParams(d.voice, playerParams(d)); }

@@ -4596,6 +4596,58 @@ int runFullSubsystemTests() {
         UIKit::setPhotoPickerObserver(proc,nullptr);
     }
 
+    // Import-only document selection copies bytes before delivering a guest URL.
+    {
+        std::vector<UIKit::DocumentPickerRequest> requests;
+        UIKit::setDocumentPickerObserver(proc, [&](const auto& q) { requests.push_back(q); });
+        int selected = 0, cancelled = 0;
+        std::string imported;
+        ObjC::ClassBuilder delegateClass = r.defineClass("HVMDocumentDelegate", "NSObject");
+        delegateClass.method("documentPicker:didPickDocumentAtURL:", [&](Ctx& x) {
+            ++selected;
+            imported = Foundation::urlFilePath(x, x.cpu.r[3]);
+            r.send(cpu, x.cpu.r[2], "dismissViewControllerAnimated:completion:", {0, 0});
+        }, "v@:@@");
+        delegateClass.method("documentPickerWasCancelled:", [&](Ctx& x) {
+            ++cancelled;
+            r.send(cpu, x.cpu.r[2], "dismissViewControllerAnimated:completion:", {0, 0});
+        }, "v@:@");
+        const auto delegate = r.createInstance(delegateClass.cls());
+        const auto presenter = ObjC::id(r.send(cpu, r.getClass("UIViewController"), r.sel("new")));
+        const auto types = Foundation::makeArray(cx, {Foundation::makeString(cx, "public.mp3")});
+        const auto picker = ObjC::id(r.send(cpu, r.send(cpu, r.getClass("UIDocumentPickerViewController"), "alloc"),
+                                           "initWithDocumentTypes:inMode:", {types, 0}));
+        r.send(cpu, picker, "setDelegate:", {delegate});
+        const auto present = [&] { r.send(cpu, presenter, "presentViewController:animated:completion:", {picker, 0, 0}); };
+        const auto pump = [&] { for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.0); };
+        const auto source = std::filesystem::temp_directory_path() / ("hvm-document-source-" + std::to_string(picker) + ".mp3");
+        { std::ofstream file(source, std::ios::binary); file << "independent audio fixture"; }
+        present();
+        const auto first = requests.back().requestId;
+        check(requests.back().types == std::vector<std::string>{"public.mp3"}, "document picker publishes requested content types");
+        UIKit::submitDocumentPickerResult(proc, first + 1, source.string()); pump();
+        check(selected == 0 && cancelled == 0, "document picker rejects stale result IDs");
+        UIKit::submitDocumentPickerResult(proc, first, source.string());
+        check(selected == 0, "document picker delivers on the guest main loop");
+        pump();
+        std::ifstream copy(imported, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(copy)), {});
+        check(selected == 1 && bytes == "independent audio fixture" && imported != source.string() && !requests.back().active,
+              "document picker imports an independent sandbox copy and dismisses");
+        UIKit::submitDocumentPickerResult(proc, first, source.string()); pump();
+        check(selected == 1, "document picker ignores duplicate delivery");
+        present(); const auto second = requests.back().requestId;
+        UIKit::submitDocumentPickerResult(proc, first, source.string());
+        UIKit::submitDocumentPickerResult(proc, second, {}); pump();
+        check(selected == 1 && cancelled == 1 && second != first, "document picker cancellation preserves its earlier import");
+        present(); UIKit::submitDocumentPickerResult(proc, requests.back().requestId, source.string() + ".missing"); pump();
+        check(cancelled == 2 && std::filesystem::exists(source), "unreadable document selection cancels and preserves its source");
+        std::filesystem::remove(source);
+        if (!imported.empty()) { std::filesystem::remove(imported); std::filesystem::remove(std::filesystem::path(imported).parent_path()); }
+        r.release(cpu, picker); r.release(cpu, presenter); r.release(cpu, delegate);
+        UIKit::setDocumentPickerObserver(proc, nullptr);
+    }
+
     // Composed ranges use UTF-16 coordinates and expand to whole Unicode clusters.
     {
         const auto range = [&](const std::u16string& text, uint32_t location, uint32_t length, bool atIndex = false) {
@@ -7391,6 +7443,10 @@ int runFullSubsystemTests() {
         const ObjC::id nsData = Foundation::makeData(cx, wav.data(), uint32_t(wav.size()));
         const ObjC::Class apCls = r.getClass("AVAudioPlayer");
         const ObjC::id player = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, apCls, r.selAlloc)), "initWithData:error:", {nsData, 0}));
+        check((r.send(cpu, player, "prepareToPlay") & 255) != 0, "decoded AVAudioPlayer prepares for playback");
+        const auto emptyPlayer = ObjC::id(r.send(cpu, apCls, "new"));
+        check((r.send(cpu, emptyPlayer, "prepareToPlay") & 255) == 0, "empty AVAudioPlayer cannot prepare for playback");
+        r.release(cpu, emptyPlayer);
         uint64_t durBits = r.send(cpu, player, "duration");
         double dur = 0; std::memcpy(&dur, &durBits, 8);
         const bool playOk = (r.send(cpu, player, "play") & 0xFF) != 0;

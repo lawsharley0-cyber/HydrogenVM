@@ -49,6 +49,37 @@ class CustomDefinitionTests(unittest.TestCase):
             self.assertEqual(rows('logic/projectiles')[-1], ['ModLabShot_0000', '300', '40'])
             self.assertEqual(rows('client/texts')[-1], ['TID_MODLAB_0000', 'Ace, "Arrow"', 'Ace, "Arrow"'])
 
+    def test_mixed_registry_has_separate_card_ids_and_projectiles(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.fixtures(root)
+            other = root / 'res/csv_logic/spells_other.csv'
+            fields = ['Name', 'Projectile', 'AreaEffectObject', 'CustomFirstProjectile',
+                      'SummonCharacter', 'Mirror', 'TID', 'NotInUse', 'IconFile']
+            with other.open('w', newline='') as stream:
+                writer = csv.writer(stream)
+                writer.writerows([fields, ['string'] * len(fields),
+                                  ['Fireball', 'Arrow', '', '', '', '', 'OLD_F', '', 'icon'],
+                                  ['Reserved'], ['ReservedTwo'], ['Rocket', 'Arrow']])
+            old = self.registry()
+            registry = dict(version=1, cards=old['cards'] + [
+                dict(slot=1, baseCardId=28000000, name='Star'),
+                dict(slot=2, baseCardId=27000000, name='Tower'),
+                dict(slot=3, baseCardId=28000003, name='Comet')])
+            overlays, meta = generate_overlays(root, registry, previous=old)
+            self.assertEqual([c['cardId'] for c in meta['cards']],
+                             [26000002, 28000004, 27000001, 28000005])
+            spells = overlays['res/csv_logic/spells_other.csv']
+            self.assertTrue(spells.startswith(other.read_bytes()))
+            rows = list(csv.reader(io.StringIO(spells.decode())))
+            self.assertEqual(rows[-2], ['ModLabCard_0001', 'ModLabShot_0001', '', '', '', '',
+                                         'TID_MODLAB_0001', 'true', 'icon'])
+            self.assertEqual(rows[-1][1], 'ModLabShot_0003')
+            shots = list(csv.reader(io.StringIO(overlays['res/csv_logic/projectiles.csv'].decode())))
+            self.assertEqual([row for row in shots if row[:1] == ['ModLabShot_0001']],
+                             [['ModLabShot_0001', '300', '40']])
+            self.assertEqual(meta['cards'][1]['unit'], '')
+
     def test_append_only_ids_span_native_tables_without_reassigning(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); self.fixtures(root)
@@ -60,7 +91,7 @@ class CustomDefinitionTests(unittest.TestCase):
                 with self.assertRaises(ValueError): validate_registry(changed, old)
 
     def test_invalid_schema_slots_ids_names_and_card_limit_reject(self):
-        for invalid in [dict(version=True, cards=[]), dict(version=1, cards=[], extra=0), self.registry(base=True), self.registry(base=28000000), self.registry(name=''), self.registry(name='a\nb'), self.registry(name='a'*33), dict(version=1, cards=[dict(slot=1, baseCardId=26000000, name='Gap')]), dict(version=1, cards=[dict(slot=i, baseCardId=26000000, name='Too many') for i in range(17)])]:
+        for invalid in [dict(version=True, cards=[]), dict(version=1, cards=[], extra=0), self.registry(base=True), self.registry(base=28000006), self.registry(name=''), self.registry(name='a\nb'), self.registry(name='a'*33), dict(version=1, cards=[dict(slot=1, baseCardId=26000000, name='Gap')]), dict(version=1, cards=[dict(slot=i, baseCardId=26000000, name='Too many') for i in range(17)])]:
             with self.subTest(registry=invalid), self.assertRaises(ValueError): validate_registry(invalid)
         for separator in ['\x85', '\u2028', '\u2029']:
             with self.subTest(separator=separator), self.assertRaises(ValueError):

@@ -1,0 +1,10 @@
+{
+  "name": "Post-training Fireball comparison with Knight in the first slot and Fireball next",
+  "steps": [
+    {"id":"battle","expected":"Native arena battle begins","actions":[{"tap":[160,365]}],"settleSeconds":12},
+    {"id":"cycle-knight","expected":"Knight deploys on the friendly left; Fireball enters its hand slot","actions":[{"drag":[100,500,50,370]}],"settleSeconds":3},
+    {"id":"select-fireball","expected":"Check the displayed elixir cost","actions":[{"tap":[100,500]}],"settleSeconds":2},
+    {"id":"cast","expected":"Fireball travels to the opposing right tower","actions":[{"drag":[100,500,245,110]}],"settleSeconds":3},
+    {"id":"impact","expected":"Compare right tower HP and King tower activation","actions":[],"settleSeconds":12}
+  ]
+}

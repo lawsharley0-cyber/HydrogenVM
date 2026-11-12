@@ -34,6 +34,9 @@ static u32 checksum(const u8 *bytes,u32 size) {
     for(u32 i=0;i<size;++i)value=(value^bytes[i])*16777619u;
     return value;
 }
+#ifdef GUEST_MUSIC_LAB
+#include "music.inc"
+#endif
 #include "forge.inc"
 #include "reward_sources.inc"
 #include "clock.inc"

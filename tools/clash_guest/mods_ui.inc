@@ -61,16 +61,88 @@ static void mod_ui_refresh(int stats) {
         mod_send1(mod_fields[f],"setEnabled:",enabled);mod_send1(mod_minus[f],"setEnabled:",enabled);mod_send1(mod_plus[f],"setEnabled:",enabled);
     }
 }
+#ifdef GUEST_MUSIC_LAB
+#include "music_ui.inc"
+#endif
 #ifdef GUEST_ART_SOURCE_TOKEN
 #include "photo_import.inc"
 #endif
 #ifdef GUEST_MECH_CARD_COUNT
 #include "mechanics_ui.inc"
+#ifdef GUEST_SPELL_COUNT
+#include "spells_ui.inc"
+#endif
+#endif
+#ifdef GUEST_SPELL_COUNT
+static u32 lab_menu,lab_back,lab_heading;
+static void lab_show_menu(void){
+#ifdef GUEST_MUSIC_LAB
+    if(music_panel)mod_send1(music_panel,"setHidden:",1);
+    if(music_player)mod_send0(music_player,"stop");
+#endif
+#ifdef GUEST_FORGE_SPELLS
+    spell_clone_close();
+#endif
+    mod_send1(mod_window,"endEditing:",1);
+    mod_send1(mod_main_scroll,"setHidden:",1);
+    mod_send1(mech_scroll,"setHidden:",1);
+    if(spell_panel)mod_send1(spell_panel,"setHidden:",1);
+#ifdef GUEST_ART_SOURCE_TOKEN
+    if(photo_panel)mod_send1(photo_panel,"setHidden:",1);
+#endif
+    mod_send1(lab_menu,"setHidden:",0);
+    mod_send1(lab_back,"setHidden:",1);
+    mod_text(lab_heading,"Mod Lab");
+    mod_message("Choose an editor.");
+    mod_text(mod_status_label,mod_status);
+}
+static void lab_open_section(int tag){
+    static const char *titles[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab","Music"};
+    mod_send1(lab_menu,"setHidden:",1);
+    mod_send1(lab_back,"setHidden:",0);
+    mod_text(lab_heading,titles[tag-51]);
+    #ifdef GUEST_MUSIC_LAB
+    if(tag==56){music_open();return;}
+#endif
+    if(tag==55){spell_ui_open();return;}
+    if(tag==54){mech_showing=0;mech_ui_action(40);return;}
+    mod_send1(mod_main_scroll,"setHidden:",0);
+    float offset=tag==51?0:tag==52?168:792;
+    CALL(mod_msg,void,(u32,u32,ModSize))(mod_main_scroll,mod_sel("setContentOffset:"),(ModSize){0,offset});
+    mod_message(tag==53?"Select a unit in Unit tuning to clone it.":"Edit values, then save your changes.");
+    mod_text(mod_status_label,mod_status);
+}
+static void lab_setup(u32 root,ModRect bounds){
+    lab_back=mod_button(root,"Editors",50,(ModRect){bounds.w-164,10,78,38});
+    lab_menu=mod_send0(mod_send0(mod_class("UIScrollView"),"alloc"),"init");
+    mod_frame(lab_menu,(ModRect){0,54,bounds.w,bounds.h-110});
+    mod_send1(root,"addSubview:",lab_menu);
+    mod_send1(lab_menu,"setClipsToBounds:",1);
+    CALL(mod_msg,void,(u32,u32,ModSize))(lab_menu,mod_sel("setContentSize:"),(ModSize){bounds.w,448});
+    const char *names[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab","Music"};
+    const char *details[]={"Gold and gems","Speed, size, health and damage","Create cards and import artwork","Troops, projectiles and summons","Effects, cost and spell templates","Import menu and battle music"};
+    for(u32 i=0;i<6;++i){
+        float y=4+73*(float)i;
+        mod_button(lab_menu,names[i],51+(int)i,(ModRect){12,y,bounds.w-24,44});
+        mod_label(lab_menu,details[i],(ModRect){16,y+44,bounds.w-32,22},13);
+    }
+}
 #endif
 static void mod_close(void){mod_send1(mod_window,"endEditing:",1);mod_send1(mod_window,"setHidden:",1);if(mod_old_window)mod_send0(mod_old_window,"makeKeyAndVisible");}
 static void mod_action(u32 self,u32 selector,u32 sender) {
     (void)self;(void)selector;int tag=(int)mod_send0(sender,"tag");
+#ifdef GUEST_MUSIC_LAB
+    if(tag>=380 && tag<=386){music_action(tag);return;}
+    if(tag==10 && music_player)mod_send0(music_player,"stop");
+#endif
     if(tag==10){mod_close();return;}
+#ifdef GUEST_SPELL_COUNT
+    if(tag==50 || tag==345){lab_show_menu();return;}
+    if(tag>=51 && tag<=56){lab_open_section(tag);return;}
+    if(tag==41){lab_open_section(55);return;}
+    if(tag>=300 && tag<=371){spell_ui_action(tag);return;}
+    if(tag==40 && spell_panel)mod_send1(spell_panel,"setHidden:",1);
+#endif
 #ifdef GUEST_MECH_CARD_COUNT
     if(tag==40 || tag>=400){mech_ui_action(tag);return;}
 #endif
@@ -130,6 +202,10 @@ static void mod_action(u32 self,u32 selector,u32 sender) {
 static void mod_ui_open(void) {
     if(!mod_allowed()){mod_message("Mod Lab unlocks after the seven trainers.");return;}
     mod_initialize();
+#ifdef GUEST_SPELL_COUNT
+    spell_session_started=0;
+    if(spell_panel)mod_send1(spell_panel,"setHidden:",1);
+#endif
 #ifdef GUEST_ART_SOURCE_TOKEN
     if(photo_panel)mod_send1(photo_panel,"setHidden:",1);
 #endif
@@ -143,6 +219,10 @@ static void mod_ui_open(void) {
 #ifdef GUEST_ART_SOURCE_TOKEN
         if(!CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("imagePickerController:didFinishPickingMediaWithInfo:"),(u32)photo_finished,"v@:@@") || !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("imagePickerControllerDidCancel:"),(u32)photo_cancelled,"v@:@"))fail("Photo delegate registration failed");
 #endif
+#ifdef GUEST_MUSIC_LAB
+        if(!CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("documentPicker:didPickDocumentAtURL:"),(u32)music_picked,"v@:@@") ||
+           !CALL(symbol("class_addMethod"),int,(u32,u32,u32,const char*))(cls,mod_sel("documentPickerWasCancelled:"),(u32)music_cancelled,"v@:@"))fail("Music delegate registration failed");
+#endif
         CALL(symbol("objc_registerClassPair"),void,(u32))(cls);mod_target=mod_send0(mod_send0(cls,"alloc"),"init");
         mod_window=mod_send0(mod_send0(mod_class("UIWindow"),"alloc"),"init");
         ModRect bounds;CALL(symbol("objc_msgSend_stret"),void,(void*,u32,u32))(&bounds,mod_send0(mod_class("UIScreen"),"mainScreen"),mod_sel("bounds"));
@@ -150,7 +230,10 @@ static void mod_ui_open(void) {
         CALL(mod_msg,void,(u32,u32,float))(mod_window,mod_sel("setWindowLevel:"),10.0f);
         u32 root=mod_send0(mod_send0(mod_class("UIView"),"alloc"),"init");mod_frame(root,bounds);mod_send1(root,"setBackgroundColor:",mod_color(0.06f,0.09f,0.14f));
         u32 vc=mod_send0(mod_send0(mod_class("UIViewController"),"alloc"),"init");mod_send1(vc,"setView:",root);mod_send1(mod_window,"setRootViewController:",vc);
-        mod_label(root,"MOD LAB",(ModRect){12,14,180,30},22);mod_button(root,"Close",10,(ModRect){bounds.w-80,12,68,32});
+        #ifdef GUEST_SPELL_COUNT
+        lab_heading=
+#endif
+        mod_label(root,"Mod Lab",(ModRect){12,14,180,30},22);mod_button(root,"Close",10,(ModRect){bounds.w-80,12,68,32});
         u32 scroll=mod_send0(mod_send0(mod_class("UIScrollView"),"alloc"),"init");mod_frame(scroll,(ModRect){0,54,bounds.w,bounds.h-110});mod_send1(root,"addSubview:",scroll);mod_send1(scroll,"setClipsToBounds:",1);
 #ifdef GUEST_MECH_CARD_COUNT
         mod_main_scroll=scroll;
@@ -163,6 +246,9 @@ static void mod_ui_open(void) {
         mod_button(scroll,"-10",22,(ModRect){204,74,48,32});mod_button(scroll,"+10",23,(ModRect){258,74,50,32});
         mod_button(scroll,"Save balances",24,(ModRect){12,118,296,34});
         mod_label(scroll,"Unit blueprints",(ModRect){12,168,200,26},18);
+#ifdef GUEST_SPELL_COUNT
+        mod_button(scroll,"Spells",41,(ModRect){220,168,88,30});
+#endif
         mod_button(scroll,"<",12,(ModRect){12,204,40,32});mod_unit_label=mod_label(scroll,"",(ModRect){60,204,198,32},17);mod_button(scroll,">",13,(ModRect){268,204,40,32});
         mod_toggle=mod_button(scroll,"",11,(ModRect){12,246,296,32});
         const char *names[MOD_FIELDS]={"Move speed %","Attack speed %","Windup speed %","Troop size %","Shot speed %","Health %","Damage %","Attack range %"};
@@ -187,13 +273,21 @@ static void mod_ui_open(void) {
         mod_status_label=mod_label(root,"",(ModRect){12,bounds.h-52,bounds.w-24,46},12);mod_send1(mod_status_label,"setNumberOfLines:",2);
 #ifdef GUEST_MECH_CARD_COUNT
         mech_ui_setup(root,bounds);
+#ifdef GUEST_SPELL_COUNT
+        mod_send1(mod_mech_button,"setHidden:",1);
+        lab_setup(root,bounds);
+#endif
 #endif
     }
 #ifdef GUEST_MECH_CARD_COUNT
     mech_ui_begin();
 #endif
     void *home,*avatar;if(mod_home(&home,&avatar)){mod_set_number(mod_gold_field,CALL(0x9ab55,u32,(void*))(avatar));mod_set_number(mod_gem_field,CALL(0x9a41d,u32,(void*))(avatar));}
-    mod_message(mod_profile_rejected?"Saved modifiers rejected. Reset draft.":"Edit, then save. Close cancels draft.");mod_ui_refresh(1);mod_send1(mod_window,"setHidden:",0);mod_send0(mod_window,"makeKeyAndVisible");
+    mod_message(mod_profile_rejected?"Saved modifiers rejected. Reset draft.":"Edit, then save. Close cancels draft.");mod_ui_refresh(1);
+#ifdef GUEST_SPELL_COUNT
+    lab_show_menu();
+#endif
+    mod_send1(mod_window,"setHidden:",0);mod_send0(mod_window,"makeKeyAndVisible");
 }
 static void mod_tick(void) {
     if(!save_initialized || !logged_in || battle_started)return;

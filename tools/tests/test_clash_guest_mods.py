@@ -30,7 +30,7 @@ class ModLabTests(unittest.TestCase):
 typedef unsigned int u32;typedef unsigned char u8;
 #define GUEST_MOD_UNIT_COUNT 2
 #define FORGE_MAX_CARDS 16u
-static u32 forge_loaded_count=0;
+static u32 forge_unit_count=0;
 #define FIELD(p,n) (*(u32*)((char*)(p)+(n)))
 #define API_puts puts
 #define CALL(address,result,args) ((result (*)args)(address))
@@ -97,7 +97,7 @@ int main(int argc,char **argv){
 typedef unsigned int u32;
 #define GUEST_MOD_UNIT_COUNT 2
 #define FORGE_MAX_CARDS 16u
-static u32 forge_loaded_count=1;
+static u32 forge_unit_count=1;
 #define FIELD(p,n) (*(u32*)((char*)(p)+(n)))
 #define API_puts puts
 #define CALL(address,result,args) ((result (*)args)(address))

@@ -51,26 +51,39 @@ def decode_registry(data, previous=None):
     return registry
 
 
-def guest_header(bundle, entries):
+# These pinned spells have a single projectile and no secondary/area effect.
+SPELL_BASES = {28000000: "Fireball", 28000003: "Rocket"}
+SPELL_TABLE = "res/csv_logic/spells_other.csv"
+
+
+def guest_header(bundle, entries, *, spell_clones=False):
     """Private append templates for a freestanding guest; never distribute CSVs.
 
     Derive templates through the same reference generator used by the authored
     fixtures, avoiding a second independent CSV parser on the phone.
     """
-    originals = {path: (Path(bundle)/path).read_bytes() for path in FORGE_TABLES}
-    lines = ['struct ForgeBlueprint {unsigned id; const char *rows[6];};',
-             'static const char *forge_table_paths[6]={' + ','.join(json.dumps(p) for p in FORGE_TABLES) + '};',
-             'static const unsigned forge_source_sizes[6]={' + ','.join(str(len(originals[p])) for p in FORGE_TABLES) + '};',
-             'static const unsigned forge_source_hashes[6]={' + ','.join(str(fnv(originals[p]))+'u' for p in FORGE_TABLES) + '};']
-    counts = [len(Table(bundle, 'logic', t).groups) for t in ('spells_characters', 'spells_buildings')]
-    lines.append('static const unsigned forge_group_counts[2]={' + ','.join(map(str, counts)) + '};')
-    lines.append('static const struct ForgeBlueprint forge_blueprints[GUEST_MOD_UNIT_COUNT]={')
+    paths = (*FORGE_TABLES, SPELL_TABLE) if spell_clones else FORGE_TABLES
+    originals = {path: (Path(bundle)/path).read_bytes() for path in paths}
+    lines = [f'#define FORGE_TABLE_COUNT {len(paths)}',
+             'struct ForgeBlueprint {unsigned id; const char *rows[FORGE_TABLE_COUNT];};',
+             'static const char *forge_table_paths[]={' + ','.join(json.dumps(p) for p in paths) + '};',
+             'static const unsigned forge_source_sizes[]={' + ','.join(str(len(originals[p])) for p in paths) + '};',
+             'static const unsigned forge_source_hashes[]={' + ','.join(str(fnv(originals[p]))+'u' for p in paths) + '};']
+    tables = ['spells_characters', 'spells_buildings']
+    if spell_clones:
+        lines.append('#define GUEST_FORGE_SPELLS 1')
+        tables.append('spells_other')
+        entries = [*entries, *(dict(cardId=id_) for id_ in SPELL_BASES)]
+    counts = [len(Table(bundle, 'logic', t).groups) for t in tables]
+    lines.append('static const unsigned forge_group_counts[]={' + ','.join(map(str, counts)) + '};')
+    lines.append('static const struct ForgeBlueprint forge_blueprints[]={')
     tokens = {'ModLabCard_0000': '@CARD@', 'ModLabUnit_0000': '@UNIT@',
               'ModLabShot_0000': '@SHOT@', 'TID_MODLAB_0000': '@TID@', 'FORGE_NAME_TOKEN': '@NAME@'}
+    spell_icons = []
     for entry in entries:
         overlays, _ = generate_overlays(bundle, dict(version=1, cards=[dict(slot=0, baseCardId=entry['cardId'], name='FORGE_NAME_TOKEN')]))
         rows = []
-        for path in FORGE_TABLES:
+        for path in paths:
             suffix = overlays.get(path, originals[path])[len(originals[path]):]
             if suffix and not originals[path].endswith(b'\n'):
                 assert suffix.startswith(b'\r\n')
@@ -82,9 +95,18 @@ def guest_header(bundle, entries):
                 text = text.replace(name, token)
             if len(text.encode()) + text.count('@NAME@') * 194 > 65536:
                 raise ValueError('Custom row template exceeds guest bound')
+            if path == SPELL_TABLE and entry['cardId'] in SPELL_BASES:
+                parsed = list(csv.reader(io.StringIO(text)))
+                parsed[0][Table(bundle, 'logic', 'spells_other').header.index('IconFile')] = '@ICON@'
+                output = io.StringIO(newline='')
+                csv.writer(output, lineterminator='\r\n').writerows(parsed)
+                spell_icons.append(json.dumps(output.getvalue()))
             rows.append(json.dumps(text, ensure_ascii=False))
         lines.append('{' + str(entry['cardId']) + ',{' + ','.join(rows) + '}},')
-    return '\n'.join(lines + ['};']) + '\n'
+    lines.append('};')
+    if spell_clones:
+        lines.append('static const char *forge_spell_icons[]={' + ','.join(spell_icons) + '};')
+    return '\n'.join(lines) + '\n'
 
 
 class Table:
@@ -144,8 +166,8 @@ def validate_registry(registry, previous=None):
     for slot, card in enumerate(cards):
         if not isinstance(card, dict) or set(card) != {'slot', 'baseCardId', 'name'}:
             raise ValueError('Invalid custom-card record')
-        if type(card['slot']) is not int or card['slot'] != slot or type(card['baseCardId']) is not int or card['baseCardId'] // 1000000 not in (26, 27):
-            raise ValueError('Slots must be append-only troop/building definitions')
+        if type(card['slot']) is not int or card['slot'] != slot or type(card['baseCardId']) is not int or (card['baseCardId'] // 1000000 not in (26, 27) and card['baseCardId'] not in SPELL_BASES):
+            raise ValueError('Invalid custom slot or unsupported base card')
         name = card['name']
         if not isinstance(name, str) or not name.strip() or len(name) > 32 or len(name.encode('utf-8')) > 96 or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '\u2028\u2029' for c in name):
             raise ValueError('Custom name must be single-line text, at most 32 characters/96 UTF-8 bytes')
@@ -196,6 +218,9 @@ def generate_overlays(bundle, registry, previous=None):
               ('characters', 'buildings', 'spells_characters', 'spells_buildings', 'projectiles')}
     texts = Table(bundle, 'client', 'texts')
     spell_tables = {26: tables['spells_characters'], 27: tables['spells_buildings']}
+    if any(c['baseCardId'] in SPELL_BASES for c in cards):
+        tables['spells_other'] = Table(bundle, 'logic', 'spells_other')
+        spell_tables[28] = tables['spells_other']
     metadata = []
     for card in cards:
         kind, index = divmod(card['baseCardId'], 1000000)
@@ -203,27 +228,38 @@ def generate_overlays(bundle, registry, previous=None):
         if index >= len(spells.groups):
             raise ValueError('Unknown original base card ID')
         spell = [r[:] for r in spells.groups[index]]
-        unit_name = spells.value(spell[0], 'SummonCharacter')
-        units = tables['characters' if kind == 26 else 'buildings']
-        unit = units.get(unit_name)
         suffix = f'{card["slot"]:04d}'
-        spell_name, unit_name, tid = f'ModLabCard_{suffix}', f'ModLabUnit_{suffix}', f'TID_MODLAB_{suffix}'
-        spell[0][0], unit[0][0] = spell_name, unit_name
-        spells.set(spell[0], 'SummonCharacter', unit_name)
+        spell_name, tid = f'ModLabCard_{suffix}', f'TID_MODLAB_{suffix}'
+        if kind == 28:
+            if (spell[0][0] != SPELL_BASES[card['baseCardId']] or
+                    any(spells.value(spell[0], field) for field in ('AreaEffectObject', 'CustomFirstProjectile', 'SummonCharacter', 'Mirror'))):
+                raise ValueError("Unsupported clone effect graph")
+            unit_name = ''
+            owner, owner_row = spells, spell[0]
+        else:
+            units = tables['characters' if kind == 26 else 'buildings']
+            unit = units.get(spells.value(spell[0], 'SummonCharacter'))
+            unit_name = f'ModLabUnit_{suffix}'
+            unit[0][0] = unit_name
+            spells.set(spell[0], 'SummonCharacter', unit_name)
+            units.set(unit[0], 'TID', tid)
+            units.append(unit)
+            owner, owner_row = units, unit[0]
+        spell[0][0] = spell_name
         spells.set(spell[0], 'NotInUse', 'true')
         spells.set(spell[0], 'TID', tid)
-        units.set(unit[0], 'TID', tid)
-        projectile = units.value(unit[0], 'Projectile')
+        projectile = owner.value(owner_row, 'Projectile')
+        if kind == 28 and not projectile:
+            raise ValueError("Missing clone projectile")
         if projectile:
             shots = tables['projectiles']
             shot = shots.get(projectile)
             projectile = f'ModLabShot_{suffix}'
             shot[0][0] = projectile
             shots.append(shot)
-            units.set(unit[0], 'Projectile', projectile)
+            owner.set(owner_row, 'Projectile', projectile)
         custom_id = kind * 1000000 + len(spells.groups) + len(spells.additions)
         spells.append(spell)
-        units.append(unit)
         text = [''] * len(texts.header)
         text[0] = tid
         for i, language in enumerate(texts.header[1:], 1):

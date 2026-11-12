@@ -1,5 +1,17 @@
 # HydrogenVM — handoff (2026-10-20)
 
+November 11 music continuation. [Custom menu and battle music](clash-royale/CUSTOM_MUSIC_2026-11-11.md) records independent menu/battle assignments, training-preserving aliases, shared Files bridge and native validation status.
+
+November 11 priority. Build [custom music](clash-royale/SANDBOX_ROADMAP_2026-11-10.md#next-milestone--custom-music) before Arrows. Start with Files import, menu playback, offline relaunch and restore.
+
+November 11. [Custom spell creation](clash-royale/SPELL_FORGE_2026-11-11.md) covers Fireball and Rocket clones, private projectiles, Photos icons and native validation.
+
+November 11. [Mod Lab workshop](clash-royale/MOD_WORKSHOP_2026-11-11.md) covers editor navigation, spell templates, mutation, preset exchange and the native comparison harness.
+
+November 10 update. [Spell Lab](clash-royale/SPELL_LAB_2026-11-10.md) documents the guest spell controls, save compatibility and native battle checks. [Sandbox roadmap](clash-royale/SANDBOX_ROADMAP_2026-11-10.md) includes custom music import.
+
+November 10 sandbox direction: [SANDBOX_ROADMAP_2026-11-10.md](clash-royale/SANDBOX_ROADMAP_2026-11-10.md) records every discussed sandbox idea and primary research sources, including the owner's custom-music addition. Dedicated spell editing is the current first implementation step; all other entries are proposals. Keep original training and earned saves intact.
+
 November 10 current: [Phone Photos](clash-royale/PHONE_PHOTOS_2026-11-10.md) adds a shared UIImagePickerController/PHPicker bridge and on-device custom-card art conversion. Both a new Hydrogen host and new Clash guest are required; preserve the existing instance/data. ART2 atomically selects immutable art generations and continues reading ART1. Runtime 690/26 Test Lab and 71 focused guest checks pass; physical iPhone Photos selection remains unqualified. Never redirect decompressed swfcache files.
 
 November 9 current: [Card behavior + custom PNG images](clash-royale/MOD_CUSTOMIZATION_2026-11-09.md) records the Spawns controls, MCH1 optional profile, ART1 image packs, 67 focused checks, native two-troop deployment, image battle/relaunch and retained-file fallback. Overrides must match bundled res/sc source assets, never decompressed swfcache/sc files. PNG import currently uses the computer packer; static troop art and phone qualification limits are explicit. Keep original training and definition-linked saves intact.

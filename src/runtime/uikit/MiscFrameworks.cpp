@@ -329,6 +329,7 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
         .m<&vc_dismissMovie>("dismissMoviePlayerViewControllerAnimated", "v@:");
 
     registerPhotoPicker(p, r);
+    registerDocumentPicker(p, r);
 
     ObjC::ClassBuilder lm = r.defineClass("CLLocationManager", "NSObject");
     lm.cm<&locc_no>("locationServicesEnabled", "c@:").cm<&locc_no>("headingAvailable", "c@:")

@@ -1,3 +1,4 @@
+#include "forge_slots.inc"
 /* Optional MCH1 profile; native references resolved afresh, never persisted. */
 #include "mechanics_rules.inc"
 #define MECH_CAPACITY (GUEST_MECH_CARD_COUNT+FORGE_MAX_CARDS)
@@ -11,9 +12,9 @@ static int mech_rejected,mech_reset_requested;
 static char mech_path[512];
 static const u32 mech_offsets[12]={0x7c,0x1ac,0xb4,0xbc,0x64,0x68,0x58,0x50,0x88,0x1b0,0x1c0,0x74};
 static const u8 mech_roles[12]={0,1,1,1,1,1,2,2,2,1,1,0};
-static u32 mech_count(void){return GUEST_MECH_CARD_COUNT+forge_loaded_count;}
-static u32 mech_id(u32 i){return i<GUEST_MECH_CARD_COUNT?mech_cards[i].id:forge_ids[i-GUEST_MECH_CARD_COUNT];}
-static const char *mech_name(u32 i){return i<GUEST_MECH_CARD_COUNT?mech_cards[i].name:forge_records[i-GUEST_MECH_CARD_COUNT].name;}
+static u32 mech_count(void){return GUEST_MECH_CARD_COUNT+forge_unit_count;}
+static u32 mech_id(u32 i){return i<GUEST_MECH_CARD_COUNT?mech_cards[i].id:forge_ids[FORGE_UNIT_SLOT(i-GUEST_MECH_CARD_COUNT)];}
+static const char *mech_name(u32 i){return i<GUEST_MECH_CARD_COUNT?mech_cards[i].name:forge_records[FORGE_UNIT_SLOT(i-GUEST_MECH_CARD_COUNT)].name;}
 static void *mech_object(u32 i,u32 prop){struct MechNative *n=&mech_native[i];return mech_roles[prop]==0?n->spell:mech_roles[prop]==1?n->unit:n->impact;}
 static void mech_write(u32 i,u32 prop,u32 value){void *p=mech_object(i,prop);if(p)FIELD(p,mech_offsets[prop])=value;}
 static int mech_supported(u32 i,u32 field){

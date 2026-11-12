@@ -455,6 +455,10 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 - (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId;
 @end
 
+@interface HVMDocumentPickerRequest ()
+- (instancetype)initWithRequest:(const RT::UIKit::DocumentPickerRequest &)q;
+@end
+
 @interface HVMMovieRequest ()
 - (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId path:(NSString *)path;
 @end
@@ -599,6 +603,13 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     HVMSession *s = weakSelf;
                     if (s && s.onTextInput) s.onTextInput(req);
+                });
+            });
+            RT::UIKit::setDocumentPickerObserver(*proc, [weakSelf](const RT::UIKit::DocumentPickerRequest &q) {
+                HVMDocumentPickerRequest *req = [[HVMDocumentPickerRequest alloc] initWithRequest:q];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    HVMSession *s = weakSelf;
+                    if (s && s.onDocumentPicker) s.onDocumentPicker(req);
                 });
             });
             RT::UIKit::setPhotoPickerObserver(*proc, [weakSelf](const RT::UIKit::PhotoPickerRequest &q) {
@@ -808,6 +819,13 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     dispatch_async(dispatch_get_main_queue(), ^{ resumeAudio(core); });
 }
 
+- (void)submitDocument:(NSString *)sourcePath requestId:(uint64_t)requestId {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lock(_core->mu); p = _core->proc; }
+    if (p) RT::UIKit::submitDocumentPickerResult(*p, requestId, sourcePath ? sourcePath.UTF8String : "");
+}
+
 - (void)submitPhoto:(NSData *)imageData requestId:(uint64_t)requestId {
     if (!_core->ready) return;
     std::shared_ptr<RT::Process> p;
@@ -880,6 +898,17 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 @end
 
 // --------------------------------------------------------------- engine ---
+
+@implementation HVMDocumentPickerRequest
+- (instancetype)initWithRequest:(const RT::UIKit::DocumentPickerRequest &)q {
+    if ((self = [super initWithActive:q.active requestId:q.requestId])) {
+        NSMutableArray<NSString *> *types = [NSMutableArray array];
+        for (const auto &type : q.types) [types addObject:[NSString stringWithUTF8String:type.c_str()]];
+        _types = [types copy];
+    }
+    return self;
+}
+@end
 
 @implementation HVMPhotoPickerRequest
 - (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId {

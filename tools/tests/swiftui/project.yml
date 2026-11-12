@@ -26,6 +26,8 @@ targets:
       - ../../../app/HydrogenVM/GameKeyboard.swift
       - ../../../app/HydrogenVM/GameMoviePlayer.swift
       - ../../../app/HydrogenVM/GamePhotoPicker.swift
+      - ../../../app/HydrogenVM/GameDocumentPicker.swift
+      - ../../../app/HydrogenVM/GameMoviePlayer.swift
       - ../../../app/HydrogenVM/FileBrowser.swift
       - ../../../app/HydrogenVM/RecentSaveFiles.swift
       - ../../../app/HydrogenVM/BinaryEditor.swift
