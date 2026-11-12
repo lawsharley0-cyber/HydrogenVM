@@ -11,9 +11,9 @@ Advanced opponent-AI refinement remains deferred. Keep earned saves intact.
 
 ## Next milestone — custom music
 
-The [menu music implementation](CUSTOM_MUSIC_2026-11-11.md) now supplies the Music editor, Files bridge, PCM WAV/MP3 import, preview, a persistent menu assignment and restore. Native signal/cancellation/rejection checks and the compiled host package are recorded in its handoff. Physical iPhone listening and Files presentation remain open. Battle/result assignments and playlists follow.
+The [menu and battle music implementation](CUSTOM_MUSIC_2026-11-11.md) now supplies the Music editor, Files bridge, PCM WAV/MP3 import, preview, independent persistent menu/battle assignments and restore. Native signal/cancellation/rejection checks and the compiled host package are recorded in its handoff. Physical iPhone listening and Files presentation remain open. Result assignments, playlists and volume controls follow.
 
-The pinned 2.1306.1 music.csv groups three entries under MenuMusic. BattleMusic has three entries and shares its first filename with TutorialMusic. Scope overrides to the selected context so an arena music choice preserves the original training soundtrack. Confirm the actual playback route in Hydrogen before implementing file substitution.
+The pinned 2.1306.1 music.csv groups three entries under MenuMusic. BattleMusic has three entries and shares its first filename with TutorialMusic. Scope overrides to the selected context so an arena music choice preserves the original training soundtrack. Battle-only aliases now isolate the native audio-open route; keep the fresh-training regression when extending this.
 
 - Import user-supplied audio through the iPhone Files picker/share/import flow.
   Begin with local, unprotected audio files; streaming-service catalog access

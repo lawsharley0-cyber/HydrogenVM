@@ -1,0 +1,70 @@
+{
+  "name": "Restore bundled battle music; relaunch after saving",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "Native settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "modlab",
+      "expected": "Mod Lab editors",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "music",
+      "expected": "Music editor",
+      "actions": [
+        {
+          "tap": [
+            160,
+            445
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "battle-context",
+      "expected": "Battle context highlighted",
+      "actions": [
+        {
+          "tap": [
+            235,
+            76
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "restore",
+      "expected": "Original battle soundtrack selected; menu.bin unchanged",
+      "actions": [
+        {
+          "tap": [
+            160,
+            300
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

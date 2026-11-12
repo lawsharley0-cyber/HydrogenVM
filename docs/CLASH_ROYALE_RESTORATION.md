@@ -1,6 +1,6 @@
 # Clash Royale solo restoration investigation
 
-November 11 music implementation. [Custom menu music](clash-royale/CUSTOM_MUSIC_2026-11-11.md) records the guest controls, shared Files bridge and validation status.
+November 11 music continuation. [Custom menu and battle music](clash-royale/CUSTOM_MUSIC_2026-11-11.md) records independent menu/battle assignments, training-preserving aliases, shared Files bridge and native validation status.
 
 November 11. [Custom spell creation](clash-royale/SPELL_FORGE_2026-11-11.md) covers Fireball and Rocket clones, private projectiles, Photos icons and native validation.
 

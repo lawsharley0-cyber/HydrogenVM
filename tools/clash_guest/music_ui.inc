@@ -1,11 +1,12 @@
 static u32 music_panel,music_picker,music_player,music_candidate_bytes,music_candidate_hash;
 static char music_candidate[560];
+static u32 music_context_buttons[2],music_use_button;
 static void music_status(const char *text){mod_message(text);mod_text(mod_status_label,mod_status);}
 static void music_stop(void){
     if(music_player){mod_send0(music_player,"stop");mod_send0(music_player,"release");music_player=0;}
 }
 static int music_write_header(u32 generation,u32 bytes,u32 hash){
-    char path[560],temporary[570];path_append(path,music_folder,"/menu.bin",sizeof path);path_append(temporary,path,".tmp",sizeof temporary);
+    char path[560],temporary[570];path_append(path,music_folder,music_headers[music_selected],sizeof path);path_append(temporary,path,".tmp",sizeof temporary);
     if(CALL(symbol("mkdir"),int,(const char*,int))(music_folder,0700) && *CALL(symbol("__error"),int*,(void))()!=17)return 0;
     u32 h[5]={0x3143554du,generation,bytes,hash,0};h[4]=checksum((u8*)h,16);
     void *f=CALL(symbol("fopen"),void*,(const char*,const char*))(temporary,"wb");if(!f)return 0;
@@ -15,7 +16,7 @@ static int music_write_header(u32 generation,u32 bytes,u32 hash){
     int closed=CALL(symbol("fclose"),int,(void*))(f);
     if(!ok || closed || CALL(symbol("rename"),int,(const char*,const char*))(temporary,path))return 0;
     music_generation=generation;music_bytes=bytes;music_hash=hash;
-    if(generation)music_path(music_file,generation);
+    if(generation){music_path(music_file,generation);music_tracks[music_selected].seconds=music_duration_bound(music_file,bytes);}
     return 1;
 }
 static int music_validate(const char *path,u32 *bytes,u32 *hash){
@@ -58,7 +59,13 @@ static void music_picked(u32 self,u32 selector,u32 picker,u32 url){
     music_stop();music_player=player;
     path_append(music_candidate,text,"",sizeof music_candidate);
     music_candidate_bytes=bytes;music_candidate_hash=hash;
-    music_status("Track ready. Preview or Use for menu.");music_dismiss(picker);
+    music_status("Track ready. Preview or save assignment.");music_dismiss(picker);
+}
+static void music_refresh(void){
+    for(u32 i=0;i<MUSIC_CONTEXTS;++i)
+        mod_send1(music_context_buttons[i],"setBackgroundColor:",i==music_selected?mod_color(.22f,.46f,.64f):mod_color(.14f,.30f,.50f));
+    mod_title(music_use_button,music_selected==MUSIC_MENU?"Use for menu":"Use for battles");
+    music_status(music_generation?"Custom track selected.":"Original soundtrack selected.");
 }
 static void music_open(void){
     music_initialize();
@@ -69,19 +76,25 @@ static void music_open(void){
         mod_frame(music_panel,(ModRect){0,54,bounds.w,bounds.h-110});mod_send1(root,"addSubview:",music_panel);
         mod_send1(music_panel,"setBackgroundColor:",mod_color(.06f,.09f,.14f));mod_send1(music_panel,"setClipsToBounds:",1);
         CALL(mod_msg,void,(u32,u32,ModSize))(music_panel,mod_sel("setContentSize:"),(ModSize){320,410});
-        mod_label(music_panel,"Menu soundtrack",(ModRect){12,4,296,30},20);
+        music_context_buttons[0]=mod_button(music_panel,"Menu",385,(ModRect){12,4,144,36});
+        music_context_buttons[1]=mod_button(music_panel,"Battle",386,(ModRect){164,4,144,36});
         mod_button(music_panel,"Import from Files",380,(ModRect){12,48,296,46});
         mod_button(music_panel,"Preview",381,(ModRect){12,106,144,42});
         mod_button(music_panel,"Stop",382,(ModRect){164,106,144,42});
-        mod_button(music_panel,"Use for menu",383,(ModRect){12,166,296,46});
+        music_use_button=mod_button(music_panel,"Use for menu",383,(ModRect){12,166,296,46});
         mod_button(music_panel,"Restore original music",384,(ModRect){12,226,296,46});
         mod_label(music_panel,"PCM WAV / MP3. 8 MB / 3 minutes.",(ModRect){12,292,296,28},12);
         mod_label(music_panel,"Restart Clash after changing music.",(ModRect){12,326,296,28},12);
     }
     mod_send1(music_panel,"setHidden:",0);
-    music_status(music_generation?"Custom menu track selected.":"Original menu soundtrack selected.");
+    music_refresh();
 }
 static void music_action(int tag){
+    if(tag==385 || tag==386){
+        music_stop();music_selected=(u32)(tag-385);
+        if(music_generation)music_path(music_file,music_generation);
+        music_refresh();return;
+    }
     if(tag==380){
         u32 cls=mod_class("UIDocumentPickerViewController");
         if(!cls){music_status("Update Hydrogen to import from Files.");return;}
@@ -92,8 +105,8 @@ static void music_action(int tag){
         CALL(mod_msg,void,(u32,u32,u32,u32,u32))(mod_send0(mod_window,"rootViewController"),mod_sel("presentViewController:animated:completion:"),music_picker,1,0);
         mod_send0(music_picker,"release");
     }else if(tag==381){
-        if(!music_player && music_generation){
-            u32 url=mod_send1(mod_class("NSURL"),"fileURLWithPath:",mod_string(music_file));
+        if(!music_player && (music_candidate[0] || music_generation)){
+            u32 url=mod_send1(mod_class("NSURL"),"fileURLWithPath:",mod_string(music_candidate[0]?music_candidate:music_file));
             u32 error=0;music_player=CALL(mod_msg,u32,(u32,u32,u32,u32*))(mod_send0(mod_class("AVAudioPlayer"),"alloc"),mod_sel("initWithContentsOfURL:error:"),url,&error);
         }
         if(!music_player || !mod_send0(music_player,"play"))music_status("Import a playable track first.");
@@ -121,7 +134,7 @@ static void music_action(int tag){
         ok=ok && !flushed && fd>=0 && !CALL(symbol("fsync"),int,(int))(fd);
         int closed=CALL(symbol("fclose"),int,(void*))(out);
         if(ok && !closed && music_check(dest,music_candidate_bytes,music_candidate_hash) && music_write_header(generation,music_candidate_bytes,music_candidate_hash)){
-            music_status("Menu track saved. Restart Clash.");
+            music_status("Assignment saved. Restart Clash.");
         }else music_status("Save failed. Current assignment kept.");
     }
 }

@@ -1,4 +1,4 @@
-"""Native profile framing, menu scope and file-failure preservation checks."""
+"""Native context isolation, profile framing and file-failure preservation checks."""
 import shutil
 import struct
 import subprocess
@@ -23,7 +23,10 @@ typedef unsigned int u32;
 typedef unsigned char u8;
 #define CALL(address,result,args) ((result (*)args)(address))
 #define API_puts puts
-static const char music_loop_csv[]="authored menu CSV";
+#define API_printf printf
+static int save_initialized=1,committed_wins=7,battle_started=0,arena_battle=0;
+#define MUSIC_CSV_CAPACITY 256
+static const char *music_csv_variants[4]={"original","menu","battle","menu and battle"};
 static void fail(const char *why){fprintf(stderr,"%s",why);exit(4);}
 static uintptr_t symbol(const char *name){
 #define MAP(n,f) if(!strcmp(name,n))return (uintptr_t)f
@@ -53,20 +56,32 @@ class MusicTests(unittest.TestCase):
             root = Path(folder)
             file = root / "res/csv_client/music.csv"
             file.parent.mkdir(parents=True)
-            rows = [["Name", "Loop", "PlayCount", "FadeOutTimeSec", "DurationSec"],
-                    ["String", "boolean", "int", "int", "int"],
-                    ["TutorialMusic", "true", "", "", ""],
-                    ["MenuMusic", "", "2", "30", "96"],
-                    ["", "", "2", "30", "96"], ["", "", "2", "30", "96"],
-                    ["BattleMusic", "true", "", "", ""]]
+            rows = [["Name", "FileName", "Loop", "PlayCount", "FadeOutTimeSec", "DurationSec"],
+                    ["String", "String", "boolean", "int", "int", "int"],
+                    ["TutorialMusic", "music/shared.ogg", "true", "", "", ""],
+                    ["MenuMusic", "music/menu.ogg", "", "2", "30", "96"],
+                    ["", "music/menu2.ogg", "", "2", "30", "96"],
+                    ["", "music/menu3.ogg", "", "2", "30", "96"],
+                    ["BattleMusic", "music/shared.ogg", "true", "", "", ""],
+                    ["", "music/battle2.ogg", "true", "", "", ""],
+                    ["", "music/battle3.ogg", "true", "", "", ""]]
             with file.open("w", newline="") as stream:
                 csv.writer(stream).writerows(rows)
-            encoded = header(root).split("=", 1)[1].strip().removesuffix(";")
-            actual = list(csv.reader(io.StringIO(json.loads(encoded))))
-            self.assertEqual(actual[:3], rows[:3])
-            self.assertEqual(actual[-1], rows[-1])
-            self.assertEqual(actual[3:6], [["MenuMusic", "true", "2", "0", "@MUSIC_SECONDS@"],
-                                         ["", "true", "2", "0", "@MUSIC_SECONDS@"], ["", "true", "2", "0", "@MUSIC_SECONDS@"]])
+            encoded = header(root).split("static const char *music_csv_variants[4]=", 1)[1].strip().removesuffix(";")
+            variants = json.loads(encoded.replace("{", "[", 1)[:-1] + "]")
+            for mask, text in enumerate(variants):
+                actual = list(csv.reader(io.StringIO(text)))
+                self.assertEqual(actual[:3], rows[:3])
+                for index in range(3, 6):
+                    expected = rows[index][:]
+                    if mask & 1:
+                        expected[2], expected[4], expected[5] = "true", "0", "@MUSIC_SECONDS@"
+                    self.assertEqual(actual[index], expected)
+                for index in range(6, 9):
+                    expected = rows[index][:]
+                    if mask & 2:
+                        expected[1] = f"music/modlab_battle_{index-6}.ogg"
+                    self.assertEqual(actual[index], expected)
 
     def test_duration_is_bounded_before_decode(self):
         import wave
@@ -113,7 +128,15 @@ int main(int argc,char **argv){
             source.write_text(PREAMBLE + module + r'''
 int main(void){
     music_initialize();
-    printf("selected=%u\n",music_generation);
+    if(music_battle_alias("/app/res/music/ios/modlab_battle_0.m4a")!=0 ||
+       music_battle_alias("/app/res/music/ios/modlab_battle_2.m4a")!=2 ||
+       music_battle_alias("/app/res/music/ios/2min_loop_battle_01.m4a")!=-1 ||
+       music_battle_alias("/app/res/music/ios/modlab_battle_3.m4a")!=-1)return 12;
+    if(!music_battle_allowed())return 13;
+    committed_wins=6;if(music_battle_allowed())return 14;
+    committed_wins=7;battle_started=1;if(music_battle_allowed())return 15;
+    arena_battle=1;if(!music_battle_allowed())return 16;
+    printf("selected=%u battle=%u mask=%u\n",music_generation,music_tracks[MUSIC_BATTLE].generation,music_mask());
     const char *valid[]={"/app/res/music/ios/menu_03.m4a","res/music/ios/wizmen04.m4a","/app/res/music/ios/new_menu_01.m4a"};
     for(int i=0;i<3;++i)if(!music_menu_path(valid[i]))return 10;
     const char *invalid[]={"/app/res/music/ios/2min_loop_battle_01.m4a","/app/res/music/ios/scroll_win_02.m4a","/app/other/menu_03.m4a","/app/xres/music/ios/menu_03.m4a","/app/res/music/ios/menu_03.m4a.tmp"};
@@ -123,11 +146,11 @@ int main(void){
 ''')
             exe = root / "probe"
             subprocess.run(["clang", "-w", "-fno-builtin", "-I", str(ROOT / "tools/clash_guest"), str(source), "-o", str(exe)], check=True)
-            def run(expected):
+            def run(expected, battle=0):
                 import os
                 result = subprocess.run([str(exe)], env=dict(os.environ, HOME=str(root)), capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(f"selected={expected}", result.stdout)
+                self.assertIn(f"selected={expected} battle={battle} mask={(1 if expected else 0) | (2 if battle else 0)}", result.stdout)
             run(0)
             import io
             import wave
@@ -142,10 +165,21 @@ int main(void){
             profile = directory / "menu.bin"
             profile.write_bytes(data)
             run(1)
+            battle_profile = directory / "battle.bin"
+            battle_profile.write_bytes(data)
+            run(1, 1)
+            self.assertEqual(profile.read_bytes(), data)
+            for bad in (data[:-1], data + b"x", data[:16] + bytes(4)):
+                battle_profile.write_bytes(bad)
+                run(1, 0)
+                self.assertEqual(battle_profile.read_bytes(), bad)
+                self.assertEqual(profile.read_bytes(), data)
+            battle_profile.write_bytes(data)
             for bad in (data[:-1], data + b"x", data[:16] + bytes(4)):
                 profile.write_bytes(bad)
-                run(0)
+                run(0, 1)
                 self.assertEqual(profile.read_bytes(), bad)
+                self.assertEqual(battle_profile.read_bytes(), data)
             profile.write_bytes(data)
             (directory / "track-00000001.audio").write_bytes(b"changed")
             run(0)

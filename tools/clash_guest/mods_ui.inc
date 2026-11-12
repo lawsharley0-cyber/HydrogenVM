@@ -120,7 +120,7 @@ static void lab_setup(u32 root,ModRect bounds){
     mod_send1(lab_menu,"setClipsToBounds:",1);
     CALL(mod_msg,void,(u32,u32,ModSize))(lab_menu,mod_sel("setContentSize:"),(ModSize){bounds.w,448});
     const char *names[]={"Account","Unit tuning","Card Forge","Spawns","Spell Lab","Music"};
-    const char *details[]={"Gold and gems","Speed, size, health and damage","Create cards and import artwork","Troops, projectiles and summons","Effects, cost and spell templates","Import and preview a menu soundtrack"};
+    const char *details[]={"Gold and gems","Speed, size, health and damage","Create cards and import artwork","Troops, projectiles and summons","Effects, cost and spell templates","Import menu and battle music"};
     for(u32 i=0;i<6;++i){
         float y=4+73*(float)i;
         mod_button(lab_menu,names[i],51+(int)i,(ModRect){12,y,bounds.w-24,44});
@@ -132,7 +132,7 @@ static void mod_close(void){mod_send1(mod_window,"endEditing:",1);mod_send1(mod_
 static void mod_action(u32 self,u32 selector,u32 sender) {
     (void)self;(void)selector;int tag=(int)mod_send0(sender,"tag");
 #ifdef GUEST_MUSIC_LAB
-    if(tag>=380 && tag<=384){music_action(tag);return;}
+    if(tag>=380 && tag<=386){music_action(tag);return;}
     if(tag==10 && music_player)mod_send0(music_player,"stop");
 #endif
     if(tag==10){mod_close();return;}
