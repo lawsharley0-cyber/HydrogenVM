@@ -2401,6 +2401,7 @@ void al_sourcei(Ctx& x, uint32_t sid, uint32_t param, int32_t val) {
     if (param == AL_BUFFER) { s.buffer = uint32_t(val); s.queuedBuffers.clear(); }
     else if (param == AL_LOOPING) s.looping = val != 0;
     else if (param == AL_SOURCE_RELATIVE) s.relative = val != 0;
+    audioTrace("alSourcei", sid, (uint64_t(param) << 32) | uint32_t(val));
     alUpdate(x, s);
 }
 void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
@@ -2445,7 +2446,34 @@ void al_sourcePlay(Ctx& x, uint32_t sid) {
     Audio::Mixer& mx = MX(x.proc);
     if (s.state == AL_PAUSED && s.voice) { mx.setPaused(s.voice, false); s.state = AL_PLAYING; return; }
     alRelease(x, s);   // playing again restarts from the beginning
-    if (!s.queuedBuffers.empty()) {
+    // A looping source repeats its whole queue and none of its buffers ever finish. The
+    // mixer only repeats a single sound, so the queue is joined into one (Pocket Ants queues
+    // its rain as one looping buffer; played as a stream it stopped after one pass).
+    Audio::Pcm joined;
+    int joinedRate = 0;
+    if (s.looping && !s.queuedBuffers.empty()) {
+        bool sameRate = true;
+        size_t total = 0;
+        for (uint32_t bid : s.queuedBuffers) {
+            if (!st.buffers.count(bid) || !st.buffers[bid].pcm) continue;
+            if (!joinedRate) joinedRate = st.buffers[bid].freq;
+            sameRate = sameRate && st.buffers[bid].freq == joinedRate;
+            total += st.buffers[bid].pcm->size();
+        }
+        if (sameRate && total != 0) {
+            if (s.queuedBuffers.size() == 1) joined = st.buffers[s.queuedBuffers.front()].pcm;
+            else {
+                std::vector<int16_t> all;
+                all.reserve(total);
+                for (uint32_t bid : s.queuedBuffers)
+                    if (st.buffers.count(bid) && st.buffers[bid].pcm) all.insert(all.end(), st.buffers[bid].pcm->begin(), st.buffers[bid].pcm->end());
+                joined = std::make_shared<const std::vector<int16_t>>(std::move(all));
+            }
+        }
+    }
+    if (joined) {
+        s.voice = mx.play(joined, joinedRate, alParams(s));
+    } else if (!s.queuedBuffers.empty()) {
         s.voice = mx.createStream(alParams(s));
         s.streaming = true;
         for (uint32_t bid : s.queuedBuffers)
