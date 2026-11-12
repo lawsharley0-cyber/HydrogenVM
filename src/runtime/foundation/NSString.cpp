@@ -355,23 +355,38 @@ uint32_t utf8Pointer(Ctx& x, id self) {
     return x.proc.allocCString(u);   // guest subclass: leaks a little, like an autoreleased buffer
 }
 uint32_t s_UTF8String(Ctx& x, id self, SEL) { return utf8Pointer(x, self); }
+// The bytes of a C string in an encoding: no byte-order mark (that belongs to dataUsingEncoding:,
+// an external form), wide encodings in the machine's little-endian order, and `unit` set to the
+// size of the terminator. A mark in front made Plants vs. Zombies read 0xFF as the typed letter.
+std::string cStringBytes(const std::u16string& s, uint32_t enc, bool* ok, uint32_t* unit) {
+    *unit = 1;
+    if (enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE) { *unit = 2; return encodeBytes(s, enc == kNSUnicode ? uint32_t(kNSUTF16LE) : enc, false, ok); }
+    if (enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE) { *unit = 4; return encodeBytes(s, enc == kNSUTF32 ? uint32_t(kNSUTF32LE) : enc, false, ok); }
+    return encodeBytes(s, enc, false, ok);
+}
 uint32_t s_cStringUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     if (enc == kNSUTF8 || enc == kNSASCII) return utf8Pointer(x, self);
     bool ok = true;
-    const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
+    uint32_t unit = 1;
+    const std::string b = cStringBytes(sv(x, self), enc, &ok, &unit);
     if (!ok) return 0;
-    return x.proc.allocCString(b);
+    if (unit == 1) return x.proc.allocCString(b);
+    const uint32_t buf = x.proc.heap().allocZeroed(uint32_t(b.size()) + unit);   // like an autoreleased buffer
+    if (buf && !b.empty()) x.mem.copyIn(buf, b.data(), b.size());
+    return buf;
 }
 bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc) {
     bool ok = true;
-    const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
-    if (!ok || b.size() + 1 > max) return false;
-    x.mem.copyIn(buf, b.c_str(), b.size() + 1);
+    uint32_t unit = 1;
+    std::string b = cStringBytes(sv(x, self), enc, &ok, &unit);
+    if (!ok || b.size() + unit > max) return false;
+    b.append(unit, '\0');
+    x.mem.copyIn(buf, b.data(), b.size());
     return true;
 }
 bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }
 uint32_t s_lengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; const std::string b = encodeBytes(sv(x, self), enc, false, &ok); return ok ? uint32_t(b.size()) : 0; }
-uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode ? 2 : 1); }
+uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return (enc == kNSUTF32 ? 4 : 0) + uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE ? 2 : enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE ? 4 : 1); }
 id s_dataUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     bool ok = true;
     const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
@@ -825,6 +840,24 @@ id constString(Process& p, const std::string& s) {
 std::string decodeBytes(const uint8_t* p, size_t n, uint32_t enc, bool* ok) {
     if (ok) *ok = true;
     switch (enc) {
+        case kNSUTF32: case kNSUTF32LE: case kNSUTF32BE: {   // to UTF-8; plain UTF-32 may start with a mark
+            bool be = enc == kNSUTF32BE;
+            size_t i = 0;
+            if (enc == kNSUTF32 && n >= 4) {
+                if (p[0] == 0xFF && p[1] == 0xFE && p[2] == 0 && p[3] == 0) i = 4;
+                else if (p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) { be = true; i = 4; }
+            }
+            if (n % 4 != 0 && ok) *ok = false;
+            std::u16string u;
+            for (; i + 4 <= n; i += 4) {
+                const uint32_t c = be ? (uint32_t(p[i]) << 24) | (uint32_t(p[i + 1]) << 16) | (uint32_t(p[i + 2]) << 8) | p[i + 3]
+                                      : (uint32_t(p[i + 3]) << 24) | (uint32_t(p[i + 2]) << 16) | (uint32_t(p[i + 1]) << 8) | p[i];
+                if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) { if (ok) *ok = false; u += char16_t(0xFFFD); }
+                else if (c >= 0x10000) { u += char16_t(0xD800 + ((c - 0x10000) >> 10)); u += char16_t(0xDC00 + ((c - 0x10000) & 0x3FF)); }
+                else u += char16_t(c);
+            }
+            return toUtf8(u);
+        }
         case kNSUTF8: case kNSASCII: case kNSNonLossyASCII: {
             // Validate UTF-8; ASCII decoding also accepts it.
             size_t i = 0;
@@ -852,15 +885,6 @@ std::string decodeBytes(const uint8_t* p, size_t n, uint32_t enc, bool* ok) {
             for (; i + 1 < n; i += 2) u += char16_t(be ? (p[i] << 8 | p[i + 1]) : (p[i + 1] << 8 | p[i]));
             return toUtf8(u);
         }
-        case kNSUTF32: {
-            U16 u;
-            for (size_t i = 0; i + 3 < n; i += 4) {
-                const uint32_t c = uint32_t(p[i]) | uint32_t(p[i + 1]) << 8 | uint32_t(p[i + 2]) << 16 | uint32_t(p[i + 3]) << 24;
-                if (c >= 0x10000) { u += char16_t(0xD800 + ((c - 0x10000) >> 10)); u += char16_t(0xDC00 + ((c - 0x10000) & 0x3FF)); }
-                else u += char16_t(c);
-            }
-            return toUtf8(u);
-        }
         case kNSMacOSRoman: {
             static const char16_t hi[128] = {
                 0xC4,0xC5,0xC7,0xC9,0xD1,0xD6,0xDC,0xE1,0xE0,0xE2,0xE4,0xE3,0xE5,0xE7,0xE9,0xE8,0xEA,0xEB,0xED,0xEC,0xEE,0xEF,0xF1,0xF3,0xF2,0xF4,0xF6,0xF5,0xFA,0xF9,0xFB,0xFC,
@@ -886,6 +910,21 @@ std::string encodeBytes(const std::u16string& s, uint32_t enc, bool lossy, bool*
         case kNSUnicode: { std::string out("\xFF\xFE", 2); for (char16_t c : s) { out += char(c & 0xFF); out += char(c >> 8); } return out; }
         case kNSUTF16LE: { std::string out; for (char16_t c : s) { out += char(c & 0xFF); out += char(c >> 8); } return out; }
         case kNSUTF16BE: { std::string out; for (char16_t c : s) { out += char(c >> 8); out += char(c & 0xFF); } return out; }
+        case kNSUTF32: case kNSUTF32LE: case kNSUTF32BE: {   // plain UTF-32 is an external form: it starts with a mark
+            std::string out;
+            if (enc == kNSUTF32) out.assign("\xFF\xFE\x00\x00", 4);
+            for (size_t i = 0; i < s.size(); ++i) {
+                uint32_t c = s[i];
+                if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (s[i + 1] - 0xDC00); ++i; }
+                else if (c >= 0xD800 && c <= 0xDFFF) {   // half a pair is not a character
+                    if (!lossy) { if (ok) *ok = false; return {}; }
+                    c = 0xFFFD;
+                }
+                if (enc == kNSUTF32BE) { out += char(c >> 24); out += char(c >> 16); out += char(c >> 8); out += char(c); }
+                else { out += char(c); out += char(c >> 8); out += char(c >> 16); out += char(c >> 24); }
+            }
+            return out;
+        }
         case kNSASCII: {
             std::string out;
             for (char16_t c : s) { if (c >= 0x80) { if (!lossy) { if (ok) *ok = false; return {}; } out += '?'; } else out += char(c); }

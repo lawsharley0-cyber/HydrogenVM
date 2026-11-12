@@ -2,6 +2,7 @@
 // registers, which the ABI wrapper takes care of).
 #include "runtime/Support.hpp"
 #include "runtime/Process.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -36,6 +37,48 @@ int32_t lround_f(Ctx&, float a) { return int32_t(std::lround(a)); }
 int32_t lrint_d(Ctx&, double a) { return int32_t(std::lrint(a)); }
 int32_t lrint_f(Ctx&, float a) { return int32_t(std::lrint(a)); }
 int64_t llround_d(Ctx&, double a) { return std::llround(a); }
+int64_t llrint_d(Ctx&, double a) { return std::isfinite(a) ? std::llrint(a) : 0; }
+int64_t llrint_f(Ctx&, float a) { return std::isfinite(a) ? std::llrint(a) : 0; }
+
+// ---- Accelerate (vDSP): the few vector routines apps use on recorded sound. Talking John
+// measures the microphone level with vDSP_maxmgv and scales and converts samples with
+// vDSP_vsmul and vDSP_vfix16; without them it never heard the player and its recording and
+// playback did not work. Strides are in elements; a stride of 0 or a negative one, or a
+// count the guest could not hold, does nothing.
+constexpr uint32_t kVdspMax = 16u << 20;
+bool vdspOk(int32_t stride, uint32_t n) { return stride > 0 && stride <= 4096 && n > 0 && n <= kVdspMax; }
+void vdsp_maxmgv(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, uint32_t n) {
+    if (!c) return;
+    float best = 0.0f;
+    if (a && vdspOk(ia, n))
+        for (uint32_t i = 0; i < n; ++i) best = std::max(best, std::fabs(x.mem.read<float>(a + i * uint32_t(ia) * 4)));
+    x.mem.write<float>(c, best);
+}
+void vdsp_maxv(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, uint32_t n) {
+    if (!c) return;
+    float best = -INFINITY;
+    if (a && vdspOk(ia, n))
+        for (uint32_t i = 0; i < n; ++i) best = std::max(best, x.mem.read<float>(a + i * uint32_t(ia) * 4));
+    x.mem.write<float>(c, best);
+}
+void vdsp_vsmul(Ctx& x, GuestPtr a, int32_t ia, GuestPtr b, GuestPtr c, int32_t ic, uint32_t n) {
+    if (!a || !b || !c || !vdspOk(ia, n) || !vdspOk(ic, n)) return;
+    const float k = x.mem.read<float>(b);
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<float>(c + i * uint32_t(ic) * 4, x.mem.read<float>(a + i * uint32_t(ia) * 4) * k);
+}
+void vdsp_vfix16(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, int32_t ic, uint32_t n) {
+    if (!a || !c || !vdspOk(ia, n) || !vdspOk(ic, n)) return;
+    for (uint32_t i = 0; i < n; ++i) {
+        const float v = x.mem.read<float>(a + i * uint32_t(ia) * 4);
+        // Truncation toward zero; out-of-range values saturate (the ARM conversion does).
+        const int16_t out = !(v == v) ? 0 : v >= 32767.0f ? 32767 : v <= -32768.0f ? -32768 : int16_t(v);
+        x.mem.write<int16_t>(c + i * uint32_t(ic) * 2, out);
+    }
+}
+void vdsp_vflt16(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, int32_t ic, uint32_t n) {
+    if (!a || !c || !vdspOk(ia, n) || !vdspOk(ic, n)) return;
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<float>(c + i * uint32_t(ic) * 4, float(x.mem.read<int16_t>(a + i * uint32_t(ia) * 2)));
+}
 double ldexp_d(Ctx&, double a, int32_t e) { return std::ldexp(a, e); }
 float ldexp_f(Ctx&, float a, int32_t e) { return std::ldexp(a, e); }
 double frexp_d(Ctx& x, double a, GuestPtr e) { int ex; const double r = std::frexp(a, &ex); x.mem.write<int32_t>(e, ex); return r; }
@@ -145,6 +188,13 @@ void registerLibcMath(Process& p) {
     p.def<&lrint_d>("_lrint");
     p.def<&lrint_f>("_lrintf");
     p.def<&llround_d>("_llround");
+    p.def<&llrint_d>("_llrint");
+    p.def<&llrint_f>("_llrintf");
+    p.def<&vdsp_maxmgv>("_vDSP_maxmgv");
+    p.def<&vdsp_maxv>("_vDSP_maxv");
+    p.def<&vdsp_vsmul>("_vDSP_vsmul");
+    p.def<&vdsp_vfix16>("_vDSP_vfix16");
+    p.def<&vdsp_vflt16>("_vDSP_vflt16");
     p.def<&ldexp_d>("_ldexp");
     p.def<&ldexp_d>("_scalbn");
     p.def<&ldexp_f>("_ldexpf");

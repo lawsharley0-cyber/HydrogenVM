@@ -648,6 +648,9 @@ void layoutRootView(Ctx& x, id window, id vc) {
     }
     boundsSizeChanged(x, view, old, {l.bounds.w, l.bounds.h});
     (void)window;
+    // Laid out for this orientation: rotateLegacyControllers must not turn it a second time
+    // if the controller later stops being a window's root.
+    VC(x, vc).legacyOrientation = o;
     setNeedsComposite(x);
 }
 const char* orientationName(int o) {
@@ -1063,6 +1066,11 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
 // from those callbacks; without them it drew landscape scenes unrotated in portrait.
 void rotateLegacyControllers(Ctx& x, const char* cause) {
     auto& u = ui(x);
+    // An app built for iPhone OS 2 turns its own picture: its view stays portrait and it draws
+    // rotated (PvZ reads the status bar orientation and rotates in OpenGL). UIKit only began
+    // turning a launch-landscape controller's view for apps built for 3.0 and later; doing it
+    // for PvZ turned its title a second time, upside down and half off the screen.
+    if (u.builtForIOS2) return;
     const int o = u.statusBarOrientation;
     for (id win : std::vector<id>(u.windows)) {
         ViewData& wd = V(x, win);
@@ -1070,6 +1078,21 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
         const id view = wd.subviews.front();
         const id vc = viewControllerOfView(x, view);
         if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o || !controllerSupports(x, vc, o)) continue;
+        // A view the app has already turned itself (a transform, or landscape-shaped bounds for
+        // a landscape orientation) is left as it is. Turning it again showed the whole game
+        // sideways, and nothing turned it back (a view that became the window's first subview
+        // while Minecraft PE's keyboard was up).
+        {
+            const LayerData& l = layerData(x, viewLayer(x, view));
+            const bool landscape = o == 3 || o == 4;
+            const bool turned = std::fabs(l.transform.m11 - 1.0f) > 1e-4f || std::fabs(l.transform.m12) > 1e-4f ||
+                                (landscape && l.bounds.w > l.bounds.h + 0.5f);
+            if (turned) {
+                x.proc.logf(LogLevel::Info, "Orientation: %s keeps its own layout for %s (%s)", rt(x).objectClassName(vc).c_str(), orientationName(o), cause);
+                VC(x, vc).legacyOrientation = o;
+                continue;
+            }
+        }
         const int from = VC(x, vc).legacyOrientation;
         x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, window-subview controller %s)", orientationName(from),
                     orientationName(o), cause, rt(x).objectClassName(vc).c_str());
@@ -1077,7 +1100,21 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
         const uint32_t noTime[2] = {0, 0};   // duration 0.0 (a double, after the int in r2: r3 and the stack)
         r.send(x.cpu, vc, "willRotateToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
         layoutRootView(x, win, vc);
-        r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        // iOS 2 had a two-step rotation, and a controller that implements it and not the
+        // one-step method gets those callbacks instead. PvZ runs its own turn between the two
+        // halves; without them it stayed half-turned and drew its title upside down.
+        const SEL oneStep = r.sel("willAnimateRotationToInterfaceOrientation:duration:");
+        const SEL firstHalf = r.sel("willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:");
+        const bool ownOneStep = r.lookup(r.classOf(vc), oneStep) != r.lookup(u.viewController, oneStep);
+        if (!ownOneStep && r.respondsTo(vc, firstHalf)) {
+            r.send(x.cpu, vc, "willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+            if (r.respondsTo(vc, r.sel("didAnimateFirstHalfOfRotationToInterfaceOrientation:")))
+                r.send(x.cpu, vc, "didAnimateFirstHalfOfRotationToInterfaceOrientation:", {uint32_t(o)});
+            if (r.respondsTo(vc, r.sel("willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:")))
+                r.send(x.cpu, vc, "willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:", {uint32_t(from), noTime[0], noTime[1]});
+        } else {
+            r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        }
         VC(x, vc).legacyOrientation = o;
         r.send(x.cpu, vc, "didRotateFromInterfaceOrientation:", {uint32_t(from)});
     }

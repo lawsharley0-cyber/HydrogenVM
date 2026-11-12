@@ -90,6 +90,9 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// Render OpenGL ES on the GPU (default YES). NO uses the software rasterizer.
 /// Takes effect at start.
 @property (nonatomic) BOOL useGPU;
+/// A game the player is playing (not a Test All Games run). Its run log is kept under
+/// Documents/Logs/Play, apart from test logs, so a test export can include it. Takes effect at start.
+@property (nonatomic) BOOL playSession;
 /// Test runs: check every GL call for errors and count draws (slower). Read the
 /// results from diagnostics (glErrors, glDraws, glEmptyPresents, glLastFrameDraws)
 /// and glErrorLog. Set before start.

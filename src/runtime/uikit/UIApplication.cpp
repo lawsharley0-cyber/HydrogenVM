@@ -551,6 +551,8 @@ void configureScreen(Ctx& x) {
         }
         u.initialOrientation = orientationFromString(o);
         u.statusBarOrientation = u.initialOrientation;
+        if (const Plist::Value* min = info->get("MinimumOSVersion"); min && !min->s.empty())
+            u.builtForIOS2 = std::atoi(min->s.c_str()) > 0 && std::atoi(min->s.c_str()) < 3;
         const Plist::Value* list = info->get("UISupportedInterfaceOrientations~iphone");
         if (!list) list = info->get("UISupportedInterfaceOrientations");
         if (list && list->type == Plist::Value::Type::Array && !list->array.empty()) {

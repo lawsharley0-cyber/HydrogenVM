@@ -24,6 +24,7 @@ targets:
       - ../../../app/HydrogenVM/PlayerOrientation.swift
       - ../../../app/HydrogenVM/PlayerViewport.swift
       - ../../../app/HydrogenVM/GameKeyboard.swift
+      - ../../../app/HydrogenVM/GameMoviePlayer.swift
       - ../../../app/HydrogenVM/GamePhotoPicker.swift
       - ../../../app/HydrogenVM/GameDocumentPicker.swift
       - ../../../app/HydrogenVM/GameMoviePlayer.swift

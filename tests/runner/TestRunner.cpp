@@ -3488,7 +3488,11 @@ int runFullSubsystemTests() {
             std::filesystem::create_directories(cx.proc.bundlePath(), ec);
             const std::string name = "hvm-relative-test.xml";
             { std::ofstream(cx.proc.bundlePath() + "/" + name) << "x"; }
+            // The same name made absolute against "/" first (PvZ builds a CFURL from
+            // "sounds/buttonclick.caf") resolves into the bundle too.
             relativeBundle = relativeBundle && cx.proc.hostPath(name) == cx.proc.bundlePath() + "/" + name &&
+                             cx.proc.hostPath("/" + name) == cx.proc.bundlePath() + "/" + name &&
+                             cx.proc.hostPath("/missing-everywhere.xml") == "/missing-everywhere.xml" &&
                              cx.proc.hostPath("missing-everywhere.xml") == "/missing-everywhere.xml";
             std::filesystem::remove(cx.proc.bundlePath() + "/" + name, ec);
         }
@@ -3685,6 +3689,74 @@ int runFullSubsystemTests() {
             std::printf("    legacy rotation: will %d did %d bounds %gx%g asked %d/%d gravity %g,%g queued %d\n",
                         willTo, didFrom, b.w, b.h, callsAfterFirst, asked, g[0], g[1], queued);
         check(rotated && gravity && queued, "window-subview controller rotates with callbacks; resting gravity and orientation notification follow");
+
+        // The same controller in three cases that must not be turned:
+        //  - an app built for iPhone OS 2 turns its own picture (PvZ drew its title upside down);
+        //  - a view the app already made landscape itself (turned twice, the whole game went
+        //    sideways and stayed: Minecraft PE with its keyboard up);
+        //  - and one with the iOS 2 two-step callbacks gets those, not the one-step call.
+        static int firstHalf = 0, secondHalf = 0;
+        firstHalf = secondHalf = 0;
+        ObjC::ClassBuilder twoStep = r.defineClass("HvmTwoStepRotationVC", "HvmLegacyRotationVC");
+        twoStep.method("willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:", [](Ctx& x) { firstHalf = int(x.cpu.r[2]); }, "v@:id")
+               .method("willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:", [](Ctx& x) { secondHalf = int(x.cpu.r[2]); }, "v@:id");
+        auto fresh = [&](ObjC::Class cls) {
+            const ObjC::id c = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, cls, r.selAlloc)), r.selInit));
+            const ObjC::id w = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+            r.send(cpu, w, "addSubview:", {ObjC::id(r.send(cpu, c, "view"))});
+            return c;
+        };
+        u.statusBarOrientation = 3;
+        u.accelFromHost = false;
+        const ObjC::id oldApp = fresh(legacy.cls());
+        u.builtForIOS2 = true;
+        willTo = 0;
+        UIKit::rotateLegacyControllers(cx, "test");
+        u.builtForIOS2 = false;
+        const auto oldBounds = UIKit::getRect(cx, ObjC::id(r.send(cpu, oldApp, "view")), "bounds");
+        const bool ios2Left = willTo == 0 && oldBounds.h > oldBounds.w;
+        r.send(cpu, ObjC::id(r.send(cpu, oldApp, "view")), "removeFromSuperview");
+        const ObjC::id own = fresh(legacy.cls());
+        UIKit::sendRect(cx, ObjC::id(r.send(cpu, own, "view")), r.sel("setBounds:"), {0, 0, 480, 320});
+        willTo = 0;
+        UIKit::rotateLegacyControllers(cx, "test");
+        const auto ownBounds = UIKit::getRect(cx, ObjC::id(r.send(cpu, own, "view")), "bounds");
+        const bool ownLeft = willTo == 0 && ownBounds.w == 480 && ownBounds.w > ownBounds.h;
+        r.send(cpu, ObjC::id(r.send(cpu, own, "view")), "removeFromSuperview");
+        const ObjC::id stepped = fresh(twoStep.cls());
+        willTo = 0;
+        UIKit::rotateLegacyControllers(cx, "test");
+        const bool halves = willTo == 3 && firstHalf == 3 && secondHalf == 1;
+        r.send(cpu, ObjC::id(r.send(cpu, stepped, "view")), "removeFromSuperview");
+        u.statusBarOrientation = savedOrientation;
+        u.accelFromHost = savedHost;
+        if (!(ios2Left && ownLeft && halves))
+            std::printf("    legacy rotation 2: ios2 %d own %d (%gx%g, will %d) halves %d/%d\n", ios2Left, ownLeft, ownBounds.w, ownBounds.h, willTo, firstHalf, secondHalf);
+        check(ios2Left, "an app built for iPhone OS 2 keeps its portrait view in landscape");
+        check(ownLeft, "a view the app already made landscape is not turned again");
+        check(halves, "a controller with the two-step rotation callbacks gets both halves");
+    }
+
+    // Accelerate's vector routines on recorded sound (Talking John), and long long rounding.
+    {
+        const uint32_t mem = proc.heap().allocZeroed(128);
+        const float in[4] = {0.25f, -0.75f, 0.5f, 40000.0f};
+        proc.mem().copyIn(mem, in, 16);
+        auto fn = [&](const char* sym, std::initializer_list<uint32_t> args) { return proc.callGuest(cpu, *proc.lookupSymbol(sym), args); };
+        fn("_vDSP_maxmgv", {mem, 1, mem + 32, 3});
+        const float peak = proc.mem().read<float>(mem + 32);
+        const float gain = 1000.0f;
+        proc.mem().write<float>(mem + 36, gain);
+        fn("_vDSP_vsmul", {mem, 1, mem + 36, mem + 48, 1, 4});
+        fn("_vDSP_vfix16", {mem + 48, 1, mem + 80, 1, 4});
+        const int16_t s0 = proc.mem().read<int16_t>(mem + 80), s1 = proc.mem().read<int16_t>(mem + 82), s3 = proc.mem().read<int16_t>(mem + 86);
+        double half = 2.5;
+        uint32_t bits[2];
+        std::memcpy(bits, &half, 8);
+        const int64_t rounded = int64_t(fn("_llrint", {bits[0], bits[1]}));
+        proc.heap().free(mem);
+        check(peak == 0.75f && s0 == 250 && s1 == -750 && s3 == 32767, "vDSP_maxmgv, vDSP_vsmul and vDSP_vfix16 work on guest arrays (and saturate)");
+        check(rounded == 2, "llrint rounds to even and returns a long long");
     }
 
     // NSUserDefaults hands out one long-lived object per stored value (Tiny Wings keeps the
@@ -7428,6 +7500,63 @@ int runFullSubsystemTests() {
         callAL("_alSourcePlay", {alSrc2});
         const size_t bothFrames = renderedFrames(8192);
         check(bothFrames >= 1990 && bothFrames <= 2000, "two OpenAL sources mix; a 22.05 kHz buffer plays at the right speed");
+        // A looping source repeats its queue and never finishes a buffer (Pocket Ants' rain is one
+        // queued buffer on a looping source; it stopped after a single pass).
+        {
+            callAL("_alSourceStop", {alSrc});
+            callAL("_alSourceStop", {alSrc2});
+            renderedFrames(4096);
+            const uint32_t loopIds = proc.heap().allocZeroed(16);
+            callAL("_alGenSources", {1, loopIds});
+            const uint32_t loopSrc = proc.mem().read<uint32_t>(loopIds);
+            callAL("_alSourcei", {loopSrc, 0x1007 /* AL_LOOPING */, 1});
+            proc.mem().write<uint32_t>(loopIds + 4, alBuf);
+            callAL("_alSourceQueueBuffers", {loopSrc, 1, loopIds + 4});
+            callAL("_alSourcePlay", {loopSrc});
+            const size_t loopFrames = renderedFrames(4096);   // four passes of the 1000-frame buffer
+            callAL("_alGetSourcei", {loopSrc, 0x1010 /* AL_SOURCE_STATE */, loopIds + 8});
+            callAL("_alGetSourcei", {loopSrc, 0x1016 /* AL_BUFFERS_PROCESSED */, loopIds + 12});
+            check(loopFrames >= 4000 && proc.mem().read<int32_t>(loopIds + 8) == 0x1012 && proc.mem().read<int32_t>(loopIds + 12) == 0,
+                  "a looping OpenAL source repeats its queued buffers and finishes none of them");
+            callAL("_alSourceStop", {loopSrc});
+            callAL("_alDeleteSources", {1, loopIds});
+            renderedFrames(4096);
+        }
+        // __maskrune answers for the class asked about: code built without the inline <ctype.h>
+        // calls it for ASCII too, and "yes" to iscntrl for a letter dropped typed characters.
+        {
+            auto mask = [&](int c, uint32_t m) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("___maskrune"), {uint32_t(c), m})); };
+            check(mask('L', 0x100 /* alpha */) != 0 && mask('L', 0x200 /* cntrl */) == 0 && mask('7', 0x400 /* digit */) != 0 &&
+                  mask('7', 0x100) == 0 && mask('\n', 0x200) != 0 && mask(' ', 0x40000 /* print */) != 0 && mask(-1, 0x500) == 0 && mask(200, 0x100) == 0,
+                  "__maskrune reports only the character classes in its mask");
+        }
+        // cStringUsingEncoding: / getCString: in a wide encoding give the characters alone: no
+        // byte-order mark (Plants vs. Zombies read 0xFF as the typed letter), a wide terminator.
+        {
+            auto& sr = ObjC::rt(proc);
+            const uint32_t lit = proc.allocCString("La");
+            const ObjC::id str = ObjC::id(sr.send(cpu, ObjC::id(sr.getClass("NSString")), "stringWithUTF8String:", {lit}));
+            const uint32_t wide = uint32_t(sr.send(cpu, str, "cStringUsingEncoding:", {10 /* NSUnicodeStringEncoding */}));
+            const bool utf16 = wide && proc.mem().read<uint16_t>(wide) == 'L' && proc.mem().read<uint16_t>(wide + 2) == 'a' && proc.mem().read<uint16_t>(wide + 4) == 0;
+            const uint32_t w32 = uint32_t(sr.send(cpu, str, "cStringUsingEncoding:", {0x9C000100u /* UTF-32LE */}));
+            const bool utf32 = w32 && proc.mem().read<uint32_t>(w32) == 'L' && proc.mem().read<uint32_t>(w32 + 4) == 'a' && proc.mem().read<uint32_t>(w32 + 8) == 0;
+            const uint32_t len32 = uint32_t(sr.send(cpu, str, "lengthOfBytesUsingEncoding:", {0x9C000100u}));
+            const bool can32 = (uint32_t(sr.send(cpu, str, "canBeConvertedToEncoding:", {0x9C000100u})) & 0xFF) != 0;
+            check(len32 == 8 && can32, "UTF-32 byte lengths and conversion checks match what getCString: writes");
+            const ObjC::id back = ObjC::id(sr.send(cpu, ObjC::id(sr.send(cpu, ObjC::id(sr.getClass("NSString")), sr.selAlloc)), "initWithBytes:length:encoding:", {w32, 8, 0x9C000100u}));
+            check(back && (uint32_t(sr.send(cpu, back, "isEqualToString:", {str})) & 0xFF) != 0 &&
+                  uint32_t(sr.send(cpu, str, "maximumLengthOfBytesUsingEncoding:", {0x8C000100u})) >= uint32_t(sr.send(cpu, str, "lengthOfBytesUsingEncoding:", {0x8C000100u})),
+                  "UTF-32 bytes read back as the same string, and the maximum length covers the mark");
+            const uint32_t out = proc.heap().allocZeroed(16);
+            std::memset(proc.mem().host(out), 0x55, 16);
+            const bool fits = (uint32_t(sr.send(cpu, str, "getCString:maxLength:encoding:", {out, 6, 10})) & 0xFF) != 0;
+            const bool tooSmall = (uint32_t(sr.send(cpu, str, "getCString:maxLength:encoding:", {out, 5, 10})) & 0xFF) == 0;
+            check(utf16 && utf32 && fits && tooSmall && proc.mem().read<uint16_t>(out) == 'L' && proc.mem().read<uint16_t>(out + 4) == 0 &&
+                  proc.mem().read<uint8_t>(out + 6) == 0x55,
+                  "C strings in UTF-16 and UTF-32 carry no byte-order mark and end with a wide terminator");
+            proc.heap().free(out);
+            proc.heap().free(lit);
+        }
 
         // AudioQueue test with guest ARMv7 callback
         const uint32_t aqOut = proc.heap().allocZeroed(32);
@@ -7491,6 +7620,97 @@ int runFullSubsystemTests() {
                   "AudioOutputUnitStart invokes the render callback and mixes its signed 16-bit stereo PCM");
             // CoreAudio's I/O thread has a 512 KB stack; Smash Hit's callback needs over 256 KB.
             check(renderStack >= (512u << 10), "AudioUnit render callbacks run on a thread with a 512 KB stack");
+        }
+
+        // A buffer asked for with no packet descriptions still has room for them (PvZ copies one
+        // per frame of its music between buffers and crashed on a null pointer).
+        {
+            const uint32_t outAt = proc.heap().allocZeroed(64);
+            const uint32_t fmt = proc.heap().allocZeroed(40);
+            proc.mem().write<double>(fmt, 44100.0);
+            const uint32_t lpcm[8] = {0x6C70636D, 0x0C, 4, 1, 4, 2, 16, 0};
+            proc.mem().copyIn(fmt + 8, lpcm, 32);
+            callAT("_AudioQueueNewOutput", {fmt, 0, 0, 0, 0, 0, outAt});
+            const uint32_t q = proc.mem().read<uint32_t>(outAt);
+            const uint32_t status = uint32_t(callAT("_AudioQueueAllocateBufferWithPacketDescriptions", {q, 4096, 0, outAt + 8}));
+            const uint32_t buf = proc.mem().read<uint32_t>(outAt + 8);
+            const bool room = status == 0 && buf && proc.mem().read<uint32_t>(buf + 20) != 0 && proc.mem().read<uint32_t>(buf + 16) >= 1024;
+            callAT("_AudioQueueDispose", {q, 1});
+            check(room, "an audio queue buffer asked for without packet descriptions still has room for one per frame");
+        }
+
+        // AudioQueueStop(queue, false) lets what is queued play to its end, and the queue's
+        // IsRunning listener hears about the start and the real stop (the Talking games wait for
+        // it before they listen again; stopping at once cut their answer short).
+        {
+            int finished = 0, notified = 0, finishedAtStopNotice = -1;
+            uint32_t noticeProp = 0, noticeUd = 0;
+            const auto outCb = proc.registerHostFunction("hvm_test_aq_drain_out", [&](Ctx&) { ++finished; });
+            const auto lisCb = proc.registerHostFunction("hvm_test_aq_drain_listener", [&](Ctx& cx) {
+                noticeUd = cx.cpu.r[0]; noticeProp = cx.cpu.r[2];
+                if (++notified == 2) finishedAtStopNotice = finished;
+            });
+            const uint32_t outAt = proc.heap().allocZeroed(64);
+            const uint32_t fmt = proc.heap().allocZeroed(40);
+            proc.mem().write<double>(fmt, 22050.0);
+            const uint32_t lpcm[8] = {0x6C70636D, 0x0C, 2, 1, 2, 1, 16, 0};
+            proc.mem().copyIn(fmt + 8, lpcm, 32);
+            callAT("_AudioQueueNewOutput", {fmt, outCb, 0, 0, 0, 0, outAt});
+            const uint32_t q = proc.mem().read<uint32_t>(outAt);
+            callAT("_AudioQueueAddPropertyListener", {q, 0x6171726E, lisCb, 77});
+            for (uint32_t i = 0; i < 2; ++i) {
+                callAT("_AudioQueueAllocateBuffer", {q, 2206, outAt + 8});
+                const uint32_t buf = proc.mem().read<uint32_t>(outAt + 8), data = proc.mem().read<uint32_t>(buf + 4);
+                for (uint32_t k = 0; k < 1103; ++k) proc.mem().write<int16_t>(data + k * 2, 9000);
+                proc.mem().write<uint32_t>(buf + 8, 2206);
+                callAT("_AudioQueueEnqueueBuffer", {q, buf, 0, 0});
+            }
+            callAT("_AudioQueueStart", {q, 0});
+            callAT("_AudioQueueStop", {q, 0});
+            auto isRunning = [&] {
+                proc.mem().write<uint32_t>(outAt + 16, 4);
+                callAT("_AudioQueueGetProperty", {q, 0x6171726E, outAt + 12, outAt + 16});
+                return proc.mem().read<uint32_t>(outAt + 12);
+            };
+            const uint32_t runningWhileQueued = isRunning();
+            size_t heard = 0;
+            for (int i = 0; i < 200 && notified < 2; ++i) {
+                heard += renderedFrames(1024);
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            }
+            const uint32_t runningAfter = isRunning();
+            check(runningWhileQueued == 1 && finished == 2 && finishedAtStopNotice == 2 && runningAfter == 0,
+                  "AudioQueueStop without inImmediate plays what is queued before the queue stops");
+            check(notified == 2 && noticeProp == 0x6171726E && noticeUd == 77,
+                  "an audio queue's IsRunning listener is told when it starts and when it has stopped");
+            // Removed, a listener hears nothing; an immediate stop is still immediate.
+            callAT("_AudioQueueRemovePropertyListener", {q, 0x6171726E, lisCb, 77});
+            callAT("_AudioQueueStart", {q, 0});
+            callAT("_AudioQueueStop", {q, 1});
+            for (int i = 0; i < 5; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            check(notified == 2 && isRunning() == 0, "a removed audio queue listener is not called, and an immediate stop stops at once");
+            // AudioQueueDispose(queue, false) on a playing queue: the sound finishes, the listener
+            // hears the stop, and only then is the queue gone.
+            callAT("_AudioQueueAddPropertyListener", {q, 0x6171726E, lisCb, 78});
+            {
+                callAT("_AudioQueueAllocateBuffer", {q, 2206, outAt + 8});
+                const uint32_t buf = proc.mem().read<uint32_t>(outAt + 8), data = proc.mem().read<uint32_t>(buf + 4);
+                for (uint32_t k = 0; k < 1103; ++k) proc.mem().write<int16_t>(data + k * 2, 9000);
+                proc.mem().write<uint32_t>(buf + 8, 2206);
+                callAT("_AudioQueueEnqueueBuffer", {q, buf, 0, 0});
+            }
+            const int finishedBefore = finished;
+            callAT("_AudioQueueStart", {q, 0});
+            callAT("_AudioQueueDispose", {q, 0});
+            const uint32_t aliveWhilePlaying = isRunning();
+            for (int i = 0; i < 200 && notified < 4; ++i) {
+                heard += renderedFrames(1024);
+                Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            }
+            const uint32_t gone = uint32_t(callAT("_AudioQueueAddPropertyListener", {q, 0x6171726E, lisCb, 79}));
+            check(aliveWhilePlaying == 1 && finished == finishedBefore + 1 && notified == 4 && noticeUd == 78 && gone != 0,
+                  "AudioQueueDispose without inImmediate plays what is queued, reports the stop, then frees the queue");
+            (void)heard;
         }
 
         // An AUGraph with a mixer feeding the output (Unreal Engine 3 sound effects): each mixer
@@ -8884,9 +9104,7 @@ int runFullSubsystemTests() {
                 proc.mem().write<uint32_t>(bAddr + 16, desc);
                 r.send(cpu, gccCls, "startWirelessControllerDiscoveryWithCompletionHandler:", {bAddr});
                 proc.heap().free(bAddr); // callback must hold a copied block
-                // Other ready work can end one runOnce before discovery's timer.
-                // Keep pumping within the same 50 ms completion budget.
-                Foundation::mainRunLoop(proc).runUntil(cpu, Foundation::now() + 0.05);
+                for (int i = 0; i < 20 && !called; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.05);
                 proc.heap().free(desc);
 
                 check(count == 0 && called == 1, "GCController controllers returns empty array and triggers discovery block");
@@ -11256,6 +11474,47 @@ int runFullSubsystemTests() {
                 return nullptr;
             }
         };
+        // A game that makes its drawable again (Minecraft PE lays its GL view out anew when its
+        // keyboard view is added) is told once more where the layer sits: the host may be
+        // showing it through a new layer, and a landscape game went unrotated without it.
+        {
+            struct PlacePlatform final : HostGL::Platform {
+                std::vector<std::array<float, 6>> told;
+                int storages = 0;
+                static void getIntegerv(uint32_t pname, int32_t* out) { *out = pname == 0x8CA7 ? 1 : 0; }   // GL_RENDERBUFFER_BINDING
+                const char* name() const override { return "placement-test"; }
+                void* createContext(int, void*, bool& desktop) override { desktop = false; return new uint8_t(1); }
+                void destroyContext(void* p) override { delete static_cast<uint8_t*>(p); }
+                bool makeCurrent(void*) override { return true; }
+                void* proc(void*, const char* n) override { return std::string(n) == "glGetIntegerv" ? reinterpret_cast<void*>(&PlacePlatform::getIntegerv) : nullptr; }
+                bool drawableStorage(void*, uint32_t, int, int, bool& handled) override { handled = true; ++storages; return true; }
+                void layerGeometry(uint32_t, const float unit[6]) override { told.push_back({unit[0], unit[1], unit[2], unit[3], unit[4], unit[5]}); }
+            };
+            auto place = std::make_shared<PlacePlatform>();
+            ProcessConfig pcfg;
+            pcfg.homePath = "/tmp/hvm_gl_placement";
+            pcfg.hostGL = place;
+            Process pproc(pcfg);
+            auto& pr = ObjC::rt(pproc);
+            auto& pcpu = pproc.mainThread().cpu;
+            const ObjC::Class pctxCls = pr.getClass("EAGLContext");
+            const ObjC::id pctx = ObjC::id(pr.send(pcpu, ObjC::id(pr.send(pcpu, ObjC::id(pctxCls), pr.selAlloc)), "initWithAPI:", {2}));
+            pr.send(pcpu, ObjC::id(pctxCls), "setCurrentContext:", {pctx});
+            const uint32_t layer = 0x4242;
+            const bool first = HostGL::renderbufferStorageFromDrawable(pproc, pctx, layer, 1136, 640);
+            const float turned[6] = {0, -2, 2, 0, 0, 1136};   // a landscape game on a 640x1136 screen
+            HostGL::layerPlaced(pproc, layer, turned, 0, 0, 568, 320, 640, 1136);
+            const size_t afterPlace = place->told.size();
+            const bool second = HostGL::renderbufferStorageFromDrawable(pproc, pctx, layer, 1136, 640);
+            const bool resent = place->told.size() == afterPlace + 1 && place->told.back() == place->told[afterPlace - 1];
+            check(first && second && afterPlace == 1 && resent, "a drawable made again for the same layer is told its placement again");
+            // A different size keeps the layer's place on the screen: the unit scale follows the drawable.
+            HostGL::renderbufferStorageFromDrawable(pproc, pctx, layer, 568, 320);
+            const bool rescaled = place->told.size() == afterPlace + 2 && std::fabs(place->told.back()[1] - 2 * place->told[0][1]) < 1e-6f &&
+                                  std::fabs(place->told.back()[2] - 2 * place->told[0][2]) < 1e-6f && place->told.back()[5] == place->told[0][5];
+            check(rescaled, "a drawable made again at another size keeps its place on the screen");
+            pr.send(pcpu, ObjC::id(pctxCls), "setCurrentContext:", {0});
+        }
         FakeGL::mainId() = std::this_thread::get_id();
         auto platform = std::make_shared<ErrPlatform>();
         ProcessConfig ecfg;

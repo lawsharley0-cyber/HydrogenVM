@@ -254,7 +254,10 @@ struct SessionCore {
     bool logFlushScheduled = false;
     AVAudioEngine *audioEngine = nil;   // pulls from the guest's mixer
     std::mutex audioMu;
-    bool micOn = false;                  // input tap installed (the guest is recording)
+    bool micOn = false;                  // input tap installed (the guest has recorded this run)
+    std::atomic<bool> micWanted{false};  // the guest is recording right now: the tap's sound reaches it
+    id audioConfigObserver = nil;        // restarts the engine after the system reconfigures or interrupts it
+    id audioInterruptObserver = nil;
     // Per-run log file in Documents/Logs (visible in the Files app). Written and
     // flushed line by line on the engine thread, so it survives a hard crash.
     FILE *logFile = nullptr;
@@ -268,11 +271,12 @@ struct SessionCore {
     }
 };
 
-// Opens Documents/Logs/<app>-<date>.log and keeps the 30 newest logs.
-FILE *openRunLog(const std::string &bundlePath) {
+// Opens Documents/Logs/<date>-<app>.log and keeps the 30 newest logs. Games the player plays
+// log to Documents/Logs/Play, so a Test All Games run (one log per game) never pushes them out.
+FILE *openRunLog(const std::string &bundlePath, bool play) {
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     if (!docs) return nullptr;
-    NSString *dir = [docs stringByAppendingPathComponent:@"Logs"];
+    NSString *dir = [docs stringByAppendingPathComponent:play ? @"Logs/Play" : @"Logs"];
     NSFileManager *fm = NSFileManager.defaultManager;
     [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSArray<NSString *> *old = [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(compare:)];
@@ -305,6 +309,45 @@ namespace {
 // Game audio: one AVAudioEngine whose source node renders the guest's mixer on
 // the audio thread. The playback category keeps it audible with the ring/silent
 // switch on (as a media app), mixing with other audio.
+// The microphone tap: the input node's first channel goes to the guest while it is recording.
+// Installed with the bus's own format (nil), which is the only one valid after a route change.
+// Caller holds audioMu.
+bool installMicTap(const std::shared_ptr<SessionCore> &core, AVAudioEngine *engine) {
+    std::weak_ptr<SessionCore> weak = core;
+    AVAudioInputNode *input = engine.inputNode;
+    AVAudioFormat *fmt = [input outputFormatForBus:0];
+    if (fmt.sampleRate <= 0 || fmt.channelCount == 0) {   // no usable input: a tap would raise
+        NSLog(@"HydrogenVM: no microphone input is available; the app records silence");
+        return false;
+    }
+    @try {
+        [input installTapOnBus:0 bufferSize:1024 format:nil block:^(AVAudioPCMBuffer *buffer, AVAudioTime *) {
+            auto c = weak.lock();
+            if (!c || !c->micWanted.load() || !buffer.floatChannelData || buffer.format.sampleRate <= 0) return;
+            std::shared_ptr<RT::Process> p;
+            { std::lock_guard<std::mutex> plk(c->mu); p = c->proc; }
+            if (p) p->pushMicrophone(buffer.floatChannelData[0], buffer.frameLength, buffer.format.sampleRate);
+        }];
+    } @catch (NSException *e) {
+        NSLog(@"HydrogenVM: microphone tap failed: %@", e.reason);
+        return false;
+    }
+    return true;
+}
+// Starts the engine again if the system stopped it. Main queue.
+void resumeAudio(const std::shared_ptr<SessionCore> &core) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    AVAudioEngine *engine = core->audioEngine;
+    if (!engine || engine.isRunning) return;
+    [AVAudioSession.sharedInstance setActive:YES error:nil];
+    if (core->micOn) {   // the input format may have changed with the hardware
+        [engine.inputNode removeTapOnBus:0];
+        core->micOn = installMicTap(core, engine);
+    }
+    engine.mainMixerNode.outputVolume = core->outputVolume.load();
+    NSError *err = nil;
+    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to resume: %@", err);
+}
 void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrogen::Runtime::Audio::Mixer> mixer) {
     std::lock_guard<std::mutex> lk(core->audioMu);
     if (core->audioEngine) return;
@@ -337,19 +380,43 @@ void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrog
     NSError *err = nil;
     if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to start: %@", err);
     core->audioEngine = engine;
+    // The system stops an AVAudioEngine whenever the audio hardware is reconfigured (the
+    // session switching to play-and-record for a game's microphone, headphones plugged in, a
+    // Bluetooth route) or interrupted (a call, Siri, an alarm), and never starts it again.
+    // Nothing restarted it, so a game's sound went silent for the rest of the run.
+    std::weak_ptr<SessionCore> weakCore = core;
+    core->audioConfigObserver = [NSNotificationCenter.defaultCenter addObserverForName:AVAudioEngineConfigurationChangeNotification
+                                                                               object:engine queue:NSOperationQueue.mainQueue
+                                                                           usingBlock:^(NSNotification *) {
+        if (auto c = weakCore.lock()) resumeAudio(c);
+    }];
+    core->audioInterruptObserver = [NSNotificationCenter.defaultCenter addObserverForName:AVAudioSessionInterruptionNotification
+                                                                                  object:nil queue:NSOperationQueue.mainQueue
+                                                                              usingBlock:^(NSNotification *note) {
+        if ([note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] != AVAudioSessionInterruptionTypeEnded) return;
+        if (auto c = weakCore.lock()) resumeAudio(c);
+    }];
 }
 void stopAudio(const std::shared_ptr<SessionCore> &core) {
     std::lock_guard<std::mutex> lk(core->audioMu);
+    if (core->audioConfigObserver) [NSNotificationCenter.defaultCenter removeObserver:core->audioConfigObserver];
+    if (core->audioInterruptObserver) [NSNotificationCenter.defaultCenter removeObserver:core->audioInterruptObserver];
+    core->audioConfigObserver = nil;
+    core->audioInterruptObserver = nil;
+    const bool hadMic = core->micOn;
     if (core->micOn) [core->audioEngine.inputNode removeTapOnBus:0];
     core->micOn = false;
+    core->micWanted = false;
     [core->audioEngine stop];
     core->audioEngine = nil;
+    if (hadMic) [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
 }
 
-// Microphone: while the guest has a recording queue running, the engine's input
-// node is tapped and its first channel goes to Process::pushMicrophone. The
-// session switches to play-and-record (still out of the speaker) only then, so
-// apps that never record never ask for the microphone.
+// Microphone: the first time the guest records, the session switches to play-and-record
+// (still out of the speaker) and the engine's input node is tapped, so apps that never
+// record never ask for the microphone. The tap then stays for the rest of the run and only
+// its delivery follows the guest: a Talking game turns recording off and on around every
+// sound it plays, and restarting the engine each time cut those sounds and its listening.
 void beginCapture(const std::shared_ptr<SessionCore> &core) {
     std::lock_guard<std::mutex> lk(core->audioMu);
     AVAudioEngine *engine = core->audioEngine;
@@ -360,36 +427,13 @@ void beginCapture(const std::shared_ptr<SessionCore> &core) {
              withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers
                    error:nil];
     [session setActive:YES error:nil];
-    AVAudioInputNode *input = engine.inputNode;
-    AVAudioFormat *fmt = [input outputFormatForBus:0];
-    if (fmt.sampleRate > 0 && fmt.channelCount > 0) {
-        const double rate = fmt.sampleRate;
-        std::weak_ptr<SessionCore> weak = core;
-        [input installTapOnBus:0 bufferSize:1024 format:fmt block:^(AVAudioPCMBuffer *buffer, AVAudioTime *) {
-            auto c = weak.lock();
-            if (!c || !buffer.floatChannelData) return;
-            std::shared_ptr<RT::Process> p;
-            { std::lock_guard<std::mutex> plk(c->mu); p = c->proc; }
-            if (p) p->pushMicrophone(buffer.floatChannelData[0], buffer.frameLength, rate);
-        }];
-        core->micOn = true;
-    }
+    core->micOn = installMicTap(core, engine);
     NSError *err = nil;
     if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to restart for recording: %@", err);
 }
-void endCapture(const std::shared_ptr<SessionCore> &core) {
-    std::lock_guard<std::mutex> lk(core->audioMu);
-    AVAudioEngine *engine = core->audioEngine;
-    if (!engine || !core->micOn) return;
-    [engine stop];
-    [engine.inputNode removeTapOnBus:0];
-    core->micOn = false;
-    [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
-    NSError *err = nil;
-    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to restart: %@", err);
-}
 void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
-    if (!on) { dispatch_async(dispatch_get_main_queue(), ^{ endCapture(core); }); return; }
+    core->micWanted = on;
+    if (!on) return;
     [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (granted) beginCapture(core);
@@ -454,6 +498,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const std::string bundle = _bundlePath.UTF8String, home = _homePath.UTF8String;
     const bool keepGoing = _keepGoing;
     const bool useGPU = _useGPU;
+    const bool playSession = _playSession;
     const bool glTrace = _glTrace;
 
     auto flushLogs = [core, weakSelf]() {
@@ -468,7 +513,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         for (auto &[line, lvl] : batch) s.onLog(str(line), HVMLogLevel(int(lvl)));
     };
 
-    core->logFile = openRunLog(bundle);
+    core->logFile = openRunLog(bundle, playSession);
 
     spawnBigStack(^{
         RT::ProcessConfig cfg;
@@ -769,6 +814,9 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         p = _core->proc;
     }
     if (p && _core->ready) p->enterForeground();
+    // Sound the system stopped while the app was away starts again.
+    std::shared_ptr<SessionCore> core = _core;
+    dispatch_async(dispatch_get_main_queue(), ^{ resumeAudio(core); });
 }
 
 - (void)submitDocument:(NSString *)sourcePath requestId:(uint64_t)requestId {

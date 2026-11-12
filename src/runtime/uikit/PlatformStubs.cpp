@@ -82,6 +82,13 @@ struct AudioQueueInstance {
     bool running = false, isFloat = false, nonInterleaved = false;
     uint32_t voice = 0;   // mixer stream; buffers go back to the app as they finish
     std::shared_ptr<Foundation::RunLoop::Timer> pump;
+    // AudioQueueAddPropertyListener: called when the property changes (IsRunning, mostly:
+    // how a player learns its sound has finished).
+    struct Listener { uint32_t prop, proc, userData; };
+    std::vector<Listener> listeners;
+    // AudioQueueStop / AudioQueueDispose with inImmediate false: what is queued plays out
+    // first, then the queue stops (or goes away).
+    bool draining = false, disposeWhenDrained = false;
     std::vector<AudioQueueBufferInfo> buffers;
     // Recording queues (AudioQueueNewInput): buffers wait here until they are filled
     // with microphone audio at the queue's rate.
@@ -306,8 +313,13 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
 int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf);
 int32_t aq_allocateBufferWithPacketDescriptions(Ctx& x, uint32_t qid, uint32_t byteSize, uint32_t descs, GuestPtr outBuf) {
     const int32_t r = aq_allocateBuffer(x, qid, byteSize, outBuf);
-    if (r != 0 || !descs) return r;
+    if (r != 0) return r;
     const uint32_t hdr = x.mem.read<uint32_t>(outBuf);
+    // A compressed file is presented to the app as PCM, one frame per "packet". A game written
+    // for the compressed file asks for no descriptions when it sees a constant packet size, yet
+    // still copies one description per packet it read (PvZ's music stream, between its primed
+    // and its queue buffers). Give the buffer room for as many as it can hold frames.
+    if (!descs) descs = std::min<uint32_t>(std::max(byteSize, 16u) / 2, (8u << 20) / 16);
     // 16-byte AudioStreamPacketDescriptions: refuse a count whose size wraps or cannot be allocated.
     const uint32_t descBlock = descs <= (64u << 20) / 16 ? x.proc.heap().allocZeroed(descs * 16) : 0;
     if (!descBlock) { aq_freeBuffer(x, qid, hdr); x.mem.write<uint32_t>(outBuf, 0); return -108; }
@@ -327,6 +339,24 @@ int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
 }
 // Hands finished buffers back to the app's callback (on the main run loop).
 void aqPumpInput(Process& p, CPU::Cpu& c, uint32_t qid);
+int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate);
+constexpr uint32_t kAqIsRunning = 0x6171726E;   // 'aqrn' kAudioQueueProperty_IsRunning
+// Tells the queue's listeners that a property changed: proc(userData, queue, property).
+void aqNotify(Process& p, CPU::Cpu& c, uint32_t qid, uint32_t prop) {
+    auto& st = p.service<AudioToolboxState>();
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end() || p.terminating() || p.stopping()) return;
+    const std::vector<AudioQueueInstance::Listener> listeners = it->second.listeners;   // a listener may remove itself
+    for (const auto& l : listeners) {
+        if (l.prop != prop || !l.proc || !st.queues.count(qid)) continue;
+        p.callGuest(c, l.proc, {l.userData, qid, prop});
+    }
+}
+// The same, from the main run loop's next pass (the caller is inside an AudioQueue call).
+void aqNotifyLater(Process& p, uint32_t qid, uint32_t prop) {
+    Process* process = &p;
+    Foundation::mainRunLoop(p).post([process, qid, prop](CPU::Cpu& c) { aqNotify(*process, c, qid, prop); });
+}
 void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
     auto& st = p.service<AudioToolboxState>();
     auto it = st.queues.find(qid);
@@ -337,6 +367,18 @@ void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
         if (p.terminating() || p.stopping() || !cb || !st.queues.count(qid)) break;
         p.callGuest(c, cb, {ud, qid, uint32_t(buf)});
     }
+    // A queue asked to stop once its sound has played out: nothing left, so it stops now.
+    it = st.queues.find(qid);
+    if (it == st.queues.end() || !it->second.draining) return;
+    AudioQueueInstance& q = it->second;
+    if (MX(p).queuedCount(q.voice) != 0 || MX(p).processedCount(q.voice) != 0) return;
+    q.draining = false;
+    q.running = false;
+    audioTrace("AudioQueueDrained", qid);
+    MX(p).setPaused(q.voice, true);
+    const bool dispose = q.disposeWhenDrained;
+    aqNotify(p, c, qid, kAqIsRunning);
+    if (dispose && st.queues.count(qid)) { Ctx x{p, c, p.mem()}; aq_dispose(x, qid, true); }
 }
 int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr);
 // AudioQueueEnqueueBufferWithParameters(q, buf, nDescs, descs, trimStart, trimEnd, nParams, params, startTime, actualStart)
@@ -346,12 +388,28 @@ void aq_enqueueWithParams(Ctx& x) {
     if (actual) for (uint32_t i = 0; i < 64; i += 4) x.mem.write<uint32_t>(actual + i, 0);   // AudioTimeStamp: "now"
     x.cpu.r[0] = uint32_t(aq_enqueueBuffer(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]));
 }
-int32_t aq_addPropertyListener(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
-int32_t aq_removePropertyListener(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t aq_addPropertyListener(Ctx& x, uint32_t qid, uint32_t prop, uint32_t proc, uint32_t userData) {
+    auto& st = ATS(x);
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end()) return -50;
+    audioTrace("AudioQueueAddPropertyListener", qid, prop);
+    if (!proc) return -50;
+    if (it->second.listeners.size() >= 64) return -108;   // no room: the caller must not wait for a notice that never comes
+    it->second.listeners.push_back({prop, proc, userData});
+    return 0;
+}
+int32_t aq_removePropertyListener(Ctx& x, uint32_t qid, uint32_t prop, uint32_t proc, uint32_t userData) {
+    auto& st = ATS(x);
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end()) return -50;
+    auto& v = it->second.listeners;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const auto& l) { return l.prop == prop && l.proc == proc && l.userData == userData; }), v.end());
+    return 0;
+}
 int32_t aq_getProperty(Ctx& x, uint32_t qid, uint32_t prop, GuestPtr outData, GuestPtr ioSize) {
     if (outData && ioSize) {
         const uint32_t sz = x.mem.read<uint32_t>(ioSize);
-        if (prop == 0x61717275 /* 'aqru' kAudioQueueProperty_IsRunning */ && sz >= 4) {
+        if ((prop == kAqIsRunning || prop == 0x61717275 /* 'aqru', an older spelling here */) && sz >= 4) {
             bool running = false;
             auto& st = ATS(x);
             if (st.queues.count(qid)) running = st.queues[qid].running;
@@ -500,7 +558,10 @@ int32_t aq_start(Ctx& x, uint32_t qid, GuestPtr) {
     audioTrace("AudioQueueStart", qid);
     if (!ATS(x).queues.count(qid)) return 0;
     auto& q = ATS(x).queues[qid];
+    const bool wasRunning = q.running;
     q.running = true;
+    q.draining = q.disposeWhenDrained = false;
+    if (!wasRunning) aqNotifyLater(x.proc, qid, kAqIsRunning);
     if (q.input) {
         q.last = std::chrono::steady_clock::now();
         q.dueFrames = 0;
@@ -522,10 +583,20 @@ int32_t aq_pause(Ctx& x, uint32_t qid) {
     MX(x.proc).setPaused(q.voice, true);
     return 0;
 }
-int32_t aq_stop(Ctx& x, uint32_t qid, bool) {
+int32_t aq_stop(Ctx& x, uint32_t qid, bool immediate) {
+    audioTrace("AudioQueueStop", qid, immediate);
     if (!ATS(x).queues.count(qid)) return 0;
     auto& q = ATS(x).queues[qid];
+    // Not immediate: the sound already queued plays to its end, and the queue stops then
+    // (aqPump). Stopping at once cut a Talking game's answer off after its first buffer.
+    if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
+        q.draining = true;
+        return 0;
+    }
+    const bool wasRunning = q.running;
     q.running = false;
+    q.draining = false;
+    if (wasRunning) aqNotifyLater(x.proc, qid, kAqIsRunning);
     if (q.input) { micRelease(x, q); q.pending.clear(); return 0; }
     if (q.offline) offlineDiscard(q);
     MX(x.proc).stop(q.voice);
@@ -542,15 +613,25 @@ int32_t aq_reset(Ctx& x, uint32_t qid) {
     if (q.offline) offlineDiscard(q);
     return 0;
 }
-int32_t aq_dispose(Ctx& x, uint32_t qid, bool) {
+int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate) {
+    audioTrace("AudioQueueDispose", qid, immediate);
     auto& st = ATS(x);
     if (st.queues.count(qid)) {
         auto& q = st.queues[qid];
+        // Not immediate: the queue goes away once what is queued has played.
+        if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
+            q.draining = q.disposeWhenDrained = true;
+            return 0;
+        }
         if (q.pump) q.pump->valid = false;
         micRelease(x, q);
         if (q.timeStamp) x.proc.heap().free(q.timeStamp);
         if (q.voice) MX(x.proc).release(q.voice);
-        for (const auto& b : q.buffers) if (b.guestAddr) x.proc.heap().free(b.guestAddr);
+        for (const auto& b : q.buffers) {
+            if (!b.guestAddr) continue;
+            if (const uint32_t descs = x.mem.read<uint32_t>(b.guestAddr + 20)) x.proc.heap().free(descs);   // its packet descriptions
+            x.proc.heap().free(b.guestAddr);
+        }
         st.queues.erase(qid);
     }
     return 0;
@@ -1777,6 +1858,7 @@ int32_t aug_stop(Ctx& x, uint32_t graph) {
     for (uint32_t n : augOutputs(st, graph)) au_stop(x, n);
     return 0;
 }
+int32_t au_converterSetProperty(Ctx&, uint32_t, uint32_t, uint32_t, GuestPtr) { return 0; }
 int32_t aug_dispose(Ctx& x, uint32_t graph) {
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
@@ -2322,6 +2404,7 @@ void al_sourcei(Ctx& x, uint32_t sid, uint32_t param, int32_t val) {
     if (param == AL_BUFFER) { s.buffer = uint32_t(val); s.queuedBuffers.clear(); }
     else if (param == AL_LOOPING) s.looping = val != 0;
     else if (param == AL_SOURCE_RELATIVE) s.relative = val != 0;
+    audioTrace("alSourcei", sid, (uint64_t(param) << 32) | uint32_t(val));
     alUpdate(x, s);
 }
 void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
@@ -2366,7 +2449,34 @@ void al_sourcePlay(Ctx& x, uint32_t sid) {
     Audio::Mixer& mx = MX(x.proc);
     if (s.state == AL_PAUSED && s.voice) { mx.setPaused(s.voice, false); s.state = AL_PLAYING; return; }
     alRelease(x, s);   // playing again restarts from the beginning
-    if (!s.queuedBuffers.empty()) {
+    // A looping source repeats its whole queue and none of its buffers ever finish. The
+    // mixer only repeats a single sound, so the queue is joined into one (Pocket Ants queues
+    // its rain as one looping buffer; played as a stream it stopped after one pass).
+    Audio::Pcm joined;
+    int joinedRate = 0;
+    if (s.looping && !s.queuedBuffers.empty()) {
+        bool sameRate = true;
+        size_t total = 0;
+        for (uint32_t bid : s.queuedBuffers) {
+            if (!st.buffers.count(bid) || !st.buffers[bid].pcm) continue;
+            if (!joinedRate) joinedRate = st.buffers[bid].freq;
+            sameRate = sameRate && st.buffers[bid].freq == joinedRate;
+            total += st.buffers[bid].pcm->size();
+        }
+        if (sameRate && total != 0) {
+            if (s.queuedBuffers.size() == 1) joined = st.buffers[s.queuedBuffers.front()].pcm;
+            else {
+                std::vector<int16_t> all;
+                all.reserve(total);
+                for (uint32_t bid : s.queuedBuffers)
+                    if (st.buffers.count(bid) && st.buffers[bid].pcm) all.insert(all.end(), st.buffers[bid].pcm->begin(), st.buffers[bid].pcm->end());
+                joined = std::make_shared<const std::vector<int16_t>>(std::move(all));
+            }
+        }
+    }
+    if (joined) {
+        s.voice = mx.play(joined, joinedRate, alParams(s));
+    } else if (!s.queuedBuffers.empty()) {
         s.voice = mx.createStream(alParams(s));
         s.streaming = true;
         for (uint32_t bid : s.queuedBuffers)
@@ -2570,21 +2680,21 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aq_enqueueBuffer>("_AudioQueueEnqueueBuffer");
     p.defineFunction("_AudioQueueEnqueueBufferWithParameters", aq_enqueueWithParams);
     p.def<&aq_setProperty>("_AudioQueueSetProperty");
-    p.def<&aq_getProperty>("_AudioQueueGetProperty");
+    supportDef<&aq_getProperty>(p, "_AudioQueueGetProperty", SupportStatus::Approx, "Answers IsRunning; other properties read as zero");
     p.def<&aq_getPropertySize>("_AudioQueueGetPropertySize");
-    p.def<&aq_addPropertyListener>("_AudioQueueAddPropertyListener");
-    p.def<&aq_removePropertyListener>("_AudioQueueRemovePropertyListener");
+    supportDef<&aq_addPropertyListener>(p, "_AudioQueueAddPropertyListener", SupportStatus::Approx, "Listeners are kept; only IsRunning changes are reported");
+    supportDef<&aq_removePropertyListener>(p, "_AudioQueueRemovePropertyListener", SupportStatus::Real, "Removes a kept listener");
     p.def<&aq_createTimeline>("_AudioQueueCreateTimeline");
     p.def<&aq_disposeTimeline>("_AudioQueueDisposeTimeline");
     p.def<&aq_getCurrentTime>("_AudioQueueGetCurrentTime");
-    p.def<&aq_start>("_AudioQueueStart");
+    supportDef<&aq_start>(p, "_AudioQueueStart", SupportStatus::Real, "Starts playback or recording and tells IsRunning listeners");
     p.def<&aq_pause>("_AudioQueuePause");
     supportDef<&aq_stop>(p, "_AudioQueueStop", SupportStatus::Approx,
-                         "Stops the mixer voice; an offline queue drops its queued audio. Buffers are not handed back");
+                         "Stops at once, or after what is queued has played when not immediate; an offline queue drops its queued audio. An immediate stop does not hand buffers back");
     p.def<&aq_flush>("_AudioQueueFlush");
     supportDef<&aq_reset>(p, "_AudioQueueReset", SupportStatus::Approx,
                           "Drops queued audio (mixer voice, recorder or offline queue); buffers are not handed back");
-    p.def<&aq_dispose>("_AudioQueueDispose");
+    supportDef<&aq_dispose>(p, "_AudioQueueDispose", SupportStatus::Real, "Stops the queue and frees its buffers, their packet descriptions and its voice");
     p.def<&aq_setParam>("_AudioQueueSetParameter");
     p.def<&aq_getParam>("_AudioQueueGetParameter");
     p.def<&aq_offlineRender>("_AudioQueueOfflineRender");
@@ -2632,6 +2742,9 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_getParam>("_AudioUnitGetParameter");
     p.def<&au_render>("_AudioUnitRender");
     p.def<&aug_new>("_NewAUGraph");
+    // Tuning of the converter inside an ExtAudioFile (bit rate, quality): accepted, the
+    // runtime's own encoders and decoders have no such settings.
+    supportDef<&au_converterSetProperty>(p, "_AudioConverterSetProperty", SupportStatus::Approx, "Accepted; converter tuning is not applied");
     p.def<&aug_dispose>("_DisposeAUGraph");
     p.def<&aug_addNode>("_AUGraphAddNode");
     p.def<&aug_ok2>("_AUGraphRemoveNode");

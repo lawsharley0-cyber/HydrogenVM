@@ -941,6 +941,19 @@ std::string Process::hostPath(const std::string& guestPath) const {
     const std::string hostTmp = homePath_ + "/tmp";
     if (matchesPathPrefix(norm, "/tmp")) return hostTmp + norm.substr(4);
     if (matchesPathPrefix(norm, "/var/tmp")) return hostTmp + norm.substr(8);
+    // A relative name made absolute against the launch directory before it got here (PvZ builds
+    // a CFURL from "sounds/buttonclick.caf", which becomes "/sounds/buttonclick.caf"): the same
+    // bundle rule as for relative names above. Without it the game found no sound or music and
+    // stayed on a black screen after its logo.
+    {
+        bool appSet;
+        { std::lock_guard<std::mutex> lk(cwdMu_); appSet = cwdSetByApp_; }
+        if (!appSet && norm.size() > 1 && norm.find("/..") == std::string::npos) {
+            std::error_code ec;
+            const std::string inBundle = bundlePath() + norm;
+            if (!std::filesystem::exists(p, ec) && std::filesystem::exists(inBundle, ec)) return inBundle;
+        }
+    }
     return p;
 }
 
@@ -1021,7 +1034,13 @@ void Process::initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stack
     t.errnoAddr = t.self + kThreadSpecificSlots * 4;
     mem_->write<uint32_t>(t.self, t.self);
     t.cpu.tpidruro = t.self;
-    t.cpu.r[CPU::kSP] = t.stackBase + stackSize - 64;
+    // The stack starts a page below the top of its mapping. On iOS the memory just above a
+    // thread's first frame is readable (the argument and environment strings for the main
+    // thread, the pthread structure for the others), and games read a little past a local
+    // array there without harm: The Sandbox copies 324 bytes from a smaller buffer in its
+    // drawing code, twelve bytes past the top, and crashed when placing an element.
+    const uint32_t headroom = stackSize >= 64 * 1024 ? 4096 : 64;
+    t.cpu.r[CPU::kSP] = t.stackBase + stackSize - headroom;
     t.cpu.fpscr = 0x03000000u;     // RunFast (flush-to-zero + default NaN), as iOS sets up
     t.cpu.user = &t;
     t.cpu.engine = engine_.get();
