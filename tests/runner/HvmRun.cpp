@@ -67,6 +67,7 @@ int hvmRunMain(int argc, char** argv) {
     std::string photoLibraryImage;
     struct Gesture { float x1, y1, x2, y2; double at; bool drag; };
     std::vector<Gesture> gestures;
+    double micVoiceAt = -1, micVoiceFor = -1;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--run-for") && i + 1 < argc) { runFor = std::atof(argv[++i]); continue; }
         if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc) { screenshot = argv[++i]; continue; }
@@ -79,6 +80,13 @@ int hvmRunMain(int argc, char** argv) {
             Gesture g{};
             g.drag = true;
             if (std::sscanf(argv[++i], "%f,%f,%f,%f@%lf", &g.x1, &g.y1, &g.x2, &g.y2, &g.at) == 5) gestures.push_back(g);
+            continue;
+        }
+        // --mic-voice START,SECONDS: the microphone hears silence, except a voice-like sound
+        // (a 220 Hz buzz with a syllable rhythm) for SECONDS starting START seconds in. For apps
+        // that listen and answer (the Talking games) on a machine with no microphone.
+        if (!std::strcmp(argv[i], "--mic-voice") && i + 1 < argc) {
+            if (std::sscanf(argv[++i], "%lf,%lf", &micVoiceAt, &micVoiceFor) != 2) micVoiceAt = micVoiceFor = -1;
             continue;
         }
         if (!std::strcmp(argv[i], "--report") && i + 1 < argc) { reportPath = argv[++i]; continue; }
@@ -407,9 +415,32 @@ int hvmRunMain(int argc, char** argv) {
             }
             while (!inputFile.empty() && !done) { pumpInput(); std::this_thread::sleep_for(milliseconds(5)); }
         });
+        std::thread mic;
+        if (micVoiceAt >= 0 && micVoiceFor > 0) mic = std::thread([&] {
+            using namespace std::chrono;
+            const auto start = steady_clock::now();
+            const double rate = 44100.0;
+            uint64_t sent = 0;
+            std::vector<float> chunk(441);   // 10 ms
+            while (!done) {
+                const double t = duration<double>(steady_clock::now() - start).count();
+                while (double(sent) / rate < t) {
+                    for (float& v : chunk) {
+                        const double at = double(sent++) / rate;
+                        const bool speaking = at >= micVoiceAt && at < micVoiceAt + micVoiceFor;
+                        const double phase = std::fmod(at * 220.0, 1.0);
+                        const double syllable = 0.5 + 0.5 * std::sin(at * 2.0 * 3.141592653589793 * 3.0);
+                        v = speaking ? float((phase * 2.0 - 1.0) * 0.6 * syllable) : 0.0f;
+                    }
+                    proc.pushMicrophone(chunk.data(), chunk.size(), rate);
+                }
+                std::this_thread::sleep_for(milliseconds(5));
+            }
+        });
         const int r = proc.run();
         done = true;
         driver.join();
+        if (mic.joinable()) mic.join();
         audio.stop();
         if (audio.error) std::fprintf(stderr, "[hvm:warn] Desktop audio transport failed: %d\n", audio.error);
         if (!screenshot.empty()) {
