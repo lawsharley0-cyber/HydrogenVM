@@ -386,7 +386,7 @@ bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc
 }
 bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }
 uint32_t s_lengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; const std::string b = encodeBytes(sv(x, self), enc, false, &ok); return ok ? uint32_t(b.size()) : 0; }
-uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE ? 2 : enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE ? 4 : 1); }
+uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return (enc == kNSUTF32 ? 4 : 0) + uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE ? 2 : enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE ? 4 : 1); }
 id s_dataUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     bool ok = true;
     const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
@@ -840,6 +840,24 @@ id constString(Process& p, const std::string& s) {
 std::string decodeBytes(const uint8_t* p, size_t n, uint32_t enc, bool* ok) {
     if (ok) *ok = true;
     switch (enc) {
+        case kNSUTF32: case kNSUTF32LE: case kNSUTF32BE: {   // to UTF-8; plain UTF-32 may start with a mark
+            bool be = enc == kNSUTF32BE;
+            size_t i = 0;
+            if (enc == kNSUTF32 && n >= 4) {
+                if (p[0] == 0xFF && p[1] == 0xFE && p[2] == 0 && p[3] == 0) i = 4;
+                else if (p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) { be = true; i = 4; }
+            }
+            if (n % 4 != 0 && ok) *ok = false;
+            std::u16string u;
+            for (; i + 4 <= n; i += 4) {
+                const uint32_t c = be ? (uint32_t(p[i]) << 24) | (uint32_t(p[i + 1]) << 16) | (uint32_t(p[i + 2]) << 8) | p[i + 3]
+                                      : (uint32_t(p[i + 3]) << 24) | (uint32_t(p[i + 2]) << 16) | (uint32_t(p[i + 1]) << 8) | p[i];
+                if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) { if (ok) *ok = false; u += char16_t(0xFFFD); }
+                else if (c >= 0x10000) { u += char16_t(0xD800 + ((c - 0x10000) >> 10)); u += char16_t(0xDC00 + ((c - 0x10000) & 0x3FF)); }
+                else u += char16_t(c);
+            }
+            return toUtf8(u);
+        }
         case kNSUTF8: case kNSASCII: case kNSNonLossyASCII: {
             // Validate UTF-8; ASCII decoding also accepts it.
             size_t i = 0;
@@ -865,15 +883,6 @@ std::string decodeBytes(const uint8_t* p, size_t n, uint32_t enc, bool* ok) {
             }
             U16 u;
             for (; i + 1 < n; i += 2) u += char16_t(be ? (p[i] << 8 | p[i + 1]) : (p[i + 1] << 8 | p[i]));
-            return toUtf8(u);
-        }
-        case kNSUTF32: {
-            U16 u;
-            for (size_t i = 0; i + 3 < n; i += 4) {
-                const uint32_t c = uint32_t(p[i]) | uint32_t(p[i + 1]) << 8 | uint32_t(p[i + 2]) << 16 | uint32_t(p[i + 3]) << 24;
-                if (c >= 0x10000) { u += char16_t(0xD800 + ((c - 0x10000) >> 10)); u += char16_t(0xDC00 + ((c - 0x10000) & 0x3FF)); }
-                else u += char16_t(c);
-            }
             return toUtf8(u);
         }
         case kNSMacOSRoman: {
@@ -907,6 +916,10 @@ std::string encodeBytes(const std::u16string& s, uint32_t enc, bool lossy, bool*
             for (size_t i = 0; i < s.size(); ++i) {
                 uint32_t c = s[i];
                 if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (s[i + 1] - 0xDC00); ++i; }
+                else if (c >= 0xD800 && c <= 0xDFFF) {   // half a pair is not a character
+                    if (!lossy) { if (ok) *ok = false; return {}; }
+                    c = 0xFFFD;
+                }
                 if (enc == kNSUTF32BE) { out += char(c >> 24); out += char(c >> 16); out += char(c >> 8); out += char(c); }
                 else { out += char(c); out += char(c >> 8); out += char(c >> 16); out += char(c >> 24); }
             }

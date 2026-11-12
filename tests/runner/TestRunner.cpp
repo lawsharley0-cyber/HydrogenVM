@@ -7487,6 +7487,10 @@ int runFullSubsystemTests() {
             const uint32_t len32 = uint32_t(sr.send(cpu, str, "lengthOfBytesUsingEncoding:", {0x9C000100u}));
             const bool can32 = (uint32_t(sr.send(cpu, str, "canBeConvertedToEncoding:", {0x9C000100u})) & 0xFF) != 0;
             check(len32 == 8 && can32, "UTF-32 byte lengths and conversion checks match what getCString: writes");
+            const ObjC::id back = ObjC::id(sr.send(cpu, ObjC::id(sr.send(cpu, ObjC::id(sr.getClass("NSString")), sr.selAlloc)), "initWithBytes:length:encoding:", {w32, 8, 0x9C000100u}));
+            check(back && (uint32_t(sr.send(cpu, back, "isEqualToString:", {str})) & 0xFF) != 0 &&
+                  uint32_t(sr.send(cpu, str, "maximumLengthOfBytesUsingEncoding:", {0x8C000100u})) >= uint32_t(sr.send(cpu, str, "lengthOfBytesUsingEncoding:", {0x8C000100u})),
+                  "UTF-32 bytes read back as the same string, and the maximum length covers the mark");
             const uint32_t out = proc.heap().allocZeroed(16);
             std::memset(proc.mem().host(out), 0x55, 16);
             const bool fits = (uint32_t(sr.send(cpu, str, "getCString:maxLength:encoding:", {out, 6, 10})) & 0xFF) != 0;
