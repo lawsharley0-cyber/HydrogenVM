@@ -12,7 +12,7 @@ usage:
         [--timeout 30] [--skip-build]
         [--home DIR]
 
-    # Omit --case to execute the complete TL-A through TL-Z suite.
+    # Omit --case to execute the complete TL-A through TL-AG suite.
     python3 tools/hvm_testlab.py validate REPORT.json
 
 Exit status:

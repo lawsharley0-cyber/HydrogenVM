@@ -35,8 +35,9 @@ Time calculate(Time a, Time b, bool subtract) {
     int32_t scale = int32_t(std::min<int64_t>(common, std::numeric_limits<int32_t>::max()));
     const __int128 numerator = __int128(a.value) * b.scale + (subtract ? -1 : 1) * __int128(b.value) * a.scale;
     const __int128 denominator = __int128(a.scale) * b.scale;
-    bool wasRounded = (a.flags | b.flags) & rounded;
+    const bool inputRounded = (a.flags | b.flags) & rounded;
     for (;;) {
+        bool wasRounded = inputRounded;
         const auto value = roundDefault(numerator * scale, denominator, wasRounded);
         if (value >= std::numeric_limits<int64_t>::min() && value <= std::numeric_limits<int64_t>::max())
             return {int64_t(value), scale, valid | (wasRounded ? rounded : 0), a.epoch == b.epoch ? 0 : a.epoch ? a.epoch : b.epoch};

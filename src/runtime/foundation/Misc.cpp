@@ -87,7 +87,7 @@ char firstArgType(const std::string& t) {
 id invocationFor(Ctx& x, id self, SEL selector, id* signature = nullptr) {
     auto& r = rt(x);
     const id sig = id(r.send(x.cpu, self, "methodSignatureForSelector:", {selector}));
-    if (!sig) throw ObjC::ObjCError("NSInvalidArgumentException: KVC method has no signature");
+    if (!sig) throw ObjC::ObjCError("*** KVC method has no signature");
     const id invocation = id(r.send(x.cpu, r.getClass("NSInvocation"), "invocationWithMethodSignature:", {sig}));
     r.send(x.cpu, invocation, "setTarget:", {self});
     r.send(x.cpu, invocation, "setSelector:", {selector});
@@ -96,10 +96,10 @@ id invocationFor(Ctx& x, id self, SEL selector, id* signature = nullptr) {
 }
 uint32_t structSize(Ctx& x, const std::string& type) {
     auto& r = rt(x);
-    if (type.empty() || type[0] != '{') throw ObjC::ObjCError("NSInvalidArgumentException: KVC requires a struct NSValue");
+    if (type.empty() || type[0] != '{') throw ObjC::ObjCError("*** KVC requires a struct NSValue");
     const id signature = id(r.send(x.cpu, r.getClass("NSMethodSignature"), "signatureWithObjCTypes:", {x.proc.internCString(type + "@:")}));
     const auto size = uint32_t(r.send(x.cpu, signature, "methodReturnLength"));
-    if (!size || size > 1024 * 1024) throw ObjC::ObjCError("NSInvalidArgumentException: KVC invalid struct size");
+    if (!size || size > 1024 * 1024) throw ObjC::ObjCError("*** KVC invalid struct size");
     return size;
 }
 struct KvcBuffer {
@@ -123,11 +123,11 @@ void kvcStructSet(Ctx& x, id self, SEL selector, id value) {
     auto& r = rt(x); id signature = 0;
     const id invocation = invocationFor(x, self, selector, &signature);
     if (!value || !r.isKindOf(value, r.getClass("NSValue")))
-        throw ObjC::ObjCError("NSInvalidArgumentException: KVC struct setter requires NSValue");
+        throw ObjC::ObjCError("*** KVC struct setter requires NSValue");
     const auto expected = x.proc.readCString(uint32_t(r.send(x.cpu, signature, "getArgumentTypeAtIndex:", {2})));
     const auto actual = x.proc.readCString(uint32_t(r.send(x.cpu, value, "objCType")));
     const auto size = structSize(x, expected);
-    if (size != structSize(x, actual)) throw ObjC::ObjCError("NSInvalidArgumentException: KVC incompatible NSValue size");
+    if (size != structSize(x, actual)) throw ObjC::ObjCError("*** KVC incompatible NSValue size");
     KvcBuffer bytes(x.proc, size);
     r.send(x.cpu, value, "getValue:", {bytes.pointer});
     r.send(x.cpu, invocation, "setArgument:atIndex:", {bytes.pointer, 2});

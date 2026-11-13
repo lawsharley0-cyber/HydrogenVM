@@ -547,6 +547,10 @@ struct Compositor {
         if (clip.x1 <= clip.x0 || clip.y1 <= clip.y0) return;
         const float alpha = parentOpacity * std::clamp(d.opacity, 0.0f, 1.0f);
         const G::Affine m = layerToSuper(d).then(parentToDevice);
+        // A quarter-turn maps rectangles to rectangles too. axisAligned() only
+        // recognizes diagonal matrices, so using it alone sends landscape solid
+        // backgrounds through the per-pixel path rasterizer unnecessarily.
+        const bool rectangular = m.axisAligned() || (m.a == 0 && m.d == 0);
         G::Path shape;
         if (d.cornerRadius > 0) shape.addRoundedRect(d.bounds, d.cornerRadius, d.cornerRadius);
         else shape.addRect(d.bounds);
@@ -557,7 +561,7 @@ struct Compositor {
             const float tm[6] = {m.a, m.b, m.c, m.d, m.tx, m.ty};
             HostGL::layerPlaced(x.proc, layer, tm, d.bounds.x, d.bounds.y, d.bounds.w, d.bounds.h, dst.width, dst.height);
             // Cut a hole down to the host's GPU layer, then draw what sits on top.
-            if (d.cornerRadius <= 0 && m.axisAligned()) G::fillRect(dst, m.applyRect(d.bounds), {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
+            if (d.cornerRadius <= 0 && rectangular) G::fillRect(dst, m.applyRect(d.bounds), {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
             else G::fillPath(dst, devShape, false, {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
         } else
         // background
@@ -572,7 +576,7 @@ struct Compositor {
                         G::drawImage(dst, pat, G::Affine::scale(pw / float(pat.width), ph / float(pat.height)).then(G::Affine::translate(xx, yy)).then(m), c2, alpha, true);
             }
         } else if (d.background.a > 0) {
-            if (d.cornerRadius <= 0 && m.axisAligned()) G::fillRect(dst, m.applyRect(d.bounds), d.background, clip, G::BlendMode::Normal, alpha);
+            if (d.cornerRadius <= 0 && rectangular) G::fillRect(dst, m.applyRect(d.bounds), d.background, clip, G::BlendMode::Normal, alpha);
             else G::fillPath(dst, devShape, false, d.background, clip, G::BlendMode::Normal, alpha);
         }
 

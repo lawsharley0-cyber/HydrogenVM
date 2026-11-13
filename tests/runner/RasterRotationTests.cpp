@@ -53,6 +53,37 @@ int main(int argc, char**) {
         std::printf("opaque 1136x640 quarter-turn median %.3f ms (local benchmark)\n", times[6]);
         if (times[6] >= 33) return 1;
     }
+    {
+        // A rotated solid layer still covers an axis-aligned rectangle. Exercise
+        // the whole compositor, including its screen clear, on the Linux bench.
+        auto& u = UIKit::ui(p);
+        u.screenW = 640; u.screenH = 1136; u.scale = 1; u.statusBarHidden = true;
+        u.statusBarOrientation = u.initialOrientation = 3;
+        const auto make = [&](const char* cls) { return uint32_t(r.send(cpu, uint32_t(r.send(cpu, r.getClass(cls), "alloc")), "init")); };
+        const auto window = make("UIWindow");
+        const auto vc = make("UIViewController");
+        const auto view = make("UIView");
+        r.send(cpu, vc, "setView:", {view});
+        r.send(cpu, window, "setRootViewController:", {vc});
+        r.send(cpu, window, "makeKeyAndVisible");
+        auto& ld = UIKit::layerData(x, UIKit::viewLayer(x, view));
+        ld.background = {1,0.5f,0,1};
+        std::vector<double> times;
+        for (int i = 0; i < (argc > 1 ? 16 : 1); ++i) {
+            const auto start = std::chrono::steady_clock::now();
+            UIKit::compositeFrame(x);
+            times.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now() - start).count());
+        }
+        for (size_t i = 0; i < u.framebuffer.rgba.size(); i += 4)
+            if (u.framebuffer.rgba[i] != 255 || u.framebuffer.rgba[i+1] != 128 || u.framebuffer.rgba[i+2] != 0 || u.framebuffer.rgba[i+3] != 255) {
+                std::puts("FAIL: rotated solid layer pixel mapping"); return 1;
+            }
+        std::sort(times.begin(), times.end());
+        if (argc > 1) {
+            std::printf("rotated solid composite median %.3f ms (local benchmark, 5 ms budget)\n", times[8]);
+            if (times[8] >= 5) return 1;
+        }
+    }
     if (ok) std::puts("raster quarter-turn: passed");
     return ok ? 0 : 1;
 }

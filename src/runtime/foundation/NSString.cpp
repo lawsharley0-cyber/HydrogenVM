@@ -10,6 +10,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #else
 #include <unicode/ubrk.h>
+#include <unicode/uchar.h>
+#include <unicode/unorm2.h>
 #endif
 
 namespace Hydrogen::Runtime::Foundation {
@@ -28,6 +30,32 @@ Strings& S(Process& p) { return p.service<Strings>(); }
 Strings& S(Ctx& x) { return S(x.proc); }
 
 using U16 = std::u16string;
+// Foundation's ASCII loss byte 0xff selects fallback conversion in CF; it is
+// not an output byte. Use native CF on Apple and Unicode decomposition on
+// Linux for accented/compatibility characters, with '?' for other scalars.
+std::string lossyAsciiScalar(const U16& value) {
+#if defined(__APPLE__)
+    const auto text = ::CFStringCreateWithCharacters(nullptr, reinterpret_cast<const UniChar*>(value.data()), CFIndex(value.size()));
+    UInt8 bytes[64]; CFIndex used = 0;
+    ::CFStringGetBytes(text, CFRangeMake(0, CFIndex(value.size())), kCFStringEncodingASCII, 0xff, false, bytes, sizeof(bytes), &used);
+    ::CFRelease(text);
+    return std::string(reinterpret_cast<const char*>(bytes), size_t(used));
+#else
+    UErrorCode error = U_ZERO_ERROR;
+    const auto normalizer = unorm2_getNFKDInstance(&error);
+    UChar normalized[64];
+    const int32_t length = U_SUCCESS(error) ? unorm2_normalize(normalizer,
+        reinterpret_cast<const UChar*>(value.data()), int32_t(value.size()), normalized, 64, &error) : 0;
+    if (U_FAILURE(error)) return "?";
+    std::string out;
+    for (int32_t i = 0; i < length; ++i) {
+        if (normalized[i] < 128) out += char(normalized[i]);
+        else if (u_charType(normalized[i]) != U_NON_SPACING_MARK && u_charType(normalized[i]) != U_COMBINING_SPACING_MARK)
+            return "?";
+    }
+    return out.empty() ? "?" : out;
+#endif
+}
 std::string toUtf8(const U16& s) { return Plist::utf16ToUtf8(s.data(), s.size()); }
 U16 fromUtf8(const std::string& s) { return Plist::utf8ToUtf16(s); }
 
@@ -392,7 +420,12 @@ bool s_getBytes(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, GuestPtr used,
                 uint32_t enc, uint32_t options, uint32_t loc, uint32_t len, GuestPtr remaining) {
     const U16 value = sv(x, self);
     if (loc > value.size() || len > value.size() - loc)
-        throw ObjC::ObjCError("NSRangeException: -[NSString getBytes:...] range out of bounds");
+        throw ObjC::ObjCError("*** -[NSString getBytes:...] range out of bounds");
+    auto store = [&](uint64_t address, const void* bytes, size_t size) {
+        uint32_t fault = uint32_t(address);
+        if (address > UINT32_MAX || !x.mem.copyInWritable(uint32_t(address), bytes, size, fault))
+            throw CPU::GuestFault(CPU::Exit::MemFault, fault, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "NSString getBytes output is not writable");
+    };
     const uint32_t end = loc + len;
     uint32_t position = loc;
     uint32_t count = 0;
@@ -418,20 +451,21 @@ bool s_getBytes(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, GuestPtr used,
         else if (!utf16 && c >= 0xd800 && c <= 0xdfff && !lossy) break;
         bool ok = true;
         std::string bytes;
-        if (lossy && enc == kNSASCII && c >= 0x80) bytes.assign(1, char(0xff));
+        if (lossy && enc == kNSASCII && c >= 0x80) bytes = lossyAsciiScalar(value.substr(position, units));
         else if (lossy && c >= 0xd800 && c <= 0xdfff && units == 1 && !utf16)
             bytes = encodeBytes(U16(1, 0xfffd), byteEncoding, true, &ok);
         else bytes = encodeBytes(value.substr(position, units), byteEncoding, lossy, &ok);
         if (!ok) break;
         if (!prefix.empty()) bytes.insert(0, prefix);
         if (buf && bytes.size() > uint64_t(max) - count) break;
-        if (buf && !bytes.empty()) x.mem.copyIn(buf + count, bytes.data(), bytes.size());
+        if (buf && !bytes.empty()) store(uint64_t(buf) + count, bytes.data(), bytes.size());
         count += uint32_t(bytes.size());
         prefix.clear();
         position += units;
     }
-    if (used) x.mem.write<uint32_t>(used, count);
-    if (remaining) writeRange(x, remaining, {position, end - position});
+    if (used) store(used, &count, sizeof(count));
+    const uint32_t rest[] = {position, end - position};
+    if (remaining) store(remaining, rest, sizeof(rest));
     return value.empty() || (position != loc && (!(options & (1u << 20)) || position == end));
 }
 bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }
@@ -977,7 +1011,12 @@ std::string encodeBytes(const std::u16string& s, uint32_t enc, bool lossy, bool*
         }
         case kNSASCII: {
             std::string out;
-            for (char16_t c : s) { if (c >= 0x80) { if (!lossy) { if (ok) *ok = false; return {}; } out += '?'; } else out += char(c); }
+            for (size_t i = 0; i < s.size(); ++i) {
+                if (s[i] < 0x80) { out += char(s[i]); continue; }
+                if (!lossy) { if (ok) *ok = false; return {}; }
+                const size_t units = s[i] >= 0xd800 && s[i] <= 0xdbff && i + 1 < s.size() && s[i+1] >= 0xdc00 && s[i+1] <= 0xdfff ? 2 : 1;
+                out += lossyAsciiScalar(s.substr(i, units)); i += units - 1;
+            }
             return out;
         }
         default: {

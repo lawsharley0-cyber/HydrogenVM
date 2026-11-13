@@ -1832,6 +1832,12 @@ static TLResult *runCaseAA(void) {
     BOOL correct = prefix && used == 7 && left.location == 4 && left.length == 1 && memcmp(bytes, expected, 7) == 0 && bytes[7] == 0x55;
     BOOL measured = [s getBytes:NULL maxLength:0 usedLength:&used encoding:NSUTF8StringEncoding options:0 range:NSMakeRange(0, 5) remainingRange:&left];
     correct = correct && measured && used == 8 && left.location == 5 && left.length == 0;
+    BOOL ascii = [s getBytes:bytes maxLength:12 usedLength:&used encoding:NSASCIIStringEncoding options:1 range:NSMakeRange(1, 1) remainingRange:&left];
+    correct = correct && ascii && used == 1 && bytes[0] == 'e';
+    BOOL caughtRange = NO;
+    @try { [s getBytes:bytes maxLength:12 usedLength:&used encoding:NSUTF8StringEncoding options:0 range:NSMakeRange(999, 1) remainingRange:&left]; }
+    @catch (NSException *exception) { caughtRange = [exception.name isEqualToString:@"NSRangeException"]; }
+    correct = correct && caughtRange;
     r.expected = @"UTF-8 prefix=41c3a9f09f9880; remaining UTF-16={4,1}; no terminator; measured=8";
     r.actual = [NSString stringWithFormat:@"prefix=%d correct=%d measured=%d used=%u remaining={%u,%u}", prefix, correct, measured, (unsigned)used, (unsigned)left.location, (unsigned)left.length];
     r.status = correct ? @"passed" : @"failed";
@@ -1897,6 +1903,14 @@ static int tladStage, tladCorrect;
 - (void)viewWillAppear:(BOOL)animated { if (tladStage != 0) tladCorrect = 0; tladStage = 1; }
 - (void)viewDidAppear:(BOOL)animated { if (tladStage != 2) tladCorrect = 0; tladStage = 3; }
 @end
+static UIWindow *tladHideWindow;
+static BOOL tladStaleAppear, tladDidDisappear;
+@interface TLReentrantLayoutController : UIViewController @end
+@implementation TLReentrantLayoutController
+- (void)viewWillAppear:(BOOL)animated { tladHideWindow.hidden = YES; }
+- (void)viewDidAppear:(BOOL)animated { tladStaleAppear = YES; }
+- (void)viewDidDisappear:(BOOL)animated { tladDidDisappear = YES; }
+@end
 static TLResult *runCaseAD(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_AD version:1];
     writeCheckpoint(CASE_AD); r.checkpointWritten = YES;
@@ -1918,6 +1932,12 @@ static TLResult *runCaseAD(void) {
     nav.view.bounds = CGRectMake(0, 0, 568, 320);
     [nav.view layoutIfNeeded];
     ok = ok && child.view.bounds.size.width == 568 && child.view.bounds.size.height == 320;
+    tladHideWindow = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+    tladHideWindow.rootViewController = [[TLReentrantLayoutController alloc] init];
+    tladStaleAppear = NO; tladDidDisappear = NO;
+    [tladHideWindow makeKeyAndVisible];
+    ok = ok && tladDidDisappear && !tladStaleAppear;
+    tladHideWindow = nil; if (prior) [prior makeKeyAndVisible];
     r.expected = @"initial appearance: willAppear -> layoutSubviews -> didAppear, synchronously";
     r.actual = [NSString stringWithFormat:@"correct=%d stage=%d", tladCorrect, tladStage];
     r.status = ok ? @"passed" : @"failed";
@@ -1941,7 +1961,8 @@ static TLResult *runCaseAE(void) {
     score.context = 0x1234567876543210ULL;
     NSData *bytes = [NSKeyedArchiver archivedDataWithRootObject:score];
     GKScore *restored = [NSKeyedUnarchiver unarchiveObjectWithData:bytes];
-    BOOL ok = restored && restored.value == score.value && restored.context == score.context && [restored.category isEqualToString:@"test-board"];
+    BOOL ok = restored && score.value == -81985529216486897LL && restored.value == -81985529216486897LL &&
+        score.context == 0x1234567876543210ULL && restored.context == 0x1234567876543210ULL && [restored.category isEqualToString:@"test-board"];
     r.expected = @"offline GKScore NSCoding preserves signed 64-bit value, context and category";
     r.actual = ok ? @"all local score fields survived" : @"local score archive mismatch";
     r.status = ok ? @"passed" : @"failed";
@@ -1960,6 +1981,10 @@ static TLResult *runCaseAF(void) {
     CGRect actual = [[view valueForKey:@"frame"] CGRectValue];
     BOOL ok = actual.origin.x == expected.origin.x && actual.origin.y == expected.origin.y &&
         actual.size.width == expected.size.width && actual.size.height == expected.size.height;
+    BOOL caught = NO;
+    @try { [view setValue:nil forKey:@"frame"]; }
+    @catch (NSException *exception) { caught = [exception.name isEqualToString:@"NSInvalidArgumentException"]; }
+    ok = ok && caught;
     r.expected = @"KVC unboxes and boxes every CGRect field through NSValue";
     r.actual = ok ? @"CGRect roundtrip preserved" : @"struct property mismatch";
     r.status = ok ? @"passed" : @"failed";
@@ -1978,6 +2003,9 @@ static TLResult *runCaseAG(void) {
     TLMediaTime sum = CMTimeAdd(a, b), difference = CMTimeSubtract(a, b);
     BOOL ok = sum.value == 5 && sum.timescale == 6 && sum.flags == 1 &&
         difference.value == 1 && difference.timescale == 6 && difference.flags == 1;
+    TLMediaTime large = {15000000001LL, 3, 1, 0}, zero = {0, 715827883, 1, 0};
+    TLMediaTime reduced = CMTimeAdd(large, zero);
+    ok = ok && reduced.timescale == 1073741823 && reduced.flags == 1;
     r.expected = @"1/2+1/3=5/6; 1/2-1/3=1/6 (24-byte ARMv7 struct ABI)";
     r.actual = ok ? @"exact rational arithmetic" : @"media time arithmetic mismatch";
     r.status = ok ? @"passed" : @"failed";

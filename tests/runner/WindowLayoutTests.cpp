@@ -1,13 +1,22 @@
 #include "runtime/uikit/UIKit.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 using namespace Hydrogen;
 using namespace Hydrogen::Runtime;
 namespace {
 std::vector<int> events;
-void will(Ctx&, uint32_t, uint32_t, bool) { events.push_back(1); }
-void layout(Ctx&, uint32_t, uint32_t) { events.push_back(2); }
+uint32_t windowToHide = 0;
+bool hideInLayout = false;
+void hide(Ctx& x) {
+    const auto window = windowToHide; windowToHide = 0;
+    if (window) ObjC::rt(x.proc).send(x.cpu, window, "setHidden:", {1});
+}
+void will(Ctx& x, uint32_t, uint32_t, bool) { events.push_back(1); if (!hideInLayout) hide(x); }
+void layout(Ctx& x, uint32_t, uint32_t) { events.push_back(2); if (hideInLayout) hide(x); }
 void did(Ctx&, uint32_t, uint32_t, bool) { events.push_back(3); }
+void willDisappear(Ctx&, uint32_t, uint32_t, bool) { events.push_back(4); }
+void didDisappear(Ctx&, uint32_t, uint32_t, bool) { events.push_back(5); }
 }
 int main() {
     ProcessConfig cfg;
@@ -20,6 +29,7 @@ int main() {
     view.m<&layout>("layoutSubviews", "v@:");
     auto vcClass = r.defineClass("LayoutProbeController", "UIViewController");
     vcClass.m<&will>("viewWillAppear:", "v@:c").m<&did>("viewDidAppear:", "v@:c");
+    vcClass.m<&willDisappear>("viewWillDisappear:", "v@:c").m<&didDisappear>("viewDidDisappear:", "v@:c");
     auto make = [&](uint32_t cls) { return uint32_t(r.send(cpu, uint32_t(r.send(cpu, cls, "alloc")), "init")); };
     const auto window = make(r.getClass("UIWindow")), vc = make(vcClass.cls()), v = make(view.cls());
     r.send(cpu, vc, "setView:", {v});
@@ -48,6 +58,17 @@ int main() {
     const auto bounds = UIKit::getRect(cx, childView, "bounds");
     if (bounds.w != 568 || bounds.h != 320) {
         std::printf("FAIL: navigation content must follow container resize; got %.0fx%.0f\n", bounds.w, bounds.h); return 1;
+    }
+    for (bool duringLayout : {false, true}) {
+        const auto nestedWindow = make(r.getClass("UIWindow")), nestedVC = make(vcClass.cls()), nestedView = make(view.cls());
+        r.send(cpu, nestedVC, "setView:", {nestedView});
+        r.send(cpu, nestedWindow, "setRootViewController:", {nestedVC});
+        windowToHide = nestedWindow; hideInLayout = duringLayout; events.clear();
+        r.send(cpu, nestedWindow, "makeKeyAndVisible");
+        if (std::find(events.begin(), events.end(), 3) != events.end() ||
+            std::find(events.begin(), events.end(), 5) == events.end() || r.host<UIKit::VCData>(nestedVC).appeared) {
+            std::puts("FAIL: reentrant disappearance cannot be followed by stale didAppear"); return 1;
+        }
     }
     std::puts("window initial layout: passed");
 }

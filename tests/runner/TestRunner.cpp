@@ -7668,6 +7668,8 @@ int runFullSubsystemTests() {
                       "NSString getBytes NULL buffer measures the full range independent of maxLength");
                 check(convert(16, 1, 0, 0, 5) && used() == 1 && left(1, 4) && proc.mem().read<uint8_t>(out + 1) == 0x55,
                       "NSString getBytes stops at an unrepresentable character with a successful prefix");
+                check(convert(16, 1, 1, 1, 1) && used() == 1 && proc.mem().read<uint8_t>(out) == 'e',
+                      "NSString lossy ASCII uses ASCII fallback, not the CF control byte 0xff");
                 check(convert(16, 10, 0, 1, 1) && used() == 2 && left(2, 0) && proc.mem().read<uint16_t>(out) == 0xe9 && proc.mem().read<uint8_t>(out + 2) == 0x55,
                       "NSString getBytes UTF-16 has no byte-order mark by default");
                 check(convert(16, 10, 2, 1, 1) && used() == 4 && proc.mem().read<uint16_t>(out) == 0xfeff && proc.mem().read<uint16_t>(out + 2) == 0xe9,
@@ -7677,6 +7679,17 @@ int runFullSubsystemTests() {
                 bool rejected = false;
                 try { convert(16, 4, 0, 0xffffffff, 2); } catch (const CPU::GuestFault&) { rejected = true; }
                 check(rejected, "NSString getBytes rejects overflowing out-of-bounds ranges");
+                const uint32_t ro = 0xbf320000;
+                proc.mem().map(ro, 4096, Memory::kProtRead);
+                for (int output = 0; output < 3; ++output) {
+                    bool faulted = false;
+                    std::memset(proc.mem().host(ro), 0x55, 4096);
+                    try { sr.send(cpu, str, selector, {output == 0 ? ro : out, 16, output == 1 ? ro : out + 32,
+                                                     4, 0, 0, 1, output == 2 ? ro : out + 36}); }
+                    catch (const CPU::GuestFault& e) { faulted = e.exit == CPU::Exit::MemFault; }
+                    check(faulted && proc.mem().read<uint32_t>(ro) == 0x55555555,
+                          "NSString getBytes faults without modifying read-only buffer/used/range outputs");
+                }
                 proc.heap().free(out);
             }
         }

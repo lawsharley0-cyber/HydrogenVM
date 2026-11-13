@@ -33,5 +33,13 @@ int main() {
     }
     const auto rounded = invoke(false, {1,2147483647,1,0}, {1,2147483646,1,0});
     if (rounded.scale != 2147483647 || rounded.value != 2 || rounded.flags != 3) { std::puts("FAIL: LCM overflow clamps scale and records rounding"); return 1; }
+    const auto exactAfterReduction = invoke(false, {15000000001,3,1,0}, {0,715827883,1,0});
+    if (exactAfterReduction.scale != 1073741823 || exactAfterReduction.flags != 1 ||
+        exactAfterReduction.value != int64_t(15000000001LL * (1073741823 / 3))) {
+        std::puts("FAIL: rejected overflowing scales cannot taint exact result flags"); return 1;
+    }
+    if (invoke(false, {15000000001,3,3,0}, {0,715827883,1,0}).flags != 3) {
+        std::puts("FAIL: accepted exact result preserves an operand's rounding flag"); return 1;
+    }
     std::puts("media time arithmetic: passed");
 }

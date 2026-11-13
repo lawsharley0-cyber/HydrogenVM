@@ -99,8 +99,8 @@ bool r_makeWithDictionary(Ctx& x, id dict, GuestPtr out) {
     if (!isNumber(x, a) || !isNumber(x, b) || !isNumber(x, c) || !isNumber(x, d)) return false;
     const CGRect r{{float(numberDouble(x, a)), float(numberDouble(x, b))},
                    {float(numberDouble(x, c)), float(numberDouble(x, d))}};
-    writeStruct(x, out, r);
-    return true;
+    uint32_t fault = 0;
+    return x.mem.copyInWritable(out, &r, sizeof(r), fault);
 }
 void r_intersection(Ctx& x, GuestPtr ret, CGRect a, CGRect b) {
     if (isNull(a) || isNull(b)) { writeStruct(x, ret, nullRect()); return; }

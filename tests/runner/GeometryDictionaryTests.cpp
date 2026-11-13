@@ -36,6 +36,16 @@ int main() {
     if ((p.callGuest(cpu, *restore, {uint32_t(empty), out}) & 0xff) || p.mem().read<uint32_t>(out) != f(-1.25f)) {
         std::puts("FAIL: malformed CGRect dictionary must fail without changing output"); return 1;
     }
+    const uint32_t ro = 0xbf300000;
+    p.mem().map(ro, 4096, Memory::kProtRead);
+    std::memset(p.mem().host(ro), 0x55, 4096);
+    if ((p.callGuest(cpu, *restore, {dict, ro}) & 0xff) || p.mem().read<uint32_t>(ro) != 0x55555555) {
+        std::puts("FAIL: CGRect dictionary cannot write a read-only destination"); return 1;
+    }
+    if ((p.callGuest(cpu, *restore, {dict, 0xfffffff8}) & 0xff) ||
+        (p.callGuest(cpu, *restore, {dict, ro - 8}) & 0xff)) {
+        std::puts("FAIL: CGRect dictionary cannot cross the arena end or an unmapped page"); return 1;
+    }
     rt.release(cpu, dict);
     p.heap().free(stack);
     std::puts("geometry dictionary: passed");

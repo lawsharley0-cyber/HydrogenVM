@@ -259,12 +259,16 @@ void vcAppearance(Ctx& x, id view, bool appearing) {
         for (id child : std::vector<id>(V(x, v).subviews)) collect(child);
     };
     collect(view);
-    for (id vc : controllers) rt(x).send(x.cpu, vc, appearing ? "viewWillAppear:" : "viewWillDisappear:", {0});
+    for (id vc : controllers) {
+        if (VC(x, vc).appeared == appearing) rt(x).send(x.cpu, vc, appearing ? "viewWillAppear:" : "viewWillDisappear:", {0});
+    }
     // Initial layout is synchronous with showing the hierarchy. In particular,
     // a GL view allocates its drawable and notifies its director during layout;
     // code after makeKeyAndVisible must not see an uninitialized scene.
     if (appearing) layoutIfNeeded(x, view);
-    for (id vc : controllers) rt(x).send(x.cpu, vc, appearing ? "viewDidAppear:" : "viewDidDisappear:", {0});
+    for (id vc : controllers) {
+        if (VC(x, vc).appeared == appearing) rt(x).send(x.cpu, vc, appearing ? "viewDidAppear:" : "viewDidDisappear:", {0});
+    }
 }
 
 void insertSubview(Ctx& x, id self, id view, long index) {
@@ -636,11 +640,14 @@ void layoutRootView(Ctx& x, id window, id vc) {
     const G::Size old{l.bounds.w, l.bounds.h};
     if (o == 3 || o == 4) {
         // LandscapeRight (3): the view's top turns to the device's right edge (+90 degrees).
-        l.transform = from2D(G::Affine::rotate(o == 3 ? kPi / 2 : -kPi / 2));
+        // Interface orientation is a discrete quarter-turn. Computing cos(pi/2)
+        // in float leaves a residual skew, turning pixel-aligned backgrounds
+        // into general paths and adding antialiasing drift at screen edges.
+        l.transform = from2D(o == 3 ? G::Affine{0, 1, -1, 0, 0, 0} : G::Affine{0, -1, 1, 0, 0, 0});
         l.bounds = {0, 0, af.h, af.w};
         l.position = {af.x + af.w / 2, af.y + af.h / 2};
     } else if (o == 2) {
-        l.transform = from2D(G::Affine::rotate(kPi));
+        l.transform = from2D(G::Affine{-1, 0, 0, -1, 0, 0});
         l.bounds = {0, 0, af.w, af.h};
         l.position = {af.x + af.w / 2, af.y + af.h / 2};
     } else {
