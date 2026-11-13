@@ -1,6 +1,8 @@
 // In-process Mach facilities for startup code. No host ports or exception delivery.
 #include "runtime/Process.hpp"
 #include "MachPorts.hpp"
+#include "runtime/Support.hpp"
+#include <array>
 #include <deque>
 #include <chrono>
 
@@ -15,11 +17,14 @@ bool range(Ctx& x, uint32_t address, uint64_t size, uint8_t access) {
     return true;
 }
 bool task(Ctx& x, uint32_t name) { return name == kTaskPort && hasMachSendRight(x.proc, name); }
+struct ExceptionAction { uint32_t port=0, behavior=0, flavor=0; };
+using ExceptionActions = std::array<ExceptionAction,14>;
 struct IPC {
     explicit IPC(Process&) {}
     std::mutex mu;
     std::condition_variable cv;
     uint32_t next = 0x20000;
+    std::unordered_map<uint32_t,ExceptionActions> exceptionActions;
     std::unordered_map<uint32_t, std::deque<std::vector<uint8_t>>> receive;
 };
 int32_t allocate(Ctx& x, uint32_t owner, uint32_t right, GuestPtr out) {
@@ -44,6 +49,8 @@ int32_t destroy(Ctx& x, uint32_t owner, uint32_t name) {
     if (!task(x, owner)) return 16;
     auto& ipc = x.proc.service<IPC>(); std::lock_guard lock(ipc.mu);
     if (!ipc.receive.erase(name)) return 15;
+    for (auto& [target, actions] : ipc.exceptionActions)
+        for (auto& action : actions) if (action.port == name) action.port = 0xffffffffu; // MACH_PORT_DEAD
     const auto refs = machSendRefs(x.proc, name);
     if (refs) modifyMachSendRefs(x.proc, owner, name, 0, -int32_t(refs));
     ipc.cv.notify_all(); return 0;
@@ -87,23 +94,93 @@ int32_t message(Ctx& x, GuestPtr buffer, uint32_t options, uint32_t sendSize, ui
         ipc.cv.wait_for(lock, std::chrono::milliseconds(10));
     }
 }
-// task/thread_set_exception_ports(target, mask, port, behavior, flavor): five
-// arguments and no out-parameters (the swap variants also return the old ports).
-int32_t setExceptionPorts(Ctx& x, uint32_t target, uint32_t, uint32_t port, int32_t, int32_t) {
-    if (!task(x, target) && !(target >= 0x1000 && hasMachSendRight(x.proc, target) && x.proc.findThreadById(target - 0x1000))) return 4;
-    if (port && !hasMachSendRight(x.proc, port)) return 15;
-    x.proc.reportMissing("Mach exception delivery (unavailable; setup accepted)");
+// Exception configuration is local metadata. Guest faults still use Engine
+// diagnostics; installing a non-null handler reports unavailable delivery.
+// Public ABI: https://web.mit.edu/darwin/src/modules/xnu/osfmk/man/thread_get_exception_ports.html
+constexpr uint32_t kExceptionMask = 0x3ffe; // exception types 1..13
+bool exceptionTarget(Ctx& x,uint32_t target,bool isTask) {
+    return isTask ? task(x,target) : target>=0x1000 && hasMachSendRight(x.proc,target) && x.proc.findThreadById(target-0x1000);
+}
+int32_t validateAction(Ctx& x,uint32_t mask,uint32_t port,uint32_t behavior,int32_t flavor) {
+    if(mask & ~kExceptionMask) return 4;
+    const auto mode=behavior & ~0x80000000u; // MACH_EXCEPTION_CODES
+    if((mode<1 || mode>3) && !(port==0 && behavior==0)) return 4;
+    if(flavor<0) return 4;
+    if(port && !hasMachSendRight(x.proc,port)) return 15;
     return 0;
 }
-int32_t exceptionPorts(Ctx& x, uint32_t target, uint32_t, uint32_t port, int32_t, int32_t,
-                       GuestPtr, GuestPtr count, GuestPtr, GuestPtr, GuestPtr) {
-    if (!task(x, target) && !(target >= 0x1000 && hasMachSendRight(x.proc, target) && x.proc.findThreadById(target - 0x1000))) return 4;
-    if (port && !hasMachSendRight(x.proc, port)) return 15;
-    if (!range(x, count, 4, Memory::kProtWrite)) return 1;
-    x.mem.write<uint32_t>(count, 0);
-    // Deliberate Mono compatibility: accept setup with an empty prior-handler list.
-    // Guest faults still use Engine diagnostics; they are never sent as Mach exceptions.
-    x.proc.reportMissing("Mach exception delivery (unavailable; setup accepted)");
+// Caller holds IPC.mu. A query returns one send-right copy per grouped tuple,
+// not one per exception bit. Installed metadata does not add user-name urefs.
+int32_t copyActions(Ctx& x,IPC& ipc,uint32_t target,bool isTask,uint32_t mask,
+                    GuestPtr masks,GuestPtr count,GuestPtr ports,GuestPtr behaviors,GuestPtr flavors) {
+    if(!range(x,count,4,Memory::kProtRead|Memory::kProtWrite)) return 1;
+    const auto capacity=x.mem.read<uint32_t>(count);
+    struct Group { uint32_t mask; ExceptionAction action; };
+    std::vector<Group> groups;
+    auto it=ipc.exceptionActions.find(target);
+    ExceptionActions defaults{};
+    if(isTask || it!=ipc.exceptionActions.end()) {
+        const auto& actions=it==ipc.exceptionActions.end() ? defaults : it->second;
+        for(unsigned bit=1;bit<actions.size();++bit) if(mask & (1u<<bit)) {
+            const auto action=actions[bit];
+            auto same=std::find_if(groups.begin(),groups.end(),[&](const Group& g) {
+                return g.action.port==action.port && g.action.behavior==action.behavior && g.action.flavor==action.flavor;
+            });
+            if(same!=groups.end()) same->mask |= 1u<<bit;
+            else groups.push_back({1u<<bit,action});
+        }
+    }
+    const auto n=std::min(size_t(capacity),groups.size());
+    for(auto out : {masks,ports,behaviors,flavors}) if(!range(x,out,n*4,Memory::kProtWrite)) return 1;
+    std::vector<uint32_t> copies;
+    for(size_t i=0;i<n;++i) if(const auto port=groups[i].action.port; port && port!=0xffffffffu) {
+        if(!acquireMachSendRight(x.proc,port)) {
+            for(auto prior:copies) modifyMachSendRefs(x.proc,kTaskPort,prior,0,-1);
+            return 19;
+        }
+        copies.push_back(port);
+    }
+    for(size_t i=0;i<n;++i) {
+        const auto& g=groups[i]; const auto offset=uint32_t(i*4);
+        x.mem.write<uint32_t>(masks+offset,g.mask); x.mem.write<uint32_t>(ports+offset,g.action.port);
+        x.mem.write<uint32_t>(behaviors+offset,g.action.behavior); x.mem.write<uint32_t>(flavors+offset,g.action.flavor);
+    }
+    x.mem.write<uint32_t>(count,uint32_t(n));
+    return 0;
+}
+template<bool IsTask>
+int32_t getExceptionPorts(Ctx& x,uint32_t target,uint32_t mask,GuestPtr masks,GuestPtr count,
+                          GuestPtr ports,GuestPtr behaviors,GuestPtr flavors) {
+    if(!exceptionTarget(x,target,IsTask) || (mask & ~kExceptionMask)) return 4;
+    auto& ipc=x.proc.service<IPC>(); std::lock_guard lock(ipc.mu);
+    return copyActions(x,ipc,target,IsTask,mask,masks,count,ports,behaviors,flavors);
+}
+void storeActions(IPC& ipc,uint32_t target,uint32_t mask,uint32_t port,uint32_t behavior,int32_t flavor) {
+    auto& actions=ipc.exceptionActions[target];
+    for(unsigned bit=1;bit<actions.size();++bit) if(mask & (1u<<bit)) actions[bit]={port,behavior,uint32_t(flavor)};
+}
+template<bool IsTask>
+int32_t setExceptionPorts(Ctx& x,uint32_t target,uint32_t mask,uint32_t port,uint32_t behavior,int32_t flavor) {
+    if(!exceptionTarget(x,target,IsTask)) return 4;
+    if(auto error=validateAction(x,mask,port,behavior,flavor)) return error;
+    {
+        auto& ipc=x.proc.service<IPC>(); std::lock_guard lock(ipc.mu);
+        storeActions(ipc,target,mask,port,behavior,flavor);
+    }
+    if(port) x.proc.reportMissing("Mach exception delivery (unavailable; metadata stored)");
+    return 0;
+}
+template<bool IsTask>
+int32_t exceptionPorts(Ctx& x,uint32_t target,uint32_t mask,uint32_t port,uint32_t behavior,int32_t flavor,
+                       GuestPtr masks,GuestPtr count,GuestPtr ports,GuestPtr behaviors,GuestPtr flavors) {
+    if(!exceptionTarget(x,target,IsTask)) return 4;
+    if(auto error=validateAction(x,mask,port,behavior,flavor)) return error;
+    {
+        auto& ipc=x.proc.service<IPC>(); std::lock_guard lock(ipc.mu);
+        if(auto error=copyActions(x,ipc,target,IsTask,mask,masks,count,ports,behaviors,flavors)) return error;
+        storeActions(ipc,target,mask,port,behavior,flavor);
+    }
+    if(port) x.proc.reportMissing("Mach exception delivery (unavailable; metadata stored)");
     return 0;
 }
 int32_t map(Ctx& x, uint32_t owner, GuestPtr out, uint32_t size, uint32_t mask, uint32_t flags,
@@ -132,12 +209,14 @@ int32_t protect(Ctx& x, uint32_t owner, uint32_t address, uint32_t size, bool ma
 void registerStartupMach(Process& p) {
     p.def<&allocate>("_mach_port_allocate");
     p.def<&insert>("_mach_port_insert_right");
-    p.def<&destroy>("_mach_port_destroy");
+    supportDef<&destroy>(p,"_mach_port_destroy",SupportStatus::Approx,"Destroys local receive endpoints and marks installed handler metadata dead; no host kernel ports");
     p.def<&message>("_mach_msg");
-    p.def<&exceptionPorts>("_task_swap_exception_ports");
-    p.def<&exceptionPorts>("_thread_swap_exception_ports");
-    p.def<&setExceptionPorts>("_task_set_exception_ports");
-    p.def<&setExceptionPorts>("_thread_set_exception_ports");
+    supportDef<&exceptionPorts<true>>(p,"_task_swap_exception_ports",SupportStatus::Approx,"Stores local exception metadata; guest Mach exception delivery is unavailable and reported for non-null handlers");
+    supportDef<&exceptionPorts<false>>(p,"_thread_swap_exception_ports",SupportStatus::Approx,"Stores local exception metadata; guest Mach exception delivery is unavailable and reported for non-null handlers");
+    supportDef<&setExceptionPorts<true>>(p,"_task_set_exception_ports",SupportStatus::Approx,"Stores local exception metadata; guest Mach exception delivery is unavailable and reported for non-null handlers");
+    supportDef<&setExceptionPorts<false>>(p,"_thread_set_exception_ports",SupportStatus::Approx,"Stores local exception metadata; guest Mach exception delivery is unavailable and reported for non-null handlers");
+    supportDef<&getExceptionPorts<true>>(p,"_task_get_exception_ports",SupportStatus::Approx,"Returns grouped local exception metadata and send-right copies; no host exception ports or guest exception delivery");
+    supportDef<&getExceptionPorts<false>>(p,"_thread_get_exception_ports",SupportStatus::Approx,"Returns grouped local exception metadata and send-right copies; no host exception ports or guest exception delivery");
     p.def<&map>("_vm_map");
     p.def<&protect>("_vm_protect");
 }

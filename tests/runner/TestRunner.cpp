@@ -12833,6 +12833,54 @@ int runFullSubsystemTests() {
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
+    {
+        ProcessConfig cfg; cfg.homePath="/tmp/hvm-exception-port-metadata";
+        Process p(cfg); auto& c=p.mainThread().cpu;
+        c.r[13]=p.heap().allocZeroed(65536)+65536-16;
+        const auto get=p.lookupSymbol("_thread_get_exception_ports");
+        bool ok=get.has_value() && p.lookupSymbol("_task_get_exception_ports").has_value();
+        auto call=[&](const char* n,std::initializer_list<uint32_t> a) { return uint32_t(p.callGuest(c,*p.lookupSymbol(n),a)); };
+        const auto b=p.heap().allocZeroed(256);
+        auto word=[&](unsigned off) { return p.mem().read<uint32_t>(b+off); };
+        auto query=[&](const char* n,uint32_t target,uint32_t mask,uint32_t cap=8) {
+            p.mem().write<uint32_t>(b+32,cap);
+            return call(n,{target,mask,b,b+32,b+64,b+96,b+128});
+        };
+        if(ok) {
+            const auto thread=call("_mach_thread_self",{});
+            ok &= query("_thread_get_exception_ports",thread,6)==0 && word(32)==0;
+            ok &= call("_mach_port_allocate",{0x103,1,b+160})==0;
+            const auto a=word(160);
+            ok &= call("_mach_port_insert_right",{0x103,a,a,20})==0;
+            ok &= call("_mach_port_allocate",{0x103,1,b+164})==0;
+            const auto d=word(164);
+            ok &= call("_mach_port_insert_right",{0x103,d,d,20})==0;
+            ok &= call("_thread_set_exception_ports",{thread,6,a,1,0})==0;
+            ok &= call("_mach_port_get_refs",{0x103,a,0,b+200})==0 && word(200)==1;
+            ok &= query("_thread_get_exception_ports",thread,6)==0 && word(32)==1 && word(0)==6 && word(64)==a && word(96)==1 && word(128)==0;
+            ok &= call("_mach_port_get_refs",{0x103,a,0,b+200})==0 && word(200)==2;
+            call("_mach_port_deallocate",{0x103,a}); // release returned copy, not installed metadata
+            ok &= call("_thread_set_exception_ports",{thread,4,d,3,1})==0;
+            ok &= query("_thread_get_exception_ports",thread,6)==0 && word(32)==2 && word(0)==2 && word(4)==4 && word(64)==a && word(68)==d && word(100)==3 && word(132)==1;
+            call("_mach_port_deallocate",{0x103,a}); call("_mach_port_deallocate",{0x103,d});
+            ok &= query("_task_get_exception_ports",0x103,6)==0 && word(64)==0;
+            p.mem().write<uint32_t>(b+32,8);
+            ok &= call("_thread_swap_exception_ports",{thread,2,0,1,0,b,b+32,b+64,b+96,b+128})==0 && word(32)==1 && word(64)==a;
+            call("_mach_port_deallocate",{0x103,a});
+            ok &= query("_thread_get_exception_ports",thread,2)==0 && word(64)==0;
+            ok &= query("_thread_get_exception_ports",0x103,2)==4;
+            ok &= query("_thread_get_exception_ports",thread,0x80000000)==4;
+            p.mem().write<uint32_t>(b+32,8);
+            ok &= call("_thread_get_exception_ports",{thread,6,0xfffffffc,b+32,b+64,b+96,b+128})==1 && word(32)==8;
+            ok &= query("_thread_get_exception_ports",thread,6,0)==0 && word(32)==0;
+            call("_mach_port_destroy",{0x103,d});
+            ok &= query("_thread_get_exception_ports",thread,4)==0 && word(64)==0xffffffffu;
+            call("_thread_set_exception_ports",{thread,6,0,1,0});
+            call("_mach_port_destroy",{0x103,a});
+            call("_mach_port_deallocate",{0x103,thread});
+        }
+        check(ok,"Mach exception queries preserve grouped thread metadata, swap ABI, isolation and checked output");
+    }
     check(runNSStringSearchTests() == 0, "bounded character-set search contract");
     check(runLegacyGlyphTests() == 0, "legacy CGContext glyph outlines and ABI");
     check(runPositionalFormatTests() == 0, "positional formatting arguments and ABI");

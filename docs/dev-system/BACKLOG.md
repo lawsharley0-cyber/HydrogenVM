@@ -1,5 +1,12 @@
 # Backlog
 
+- November 13 owner IPA queue: Super Hexagon 1.0.0, issue #438,
+  `codex/super-hexagon-compat` (initially based on Canabalt #437).
+  Fresh launch stops at missing `thread_get_exception_ports` before a frame.
+  Implement shared checked Mach exception metadata queries/set/swap, label
+  undelivered exception-message limitations, and add runner plus TL-AN red/green
+  coverage before continuing the playability loop. No app assets in Git.
+
 - Owner IPA queue, November 13: Canabalt 1.4 startup/text-wrapping crash on
   main ea5a6d2e, tracked in [#436](https://github.com/lawsharley0-cyber/HydrogenVM/issues/436).
   Group D, `codex/canabalt-compat`: implement the missing bounded NSString
