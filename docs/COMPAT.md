@@ -4,7 +4,7 @@
 
 | App / fixture | Status | Evidence |
 |---|---|---|
-| BADLAND 1.0 (build 8) | Linux core loop verified; device unqualified | Menus, controlled flight, earned level completion, saved progression on relaunch, captured music/audio, pause/resume and four-minute clean sessions. Without live frame export: average 22.48 ms, p99 30.41 ms; launch/loading outliers remain. Must-launch registered; no proprietary assets or game patches. [Reproduction, shared fixes, gates and limits](BADLAND_PLAYABILITY_2026-11-12.md). |
+| BADLAND 1.0 (build 8) | In progress: core loop verified; frame-time outliers remain | Menus, controlled flight, earned completion, saves across relaunch, captured music/audio, pause/resume and four-minute clean sessions. Final post-review run: average 26.40 ms, p95 33.55 ms, p99 285.21 ms; an earlier run reached p99 30.41 ms. Must-launch registered. [Reproduction, shared fixes, gates and limits](BADLAND_PLAYABILITY_2026-11-12.md). |
 
 ## Scanner
 

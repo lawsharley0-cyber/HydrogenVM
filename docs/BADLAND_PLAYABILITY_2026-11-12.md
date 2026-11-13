@@ -1,11 +1,12 @@
 # BADLAND 1.0 — Linux bench investigation
 
 Owner-selected first app, November 12, 2026. Tracking: [#423](https://github.com/lawsharley0-cyber/HydrogenVM/issues/423).
-**Linux core playability reproduced; physical devices remain unqualified.**
+**In progress: Linux core playability reproduced; frame-time qualification remains open.**
 Menus, controlled flight, an earned level completion, music/audio capture,
 four-minute clean runs and saved progression across relaunch are reproduced.
-The timing run without live frame export has p99 below 33 ms; startup/loading
-outliers and the cost of live capture are reported separately below.
+One timing run without live frame export has p99 below 33 ms, but the final
+post-review run did not reproduce that tail latency. Outliers, capture costs
+and physical-device limits are reported separately below.
 
 ## Fixture and reproduction
 
@@ -116,11 +117,14 @@ This drives actual guest input, physics, collisions, deaths and respawns.
 |---|---|---|---|
 | `badland-qualified-fresh` (live frames + WAV + contact sheet) | 240 s, clean save/close, exit 0 | 7,935 | 28.32 / 25.17 / 35.13 / 142.61 |
 | `badland-timing-fresh` (same scripted input, WAV, no live frame export) | 240 s, clean save/close, exit 0 | 9,892 | 22.48 / 22.54 / 27.00 / 30.41 |
+| `badland-review-final-fresh` (post-review fixes, WAV, no live frame export) | 241 s, clean save/close, exit 0; earned completion with three clones | 8,878 | 26.40 / 20.45 / 33.55 / 285.21 |
 
 These percentiles include startup; they do not claim every frame is under 33 ms.
 The timing run's maximum was 1,219 ms during the complete launch/session.
 Live-export numbers do not meet the same tail-latency target. Physical-device
-speed is a separate qualification.
+speed is a separate qualification. The final run had no runtime errors or audio
+transport drops, but its tail latency means the frame-time requirement remains
+open. The faster earlier run alone does not qualify every gameplay scenario.
 
 - Captured scenes show correctly sized landscape graphics, flying characters,
   scrolling/animated scenery, collision/death/respawn and working pause/resume.
