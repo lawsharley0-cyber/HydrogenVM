@@ -2330,6 +2330,17 @@ int runFullSubsystemTests() {
             if (fd >= 0) call(b, "_close", {uint32_t(fd)});
         }
         {
+            // Header names respelled for old parsers; values and lengths untouched; only response headers.
+            std::string r = "HTTP/1.1 200 OK\r\netag: \"abc\"\r\ncontent-encoding: gzip\r\nx-amz-cf-id: Q\r\nContent-Length: 2\r\n\r\netag: body";
+            const size_t before = r.size();
+            const int n = canonicalHeaderNames(r.data(), r.size());
+            std::string req = "GET / HTTP/1.1\r\netag: x\r\n\r\n";
+            const int m = canonicalHeaderNames(req.data(), req.size());
+            check(n == 3 && r.size() == before && r.find("\r\nETag: \"abc\"\r\nContent-Encoding: gzip\r\nX-Amz-Cf-Id: Q\r\nContent-Length: 2") != std::string::npos &&
+                  r.find("\r\n\r\netag: body") != std::string::npos && m == 0,
+                  "TLS bridge: response header names get their usual spelling (ETag), the body and requests are untouched");
+        }
+        {
             // The bridge's play-log lines: key headers kept, queries dropped, repeats folded, totals at the end.
             std::vector<std::string> lines;
             size_t gameBytes = 0, serverBytes = 0;

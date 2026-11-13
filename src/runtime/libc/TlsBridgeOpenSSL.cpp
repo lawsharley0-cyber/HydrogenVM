@@ -213,7 +213,8 @@ private:
             if (ur) {
                 const int n = SSL_read(u, buf, sizeof buf);
                 if (n <= 0) { if (SSL_get_error(u, n) == SSL_ERROR_WANT_READ) continue; http.ended("closed by the server"); return; }
-                http.chunk(false, buf, size_t(n));
+                http.chunk(false, buf, size_t(n));   // logged as the server sent it
+                canonicalHeaderNames(buf, size_t(n));
                 if (SSL_write(g, buf, n) != n) { http.ended("game stopped taking data"); return; }
             }
         }

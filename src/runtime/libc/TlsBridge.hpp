@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <algorithm>
 #include <cctype>
 #include <utility>
 
@@ -53,7 +54,7 @@ inline std::string httpSummary(const char* p, size_t n) {
     std::string out = httpFirstLine(p, n);
     if (out.empty()) return out;
     static const char* const kKeep[] = {"content-length:", "content-range:", "range:", "location:", "content-type:",
-                                        "transfer-encoding:", "content-encoding:", "connection:"};
+                                        "transfer-encoding:", "content-encoding:", "connection:", "etag:", "last-modified:"};
     std::string extra;
     size_t i = 0;
     while (i < n) {
@@ -73,6 +74,39 @@ inline std::string httpSummary(const char* p, size_t n) {
         i = e + 1;
     }
     return extra.empty() ? out : out + " [" + extra + "]";
+}
+
+// Today's servers and CDNs often send header names in lower case ("etag:", "content-encoding:").
+// HTTP says case does not matter, but parsers in old games look for "ETag:" exactly (Minion
+// Rush's asset check asks its CDN for an ETag over and over). In a response that starts in this
+// chunk, header names get their usual spelling; values, sizes and byte counts are unchanged.
+// Returns how many names were respelled.
+inline int canonicalHeaderNames(char* p, size_t n) {
+    if (n < 8 || std::string(p, 7) != "HTTP/1.") return 0;
+    int changed = 0;
+    size_t i = 0;
+    while (i < n && p[i] != '\n') ++i;   // past the status line
+    for (++i; i < n;) {
+        if (p[i] == '\r' || p[i] == '\n') break;   // end of the headers
+        size_t colon = i;
+        while (colon < n && p[colon] != ':' && p[colon] != '\n') ++colon;
+        if (colon >= n || p[colon] != ':') break;
+        std::string name(p + i, colon - i), lower = name;
+        for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+        std::string want;
+        if (lower == "etag") want = "ETag";
+        else if (lower == "www-authenticate") want = "WWW-Authenticate";
+        else if (lower == "content-md5") want = "Content-MD5";
+        else {
+            want = lower;
+            bool up = true;
+            for (char& c : want) { if (up) c = char(std::toupper(static_cast<unsigned char>(c))); up = c == '-'; }
+        }
+        if (want != name) { std::copy(want.begin(), want.end(), p + i); ++changed; }
+        while (i < n && p[i] != '\n') ++i;
+        ++i;
+    }
+    return changed;
 }
 
 // One bridged connection's lines for the play log: each request and response with its key

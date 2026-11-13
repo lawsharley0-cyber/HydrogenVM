@@ -191,7 +191,8 @@ bool transfer(SSLContextRef from, SSLContextRef to, int toFd, bool fromGame, Hyd
     uint8_t buf[16384];
     size_t n = 0;
     const OSStatus s = SSLRead(from, buf, sizeof buf, &n);
-    if (n) http.chunk(fromGame, reinterpret_cast<const char*>(buf), n);
+    if (n) http.chunk(fromGame, reinterpret_cast<const char*>(buf), n);   // logged as sent
+    if (n && !fromGame) Hydrogen::Runtime::canonicalHeaderNames(reinterpret_cast<char*>(buf), n);
     if (n && !writeAll(to, toFd, buf, n)) { http.ended(fromGame ? "server stopped taking data" : "game stopped taking data"); return false; }
     if (s != noErr && s != errSSLWouldBlock) http.ended(fromGame ? "closed by the game" : "closed by the server");
     return s == noErr || s == errSSLWouldBlock;
