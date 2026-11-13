@@ -6953,6 +6953,48 @@ int runFullSubsystemTests() {
                   "std::string out-of-line members: replace(pos,n,const char*), rbegin, _M_set_length_and_sharable, clear, _Alloc_hider");
         }
 
+        // Out-of-line members Unity 4 imports (Lego Technic Pullback Racers 1.0):
+        // _M_data, _M_check_length, basic_string::_S_empty_rep, _S_copy_chars,
+        // insert(pos, string) and replace(iterator, iterator, const_iterator, const_iterator).
+        {
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, cstr("4.0.1f2"), 0});
+            const uint32_t data = call("__ZNKSs7_M_dataEv", {t});
+            const bool dataOk = data != 0xDEADu && data == m.read<uint32_t>(t) && proc.readCString(data) == "4.0.1f2";
+            bool checkOk = false;
+            try {
+                checkOk = call("__ZNKSs15_M_check_lengthEmmPKc", {t, 0, 3, cstr("basic_string::append")}) != 0xDEADu;
+            } catch (const std::exception&) { checkOk = false; }
+            bool threw = false;
+            try {
+                call("__ZNKSs15_M_check_lengthEmmPKc", {t, 0, 0x3FFFFFFCu, cstr("basic_string::append")});
+            } catch (const std::exception&) { threw = true; }
+            const uint32_t er1 = call("__ZNSs12_S_empty_repEv", {});
+            const uint32_t er2 = call("__ZNSs4_Rep12_S_empty_repEv", {});
+            const bool emptyOk = er1 != 0xDEADu && er1 == er2 && m.read<uint32_t>(er1 + 8) == 0xFFFFFFFFu;
+            const uint32_t dst = proc.heap().allocZeroed(16);
+            const uint32_t src = cstr("ABCDEF");
+            call("__ZNSs13_S_copy_charsEPcPKcS1_", {dst, src, src + 4});
+            const bool copyRaw = std::memcmp(m.host(dst), "ABCD", 4) == 0 && m.read<uint8_t>(dst + 4) == 0;
+            call("__ZNSs13_S_copy_charsEPcN9__gnu_cxx17__normal_iteratorIS_SsEES2_", {dst + 8, data, data + 3});
+            const bool copyIt = std::memcmp(m.host(dst + 8), "4.0", 3) == 0;
+            const uint32_t add = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {add, cstr("XY"), 0});
+            const uint32_t ins = call("__ZNSs6insertEmRKSs", {t, 1, add});
+            const bool inserted = ins == t && str(t) == "4XY.0.1f2";
+            const uint32_t d = m.read<uint32_t>(t);
+            const uint32_t k = m.read<uint32_t>(add);
+            call("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_NS0_IPKcSsEES5_", {t, d, d + 3, k, k + 2});
+            const bool replacedIt = str(t) == "XY.0.1f2";
+            if (!(dataOk && checkOk && threw && emptyOk && copyRaw && copyIt && inserted && replacedIt))
+                std::printf("    Unity string imports: data %d check %d threw %d empty %d copy %d/%d insert %d replace %d\n",
+                            dataOk, checkOk, threw, emptyOk, copyRaw, copyIt, inserted, replacedIt);
+            call("__ZNSsD1Ev", {t});
+            call("__ZNSsD1Ev", {add});
+            check(dataOk && checkOk && threw && emptyOk && copyRaw && copyIt && inserted && replacedIt,
+                  "std::string out-of-line Unity imports: _M_data, _M_check_length, _S_empty_rep, _S_copy_chars, insert(pos,str), replace(iterators)");
+        }
+
         // libstdc++ __basic_file<char> tests
         const uint32_t bfile = proc.heap().allocZeroed(16);
         call("__ZNSt12__basic_fileIcEC1EP15__gthread_mutex", {bfile, 0});
@@ -7672,6 +7714,28 @@ int runFullSubsystemTests() {
                 std::printf("    mp3 file: open %x format %d list %d counts %d three %d bounded %d end %d\n", opened, format, formatList, counts, three, bounded, atEnd);
             check(opened == 0 && format && formatList && counts && three && bounded && atEnd,
                   "AudioFile presents an MP3 as compressed packets: format, format list, counts, and packet reads with descriptions");
+
+            // kAudioFilePropertyFrameToPacket ('frpk') and PacketToFrame ('pkfr').
+            // Unity 4 (Lego Technic Pullback Racers) asks for FrameToPacket after
+            // AudioQueueStart; an unsupported result made it dispose the queue every
+            // frame, so menu music never played.
+            const uint32_t tr = proc.heap().allocZeroed(24);
+            proc.mem().write<uint64_t>(tr, 1152ull * 3 + 50);
+            proc.mem().write<uint32_t>(io + 4, 20);
+            const uint32_t frpkStatus = audioCall("_AudioFileGetProperty", {mp3File, 0x6672706B, io + 4, tr});
+            const bool frpk = frpkStatus == 0 && proc.mem().read<uint64_t>(tr) == 1152ull * 3 + 50 &&
+                              proc.mem().read<uint64_t>(tr + 8) == 3 && proc.mem().read<uint32_t>(tr + 16) == 50;
+            proc.mem().write<uint64_t>(tr + 8, 5);
+            proc.mem().write<uint32_t>(io + 4, 20);
+            const uint32_t pkfrStatus = audioCall("_AudioFileGetProperty", {mp3File, 0x706B6672, io + 4, tr});
+            const bool pkfr = pkfrStatus == 0 && proc.mem().read<uint64_t>(tr) == 5ull * 1152 &&
+                              proc.mem().read<uint32_t>(tr + 16) == 0;
+            const uint32_t frpkInfo = audioCall("_AudioFileGetPropertyInfo", {mp3File, 0x6672706B, io + 8, 0});
+            if (!(frpk && pkfr && frpkInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 20))
+                std::printf("    FrameToPacket: frpk status %x ok %d pkfr %d info %x size %u\n",
+                            frpkStatus, frpk, pkfr, frpkInfo, proc.mem().read<uint32_t>(io + 8));
+            check(frpk && pkfr && frpkInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 20,
+                  "AudioFile FrameToPacket and PacketToFrame for an MP3 (1152 frames per packet)");
 
             // The app's side of FMOD's decode: a queue in the file's format, one packet per
             // buffer, rendered offline to 16-bit stereo.

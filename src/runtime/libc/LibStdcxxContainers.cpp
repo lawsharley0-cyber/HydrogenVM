@@ -396,6 +396,32 @@ template <uint32_t CharSize> void r_setLeaked(Ctx& x, GuestPtr rep) {
 }
 uint32_t r_emptyRep(Ctx& x) { return x.proc.service<Strings>().emptyRep; }
 
+// Out-of-line members some Unity 4 / GCC builds import instead of inlining.
+// _M_data() is the data pointer, the same as c_str()/data().
+// _M_check_length(n1, n2, s): throw if size-n1 + n2 exceeds max_size, as GCC 4.2.
+// basic_string::_S_empty_rep() is the same storage as _Rep::_S_empty_rep().
+// _S_copy_chars is a memcpy; the iterator overload is the same ABI (a wrapped pointer).
+void m_checkLength(Ctx& x, GuestPtr self, uint32_t n1, uint32_t n2, GuestPtr msg) {
+    const uint32_t size = q_size(x, self);
+    if (kMaxSize - (size - n1) < n2)
+        lengthError(msg ? x.proc.readCString(msg).c_str() : "basic_string::_M_check_length");
+}
+void s_copyChars(Ctx& x, GuestPtr dest, GuestPtr first, GuestPtr last) {
+    if (!dest || last <= first) return;
+    const uint32_t n = last - first;
+    std::memcpy(x.mem.host(dest), x.mem.host(first), n);
+}
+uint32_t m_insertStr(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr other) {
+    const std::string o = value(x, other);
+    return m_insertBuf(x, self, pos, x.mem.read<uint32_t>(other), uint32_t(o.size()));
+}
+uint32_t m_replaceIterators(Ctx& x, GuestPtr self, uint32_t i1, uint32_t i2, GuestPtr k1, GuestPtr k2) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    if (i1 < d || i2 < i1 || k2 < k1) return self;
+    return m_replace(x, self, i1 - d, i2 - i1, k1, k2 - k1);
+}
+
+
 // --------------------------------------------------------------- std::wstring
 // std::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t>>
 // On 32-bit Darwin ARM, sizeof(wchar_t) == 4. _Rep header is 12 bytes
@@ -1001,6 +1027,13 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&r_setSharable<1>>("__ZNSs4_Rep13_M_set_sharableEv");
     p.def<&r_setLeaked<1>>("__ZNSs4_Rep13_M_set_leakedEv");
     p.def<&r_emptyRep>("__ZNSs4_Rep12_S_empty_repEv");
+    p.def<&q_cstr>("__ZNKSs7_M_dataEv");
+    p.def<&m_checkLength>("__ZNKSs15_M_check_lengthEmmPKc");
+    p.def<&r_emptyRep>("__ZNSs12_S_empty_repEv");
+    p.def<&s_copyChars>("__ZNSs13_S_copy_charsEPcPKcS1_");
+    p.def<&s_copyChars>("__ZNSs13_S_copy_charsEPcN9__gnu_cxx17__normal_iteratorIS_SsEES2_");
+    p.def<&m_insertStr>("__ZNSs6insertEmRKSs");
+    p.def<&m_replaceIterators>("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_NS0_IPKcSsEES5_");
 
     // std::wstring
     p.def<&wc_default>("__ZNSbIwSt11char_traitsIwESaIwEEC1Ev");

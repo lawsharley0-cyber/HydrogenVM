@@ -828,6 +828,7 @@ uint32_t afPropertySize(const AudioFileInstance& af, uint32_t prop) {
     case 0x706E666F: return 16;   // 'pnfo' AudioFilePacketTableInfo
     case 0x62636E74: case 0x65647572: case 0x70636E74: return 8;   // 'bcnt' 'edur' 'pcnt'
     case 0x70737A65: case 0x706B7562: case 0x66666D74: return 4;   // 'psze' 'pkub' 'ffmt'
+    case 0x6672706B: case 0x706B6672: return 20;   // 'frpk' 'pkfr' AudioFramePacketTranslation (20 bytes on 32-bit)
     default: return 0;
     }
 }
@@ -896,6 +897,20 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         case 0x66666D74: x.mem.write<uint32_t>(outData, 0x4D504733); break;            // 'ffmt' = 'MPG3'
         case 0x646F6666: x.mem.write<uint64_t>(outData, m.dataOffset); break;          // 'doff'
         case 0x62726174: x.mem.write<uint32_t>(outData, seconds > 0 ? uint32_t(double(m.dataBytes) * 8.0 / seconds) : 0); break;   // 'brat'
+        case 0x6672706B: {   // 'frpk' FrameToPacket: mFrame in, mPacket and mFrameOffsetInPacket out
+            const int64_t fpp = int64_t(m.framesPerPacket ? m.framesPerPacket : 1);
+            const int64_t frame = int64_t(x.mem.read<uint64_t>(outData));
+            const int64_t packet = frame / fpp;
+            x.mem.write<uint64_t>(outData + 8, uint64_t(packet));
+            x.mem.write<uint32_t>(outData + 16, uint32_t(frame - packet * fpp));
+            break;
+        }
+        case 0x706B6672: {   // 'pkfr' PacketToFrame: mPacket in, mFrame out
+            const int64_t packet = int64_t(x.mem.read<uint64_t>(outData + 8));
+            x.mem.write<uint64_t>(outData, uint64_t(packet * int64_t(m.framesPerPacket)));
+            x.mem.write<uint32_t>(outData + 16, 0);
+            break;
+        }
         default: break;
         }
         return 0;
@@ -925,6 +940,14 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<uint32_t>(outData, 2 * afChannels(af));
     } else if (prop == 0x66666D74 /* 'ffmt' file format */ && cap >= 4) {
         x.mem.write<uint32_t>(outData, 0x63616666 /* 'caff' */);
+    } else if (prop == 0x6672706B /* 'frpk' FrameToPacket: decoded PCM is one frame per packet */) {
+        const int64_t frame = int64_t(x.mem.read<uint64_t>(outData));
+        x.mem.write<uint64_t>(outData + 8, uint64_t(frame));
+        x.mem.write<uint32_t>(outData + 16, 0);
+    } else if (prop == 0x706B6672 /* 'pkfr' PacketToFrame */) {
+        const int64_t packet = int64_t(x.mem.read<uint64_t>(outData + 8));
+        x.mem.write<uint64_t>(outData, uint64_t(packet));
+        x.mem.write<uint32_t>(outData + 16, 0);
     }
     return 0;
 }
