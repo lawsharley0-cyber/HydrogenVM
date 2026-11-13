@@ -5,6 +5,7 @@
 | App / fixture | Status | Evidence |
 |---|---|---|
 | BADLAND 1.0 (build 8) | In progress: core loop verified; frame-time outliers remain | Menus, controlled flight, earned completion, saves across relaunch, captured music/audio, pause/resume and four-minute clean sessions. Final post-review run: average 26.40 ms, p95 33.55 ms, p99 285.21 ms; an earlier run reached p99 30.41 ms. Must-launch registered. [Reproduction, shared fixes, gates and limits](BADLAND_PLAYABILITY_2026-11-12.md). |
+| Canabalt 1.4 | Playable with notes on Linux | Fresh 230 s session: menu, Scores/Back/PLAY, jumps, retries, pause/resume, earned 553 m, captured music/effects, and scores visible after clean relaunch. Average 7.23 ms, p95 18.61 ms, p99 23.33 ms; maximum 69.74 ms (outliers remain). Offline local play; phone GPU/audio routing/speed unqualified. [Shared fixes, reproduction and gate evidence](CANABALT_PLAYABILITY_2026-11-13.md). |
 
 ## Scanner
 

@@ -1,5 +1,16 @@
 # Status
 
+November 13 Canabalt Linux bench: source `8d6145af` integrates main `f019d477`.
+Shared bounded string search, real outline glyphs, positional formats,
+animation BOOL and window/timer-pool lifetime corrections pass 806 fulltest
+checks, 39 Test Lab cases, 47 support checks, 12 heap checks, 11 focused
+runners, and 492 Python tests (6 skipped; 725 subtests). Stub audit has no new
+findings; fullcompat has no baseline regressions; all 14 available must-launch
+games pass (21 missing fixtures skipped). Fresh 230 s gameplay earns
+553 m and survives a clean relaunch; average 7.23 ms, p99 23.33 ms, maximum
+69.74 ms. Phone qualification and frame outliers remain explicit notes.
+[Full reproduction and evidence](../CANABALT_PLAYABILITY_2026-11-13.md).
+
 Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](../clash-royale/DRAW_CHECKPOINTS.md)
 records the new native draw save path, battle-avatar wallet correction, 41
 focused checks and a controlled original 0–0 draw followed by two unchanged
