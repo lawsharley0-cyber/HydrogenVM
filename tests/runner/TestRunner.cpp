@@ -31,6 +31,8 @@
 #include <map>
 #include "runtime/libc/TlsBridge.hpp"
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
+#include <csignal>
+#include <pthread.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
@@ -2329,6 +2331,9 @@ int runFullSubsystemTests() {
         }
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
         {
+            // The test's own TLS ends write with write(); a closed peer must fail a check, not raise SIGPIPE.
+            sigset_t pipeSet, oldSet; sigemptyset(&pipeSet); sigaddset(&pipeSet, SIGPIPE);
+            pthread_sigmask(SIG_BLOCK, &pipeSet, &oldSet);
             // The OpenSSL bridge end to end: a TLS 1.0-only client (a 2013 game's OpenSSL) in,
             // a server that refuses anything below TLS 1.2 out, bytes passed both ways.
             SSL_CTX* sctx = SSL_CTX_new(TLS_server_method());
@@ -2413,6 +2418,10 @@ int runFullSubsystemTests() {
             server2.join();
             SSL_CTX_free(mctx);
             check(sawServerCert, "TLS bridge: a game with TLS 1.2 or later is passed through and sees the real server's certificate");
+            {   // drop a SIGPIPE left pending by a write to a closed test socket, then restore the mask
+                timespec zero{0, 0}; while (sigtimedwait(&pipeSet, nullptr, &zero) > 0) {}
+                pthread_sigmask(SIG_SETMASK, &oldSet, nullptr);
+            }
             ::close(srv);
             SSL_CTX_free(cctx); SSL_CTX_free(sctx); X509_free(cert); EVP_PKEY_free(key);
             check(clientVersion == "TLSv1" && serverVersion.rfind("TLSv1.", 0) == 0 && serverVersion != "TLSv1" &&

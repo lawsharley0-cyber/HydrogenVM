@@ -12,6 +12,8 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <poll.h>
+#include <pthread.h>
+#include <csignal>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <cstring>
@@ -141,6 +143,9 @@ public:
 
 private:
     void run(int listener, std::string host, uint32_t ip, uint16_t port, std::function<void(const std::string&)> log) {
+        // OpenSSL writes with write(): a peer that hung up must not kill the process with SIGPIPE.
+        sigset_t pipe; sigemptyset(&pipe); sigaddset(&pipe, SIGPIPE);
+        pthread_sigmask(SIG_BLOCK, &pipe, nullptr);
         pollfd p{listener, POLLIN, 0};
         const int guest = ::poll(&p, 1, 30000) == 1 ? ::accept4(listener, nullptr, nullptr, SOCK_CLOEXEC) : -1;
         ::close(listener);
