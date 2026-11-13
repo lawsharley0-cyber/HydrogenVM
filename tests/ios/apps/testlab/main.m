@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Thirty-three automated cases (TL-A--TL-AG); see docs/TEST_LAB.md for the
+// Thirty-five automated cases (TL-A--TL-AG plus TL-AO/TL-AP); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
@@ -87,6 +87,8 @@ static const char *kAppBuild        = "1";
 #define CASE_AE @"TL-AE"
 #define CASE_AF @"TL-AF"
 #define CASE_AG @"TL-AG"
+#define CASE_AO @"TL-AO"
+#define CASE_AP @"TL-AP"
 #define CASE_T  @"TL-T"
 #define CASE_U  @"TL-U"
 #define CASE_V  @"TL-V"
@@ -2014,6 +2016,46 @@ static TLResult *runCaseAG(void) {
     return r;
 }
 
+// Host-driven case: run with the project-owned iPad-only TestLab variant.
+static TLResult *runCaseAO(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AO version:1];
+    writeCheckpoint(CASE_AO); r.checkpointWritten = YES;
+    double start = monoMs();
+    UIDevice *device = [UIDevice currentDevice];
+    CGRect bounds = [UIScreen mainScreen].bounds;
+    CGFloat scale = [UIScreen mainScreen].scale;
+    NSInteger orientation = [UIApplication sharedApplication].statusBarOrientation;
+    BOOL ok = device.userInterfaceIdiom==1 && [device.model isEqualToString:@"iPad"] &&
+        bounds.size.width==768 && bounds.size.height==1024 && scale==1 && orientation==4;
+    r.expected = @"iPad idiom/model, 768x1024 points @1, iPad-specific landscape-left orientation";
+    r.actual = [NSString stringWithFormat:@"idiom=%d model=%@ bounds=%gx%g scale=%g orientation=%d",
+        (int)device.userInterfaceIdiom,device.model,(double)bounds.size.width,(double)bounds.size.height,(double)scale,(int)orientation];
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"iPad-only app incorrectly receives phone profile";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+@interface CLLocationManager : NSObject
++ (BOOL)locationServicesEnabled;
+- (BOOL)locationServicesEnabled;
+@end
+static TLResult *runCaseAP(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AP version:1];
+    writeCheckpoint(CASE_AP); r.checkpointWritten = YES;
+    double start = monoMs();
+    CLLocationManager *manager = [[CLLocationManager alloc] init];
+    BOOL modern = [CLLocationManager locationServicesEnabled];
+    BOOL legacy = [manager locationServicesEnabled];
+    BOOL ok = !modern && !legacy;
+    r.expected = @"class and deprecated instance location availability both disabled";
+    r.actual = [NSString stringWithFormat:@"class=%d instance=%d",(int)modern,(int)legacy];
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"legacy location-services availability query mismatch";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
 static TLResult *runCaseZ(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_Z version:1];
     writeCheckpoint(CASE_Z); r.checkpointWritten = YES;
@@ -2253,7 +2295,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AP];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -2314,6 +2356,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseAF()];
         } else if ([cid isEqualToString:CASE_AG]) {
             [results addObject:runCaseAG()];
+        } else if ([cid isEqualToString:CASE_AP]) {
+            [results addObject:runCaseAP()];
         } else if ([cid isEqualToString:CASE_AE]) {
             [results addObject:runCaseAE()];
         } else if ([cid isEqualToString:CASE_AD]) {
@@ -2366,6 +2410,8 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_Y]) return runCaseY();
     if ([caseId isEqualToString:CASE_AF]) return runCaseAF();
     if ([caseId isEqualToString:CASE_AG]) return runCaseAG();
+    if ([caseId isEqualToString:CASE_AO]) return runCaseAO();
+    if ([caseId isEqualToString:CASE_AP]) return runCaseAP();
     if ([caseId isEqualToString:CASE_AE]) return runCaseAE();
     if ([caseId isEqualToString:CASE_AD]) return runCaseAD();
     if ([caseId isEqualToString:CASE_AC]) return runCaseAC();
@@ -2408,8 +2454,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AP ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AP: Location query" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -2445,6 +2491,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_AE version:1],
         [[TLResult alloc] initWithId:CASE_AF version:1],
         [[TLResult alloc] initWithId:CASE_AG version:1],
+        [[TLResult alloc] initWithId:CASE_AP version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -2505,7 +2552,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AP]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

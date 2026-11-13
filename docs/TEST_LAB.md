@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 33 automated cases (TL-A–TL-AG) · schema version 1.
+Version 1.0 · 35 automated cases (TL-A–TL-AG plus TL-AO/TL-AP) · schema version 1.
 
 ## Contents
 
@@ -23,9 +23,9 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-The automated suite now covers 33 case IDs, including import integrity, CPU
+The automated suite now covers 35 case IDs, including import integrity, CPU
 correctness, graphics, audio, persistence, threading, input, and lifecycle.
-TL-L is a host-driven termination check; 32 cases are guest-selectable.
+TL-L is a host-driven termination check and TL-AO uses an iPad-only fixture; 33 cases are guest-selectable.
 
 ---
 
@@ -93,7 +93,7 @@ The host runner retains these dictionaries and the oracle description in its
 report. A pass marker without a fresh complete guest result (or followed by a
 nonzero exit) is a failure. `objc_conformance.m` uses ARC;
 `objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
-convention. The menu scrolls so all 32 selectable cases and footer controls remain
+convention. The menu scrolls so all 33 selectable cases and footer controls remain
 reachable.
 
 These five cases pass on unchanged main; that is new coverage, not a runtime
@@ -488,3 +488,21 @@ nothing in the schema unless fields change, and add the row to this file.
 - Empty zip entries are stored by some tools and deflated by others. Both must import (TL-A).
 - Re-importing an IPA must keep `Documents/`, `Library/` and `tmp/`; it replaces only the `.app` bundle (TL-E).
 - When you see "no `TESTLAB` line in stdout", run the case by hand: the failure is usually an import or loader error on stderr.
+
+### Priority-folder regressions (AO/AP)
+
+TL-AO imports a separate project-authored TestLab iPad variant with device
+family [2], a generic portrait key, and an iPad-specific landscape-left key.
+It checks iPad idiom/model, 768x1024 logical points, scale1 and device-specific
+orientation. It fails on the original phone-only runtime. The generated variant
+changes only the owned fixture metadata, preserves its executable/resources,
+uses an isolated home, and records its own SHA256 in case diagnostics. AO is
+host-driven rather than a normal phone-fixture menu item. The runner also checks
+scalar family2, phone/universal/absent/empty/malformed family defaults.
+
+TL-AP reproduces Angry Birds Island HD delayed legacy CoreLocation availability
+query: class and deprecated instance getters must both report the configured
+disabled location source, without asking for GPS or fabricating coordinates.
+It interrupts on the original missing instance selector and passes after the
+shared compatibility method. AH–AN are reserved by the separate Canabalt #437
+and parked Super Hexagon #438 work; these IDs avoid integration collisions.

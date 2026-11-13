@@ -3,6 +3,7 @@
 //   CoreTelephony (no carrier), SystemConfiguration's CaptiveNetwork (no Wi-Fi info),
 //   Security certificates/keys (unavailable), +attemptRotationToDeviceOrientation.
 #include "UIKit.hpp"
+#include "runtime/Support.hpp"
 #include <cctype>
 #include <functional>
 
@@ -332,6 +333,10 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
     registerDocumentPicker(p, r);
 
     ObjC::ClassBuilder lm = r.defineClass("CLLocationManager", "NSObject");
+    // iOS 3.x exposed this availability query on the manager instance.
+    supportMethod(p,lm,"CLLocationManager","locationServicesEnabled",[](Ctx& x) {
+        x.cpu.r[0]=locc_no(x,x.cpu.r[0],x.cpu.r[1]);
+    },SupportStatus::Unavailable,"No location source configured; deprecated instance query reports disabled like the class API","c@:");
     lm.cm<&locc_no>("locationServicesEnabled", "c@:").cm<&locc_no>("headingAvailable", "c@:")
       .cm<&locc_no>("significantLocationChangeMonitoringAvailable", "c@:").cm<&locc_no>("regionMonitoringAvailable", "c@:")
       .cm<&locc_status>("authorizationStatus", "i@:")
