@@ -7693,6 +7693,15 @@ int runFullSubsystemTests() {
             const bool rejects = !Audio::indexMp3(noise.data(), noise.size(), none) && !Audio::indexMp3(kToneMp3, 40, none);
             check(layout && cutShort && rejects,
                   "indexMp3 skips the ID3 tag and the Info frame, lists each MPEG frame as a packet, and rejects data that is not MP3");
+            // The Info/Xing tag on this fixture is LAME-compatible (encoder "Lavc60.31"):
+            // 21 frames, delay 576, padding 1566. AudioFile's packet table is the audible
+            // length (21*1152 - 576 - 1566 = 22050 = 0.5 s at 44.1 kHz), which ffmpeg also
+            // decodes. Reporting 21*1152 with priming 0 is the raw MPEG length, not Apple's.
+            if (!(index.validFrames == 22050 && index.primingFrames == 576 && index.remainderFrames == 1566))
+                std::printf("    indexMp3 packet table: valid %llu priming %d remainder %d (want 22050, 576, 1566)\n",
+                            (unsigned long long)index.validFrames, index.primingFrames, index.remainderFrames);
+            check(index.validFrames == 22050 && index.primingFrames == 576 && index.remainderFrames == 1566,
+                  "indexMp3 reads LAME/Xing delay and padding into the AudioFile packet table");
 
             // Packet by packet, and with one packet split across two calls: the same samples.
             std::vector<int16_t> whole, split;
@@ -7728,8 +7737,23 @@ int runFullSubsystemTests() {
             const bool formatList = listInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 48 && list == 0 &&
                                     proc.mem().read<uint32_t>(io + 16 + 8) == 0x2E6D7033 && proc.mem().read<uint32_t>(io + 16 + 40) == 0x00650002;
             prop(0x70636E74, 8, io + 72); prop(0x706B7562, 4, io + 80); prop(0x62636E74, 8, io + 88); prop(0x706E666F, 16, io + 96);
+            prop(0x65647572, 8, io + 112);
             const bool counts = proc.mem().read<uint64_t>(io + 72) == 21 && proc.mem().read<uint32_t>(io + 80) == 209 &&
-                                proc.mem().read<uint64_t>(io + 88) == 4388 && proc.mem().read<uint64_t>(io + 96) == 21 * 1152;
+                                proc.mem().read<uint64_t>(io + 88) == 4388;
+            // 'pnfo' / 'edur': Apple reports the audible length and the LAME encoder delay,
+            // not the raw MPEG sample count. FMOD's AudioQueue codec stores mNumberValidFrames
+            // as lengthpcm (and falls back to edur * sampleRate if 'pnfo' fails).
+            const bool packetTable = proc.mem().read<uint64_t>(io + 96) == 22050 &&
+                                     proc.mem().read<uint32_t>(io + 104) == 576 &&
+                                     proc.mem().read<uint32_t>(io + 108) == 1566 &&
+                                     proc.mem().read<double>(io + 112) == 0.5;
+            if (!packetTable)
+                std::printf("    AudioFile pnfo/edur: valid %llu priming %u remainder %u edur %f (want 22050, 576, 1566, 0.5)\n",
+                            (unsigned long long)proc.mem().read<uint64_t>(io + 96),
+                            proc.mem().read<uint32_t>(io + 104), proc.mem().read<uint32_t>(io + 108),
+                            proc.mem().read<double>(io + 112));
+            check(packetTable,
+                  "AudioFile 'pnfo' and 'edur' for a LAME-tagged MP3 are the audible length and encoder delay");
             // three packets from the start: 208 + 209 + 209 bytes, each described
             proc.mem().write<uint32_t>(io + 4, 0);
             proc.mem().write<uint32_t>(io + 8, 3);
