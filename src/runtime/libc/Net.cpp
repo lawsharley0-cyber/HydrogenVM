@@ -31,6 +31,8 @@
 #include <map>
 #include <mutex>
 #include <poll.h>
+#include <sys/ioctl.h>
+#include <tuple>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -109,6 +111,25 @@ struct BridgeLogState {
     ~BridgeLogState() { std::lock_guard lock(sink->mu); sink->proc = nullptr; }
     std::shared_ptr<BridgeLogSink> sink;
 };
+// ---- kqueue / kevent (Darwin's event queue; asio's reactor runs on it), over poll.
+// Each queue is a host descriptor (so close works) plus a table of registrations. Read and
+// write filters report what poll reports; EV_CLEAR (edge-triggered) is kept by reporting a
+// registration again only after something changed: the descriptor was read from or written to
+// (any send/recv/read/write on it bumps its generation) or, for reads, the byte count changed.
+struct KqueueState {
+    explicit KqueueState(Process&) {}
+    struct Reg { int16_t filter; uint16_t flags; uint32_t fflags; uint32_t udata; bool enabled; bool triggered;
+                 uint64_t seenGen; int64_t seenAvail; bool reported; };
+    struct Queue { std::map<std::pair<uint32_t, int16_t>, Reg> regs; };
+    std::mutex mu;
+    std::map<int, Queue> queues;
+    std::map<int, uint64_t> ioGen;   // fd -> I/O generation
+};
+void bumpIoGen(Process& p, int fd) {
+    auto& k = p.service<KqueueState>();
+    std::lock_guard lock(k.mu);
+    if (!k.queues.empty()) ++k.ioGen[fd];
+}
 bool isUdp(Ctx& x, int fd) { auto& s = x.proc.service<SocketState>(); std::lock_guard lock(s.mu); return s.udp.count(fd) != 0; }
 int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
     if (family == kAF_INET && type == SOCK_DGRAM && (protocol == 0 || protocol == IPPROTO_UDP)) {
@@ -302,7 +323,7 @@ int32_t n_send(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
     bool nonblocking = (flags & 128) || (::fcntl(fd, F_GETFL) & O_NONBLOCK);
     for (;;) {
         ssize_t out = ::send(fd, x.mem.host(buf), n, hostFlags | MSG_DONTWAIT);
-        if (out >= 0) return int32_t(out);
+        if (out >= 0) { bumpIoGen(x.proc, fd); return int32_t(out); }
         if (errno != EAGAIN || nonblocking) return hostFailure(x);
         if (!waitSocket(x, fd, POLLOUT)) return -1;
     }
@@ -317,6 +338,7 @@ int32_t n_recv(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
     uint32_t received = 0;
     for (;;) {
         ssize_t out = ::recv(fd, x.mem.host(buf + received), n - received, hostFlags | MSG_DONTWAIT);
+        bumpIoGen(x.proc, fd);
         if (out >= 0) {
             received += uint32_t(out);
             if (!out || received == n || nonblocking || !(flags & 64)) return int32_t(received);
@@ -675,6 +697,124 @@ int32_t pollHost(Ctx& x, std::vector<pollfd>& fds, int32_t timeoutMs) {
         if (x.proc.stopping() || (timeoutMs >= 0 && std::chrono::steady_clock::now() >= end)) return 0;
     }
 }
+constexpr int16_t kEvfiltRead = -1, kEvfiltWrite = -2, kEvfiltUser = -10;
+constexpr uint16_t kEvAdd = 0x1, kEvDelete = 0x2, kEvEnable = 0x4, kEvDisable = 0x8, kEvOneshot = 0x10, kEvClear = 0x20,
+                   kEvError = 0x4000, kEvEof = 0x8000;
+constexpr uint32_t kNoteTrigger = 0x01000000;
+int32_t n_kqueue(Ctx& x) {
+    const int fd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);   // a descriptor number that close() releases
+    if (fd < 0) return hostFailure(x);
+    auto& k = x.proc.service<KqueueState>();
+    std::lock_guard lock(k.mu);
+    k.queues[fd] = {};
+    return fd;
+}
+// struct kevent (32-bit): ident 4, filter 2, flags 2, fflags 4, data 4, udata 4 = 20 bytes.
+int32_t n_kevent(Ctx& x, int32_t kq, GuestPtr changes, int32_t nchanges, GuestPtr events, int32_t nevents, GuestPtr timeout) {
+    auto& k = x.proc.service<KqueueState>();
+    int32_t timeoutMs = -1;
+    if (timeout) {
+        const int64_t sec = int32_t(x.mem.read<uint32_t>(timeout)), nsec = int32_t(x.mem.read<uint32_t>(timeout + 4));
+        timeoutMs = int32_t(std::clamp<int64_t>(sec * 1000 + (nsec + 999999) / 1000000, 0, INT32_MAX));
+    }
+    using Out = std::tuple<uint32_t, int16_t, uint16_t, uint32_t, int32_t, uint32_t>;   // ident, filter, flags, fflags, data, udata
+    std::vector<Out> out;
+    {
+        std::lock_guard lock(k.mu);
+        auto q = k.queues.find(kq);
+        if (q == k.queues.end()) return failWith(x, kEBADF);
+        for (int32_t i = 0; i < nchanges; ++i) {
+            const GuestPtr c = changes + uint32_t(i) * 20;
+            const uint32_t ident = x.mem.read<uint32_t>(c);
+            const int16_t filter = int16_t(x.mem.read<uint16_t>(c + 4));
+            const uint16_t flags = x.mem.read<uint16_t>(c + 6);
+            const uint32_t fflags = x.mem.read<uint32_t>(c + 8), udata = x.mem.read<uint32_t>(c + 16);
+            const auto key = std::make_pair(ident, filter);
+            auto it = q->second.regs.find(key);
+            if (flags & kEvDelete) { if (it != q->second.regs.end()) q->second.regs.erase(it); continue; }
+            if (flags & kEvAdd) {
+                KqueueState::Reg r{filter, flags, fflags, udata, true, false, ~0ull, -1, false};
+                if (it != q->second.regs.end()) r.triggered = it->second.triggered;
+                it = q->second.regs.insert_or_assign(key, r).first;
+            }
+            if (it == q->second.regs.end()) continue;
+            if (flags & kEvEnable) it->second.enabled = true;
+            if (flags & kEvDisable) it->second.enabled = false;
+            if (filter == kEvfiltUser && (fflags & kNoteTrigger)) it->second.triggered = true;
+            it->second.udata = udata;
+        }
+    }
+    if (nevents <= 0) return 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs < 0 ? 0 : timeoutMs);
+    for (;;) {
+        std::vector<pollfd> fds;
+        std::vector<std::pair<uint32_t, int16_t>> keys;
+        {
+            std::lock_guard lock(k.mu);
+            auto q = k.queues.find(kq);
+            if (q == k.queues.end()) return failWith(x, kEBADF);
+            for (auto& [key, r] : q->second.regs) {
+                if (!r.enabled) continue;
+                if (r.filter == kEvfiltUser) {
+                    if (r.triggered && out.size() < size_t(nevents)) {
+                        out.emplace_back(key.first, r.filter, uint16_t(r.flags & (kEvClear | kEvOneshot)), 0, 0, r.udata);
+                        if (r.flags & kEvClear) r.triggered = false;
+                    }
+                    continue;
+                }
+                if (r.filter != kEvfiltRead && r.filter != kEvfiltWrite) continue;
+                fds.push_back(pollfd{int(key.first), short(r.filter == kEvfiltRead ? POLLIN : POLLOUT), 0});
+                keys.push_back(key);
+            }
+        }
+        if (!fds.empty() && ::poll(fds.data(), nfds_t(fds.size()), 0) < 0 && errno != EINTR) return hostFailure(x);
+        {
+            std::lock_guard lock(k.mu);
+            auto q = k.queues.find(kq);
+            if (q == k.queues.end()) return failWith(x, kEBADF);
+            for (size_t i = 0; i < fds.size() && out.size() < size_t(nevents); ++i) {
+                auto it = q->second.regs.find(keys[i]);
+                if (it == q->second.regs.end()) continue;
+                KqueueState::Reg& r = it->second;
+                if (!fds[i].revents) { r.reported = false; continue; }
+                const int fd = int(keys[i].first);
+                int avail = 0;
+                if (r.filter == kEvfiltRead) ::ioctl(fd, FIONREAD, &avail);
+                const uint64_t gen = k.ioGen[fd];
+                const bool eof = fds[i].revents & (POLLHUP | POLLERR | POLLNVAL);
+                if ((r.flags & kEvClear) && r.reported && gen == r.seenGen && (r.filter != kEvfiltRead || avail == r.seenAvail)) continue;
+                r.reported = true; r.seenGen = gen; r.seenAvail = avail;
+                uint16_t f = uint16_t(r.flags & (kEvClear | kEvOneshot));
+                if (eof) f |= kEvEof;
+                if (fds[i].revents & POLLNVAL) f |= kEvError;
+                out.emplace_back(keys[i].first, r.filter, f, 0, r.filter == kEvfiltRead ? avail : 0, r.udata);
+                if (r.flags & kEvOneshot) q->second.regs.erase(it);
+            }
+        }
+        if (!out.empty() || timeoutMs == 0 || (timeoutMs > 0 && std::chrono::steady_clock::now() >= deadline) || x.proc.stopping()) break;
+        // Nothing to report yet: wait until a descriptor changes, in short slices so user
+        // events from other threads and EV_CLEAR re-arms (after I/O) are seen promptly.
+        int32_t slice = 10;
+        if (timeoutMs > 0)
+            slice = int32_t(std::clamp<int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count(), 0, slice));
+        bool anyClearReported = false;
+        {
+            std::lock_guard lock(k.mu);
+            auto q = k.queues.find(kq);
+            if (q != k.queues.end()) for (auto& [key, r] : q->second.regs) anyClearReported |= r.reported;
+        }
+        if (fds.empty() || anyClearReported) sleepFor(x, int64_t(slice) * 1000);
+        else ::poll(fds.data(), nfds_t(fds.size()), slice);
+    }
+    const size_t n = std::min(out.size(), size_t(nevents));
+    for (size_t i = 0; i < n; ++i) {
+        const GuestPtr e = events + uint32_t(i) * 20;
+        const auto& [ident, filter, flags, fflags, data, udata] = out[i];
+        x.mem.write<uint32_t>(e, ident); x.mem.write<uint16_t>(e + 4, uint16_t(filter)); x.mem.write<uint16_t>(e + 6, flags);
+        x.mem.write<uint32_t>(e + 8, fflags); x.mem.write<uint32_t>(e + 12, uint32_t(data)); x.mem.write<uint32_t>(e + 16, udata);
+    }
+    return int32_t(n);
+}
 constexpr short kPollMask = POLLIN | POLLPRI | POLLOUT | POLLERR | POLLHUP | POLLNVAL;
 int32_t n_poll(Ctx& x, GuestPtr fds, uint32_t n, int32_t timeout) {
     std::vector<pollfd> h(n);
@@ -790,6 +930,8 @@ void registerLibcNet(Process& p) {
     p.def<&n_getifaddrs>("_getifaddrs");
     p.def<&n_freeifaddrs>("_freeifaddrs");
     p.def<&n_poll>("_poll");
+    supportDef<&n_kqueue>(p, "_kqueue", SupportStatus::Approx, "kqueue over poll: read, write and user filters; EV_CLEAR reports again after I/O on the descriptor");
+    supportDef<&n_kevent>(p, "_kevent", SupportStatus::Approx, "kqueue over poll: read, write and user filters; EV_CLEAR reports again after I/O on the descriptor");
     p.def<&n_select>("_select");
     p.def<&n_select>("_select$DARWIN_EXTSN");
     p.def<&n_pipe>("_pipe");

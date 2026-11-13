@@ -1136,6 +1136,60 @@ Plist::ValuePtr objectToPlist(Ctx& x, id obj) {
     return nullptr;
 }
 
+// ------------------------------------------------------- ordered sets ---
+// NSOrderedSet / NSMutableOrderedSet: an array (same storage and most methods) that keeps
+// each object once, by -isEqual:.
+id os_allocWithZone(Ctx& x, id self, SEL, uint32_t) {
+    const id o = rt(x).createInstance(self);
+    auto d = std::make_unique<ArrayData>();
+    d->isMutable = rt(x).isKindOf(o, rt(x).getClass("NSMutableOrderedSet"));
+    rt(x).setHost(o, std::move(d));
+    return o;
+}
+id os_alloc(Ctx& x, id self, SEL s) { return os_allocWithZone(x, self, s, 0); }
+std::vector<id> unique(Ctx& x, const std::vector<id>& v) {
+    std::vector<id> out;
+    for (id o : v) {
+        bool seen = false;
+        for (id k : out) if (objectsEqual(x, k, o)) { seen = true; break; }
+        if (!seen) out.push_back(o);
+    }
+    return out;
+}
+id os_initWithArray(Ctx& x, id self, SEL, id other) { setItems(x, self, unique(x, itemsOf(x, other))); return self; }
+id os_initWithObject(Ctx& x, id self, SEL, id o) { setItems(x, self, {o}); return self; }
+id os_initWithObjectsCount(Ctx& x, id self, SEL, GuestPtr objs, uint32_t n) {
+    std::vector<id> v(n);
+    for (uint32_t i = 0; i < n; ++i) v[i] = x.mem.read<uint32_t>(objs + i * 4);
+    setItems(x, self, unique(x, v));
+    return self;
+}
+id os_initWithObjects(Ctx& x, id self, SEL, id first, VarArgs va) { setItems(x, self, unique(x, nilTerminated(x, first, va.args))); return self; }
+id osc_orderedSet(Ctx& x, id self, SEL) { return autoreleased(x, ai_init(x, os_allocWithZone(x, self, 0, 0), 0)); }
+id osc_withCapacity(Ctx& x, id self, SEL, uint32_t) { return osc_orderedSet(x, self, 0); }
+id osc_withArray(Ctx& x, id self, SEL, id a) { return autoreleased(x, os_initWithArray(x, os_allocWithZone(x, self, 0, 0), 0, a)); }
+id osc_withObject(Ctx& x, id self, SEL, id o) { return autoreleased(x, os_initWithObject(x, os_allocWithZone(x, self, 0, 0), 0, o)); }
+id osc_withObjects(Ctx& x, id self, SEL, id first, VarArgs va) {
+    return autoreleased(x, os_initWithObjects(x, os_allocWithZone(x, self, 0, 0), 0, first, va));
+}
+id os_array(Ctx& x, id self, SEL) { return makeArray(x, itemsOf(x, self)); }
+id os_set(Ctx& x, id self, SEL) { return id(rt(x).send(x.cpu, rt(x).getClass("NSSet"), "setWithArray:", {os_array(x, self, 0)})); }
+id os_copyWithZone(Ctx& x, id self, SEL, uint32_t) {
+    const id o = os_allocWithZone(x, rt(x).getClass("NSOrderedSet"), 0, 0);
+    setItems(x, o, itemsOf(x, self));
+    return o;
+}
+id os_mutableCopyWithZone(Ctx& x, id self, SEL, uint32_t) {
+    const id o = os_allocWithZone(x, rt(x).getClass("NSMutableOrderedSet"), 0, 0);
+    setItems(x, o, itemsOf(x, self));
+    return o;
+}
+id os_copy(Ctx& x, id self, SEL s) { return os_copyWithZone(x, self, s, 0); }
+id os_mutableCopy(Ctx& x, id self, SEL s) { return os_mutableCopyWithZone(x, self, s, 0); }
+void os_addObject(Ctx& x, id self, SEL s, id o) { if (a_indexOfObject(x, self, s, o) == kNotFound) m_addObject(x, self, s, o); }
+void os_addObjectsFromArray(Ctx& x, id self, SEL s, id other) { for (id o : itemsOf(x, other)) os_addObject(x, self, s, o); }
+void os_insertObject(Ctx& x, id self, SEL s, id o, uint32_t i) { if (a_indexOfObject(x, self, s, o) == kNotFound) m_insertObject(x, self, s, o, i); }
+
 void registerCollections(Process& p, ObjC::Runtime& r) {
     auto& c = p.service<Colls>();
     c.constMutationCell = p.allocStatic(4);
@@ -1246,6 +1300,28 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
        .m<&sm_minusSet>("minusSet:").m<&sm_intersectSet>("intersectSet:");
     si.m<&set_dealloc>("dealloc", "v@:");
     sm.m<&set_dealloc>("dealloc", "v@:");
+
+    ObjC::ClassBuilder nos = r.defineClass("NSOrderedSet", "NSObject");
+    ObjC::ClassBuilder nmos = r.defineClass("NSMutableOrderedSet", "NSOrderedSet");
+    nos.cm<&os_alloc>("alloc").cm<&os_allocWithZone>("allocWithZone:").cm<&osc_orderedSet>("orderedSet")
+       .cm<&osc_withArray>("orderedSetWithArray:").cm<&osc_withObject>("orderedSetWithObject:")
+       .cm<&osc_withObjects>("orderedSetWithObjects:").cm<&osc_withArray>("orderedSetWithSet:");
+    nos.m<&ai_init>("init").m<&os_initWithArray>("initWithArray:").m<&os_initWithArray>("initWithSet:")
+       .m<&os_initWithObject>("initWithObject:").m<&os_initWithObjects>("initWithObjects:").m<&os_initWithObjectsCount>("initWithObjects:count:")
+       .m<&a_count>("count", "I@:").m<&a_objectAtIndex>("objectAtIndex:").m<&a_objectAtIndex>("objectAtIndexedSubscript:")
+       .m<&a_firstObject>("firstObject").m<&a_lastObject>("lastObject")
+       .m<&a_indexOfObject>("indexOfObject:", "I@:@").m<&a_containsObject>("containsObject:", "c@:@")
+       .m<&a_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
+       .m<&a_objectEnumerator>("objectEnumerator").m<&a_reverseObjectEnumerator>("reverseObjectEnumerator")
+       .m<&a_enumerateUsingBlock>("enumerateObjectsUsingBlock:", "v@:@?")
+       .m<&os_array>("array").m<&os_set>("set").m<&a_description>("description")
+       .m<&os_copyWithZone>("copyWithZone:").m<&os_mutableCopyWithZone>("mutableCopyWithZone:").m<&os_copy>("copy").m<&os_mutableCopy>("mutableCopy")
+       .m<&array_dealloc>("dealloc", "v@:");
+    nmos.cm<&osc_withCapacity>("orderedSetWithCapacity:").m<&ai_initWithCapacity>("initWithCapacity:")
+        .m<&os_addObject>("addObject:", "v@:@").m<&os_addObjectsFromArray>("addObjectsFromArray:")
+        .m<&os_insertObject>("insertObject:atIndex:", "v@:@I")
+        .m<&m_removeObject>("removeObject:", "v@:@").m<&m_removeObjectAtIndex>("removeObjectAtIndex:", "v@:I")
+        .m<&m_removeAllObjects>("removeAllObjects", "v@:").m<&m_removeObjectsInArray>("removeObjectsInArray:");
 
     ObjC::ClassBuilder ne = r.defineClass("NSEnumerator", "NSObject");
     ObjC::ClassBuilder ae = r.defineClass("__NSFastEnumerationEnumerator", "NSEnumerator");
