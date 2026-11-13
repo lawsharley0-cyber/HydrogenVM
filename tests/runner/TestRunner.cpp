@@ -7642,6 +7642,45 @@ int runFullSubsystemTests() {
             proc.heap().free(lit);
         }
 
+        // NSString byte conversion: literal Unicode/encoding oracles, not game output.
+        {
+            auto& sr = ObjC::rt(proc);
+            const char* selector = "getBytes:maxLength:usedLength:encoding:options:range:remainingRange:";
+            const auto str = Foundation::constString(proc, "A\xc3\xa9\xf0\x9f\x98\x80Z");
+            const bool supported = (sr.send(cpu, str, "respondsToSelector:", {sr.sel(selector)}) & 0xff) != 0;
+            check(supported, "NSString range byte conversion is implemented (BADLAND Crashlytics startup)");
+            if (supported) {
+                const auto out = proc.heap().allocZeroed(64);
+                auto convert = [&](uint32_t max, uint32_t enc, uint32_t options, uint32_t loc, uint32_t len, bool countOnly = false) {
+                    std::memset(proc.mem().host(out), 0x55, 64);
+                    return (sr.send(cpu, str, selector, {countOnly ? 0u : out, max, out + 32, enc, options, loc, len, out + 36}) & 0xff) != 0;
+                };
+                auto used = [&] { return proc.mem().read<uint32_t>(out + 32); };
+                auto left = [&](uint32_t loc, uint32_t len) { return proc.mem().read<uint32_t>(out + 36) == loc && proc.mem().read<uint32_t>(out + 40) == len; };
+                check(convert(7, 4, 0, 0, 5) && used() == 7 && left(4, 1) &&
+                      std::memcmp(proc.mem().host(out), "A\xc3\xa9\xf0\x9f\x98\x80", 7) == 0 && proc.mem().read<uint8_t>(out + 7) == 0x55,
+                      "NSString getBytes writes partial UTF-8 without a terminator and counts UTF-16 units");
+                check(convert(3, 4, 0, 1, 3) && used() == 2 && left(2, 2) && proc.mem().read<uint8_t>(out + 2) == 0x55,
+                      "NSString getBytes never splits a UTF-8 scalar or surrogate pair");
+                check(!convert(1, 4, 0, 1, 1) && used() == 0 && left(1, 1) && proc.mem().read<uint8_t>(out) == 0x55,
+                      "NSString getBytes fails when no character fits");
+                check(convert(0, 4, 0, 0, 5, true) && used() == 8 && left(5, 0),
+                      "NSString getBytes NULL buffer measures the full range independent of maxLength");
+                check(convert(16, 1, 0, 0, 5) && used() == 1 && left(1, 4) && proc.mem().read<uint8_t>(out + 1) == 0x55,
+                      "NSString getBytes stops at an unrepresentable character with a successful prefix");
+                check(convert(16, 10, 0, 1, 1) && used() == 2 && left(2, 0) && proc.mem().read<uint16_t>(out) == 0xe9 && proc.mem().read<uint8_t>(out + 2) == 0x55,
+                      "NSString getBytes UTF-16 has no byte-order mark by default");
+                check(convert(16, 10, 2, 1, 1) && used() == 4 && proc.mem().read<uint16_t>(out) == 0xfeff && proc.mem().read<uint16_t>(out + 2) == 0xe9,
+                      "NSString getBytes external representation includes the UTF-16 byte-order mark");
+                check(!convert(16, 0xdeadbeef, 0, 0, 5) && used() == 0 && left(0, 5),
+                      "NSString getBytes rejects unknown encodings");
+                bool rejected = false;
+                try { convert(16, 4, 0, 0xffffffff, 2); } catch (const CPU::GuestFault&) { rejected = true; }
+                check(rejected, "NSString getBytes rejects overflowing out-of-bounds ranges");
+                proc.heap().free(out);
+            }
+        }
+
         // AudioQueue test with guest ARMv7 callback
         const uint32_t aqOut = proc.heap().allocZeroed(32);
         // Guest callback at 0x20000: mov r3, #1; str r3, [r0]; bx lr

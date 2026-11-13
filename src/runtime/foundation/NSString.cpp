@@ -384,6 +384,56 @@ bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc
     x.mem.copyIn(buf, b.data(), b.size());
     return true;
 }
+// NSString's range is in UTF-16 units, while maxLength/usedLength count bytes.
+// Unlike getCString:, this API converts a prefix and never adds a terminator.
+// A NULL buffer is a sizing query, independent of maxLength. Contract:
+// https://developer.apple.com/documentation/foundation/nsstring/getbytes(_:maxlength:usedlength:encoding:options:range:remaining:)
+bool s_getBytes(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, GuestPtr used,
+                uint32_t enc, uint32_t options, uint32_t loc, uint32_t len, GuestPtr remaining) {
+    const U16 value = sv(x, self);
+    if (loc > value.size() || len > value.size() - loc)
+        throw ObjC::ObjCError("NSRangeException: -[NSString getBytes:...] range out of bounds");
+    const uint32_t end = loc + len;
+    uint32_t position = loc;
+    uint32_t count = 0;
+    const bool lossy = options & 1;
+    const bool external = options & 2;
+    const bool utf16 = enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE;
+    const bool supported = enc == kNSUTF8 || utf16 || enc == kNSUTF32 ||
+        enc == kNSUTF32LE || enc == kNSUTF32BE || enc == kNSASCII || enc == kNSISOLatin1;
+    const uint32_t byteEncoding = enc == kNSUnicode ? uint32_t(kNSUTF16LE) :
+                                  enc == kNSUTF32 ? uint32_t(kNSUTF32LE) : enc;
+    std::string prefix;
+    if (external && len) {
+        if (enc == kNSUnicode) prefix.assign("\xff\xfe", 2);
+        else if (enc == kNSUTF32) prefix.assign("\xff\xfe\0\0", 4);
+        else if (enc == kNSUTF8) prefix.assign("\xef\xbb\xbf", 3);
+    }
+    // Do not emit just a byte-order mark if the first character cannot fit.
+    while (supported && position < end) {
+        uint32_t units = 1;
+        const char16_t c = value[position];
+        if (c >= 0xd800 && c <= 0xdbff && position + 1 < end &&
+            value[position + 1] >= 0xdc00 && value[position + 1] <= 0xdfff) units = 2;
+        else if (!utf16 && c >= 0xd800 && c <= 0xdfff && !lossy) break;
+        bool ok = true;
+        std::string bytes;
+        if (lossy && enc == kNSASCII && c >= 0x80) bytes.assign(1, char(0xff));
+        else if (lossy && c >= 0xd800 && c <= 0xdfff && units == 1 && !utf16)
+            bytes = encodeBytes(U16(1, 0xfffd), byteEncoding, true, &ok);
+        else bytes = encodeBytes(value.substr(position, units), byteEncoding, lossy, &ok);
+        if (!ok) break;
+        if (!prefix.empty()) bytes.insert(0, prefix);
+        if (buf && bytes.size() > uint64_t(max) - count) break;
+        if (buf && !bytes.empty()) x.mem.copyIn(buf + count, bytes.data(), bytes.size());
+        count += uint32_t(bytes.size());
+        prefix.clear();
+        position += units;
+    }
+    if (used) x.mem.write<uint32_t>(used, count);
+    if (remaining) writeRange(x, remaining, {position, end - position});
+    return value.empty() || (position != loc && (!(options & (1u << 20)) || position == end));
+}
 bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }
 uint32_t s_lengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; const std::string b = encodeBytes(sv(x, self), enc, false, &ok); return ok ? uint32_t(b.size()) : 0; }
 uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return (enc == kNSUTF32 ? 4 : 0) + uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE ? 2 : enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE ? 4 : 1); }
@@ -977,6 +1027,7 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_getCharactersRange>("getCharacters:range:", "v@:^S{_NSRange=II}").m<&s_getCharacters>("getCharacters:")
       .m<&s_UTF8String>("UTF8String", "*@:").m<&s_UTF8String>("cString").m<&s_UTF8String>("lossyCString")
       .m<&s_cStringUsingEncoding>("cStringUsingEncoding:").m<&s_getCString>("getCString:maxLength:encoding:")
+      .m<&s_getBytes>("getBytes:maxLength:usedLength:encoding:options:range:remainingRange:", "c@:^vI^III{_NSRange=II}^{_NSRange=II}")
       .m<&s_canConvert>("canBeConvertedToEncoding:", "c@:I").m<&s_lengthOfBytes>("lengthOfBytesUsingEncoding:").m<&s_maxLengthOfBytes>("maximumLengthOfBytesUsingEncoding:")
       .m<&s_dataUsingEncoding>("dataUsingEncoding:").m<&s_dataUsingEncodingLossy>("dataUsingEncoding:allowLossyConversion:")
       .m<&s_isEqualToString>("isEqualToString:", "c@:@").m<&s_isEqual>("isEqual:", "c@:@").m<&s_hash>("hash", "I@:")

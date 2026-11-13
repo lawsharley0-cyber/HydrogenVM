@@ -249,20 +249,22 @@ void notifyMoveToWindow(Ctx& x, id view, id newWindow, bool will) {
     for (id s : std::vector<id>(V(x, view).subviews)) notifyMoveToWindow(x, s, newWindow, will);
 }
 void vcAppearance(Ctx& x, id view, bool appearing) {
-    const id vc = V(x, view).viewController;
-    if (vc) {
-        VCData& c = VC(x, vc);
-        if (appearing && !c.appeared) {
-            c.appeared = true;
-            rt(x).send(x.cpu, vc, "viewWillAppear:", {0});
-            rt(x).send(x.cpu, vc, "viewDidAppear:", {0});
-        } else if (!appearing && c.appeared) {
-            c.appeared = false;
-            rt(x).send(x.cpu, vc, "viewWillDisappear:", {0});
-            rt(x).send(x.cpu, vc, "viewDidDisappear:", {0});
+    std::vector<id> controllers;
+    std::function<void(id)> collect = [&](id v) {
+        const id vc = V(x, v).viewController;
+        if (vc && VC(x, vc).appeared != appearing) {
+            VC(x, vc).appeared = appearing;
+            controllers.push_back(vc);
         }
-    }
-    for (id s : std::vector<id>(V(x, view).subviews)) vcAppearance(x, s, appearing);
+        for (id child : std::vector<id>(V(x, v).subviews)) collect(child);
+    };
+    collect(view);
+    for (id vc : controllers) rt(x).send(x.cpu, vc, appearing ? "viewWillAppear:" : "viewWillDisappear:", {0});
+    // Initial layout is synchronous with showing the hierarchy. In particular,
+    // a GL view allocates its drawable and notifies its director during layout;
+    // code after makeKeyAndVisible must not see an uninitialized scene.
+    if (appearing) layoutIfNeeded(x, view);
+    for (id vc : controllers) rt(x).send(x.cpu, vc, appearing ? "viewDidAppear:" : "viewDidDisappear:", {0});
 }
 
 void insertSubview(Ctx& x, id self, id view, long index) {

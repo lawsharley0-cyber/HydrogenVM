@@ -53,6 +53,62 @@ void lenient(ObjC::Runtime& r, Class c) {
 
 struct GameKitState { explicit GameKitState(Process&) {} id localPlayer = 0; };
 
+// Scores remain useful local NSCoding objects when Game Center is unavailable:
+// games cache them for a future authenticated report instead of losing progress.
+struct ScoreData : ObjC::HostObject {
+    id category = 0, date = 0;
+    int64_t value = 0;
+    uint64_t context = 0;
+    bool defaultBoard = false;
+};
+ScoreData& SD(Ctx& x, id self) { return ObjC::rt(x).host<ScoreData>(self); }
+void score_setCategory(Ctx& x, id self, uint32_t, id category) {
+    auto& d = SD(x, self); auto& r = ObjC::rt(x);
+    const id copy = category ? id(r.send(x.cpu, category, "copy")) : 0;
+    if (d.category) r.release(x.cpu, d.category);
+    d.category = copy;
+}
+id score_init(Ctx& x, id self, uint32_t s, id category) {
+    score_setCategory(x, self, s, category);
+    auto& d = SD(x, self); auto& r = ObjC::rt(x);
+    if (!d.date) d.date = r.retain(x.cpu, id(r.send(x.cpu, r.getClass("NSDate"), "date")));
+    return self;
+}
+id score_category(Ctx& x, id self, uint32_t) { return SD(x, self).category; }
+id score_date(Ctx& x, id self, uint32_t) { return SD(x, self).date; }
+int64_t score_value(Ctx& x, id self, uint32_t) { return SD(x, self).value; }
+uint64_t score_context(Ctx& x, id self, uint32_t) { return SD(x, self).context; }
+void score_setValue(Ctx& x, id self, uint32_t, int64_t value) { SD(x, self).value = value; }
+void score_setContext(Ctx& x, id self, uint32_t, uint64_t value) { SD(x, self).context = value; }
+bool score_default(Ctx& x, id self, uint32_t) { return SD(x, self).defaultBoard; }
+void score_setDefault(Ctx& x, id self, uint32_t, bool value) { SD(x, self).defaultBoard = value; }
+void score_encode(Ctx& x, id self, uint32_t, id coder) {
+    auto& r = ObjC::rt(x); auto& d = SD(x, self);
+    auto key = [&](const char* name) { return Foundation::constString(x.proc, name); };
+    r.send(x.cpu, coder, "encodeObject:forKey:", {d.category, key("category")});
+    r.send(x.cpu, coder, "encodeObject:forKey:", {d.date, key("date")});
+    r.send(x.cpu, coder, "encodeInt64:forKey:", {uint32_t(d.value), uint32_t(uint64_t(d.value) >> 32), key("value")});
+    r.send(x.cpu, coder, "encodeInt64:forKey:", {uint32_t(d.context), uint32_t(d.context >> 32), key("context")});
+    r.send(x.cpu, coder, "encodeBool:forKey:", {d.defaultBoard ? 1u : 0u, key("defaultBoard")});
+}
+id score_decode(Ctx& x, id self, uint32_t s, id coder) {
+    auto& r = ObjC::rt(x); auto& d = SD(x, self);
+    auto key = [&](const char* name) { return Foundation::constString(x.proc, name); };
+    score_setCategory(x, self, s, id(r.send(x.cpu, coder, "decodeObjectForKey:", {key("category")})));
+    if (d.date) r.release(x.cpu, d.date);
+    d.date = r.retain(x.cpu, id(r.send(x.cpu, coder, "decodeObjectForKey:", {key("date")})));
+    d.value = int64_t(r.send(x.cpu, coder, "decodeInt64ForKey:", {key("value")}));
+    d.context = r.send(x.cpu, coder, "decodeInt64ForKey:", {key("context")});
+    d.defaultBoard = (r.send(x.cpu, coder, "decodeBoolForKey:", {key("defaultBoard")}) & 0xff) != 0;
+    return self;
+}
+void score_dealloc(Ctx& x, id self, uint32_t) {
+    auto& r = ObjC::rt(x); auto& d = SD(x, self);
+    if (d.category) r.release(x.cpu, d.category);
+    if (d.date) r.release(x.cpu, d.date);
+    r.disposeInstance(x.cpu, self);
+}
+
 } // namespace
 
 void registerGameKit(Process& p, ObjC::Runtime& r) {
@@ -91,8 +147,15 @@ void registerGameKit(Process& p, ObjC::Runtime& r) {
 
     ObjC::ClassBuilder score = r.defineClass("GKScore", "NSObject");
     lenient(r, score.cls());
-    score.method("initWithCategory:", [](Ctx& x) { ret(x, x.cpu.r[0]); }, "@@:@");
-    score.method("initWithLeaderboardIdentifier:", [](Ctx& x) { ret(x, x.cpu.r[0]); }, "@@:@");
+    score.m<&score_init>("initWithCategory:", "@@:@").m<&score_init>("initWithLeaderboardIdentifier:", "@@:@")
+        .m<&score_category>("category", "@@:").m<&score_category>("leaderboardIdentifier", "@@:")
+        .m<&score_setCategory>("setCategory:", "v@:@").m<&score_setCategory>("setLeaderboardIdentifier:", "v@:@")
+        .m<&score_value>("value", "q@:").m<&score_setValue>("setValue:", "v@:q")
+        .m<&score_context>("context", "Q@:").m<&score_setContext>("setContext:", "v@:Q")
+        .m<&score_date>("date", "@@:")
+        .m<&score_default>("shouldSetDefaultLeaderboard", "c@:").m<&score_setDefault>("setShouldSetDefaultLeaderboard:", "v@:c")
+        .m<&score_encode>("encodeWithCoder:", "v@:@").m<&score_decode>("initWithCoder:", "@@:@")
+        .m<&score_dealloc>("dealloc", "v@:");
     score.method("reportScoreWithCompletionHandler:", [](Ctx& x) { completeLater(x, arg(x, 0), 0, GKErrorNotAuthenticated); }, "v@:@?");
     score.classMethod("reportScores:withCompletionHandler:", [](Ctx& x) { completeLater(x, arg(x, 1), 0, GKErrorNotAuthenticated); }, "v@:@@?");
 

@@ -87,6 +87,7 @@ typedef struct {
 - (unsigned short)characterAtIndex:(NSUInteger)i;
 - (const char *)UTF8String;
 - (const char *)cStringUsingEncoding:(NSStringEncoding)enc;
+- (BOOL)getBytes:(void *)buffer maxLength:(NSUInteger)maxLength usedLength:(NSUInteger *)usedLength encoding:(NSStringEncoding)encoding options:(NSUInteger)options range:(NSRange)range remainingRange:(NSRange *)remainingRange;
 - (NSData *)dataUsingEncoding:(NSStringEncoding)enc;
 - (BOOL)isEqualToString:(NSString *)s;
 - (NSComparisonResult)compare:(NSString *)s;

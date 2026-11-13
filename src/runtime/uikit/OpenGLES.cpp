@@ -5,6 +5,7 @@
 // programs, uniforms, vertex attributes, VBOs, FBOs, textures) state tracker
 // and software rasterizer wired into CAEAGLLayer via LayerData::externalContents.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/MobileShaderSource.hpp"
 #include "runtime/Support.hpp"
 #include "UIKit.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
@@ -2209,7 +2210,7 @@ void gl_shaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings, G
 void gl_compileShader(Ctx& x, uint32_t shader) {
     if (auto* sg = currentSg(x, currentCtx(x)); sg && sg->shaders.count(shader)) {
         auto& sh = sg->shaders[shader];
-        sh.compiled = sh.executable.compile(sh.source, sh.type == GL_VERTEX_SHADER);
+        sh.compiled = sh.executable.compile(Shader::normalizeMobileSource(sh.source), sh.type == GL_VERTEX_SHADER);
         sh.infoLog = sh.compiled && !sh.executable.warnings.empty() ? sh.executable.warnings : sh.executable.error;
         if (!sh.compiled) x.proc.logf(LogLevel::Warning, "GLSL shader %u: %s", shader, sh.infoLog.c_str());
     }
