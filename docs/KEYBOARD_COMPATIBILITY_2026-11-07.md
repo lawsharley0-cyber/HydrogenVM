@@ -1,5 +1,23 @@
 # Custom text input continuation — November 7, 2026
 
+November 8 integration follow-up: main `588eebb` includes #366/#381 through
+#382 and subsequently skipped the custom keyboard case in #384. PR #390 is
+now a small accessory-only continuation on that newer main. Its first run
+therefore did not exercise Done; PlayerUITests being green is not keyboard
+qualification. That skip is removed for the retained-toolbar candidate.
+The same run's full UI workflow failed separately in
+`EditorUITests.testDiscardFromNestedJSONPreservesDisk`; keep that failure
+separate from the unexecuted keyboard case. Await a real unskipped UI result.
+
+November 8: `e331d83` passes Linux and the full Apple Silicon CI job, including
+unsigned device packaging and emulator simulator checks. The separate keyboard
+UI test confirms appearance, insert/delete and Return, but fails dismissal:
+Done's computed hit point is `{-1, -1}`. The responder returned a newly allocated
+toolbar on every accessory query. The candidate now retains one flexible-width
+toolbar and gives its Done item a stable identifier; the UI test requires a
+hittable item and still checks actual callback and keyboard disappearance.
+This fix needs a new simulator run; do not declare the previous UI test green.
+
 CI follow-up: revision `5aba0b4` passes the full Linux CI job, unsigned iOS
 simulator shell compilation and the actual-bridge crash-journal regression.
 The separate SwiftUI harness then failed to compile because its synthetic
