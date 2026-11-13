@@ -29,6 +29,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <map>
+#include "runtime/libc/TlsBridge.hpp"
+#if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
+#include <csignal>
+#include <pthread.h>
+#include <openssl/evp.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#endif
 #include <sstream>
 #include <string>
 #include <vector>
@@ -2295,6 +2303,134 @@ int runFullSubsystemTests() {
                   call(off, "_socket", {2, 1, 0}) == -1,
                   "Without the switch a game stays offline: no name lookups, no TCP sockets");
         }
+        {
+            // A secure connection (port 443) from a game allowed online goes to the TLS bridge's
+            // local port, and the bridge hears which server it is for.
+            struct FakeBridge final : TlsBridge {
+                uint16_t port = 0; std::string host; uint16_t asked = 0;
+                uint16_t open(const std::string& h, uint32_t, uint16_t p, std::function<void(const std::string&)>) override {
+                    host = h; asked = p; return port;
+                }
+            };
+            auto fake = std::make_shared<FakeBridge>();
+            fake->port = ready ? ntohs(local.sin_port) : 0;
+            ProcessConfig bCfg; bCfg.homePath = "/var/tmp/hvm-internet-bridge-unit";
+            bCfg.internetAccess = true; bCfg.loopbackNetwork = true; bCfg.loopbackAliases = {"secure.example"}; bCfg.tlsBridge = fake;
+            Process b(bCfg); auto& mem = b.mem();
+            const uint32_t block = b.heap().allocZeroed(64);
+            const int r = call(b, "_getaddrinfo", {b.allocCString("secure.example"), b.allocCString("443"), 0, block});
+            const uint32_t info = mem.read<uint32_t>(block), addr = info ? mem.read<uint32_t>(info + 24) : 0;
+            const int fd = call(b, "_socket", {2, 1, 0});
+            const int c = r == 0 && addr && fd >= 0 ? call(b, "_connect", {uint32_t(fd), addr, 16}) : -1;
+            pollfd p{listener, POLLIN, 0};
+            const int peer = c == 0 && ::poll(&p, 1, 1000) == 1 ? ::accept(listener, nullptr, nullptr) : -1;
+            check(peer >= 0 && fake->host == "secure.example" && fake->asked == 443,
+                  "Allow internet: a connection to port 443 goes through the TLS bridge, named after the server the game looked up");
+            if (peer >= 0) ::close(peer);
+            if (fd >= 0) call(b, "_close", {uint32_t(fd)});
+        }
+#if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
+        {
+            // The test's own TLS ends write with write(); a closed peer must fail a check, not raise SIGPIPE.
+            sigset_t pipeSet, oldSet; sigemptyset(&pipeSet); sigaddset(&pipeSet, SIGPIPE);
+            pthread_sigmask(SIG_BLOCK, &pipeSet, &oldSet);
+            // The OpenSSL bridge end to end: a TLS 1.0-only client (a 2013 game's OpenSSL) in,
+            // a server that refuses anything below TLS 1.2 out, bytes passed both ways.
+            SSL_CTX* sctx = SSL_CTX_new(TLS_server_method());
+            SSL_CTX_set_min_proto_version(sctx, TLS1_2_VERSION);
+            EVP_PKEY* key = EVP_RSA_gen(2048);
+            X509* cert = X509_new();
+            X509_gmtime_adj(X509_getm_notBefore(cert), 0); X509_gmtime_adj(X509_getm_notAfter(cert), 86400);
+            X509_set_pubkey(cert, key); X509_set_issuer_name(cert, X509_get_subject_name(cert)); X509_sign(cert, key, EVP_sha256());
+            SSL_CTX_use_certificate(sctx, cert); SSL_CTX_use_PrivateKey(sctx, key);
+            int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in sa{}; sa.sin_family = AF_INET; sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK); socklen_t sl = sizeof sa;
+            bool up = ::bind(srv, reinterpret_cast<sockaddr*>(&sa), sizeof sa) == 0 && ::listen(srv, 1) == 0 &&
+                      ::getsockname(srv, reinterpret_cast<sockaddr*>(&sa), &sl) == 0;
+            std::string serverGot, serverVersion;
+            std::thread server([&] {
+                pollfd p{srv, POLLIN, 0};
+                const int c = up && ::poll(&p, 1, 10000) == 1 ? ::accept(srv, nullptr, nullptr) : -1;
+                if (c < 0) return;
+                timeval tv{10, 0};   // a bridge that stops forwarding fails the check instead of hanging
+                ::setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv); ::setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+                SSL* ss = SSL_new(sctx); SSL_set_fd(ss, c);
+                if (SSL_accept(ss) == 1) {
+                    serverVersion = SSL_get_version(ss);
+                    char b[64] = {}; const int n = SSL_read(ss, b, 31);
+                    if (n > 0) serverGot.assign(b, size_t(n));
+                    SSL_write(ss, "HTTP/1.1 200 OK\r\n\r\n", 19);
+                }
+                SSL_shutdown(ss); SSL_free(ss); ::close(c);
+            });
+            std::string why, logged;
+            auto bridge = makeOpenSslTlsBridge(false, &why);
+            const uint16_t local = bridge && up ? bridge->open("127.0.0.1", sa.sin_addr.s_addr, ntohs(sa.sin_port),
+                                                               [&](const std::string& l) { logged += l + "\n"; }) : 0;
+            SSL_CTX* cctx = SSL_CTX_new(TLS_client_method());
+            SSL_CTX_set_security_level(cctx, 0);
+            SSL_CTX_set_min_proto_version(cctx, TLS1_VERSION); SSL_CTX_set_max_proto_version(cctx, TLS1_VERSION);
+            SSL_CTX_set_cipher_list(cctx, "ALL:@SECLEVEL=0");
+            std::string clientGot, clientVersion;
+            const int cfd = ::socket(AF_INET, SOCK_STREAM, 0);
+            { timeval tv{10, 0}; ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv); ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv); }
+            sockaddr_in ba{}; ba.sin_family = AF_INET; ba.sin_addr.s_addr = htonl(INADDR_LOOPBACK); ba.sin_port = htons(local);
+            if (local && ::connect(cfd, reinterpret_cast<sockaddr*>(&ba), sizeof ba) == 0) {
+                SSL* cs = SSL_new(cctx); SSL_set_fd(cs, cfd);
+                if (SSL_connect(cs) == 1) {
+                    clientVersion = SSL_get_version(cs);
+                    SSL_write(cs, "GET /locate?service=auth HTTP/1.1\r\n", 35);
+                    char b[64] = {}; const int n = SSL_read(cs, b, 19);
+                    if (n > 0) clientGot.assign(b, size_t(n));
+                }
+                SSL_shutdown(cs); SSL_free(cs);
+            }
+            ::close(cfd);
+            server.join();
+            // A game whose own TLS is 1.2 or later is passed through: it sees the real server's certificate.
+            bool sawServerCert = false;
+            std::thread server2([&] {
+                pollfd p{srv, POLLIN, 0};
+                const int c = ::poll(&p, 1, 10000) == 1 ? ::accept(srv, nullptr, nullptr) : -1;
+                if (c < 0) return;
+                timeval tv{10, 0};
+                ::setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+                SSL* ss = SSL_new(sctx); SSL_set_fd(ss, c);
+                SSL_accept(ss);
+                SSL_shutdown(ss); SSL_free(ss); ::close(c);
+            });
+            const uint16_t local2 = bridge ? bridge->open("127.0.0.1", sa.sin_addr.s_addr, ntohs(sa.sin_port), nullptr) : 0;
+            SSL_CTX* mctx = SSL_CTX_new(TLS_client_method());
+            SSL_CTX_set_min_proto_version(mctx, TLS1_2_VERSION);
+            const int mfd = ::socket(AF_INET, SOCK_STREAM, 0);
+            { timeval tv{10, 0}; ::setsockopt(mfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv); }
+            sockaddr_in ma{}; ma.sin_family = AF_INET; ma.sin_addr.s_addr = htonl(INADDR_LOOPBACK); ma.sin_port = htons(local2);
+            if (local2 && ::connect(mfd, reinterpret_cast<sockaddr*>(&ma), sizeof ma) == 0) {
+                SSL* ms = SSL_new(mctx); SSL_set_fd(ms, mfd);
+                if (SSL_connect(ms) == 1) {
+                    X509* peer = SSL_get1_peer_certificate(ms);
+                    sawServerCert = peer && X509_cmp(peer, cert) == 0;
+                    X509_free(peer);
+                }
+                SSL_shutdown(ms); SSL_free(ms);
+            }
+            ::close(mfd);
+            server2.join();
+            SSL_CTX_free(mctx);
+            check(sawServerCert, "TLS bridge: a game with TLS 1.2 or later is passed through and sees the real server's certificate");
+            {   // drop a SIGPIPE left pending by a write to a closed test socket, then restore the mask
+                timespec zero{0, 0}; while (sigtimedwait(&pipeSet, nullptr, &zero) > 0) {}
+                pthread_sigmask(SIG_SETMASK, &oldSet, nullptr);
+            }
+            ::close(srv);
+            SSL_CTX_free(cctx); SSL_CTX_free(sctx); X509_free(cert); EVP_PKEY_free(key);
+            check(clientVersion == "TLSv1" && serverVersion.rfind("TLSv1.", 0) == 0 && serverVersion != "TLSv1" &&
+                  serverVersion != "TLSv1.1" && serverGot.rfind("GET /locate?service=auth", 0) == 0 && clientGot.rfind("HTTP/1.1 200 OK", 0) == 0 &&
+                  logged.find("bridged") != std::string::npos && logged.find("<- GET /locate HTTP/1.1") != std::string::npos &&
+                  logged.find("-> HTTP/1.1 200 OK") != std::string::npos,
+                  "TLS bridge: a TLS 1.0 game reaches a TLS 1.2+ server, bytes pass both ways, HTTP lines are logged without queries");
+        }
+#endif
         if (listener >= 0) ::close(listener);
     }
 

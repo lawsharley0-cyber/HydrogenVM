@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include "runtime/libc/TlsBridge.hpp"
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -147,6 +148,14 @@ int hvmRunMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--guest-lib-dir") && i + 1 < argc) { cfg.guestLibDir = argv[++i]; cfg.guestLibs = true; }
         else if (!std::strcmp(argv[i], "--quiet")) quiet = true;
         else if (!std::strcmp(argv[i], "--")) { for (++i; i < argc; ++i) cfg.extraArgs.push_back(argv[i]); }
+    }
+    if (cfg.internetAccess) {
+        // Old game TLS in, modern TLS out (TlsBridge.hpp). HVM_TLS_BRIDGE_NOVERIFY=1 accepts a
+        // local test server's self-signed certificate.
+        std::string why;
+        const char* noVerify = std::getenv("HVM_TLS_BRIDGE_NOVERIFY");
+        cfg.tlsBridge = Hydrogen::Runtime::makeOpenSslTlsBridge(!(noVerify && *noVerify == '1'), &why);
+        if (!cfg.tlsBridge) std::fprintf(stderr, "TLS bridge unavailable: %s\n", why.c_str());
     }
     if (!cfg.loopbackAliases.empty() && !cfg.loopbackNetwork) {
         std::fprintf(stderr, "--loopback-alias requires --loopback-network\n"); return 2;
