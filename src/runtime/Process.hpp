@@ -32,6 +32,7 @@ namespace Hydrogen::Runtime {
 enum class LogLevel { Debug, Info, Warning, Error, GuestStdout, GuestStderr };
 
 namespace HostGL { class Platform; }
+struct TlsBridge;
 
 struct ProcessConfig {
     std::string bundlePath;            // …/Foo.app
@@ -44,6 +45,8 @@ struct ProcessConfig {
     bool threadLiveness = false;       // opt-in one-second per-thread progress evidence
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
     bool internetAccess = false;      // per-game opt-in (player's "Allow internet" switch): real TCP/UDP and DNS
+    // With internetAccess: guest TCP to port 443 goes through this (old game TLS in, modern TLS out).
+    std::shared_ptr<TlsBridge> tlsBridge;
     bool offlineClash = false;        // pinned client only: session-owned local NPC service
     std::map<uint16_t,uint16_t> loopbackPortOverrides; // explicit localhost-only service routing
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1

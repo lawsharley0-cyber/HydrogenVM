@@ -17,6 +17,7 @@
 #include "Network.hpp"
 #include "DarwinErrno.hpp"
 #include "runtime/Support.hpp"
+#include "TlsBridge.hpp"
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <algorithm>
@@ -27,6 +28,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <netdb.h>
+#include <map>
 #include <mutex>
 #include <poll.h>
 #include <thread>
@@ -79,6 +81,25 @@ bool internet(Ctx& x) { return x.proc.config().internetAccess; }
 void tellInternetOnce(Ctx& x) {
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) x.proc.logf(LogLevel::Info, "Internet: allowed for this game (its \"Allow internet\" switch is on)");
+}
+// Which name each address came from, so a bridged secure connection can name its server.
+struct HostNameState {
+    explicit HostNameState(Process&) {}
+    std::mutex mu;
+    std::map<uint32_t, std::string> byIp;
+};
+void rememberName(Ctx& x, uint32_t ipNetworkOrder, const std::string& name) {
+    if (name.empty()) return;
+    auto& s = x.proc.service<HostNameState>();
+    std::lock_guard lock(s.mu);
+    s.byIp[ipNetworkOrder] = name;
+}
+std::string nameFor(Ctx& x, uint32_t ipNetworkOrder) {
+    auto& s = x.proc.service<HostNameState>();
+    { std::lock_guard lock(s.mu); auto it = s.byIp.find(ipNetworkOrder); if (it != s.byIp.end()) return it->second; }
+    char b[INET_ADDRSTRLEN] = ""; in_addr a{}; a.s_addr = ipNetworkOrder;
+    inet_ntop(AF_INET, &a, b, sizeof b);
+    return b;
 }
 bool isUdp(Ctx& x, int fd) { auto& s = x.proc.service<SocketState>(); std::lock_guard lock(s.mu); return s.udp.count(fd) != 0; }
 int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
@@ -209,7 +230,19 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
     inet_ntop(AF_INET, &host.sin_addr, ipBuf, sizeof(ipBuf));
     uint16_t origPort = ntohs(host.sin_port);
     x.proc.logf(LogLevel::Debug, "guest connect fd=%d to %s:%d", fd, ipBuf, origPort);
-    if ((ntohl(host.sin_addr.s_addr) >> 24) != 127 && internet(x)) {
+    if (internet(x) && origPort == 443 && x.proc.config().tlsBridge) {
+        // A secure connection: the game's own TLS is likely too old for today's servers, so it
+        // talks to a local bridge that speaks modern TLS to the server (TlsBridge.hpp).
+        tellInternetOnce(x);
+        const std::string server = nameFor(x, host.sin_addr.s_addr);
+        Process* proc = &x.proc;
+        const uint16_t local = x.proc.config().tlsBridge->open(server, host.sin_addr.s_addr, origPort,
+            [proc](const std::string& line) { proc->log(LogLevel::Info, line); });
+        if (!local) return failWith(x, 61);   // ECONNREFUSED
+        x.proc.logf(LogLevel::Info, "Internet: secure connection to %s (%s:%d) goes through the TLS bridge", server.c_str(), ipBuf, origPort);
+        host.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        host.sin_port = htons(local);
+    } else if ((ntohl(host.sin_addr.s_addr) >> 24) != 127 && internet(x)) {
         tellInternetOnce(x);
         x.proc.logf(LogLevel::Info, "Internet: connecting to %s:%d", ipBuf, origPort);
     } else if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) {
@@ -378,6 +411,7 @@ int32_t internetAddrInfo(Ctx& x, GuestPtr node, GuestPtr service, GuestPtr hints
         if (!head && a->ai_canonname) { const uint32_t c = x.proc.allocCString(a->ai_canonname); owned.push_back(c); x.mem.write<uint32_t>(node32 + 20, c); }
         x.mem.write<uint8_t>(addr, 16); x.mem.write<uint8_t>(addr + 1, kAF_INET);
         x.mem.write<uint16_t>(addr + 2, in->sin_port); x.mem.write<uint32_t>(addr + 4, in->sin_addr.s_addr);
+        rememberName(x, in->sin_addr.s_addr, name);
         if (prev) x.mem.write<uint32_t>(prev + 28, node32); else head = node32;
         prev = node32;
     }
@@ -399,7 +433,7 @@ int32_t n_getaddrinfo(Ctx& x, GuestPtr node, GuestPtr service, GuestPtr hints, G
     x.proc.logf(LogLevel::Debug, "getaddrinfo node=%s", name.c_str());
     in_addr ip{};
     bool alias = std::find(x.proc.config().loopbackAliases.begin(), x.proc.config().loopbackAliases.end(), name) != x.proc.config().loopbackAliases.end();
-    if (name == "localhost" || alias) ip.s_addr = htonl(INADDR_LOOPBACK);
+    if (name == "localhost" || alias) { ip.s_addr = htonl(INADDR_LOOPBACK); if (alias) rememberName(x, ip.s_addr, name); }
     else if (inet_pton(AF_INET, name.c_str(), &ip) != 1 || (ntohl(ip.s_addr) >> 24) != 127) {
         x.proc.logf(LogLevel::Info, "Loopback resolver refused host: %s", name.c_str()); return 8;
     }
@@ -494,7 +528,10 @@ uint32_t n_gethostbyname(Ctx& x, GuestPtr namePtr) {
         addrinfo h{}, *found = nullptr; h.ai_family = AF_INET; h.ai_socktype = SOCK_STREAM;
         if (::getaddrinfo(name.c_str(), nullptr, &h, &found) == 0) {
             for (addrinfo* a = found; a && ips.size() < 8; a = a->ai_next)
-                if (a->ai_family == AF_INET && a->ai_addr) ips.push_back(reinterpret_cast<const sockaddr_in*>(a->ai_addr)->sin_addr.s_addr);
+                if (a->ai_family == AF_INET && a->ai_addr) {
+                    ips.push_back(reinterpret_cast<const sockaddr_in*>(a->ai_addr)->sin_addr.s_addr);
+                    rememberName(x, ips.back(), name);
+                }
             ::freeaddrinfo(found);
         } else x.proc.logf(LogLevel::Info, "Internet: could not resolve %s", name.c_str());
     }
