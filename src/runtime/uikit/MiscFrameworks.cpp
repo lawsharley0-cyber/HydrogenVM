@@ -1,7 +1,7 @@
 // HydrogenVM — small framework pieces apps touch at launch:
 //   UIWebView (no web engine: remote loads fail offline, HTML loads "finish"),
 //   CoreTelephony (no carrier), SystemConfiguration's CaptiveNetwork (no Wi-Fi info),
-//   Security certificates/keys (unavailable), +attemptRotationToDeviceOrientation.
+//   +attemptRotationToDeviceOrientation.
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 #include <cctype>
@@ -66,9 +66,6 @@ void ct_ignore(Ctx&, id, SEL, uint32_t) {}
 
 // ---- misc C functions
 uint32_t z1(Ctx&, uint32_t) { return 0; }
-uint32_t z2(Ctx&, uint32_t, uint32_t) { return 0; }
-int32_t secUnimplemented6(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return -4; }   // errSecUnimplemented
-int32_t secUnimplemented3(Ctx&, uint32_t, uint32_t, uint32_t) { return -4; }
 void vc_attemptRotation(Ctx& x, id, SEL) { reevaluateRootOrientation(x, "attemptRotationToDeviceOrientation", true); }
 
 // ---- MobileCoreServices: uniform type identifiers for common file types.
@@ -406,20 +403,6 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
       .m<&ad_uuid>("advertisingIdentifier")
       .m<&ad_trackingEnabled>("isAdvertisingTrackingEnabled", "c@:");
 
-    // Security: certificates and public-key operations aren't available.
-    p.def<&z2>("_SecCertificateCreateWithData");
-    p.def<&z1>("_SecCertificateCopySubjectSummary");
-    p.def<&z1>("_SecCertificateCopyData");
-    p.def<&z1>("_SecKeyGetBlockSize");
-    p.def<&secUnimplemented6>("_SecKeyEncrypt");
-    p.def<&secUnimplemented6>("_SecKeyDecrypt");
-    p.def<&secUnimplemented6>("_SecKeyRawVerify");
-    p.def<&secUnimplemented3>("_SecTrustCreateWithCertificates");
-    p.def<&secUnimplemented3>("_SecTrustEvaluate");
-    p.def<&z1>("_SecTrustCopyPublicKey");
-    p.def<&z1>("_SecTrustGetCertificateCount");
-    p.def<&z2>("_SecTrustGetCertificateAtIndex");
-    p.def<&secUnimplemented3>("_SecPolicyCreateBasicX509");
 }
 
 } // namespace Hydrogen::Runtime::UIKit

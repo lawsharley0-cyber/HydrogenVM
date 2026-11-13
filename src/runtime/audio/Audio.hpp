@@ -105,7 +105,11 @@ public:
 
     // What the app actually made audible (before the player's own volume), for
     // tests. Music = streams, looping voices and sounds of 8 s or more; effects =
-    // the rest. A voice counts once, the first time it is heard.
+    // the rest, and also a sharp energy rise on a stream that already had an
+    // audible bed (a game that mixes effects into one OpenAL queue). A voice
+    // counts once, the first time it is heard; a mixed-in rise can additionally
+    // count as an effect voice. Onset detection is reporting only and does not
+    // change the mixed samples.
     struct Stats {
         uint64_t framesRendered = 0, audibleFrames = 0, musicFrames = 0, effectFrames = 0;
         uint32_t musicVoices = 0, effectVoices = 0;
@@ -127,6 +131,13 @@ private:
         double pos = 0;   // in frames of the front buffer
         VoiceParams p;
         bool paused = false, stream = false, autoRelease = false, done = false, heard = false;
+        // Onset detector (reporting only): 10 ms windows, ~400 ms of history.
+        static constexpr int kOnsetHist = 40;
+        static constexpr int kOnsetWindow = kRate / 100;   // 10 ms
+        float onsetRms[kOnsetHist] = {};
+        int onsetFilled = 0, onsetIndex = 0, onsetSamples = 0, effectHoldSamples = 0;
+        double onsetSumSq = 0;
+        bool onsetCounted = false;
         std::vector<uint64_t> processed;
     };
     mutable std::mutex mu_;
