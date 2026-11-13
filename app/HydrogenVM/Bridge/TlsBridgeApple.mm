@@ -187,15 +187,14 @@ bool writeAll(SSLContextRef to, int fd, const uint8_t* p, size_t n) {
 }
 // One read from `from` passed on to `to`; false when `from` closed or failed.
 using Log = std::function<void(const std::string&)>;
-bool transfer(SSLContextRef from, SSLContextRef to, int toFd, const char* dir, const std::string& host, const Log& log, int& told) {
+bool transfer(SSLContextRef from, SSLContextRef to, int toFd, bool fromGame, Hydrogen::Runtime::HttpLog& http) {
     uint8_t buf[16384];
     size_t n = 0;
     const OSStatus s = SSLRead(from, buf, sizeof buf, &n);
-    if (n && log && told < 40) {
-        const std::string line = Hydrogen::Runtime::httpFirstLine(reinterpret_cast<const char*>(buf), n);
-        if (!line.empty()) { ++told; log("Internet: " + host + " " + dir + " " + line); }
-    }
-    if (n && !writeAll(to, toFd, buf, n)) return false;
+    if (n) http.chunk(fromGame, reinterpret_cast<const char*>(buf), n);   // logged as sent
+    if (n && !fromGame) Hydrogen::Runtime::canonicalHeaderNames(reinterpret_cast<char*>(buf), n);
+    if (n && !writeAll(to, toFd, buf, n)) { http.ended(fromGame ? "server stopped taking data" : "game stopped taking data"); return false; }
+    if (s != noErr && s != errSSLWouldBlock) http.ended(fromGame ? "closed by the game" : "closed by the server");
     return s == noErr || s == errSSLWouldBlock;
 }
 uint16_t peekHello(int fd) {
@@ -316,16 +315,16 @@ private:
         return fd;
     }
     static void pump(SSLContextRef g, int gfd, SSLContextRef u, int ufd, const std::string& host, const Log& log) {
-        int told = 0;
+        Hydrogen::Runtime::HttpLog http(host, log);
         for (;;) {
             size_t ga = 0, ua = 0;
             SSLGetBufferedReadSize(g, &ga);
             SSLGetBufferedReadSize(u, &ua);
             if (!ga && !ua) {
                 pollfd fds[2] = {{gfd, POLLIN, 0}, {ufd, POLLIN, 0}};
-                if (::poll(fds, 2, 120000) <= 0) return;   // two quiet minutes: the game has moved on
+                if (::poll(fds, 2, 120000) <= 0) { http.ended("idle for two minutes"); return; }
             }
-            if (!transfer(g, u, ufd, "<-", host, log, told) || !transfer(u, g, gfd, "->", host, log, told)) return;
+            if (!transfer(g, u, ufd, true, http) || !transfer(u, g, gfd, false, http)) return;
         }
     }
     std::mutex mu_;

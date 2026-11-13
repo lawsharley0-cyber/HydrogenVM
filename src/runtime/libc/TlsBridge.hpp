@@ -14,6 +14,10 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <algorithm>
+#include <zlib.h>
+#include <cctype>
+#include <utility>
 
 namespace Hydrogen::Runtime {
 
@@ -45,6 +49,178 @@ inline std::string httpFirstLine(const char* p, size_t n) {
     }
     return line;
 }
+
+// The first line plus the headers that say what is being fetched and how big it is.
+inline std::string httpSummary(const char* p, size_t n) {
+    std::string out = httpFirstLine(p, n);
+    if (out.empty()) return out;
+    static const char* const kKeep[] = {"content-length:", "content-range:", "range:", "location:", "content-type:",
+                                        "transfer-encoding:", "content-encoding:", "connection:", "etag:", "last-modified:"};
+    std::string extra;
+    size_t i = 0;
+    while (i < n) {
+        size_t e = i;
+        while (e < n && p[e] != '\n') ++e;
+        std::string line(p + i, e - i);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (i && line.empty()) break;   // end of the headers
+        std::string lower = line;
+        for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* k : kKeep)
+            if (lower.rfind(k, 0) == 0 && line.size() < 200) {
+                if (lower.rfind("location:", 0) == 0) line = line.substr(0, line.find('?'));   // signed URLs stay out of shared logs
+                extra += (extra.empty() ? "" : ", ") + line;
+                break;
+            }
+        i = e + 1;
+    }
+    return extra.empty() ? out : out + " [" + extra + "]";
+}
+
+// Today's servers and CDNs often send header names in lower case ("etag:", "content-encoding:").
+// HTTP says case does not matter, but parsers in old games look for "ETag:" exactly (Minion
+// Rush's asset check asks its CDN for an ETag over and over). In a response that starts in this
+// chunk, header names get their usual spelling; values, sizes and byte counts are unchanged.
+// Returns how many names were respelled.
+inline int canonicalHeaderNames(char* p, size_t n) {
+    if (n < 8 || std::string(p, 7) != "HTTP/1.") return 0;
+    int changed = 0;
+    size_t i = 0;
+    while (i < n && p[i] != '\n') ++i;   // past the status line
+    for (++i; i < n;) {
+        if (p[i] == '\r' || p[i] == '\n') break;   // end of the headers
+        size_t colon = i;
+        while (colon < n && p[colon] != ':' && p[colon] != '\n') ++colon;
+        if (colon >= n || p[colon] != ':') break;
+        std::string name(p + i, colon - i), lower = name;
+        for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+        std::string want;
+        if (lower == "etag") want = "ETag";
+        else if (lower == "www-authenticate") want = "WWW-Authenticate";
+        else if (lower == "content-md5") want = "Content-MD5";
+        else {
+            want = lower;
+            bool up = true;
+            for (char& c : want) { if (up) c = char(std::toupper(static_cast<unsigned char>(c))); up = c == '-'; }
+        }
+        if (want != name) { std::copy(want.begin(), want.end(), p + i); ++changed; }
+        while (i < n && p[i] != '\n') ++i;
+        ++i;
+    }
+    return changed;
+}
+
+// A short look at a small response body for the play log (so a game's exchange with its
+// servers can be rebuilt offline): gzip undone, values of secret-looking JSON keys and
+// query strings blanked, other control bytes shown as dots. Empty for large or absent bodies.
+inline std::string httpBodyPreview(const char* p, size_t n) {
+    const std::string all(p, n);
+    const size_t split = all.find("\r\n\r\n");
+    if (split == std::string::npos) return {};
+    std::string lowerHead = all.substr(0, split);
+    for (char& c : lowerHead) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (all.size() > 9 && all.compare(0, 7, "HTTP/1.") == 0 && all[9] == '1') return {};   // interim (1xx): no body of its own
+    std::string body = all.substr(split + 4);
+    if (body.empty() || body.size() > 4096) return {};
+    if (body.compare(0, 5, "HTTP/") == 0) return {};   // another response, not a body
+    if (lowerHead.find("content-encoding: gzip") != std::string::npos) {
+        std::string out(16384, '\0');
+        z_stream z{};
+        if (inflateInit2(&z, 16 + MAX_WBITS) != Z_OK) return {};
+        z.next_in = reinterpret_cast<Bytef*>(body.data()); z.avail_in = uInt(body.size());
+        z.next_out = reinterpret_cast<Bytef*>(out.data()); z.avail_out = uInt(out.size());
+        const int r = inflate(&z, Z_FINISH);
+        out.resize(z.total_out);
+        inflateEnd(&z);
+        if (r != Z_STREAM_END && r != Z_BUF_ERROR) return {};
+        body = out;
+    }
+    // Blank secrets: "...token...": "value", password=..., and URL queries.
+    static const char* const kSecret[] = {"token", "password", "secret", "credential", "session", "signature", "sig", "key", "email", "name"};
+    std::string lower = body;
+    for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (size_t i = 0; i < body.size(); ++i) {
+        if (body[i] != '"') continue;
+        size_t end = i + 1;
+        while (end < body.size() && body[end] != '"') end += body[end] == '\\' ? 2 : 1;
+        if (end >= body.size()) return {};   // cannot tell keys from values safely: no preview
+        const std::string k = lower.substr(i + 1, end - i - 1);
+        size_t v = end + 1;
+        bool colon = false;
+        while (v < body.size() && (body[v] == ' ' || body[v] == '\t' || body[v] == '\r' || body[v] == '\n' || body[v] == ':')) {
+            colon = colon || body[v] == ':';
+            ++v;
+        }
+        bool secret = false;
+        for (const char* s : kSecret) if (k.find(s) != std::string::npos) { secret = true; break; }
+        if (colon && secret && v < body.size()) {
+            // Blank the whole value: a string up to its unescaped quote, or a bare value up to , } ]
+            size_t ve = v;
+            if (body[v] == '"') {
+                ++ve;
+                while (ve < body.size() && body[ve] != '"') ve += body[ve] == '\\' ? 2 : 1;
+                if (ve >= body.size()) return {};
+                for (size_t j = v + 1; j < ve; ++j) body[j] = '*';
+            } else {
+                while (ve < body.size() && body[ve] != ',' && body[ve] != '}' && body[ve] != ']') body[ve++] = '*';
+            }
+            i = ve;
+        } else i = end;
+    }
+    for (size_t q = body.find('?'); q != std::string::npos; q = body.find('?', q + 1))
+        for (size_t j = q + 1; j < body.size() && body[j] != '"' && body[j] != ' ' && body[j] != '\n' && body[j] != '<'; ++j) body[j] = '*';
+    if (body.size() > 600) body = body.substr(0, 600) + "...";
+    for (char& c : body) if (static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) >= 0x7F) c = '.';
+    return body;
+}
+
+// One bridged connection's lines for the play log: each request and response with its key
+// headers, repeats folded into a count (a game that polls would otherwise flood the log),
+// and the bytes each side sent when it ends.
+class HttpLog {
+public:
+    HttpLog(std::string host, std::function<void(const std::string&)> log) : host_(std::move(host)), log_(std::move(log)) {}
+    void chunk(bool fromGame, const char* p, size_t n) {
+        (fromGame ? game_ : server_) += n;
+        if (!log_) return;
+        const std::string line = httpSummary(p, n);
+        if (line.empty()) return;
+        Side& side = fromGame ? toServer_ : toGame_;   // a poll alternates request and reply: fold each side alone
+        const std::string tagged = std::string(fromGame ? "<- " : "-> ") + line;
+        const std::string body = fromGame ? std::string() : httpBodyPreview(p, n);
+        if (tagged == side.last && body == side.lastBody) {
+            ++side.count;
+            if (side.count == 10 || side.count == 100 || side.count == 1000) say(side.last + " (" + std::to_string(side.count) + " times so far)");
+            return;
+        }
+        flush(side);
+        side.last = tagged;
+        side.lastBody = body;
+        side.count = 1;
+        say(tagged);
+        if (!body.empty()) say("   body: " + body);   // a changed body with the same headers is a new line too
+    }
+    void ended(const char* how) {
+        if (!log_) return;
+        flush(toServer_);
+        flush(toGame_);
+        log_("Internet: " + host_ + " connection ended, " + how + " (game sent " + std::to_string(game_) +
+             " bytes, server sent " + std::to_string(server_) + ")");
+    }
+private:
+    struct Side { std::string last, lastBody; int count = 0; };   // count includes the first time
+    void say(const std::string& s) { if (lines_++ < 400) log_("Internet: " + host_ + " " + s); }
+    void flush(Side& side) {
+        if (side.count > 1 && side.count != 10 && side.count != 100 && side.count != 1000)
+            say(side.last + " (" + std::to_string(side.count) + " times)");
+        side.count = 0;
+    }
+    std::string host_;
+    std::function<void(const std::string&)> log_;
+    Side toServer_, toGame_;
+    int lines_ = 0;
+    uint64_t game_ = 0, server_ = 0;
+};
 
 // The version a TLS ClientHello asks for (0x0301 TLS 1.0, 0x0302 TLS 1.1, 0x0303 TLS 1.2 and
 // later), or 0 when the bytes are not a ClientHello. A game that already speaks TLS 1.2 or
