@@ -160,6 +160,57 @@ real menu MP3, audible from frame 0). Continuous music is still the
 open audio question; the IPA is not recorded in `must_launch` or
 `COMPAT.md`.
 
+## AudioFile packet table (Apple-accurate; did not keep the stream open)
+
+FMOD's AudioQueue codec (`fmod_codec_audioqueue.cpp`) decides length
+from AudioFile properties, not from how much one prefetch returns.
+The open path at `0x57df78` queries `'dfmt'`, `'psze'` (because
+`FMOD_ACCURATETIME` is set), `'edur'`, `'bcnt'`, and `'pnfo'`. If
+`'pnfo'` succeeds, `lengthpcm` is `mNumberValidFrames` and priming is
+`mPrimingFrames`; otherwise length is `edur * sampleRate`. Those values
+are written into `FMOD_CODEC_WAVEFORMAT` (296 bytes at codec+0x20).
+
+The menu file (`racer_music_menu_loop`, Unity 4 AudioClip `m_Type=13`
+AUDIOQUEUE, `m_Stream=2`, 261,787 bytes in `sharedassets0.assets.resS`)
+is a LAME 3.98r VBR MP3 with a Xing tag: 545 audio frames, encoder
+delay 576, padding 1792. ffmpeg decodes **625472** samples (14.183 s).
+Apple's `AudioFilePacketTableInfo` for a LAME-tagged MP3 is that audible
+length and those delay/padding figures, **not** the raw MPEG count
+`545 * 1152 = 627840` with priming 0.
+
+Before this fix we reported the raw MPEG length. After, a 15 s traced
+menu run shows FMOD receiving the Apple values on every open:
+
+| Property | We now return | Expected (Xing/LAME + ffmpeg) |
+|---|---|---|
+| `'dfmt'` | 44100, `'.mp3'`, 1152 frames/packet, 2 ch | same |
+| `'psze'` | 1044 | actual max packet (15*1044 = 15660 input buffer) |
+| `'edur'` | 14.183039 | 625472 / 44100 |
+| `'bcnt'` | 260096 | sum of the 545 audio packets |
+| `'pnfo'` | valid 625472, priming 576, remainder 1792 | LAME delay/padding, ffmpeg's decode length |
+| `'pcnt'` | 545 (not queried in this open) | audio packets, Xing frame excluded |
+| `'mgic'`, `'cmap'` | GetPropertyInfo unsupported (`'pty?'`) | MP3 has no magic cookie; FMOD skips both |
+
+Fail-first tests on the existing LAME-compatible tone fixture
+(`kToneMp3`: 21 frames, delay 576, padding 1566): `indexMp3` and
+`AudioFileGetProperty` `'pnfo'`/`'edur'` must be 22050 / 576 / 1566 /
+0.5 s (the audible 0.5 s), not `21*1152`. `fulltest` 820/0.
+
+The corrected length does **not** stop FMOD closing the queue. A 15 s
+menu was still silent (mixer peak 0, audible never). The cycle is now
+1 prime + a 4096-frame fill (14080 bytes copied after a 576-frame
+skip) + a **576-frame** render that finishes the first 4096 + three
+more 4096 fills + Dispose — still one 16384-frame prefetch. The 576
+render is the priming skip, which is correct. Guest LR at Dispose is
+the codec close path (`0x57e1c8` ← wrapper `0x57d724` ← `0x5202a8`
+← FMOD Sound destructor `0x567958`, reached from `0x565048`). The
+FMOD mode on the stack is `0x0100c0ca` =
+`FMOD_CREATESTREAM|SOFTWARE|ACCURATETIME|MPEGSEARCH|LOOP_NORMAL|2D`
+plus UNICODE: this **is** a stream, so the codec should have stayed
+open. Length is not 16384; FMOD knows the file is 14.183 s and still
+destroys the Sound after the first stream buffer. That remaining
+close is not a missing or wrong AudioFile property.
+
 ## Pull-back launch (works)
 
 `ControlScheme` defaults to `Tilt` (PlayerPrefs). Under that default,
@@ -223,7 +274,7 @@ Mid-race state is not saved (expected).
 
 | Gate | Result |
 |---|---|
-| `hvm_tests fulltest` | **818 passed, 0 failed** (FMOD 4096-frame offline-render loop; `accel` parse and UIKit delivery). Earlier 815/0 after the two runtime fixes; 816/0 after the FMOD-loop test alone. Re-run after the accelerometer input. |
+| `hvm_tests fulltest` | **820 passed, 0 failed** (LAME/Xing `'pnfo'`/`'edur'` audible length; plus the earlier FMOD-loop and `accel` tests). 818/0 before the packet-table fix. |
 | support / stub / pytest / Test Lab / must_launch | not re-run after these commits. Pytest still has the pre-existing #445 `TestCensus` fixture-path failure on this bench — not "fixed" in this PR. |
 
 No baseline was weakened. Required CI on this commit has not been reported green.
@@ -232,11 +283,11 @@ is left for when the verdict is settled (and to avoid a clash with #447's CoC ro
 
 ## Still needed for "playable"
 
-- Continuous music: FMOD's AudioQueue codec closes after a 16384-frame
-  prefetch of each long MP3 and retries ~6.5 / s; only short AIFF effects
-  reach the mixer. OfflineRender itself is not returning zero. A general
-  iOS-accurate reason FMOD's createSound does not keep the stream open is
-  still wanted.
+- Continuous music: AudioFile properties FMOD queries now match Apple
+  (LAME packet table, 14.183 s). FMOD still `CREATESTREAM`s, fills one
+  16384-frame buffer, and runs the Sound destructor (`0x56750c` from
+  `0x565048`). Why that destructor runs after a successful prefetch is
+  the remaining question — not a wrong file length.
 - Earned level-unlock across a relaunch (finish track 1).
 - Phone: Mesa vs device GPU, real speed, 16 KB pages, headphones.
 
