@@ -1,5 +1,6 @@
 // `hvm run <bundle.app | file.ipa> [--home DIR] [--keep-going] [--trace] [--quiet]
 //          [--run-for SECONDS] [--screenshot FILE.png] [--tap X,Y@T] [--drag X1,Y1,X2,Y2@T]
+//          [--device MODEL]
 //          [--report FILE.json] [-- args...]`
 // --report writes a machine-readable summary: exit status, crash report, every
 // warning/error the runtime logged, missing functions, and performance counters.
@@ -73,6 +74,14 @@ int hvmRunMain(int argc, char** argv) {
     double sendAt = -1;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--run-for") && i + 1 < argc) { runFor = std::atof(argv[++i]); continue; }
+        // --device MODEL: hw.machine / UIDevice platform (default iPhone5,2). Apps that
+        // predate a model, or that pick a framebuffer from a device table, need the
+        // matching identifier — a 2012 title may mis-scale on iPhone5,2.
+        if (!std::strcmp(argv[i], "--device") && i + 1 < argc) {
+            cfg.deviceModel = argv[++i];
+            if (cfg.deviceModel.empty()) { std::fprintf(stderr, "--device requires a model such as iPhone4,1\n"); return 2; }
+            continue;
+        }
         if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc) { screenshot = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--tap") && i + 1 < argc) {
             Gesture g{};
