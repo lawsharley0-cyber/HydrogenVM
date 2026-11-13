@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 39 automated cases (TL-A–TL-AM) · schema version 1.
+Version 1.0 · 40 automated cases (TL-A–TL-AN) · schema version 1.
 
 ## Contents
 
@@ -23,9 +23,9 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-The automated suite now covers 39 case IDs, including import integrity, CPU
+The automated suite now covers 40 case IDs, including import integrity, CPU
 correctness, graphics, audio, persistence, threading, input, and lifecycle.
-TL-L is a host-driven termination check; 38 cases are guest-selectable.
+TL-L is a host-driven termination check; 39 cases are guest-selectable.
 
 ---
 
@@ -106,7 +106,7 @@ The host runner retains these dictionaries and the oracle description in its
 report. A pass marker without a fresh complete guest result (or followed by a
 nonzero exit) is a failure. `objc_conformance.m` uses ARC;
 `objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
-convention. The menu scrolls so all 38 selectable cases and footer controls remain
+convention. The menu scrolls so all 39 selectable cases and footer controls remain
 reachable.
 
 These five cases pass on unchanged main; that is new coverage, not a runtime
@@ -508,3 +508,7 @@ Checks deferred delivery exactly once, scalar BOOL YES, and preserved animation 
 ### TL-AL / TL-AM — window ownership and UIKit timer pools
 
 TL-AL checks that the last application reference can release a visible window. TL-AM explicitly transfers an owned object into the autorelease pool from a timer and checks deallocation before the outer pool drains. Visibility must not own UIWindow, and UIKit must drain pools around the whole main-loop turn, including timers, queued work and nested main-loop pumps. Independent Foundation/worker loops remain caller-managed. Both cases fail on the corresponding pre-fix binaries.
+
+### TL-AN — Mach exception metadata
+
+Super Hexagon queries thread exception configuration during startup. The case checks an initially empty thread, grouped masks after metadata setup, scalar behavior/flavor values, and invalid-mask rejection. The runner additionally checks task isolation, send-right copies, swap ABI, destroyed endpoints and checked output spans. Metadata setup does not implement Mach exception message delivery; non-null handlers report that unavailable behavior explicitly.
