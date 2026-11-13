@@ -197,6 +197,7 @@ int hvmRunMain(int argc, char** argv) {
     std::mutex frameMu;
     Graphics::Image lastFrame;
     auto lastPublished = std::chrono::steady_clock::time_point{};
+    std::atomic<Runtime::Process*> frameProcess{nullptr};
     if (!screenshot.empty() || !frameFile.empty()) {
         cfg.present = [&](const uint8_t* rgba, int w, int h) {
             std::lock_guard<std::mutex> lk(frameMu);
@@ -209,7 +210,9 @@ int hvmRunMain(int argc, char** argv) {
                 lastPublished = now;
                 const std::string temporary = frameFile + ".tmp";
                 std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-                const uint32_t header[] = {0x31465648, uint32_t(w), uint32_t(h), std::bit_cast<uint32_t>(cfg.screenScale)};
+                auto* active=frameProcess.load(std::memory_order_acquire);
+                const float scale=active ? Runtime::UIKit::ui(*active).scale : cfg.screenScale;
+                const uint32_t header[] = {0x31465648, uint32_t(w), uint32_t(h), std::bit_cast<uint32_t>(scale)};
                 out.write(reinterpret_cast<const char*>(header), sizeof header);
                 out.write(reinterpret_cast<const char*>(rgba), size_t(w)*size_t(h)*4);
                 out.close();
@@ -227,6 +230,11 @@ int hvmRunMain(int argc, char** argv) {
         const auto wallStart = std::chrono::steady_clock::now();
         EntryTrace entryTrace;
         Runtime::Process proc(cfg);
+        struct FrameProcessScope {
+            std::atomic<Runtime::Process*>& slot;
+            ~FrameProcessScope() { slot.store(nullptr,std::memory_order_release); }
+        } frameProcessScope{frameProcess};
+        frameProcess.store(&proc,std::memory_order_release);
         entryTrace.attach(proc);
         if (!documentImport.empty()) {
             Runtime::UIKit::setDocumentPickerObserver(proc, [&proc, documentImport](const Runtime::UIKit::DocumentPickerRequest& q) {

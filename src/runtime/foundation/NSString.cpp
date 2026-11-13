@@ -308,6 +308,14 @@ id c_stringWithString(Ctx& x, id self, SEL, id o) {
     // so apps that over-release it (The Sandbox) get away with it as on iOS.
     auto& st = S(x);
     if ((self == st.nsString || self == st.cfString) && o && rt(x).classOf(o) == st.constString) return o;
+    // The same for any immutable string: Foundation's initWithString: copies, and copying an
+    // immutable string is the string itself. Minion Rush 5.7's Crashlytics keeps
+    // [NSString stringWithString:<Info.plist value>] without retaining it; on iOS that is the
+    // bundle's own long-lived string, here a new one was freed under it.
+    if ((self == st.nsString || self == st.cfString) && o) {
+        const StringData* d = dataOf(x, o);
+        if (d && !d->isMutable) return autoreleased(x, rt(x).retain(x.cpu, o));
+    }
     return construct(x, self, i_initWithString, o);
 }
 id c_stringWithUTF8String(Ctx& x, id self, SEL, GuestPtr c) { return construct(x, self, i_initWithUTF8String, c); }

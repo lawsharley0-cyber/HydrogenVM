@@ -634,8 +634,11 @@ int32_t sb_pbackfail(Ctx& x, GuestPtr sb, int32_t c) {
         return int32_t(uint8_t(b.s[b.g]));
     });
 }
+// libstdc++ basic_stringbuf::showmanyc: egptr() - gptr() when open for input (so 0 once
+// everything has been read), -1 only when the buffer is not readable. Games check
+// `in_avail() == 0` after `iss >> number` to see that the whole string was a number.
 int32_t sb_showmanyc(Ctx& x, GuestPtr sb) {
-    return withBuf(x, sb, [](Buf& b) { return b.g < b.s.size() ? int32_t(b.s.size() - b.g) : -1; });
+    return withBuf(x, sb, [](Buf& b) { return (b.mode & mIn) ? int32_t(b.g < b.s.size() ? b.s.size() - b.g : 0) : -1; });
 }
 void writePos(Ctx& x, uint32_t ret, int64_t pos) {
     x.mem.write<uint64_t>(ret, uint64_t(pos));

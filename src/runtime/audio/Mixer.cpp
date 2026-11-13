@@ -185,6 +185,32 @@ void Mixer::render(float* left, float* right, size_t frames) {
                 voicePeak = std::max<int16_t>(voicePeak, int16_t(std::min(32767, std::abs(int(s[i0 * 2])))));
                 left[i] += (float(s[i0 * 2]) * (1 - t) + float(s1[i1 * 2]) * t) * gl;
                 right[i] += (float(s[i0 * 2 + 1]) * (1 - t) + float(s1[i1 * 2 + 1]) * t) * gr;
+                // Reporting only: 10 ms RMS of the audible (post-gain) level, for onset checks.
+                const float audibleL = (float(s[i0 * 2]) * (1 - t) + float(s1[i1 * 2]) * t) * kScale * appGain;
+                const float audibleR = (float(s[i0 * 2 + 1]) * (1 - t) + float(s1[i1 * 2 + 1]) * t) * kScale * appGain;
+                v.onsetSumSq += double(audibleL) * double(audibleL) + double(audibleR) * double(audibleR);
+                v.onsetSamples++;
+                if (v.onsetSamples >= Voice::kOnsetWindow) {
+                    const float rms = float(std::sqrt(v.onsetSumSq / double(2 * v.onsetSamples)));
+                    if (v.onsetFilled >= 20) {   // 200 ms of already-audible history
+                        float tmp[Voice::kOnsetHist];
+                        const int n = v.onsetFilled;
+                        for (int k = 0; k < n; ++k) tmp[k] = v.onsetRms[k];
+                        std::nth_element(tmp, tmp + n / 2, tmp + n);
+                        const float bg = tmp[n / 2];
+                        constexpr float kOnsetRatio = 5.0f;
+                        if (bg > kAudible && rms >= kOnsetRatio * bg) {
+                            v.effectHoldSamples = Voice::kOnsetWindow * 20;   // ~200 ms
+                            if (!v.onsetCounted) { v.onsetCounted = true; stats_.effectVoices++; }
+                        }
+                    }
+                    v.onsetRms[v.onsetIndex] = rms;
+                    v.onsetIndex = (v.onsetIndex + 1) % Voice::kOnsetHist;
+                    if (v.onsetFilled < Voice::kOnsetHist) v.onsetFilled++;
+                    v.onsetSumSq = 0;
+                    v.onsetSamples = 0;
+                }
+                if (v.effectHoldSamples > 0) v.effectHoldSamples--;
                 v.pos += step;
             }
             if (v.pos >= double(n)) {
@@ -196,6 +222,9 @@ void Mixer::render(float* left, float* right, size_t frames) {
             }
         }
         const float level = float(voicePeak) * kScale * appGain;
+        // A music stream that just had a sharp rise also tallies as an effect (hold
+        // is counted down per output sample above). Hold may extend into a later call.
+        if (v.onsetCounted && v.effectHoldSamples > 0) effectHeard = true;
         if (level > kAudible) {
             (music ? musicHeard : effectHeard) = true;
             callPeak = std::max(callPeak, std::min(level, 1.0f));

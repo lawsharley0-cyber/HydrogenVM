@@ -13,6 +13,16 @@
   outlier/device notes; draft for independent review, not merged by Codex.
   No game assets or saves
   in Git; no hotspot edit planned.
+- Owner priority override, November 13: Desktop/IPA/Get these working comes
+  before the earlier game queue. First: Angry Birds Hatchery Island HD1.7.0,
+  issue #442, branch `codex/angry-birds-island-compat`, GroupD single editor.
+  iPad-only UIDeviceFamily[2] currently gets a phone idiom and 320x480 screen,
+  clipping menu artwork/controls. Shared tablet profile plus legacy location
+  query now pass runner/TL-AO/AP coverage and the six-minute Linux playability
+  loop: earned clear, save/relaunch, audio, drag/pinch and average 21.15 ms.
+  Fulltest805/TestLab35 and all available launch gates pass. See
+  `docs/ANGRY_BIRDS_ISLAND_PLAYABILITY_2026-11-13.md` for outlier/device notes.
+  No game assets or save edits; parked Super Hexagon stays on its own branch.
 
 Latest owner-prioritized modding continuation: [MOD_LAB.md](../clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
 

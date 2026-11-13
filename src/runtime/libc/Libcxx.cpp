@@ -116,6 +116,9 @@ void m_lock(Ctx& x, GuestPtr self) {
     if (rc != 0) thread_error("mutex::lock", int(rc));
 }
 
+// mutex::try_lock: true when pthread_mutex_trylock took it (0), false when it is held (EBUSY).
+uint32_t m_tryLock(Ctx& x, GuestPtr self) { return callHost1(x, "_pthread_mutex_trylock", self) == 0 ? 1 : 0; }
+
 void m_unlock(Ctx& x, GuestPtr self) {
     const uint32_t rc = callHost1(x, "_pthread_mutex_unlock", self);
     if (rc != 0) thread_error("mutex::unlock", int(rc));
@@ -278,6 +281,7 @@ void registerLibcxx(Process& p) {
 
     p.def<&m_lock>("__ZNSt3__15mutex4lockEv");
     p.def<&m_unlock>("__ZNSt3__15mutex6unlockEv");
+    p.def<&m_tryLock>("__ZNSt3__15mutex8try_lockEv");
     p.def<&m_dtor>("__ZNSt3__15mutexD1Ev");
 
     p.def<&cv_notify_one>("__ZNSt3__118condition_variable10notify_oneEv");

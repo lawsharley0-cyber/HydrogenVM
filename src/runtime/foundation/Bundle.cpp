@@ -4,6 +4,7 @@
 // Guest code sees real host paths (the app bundle and its sandbox home live
 // in the HydrogenVM container), exactly as an iOS app sees its own sandbox.
 #include "Foundation.hpp"
+#include <mutex>
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -410,6 +411,8 @@ struct BundleData : ObjC::HostObject {
     Plist::ValuePtr info;
     id infoDict = 0;
     bool isMain = false;
+    std::mutex cacheMu;
+    std::map<std::string, id> cached;   // paths, URLs and identifier, made once (see kept())
 };
 BundleData* bd(Ctx& x, id b) { return b ? rt(x).hostIf<BundleData>(b) : nullptr; }
 
@@ -648,19 +651,41 @@ id b_withIdentifier(Ctx& x, id, SEL, id ident) {
 }
 id b_allBundles(Ctx& x, id, SEL) { return makeArray(x, {mainBundle(x)}); }
 id b_allFrameworks(Ctx& x, id, SEL) { return makeArray(x, {}); }
-id b_bundlePath(Ctx& x, id self, SEL) { return makeString(x, x.proc.guestPath(bd(x, self)->path)); }
-id b_resourcePath(Ctx& x, id self, SEL) { return makeString(x, x.proc.guestPath(bd(x, self)->path)); }
-id b_executablePath(Ctx& x, id self, SEL) {
+// A bundle's paths, URLs and identifier are made once and kept: on iOS they are the bundle's
+// own ivars, and apps keep them without retaining (Minion Rush's Crashlytics keeps the bundle
+// identifier as its keychain service; a fresh autoreleased string each time was freed under it).
+template <class Make> id kept(Ctx& x, id self, const char* key, Make make) {
     BundleData* d = bd(x, self);
-    if (d->isMain) return makeString(x, x.proc.guestExecutablePath());
-    const std::string e = d->info->getString("CFBundleExecutable");
-    return e.empty() ? 0 : makeString(x, x.proc.guestPath((fs::path(d->path) / e).string()));
+    if (!d) return 0;
+    std::lock_guard<std::mutex> lk(d->cacheMu);
+    if (auto it = d->cached.find(key); it != d->cached.end()) return it->second;
+    const id o = make(d);
+    if (o) { rt(x).retain(x.cpu, o); rt(x).makeImmortal(o); }
+    d->cached[key] = o;
+    return o;
 }
-id b_privateFrameworksPath(Ctx& x, id self, SEL) { return makeString(x, bd(x, self)->path + "/Frameworks"); }
-id b_builtInPlugInsPath(Ctx& x, id self, SEL) { return makeString(x, bd(x, self)->path + "/PlugIns"); }
-id b_bundleURL(Ctx& x, id self, SEL) { return newURL(x, fileURLString(x.proc.guestPath(bd(x, self)->path), true), 0); }
-id b_executableURL(Ctx& x, id self, SEL s) { const id p = b_executablePath(x, self, s); return p ? newURL(x, fileURLString(utf8(x, p), false), 0) : 0; }
-id b_identifier(Ctx& x, id self, SEL) { const std::string v = bd(x, self)->info->getString("CFBundleIdentifier"); return v.empty() ? 0 : makeString(x, v); }
+id b_bundlePath(Ctx& x, id self, SEL) { return kept(x, self, "bundlePath", [&](BundleData* d) { return makeString(x, x.proc.guestPath(d->path)); }); }
+id b_resourcePath(Ctx& x, id self, SEL) { return kept(x, self, "resourcePath", [&](BundleData* d) { return makeString(x, x.proc.guestPath(d->path)); }); }
+id b_executablePath(Ctx& x, id self, SEL) {
+    return kept(x, self, "executablePath", [&](BundleData* d) -> id {
+        if (d->isMain) return makeString(x, x.proc.guestExecutablePath());
+        const std::string e = d->info->getString("CFBundleExecutable");
+        return e.empty() ? 0 : makeString(x, x.proc.guestPath((fs::path(d->path) / e).string()));
+    });
+}
+id b_privateFrameworksPath(Ctx& x, id self, SEL) { return kept(x, self, "privateFrameworksPath", [&](BundleData* d) { return makeString(x, d->path + "/Frameworks"); }); }
+id b_builtInPlugInsPath(Ctx& x, id self, SEL) { return kept(x, self, "builtInPlugInsPath", [&](BundleData* d) { return makeString(x, d->path + "/PlugIns"); }); }
+id b_bundleURL(Ctx& x, id self, SEL) { return kept(x, self, "bundleURL", [&](BundleData* d) { return newURL(x, fileURLString(x.proc.guestPath(d->path), true), 0); }); }
+id b_executableURL(Ctx& x, id self, SEL s) {
+    const id p = b_executablePath(x, self, s);
+    return p ? kept(x, self, "executableURL", [&](BundleData*) { return newURL(x, fileURLString(utf8(x, p), false), 0); }) : 0;
+}
+id b_identifier(Ctx& x, id self, SEL) {
+    return kept(x, self, "bundleIdentifier", [&](BundleData* d) -> id {
+        const std::string v = d->info->getString("CFBundleIdentifier");
+        return v.empty() ? 0 : makeString(x, v);
+    });
+}
 id b_infoDictionary(Ctx& x, id self, SEL) {
     BundleData* d = bd(x, self);
     if (!d->infoDict) { d->infoDict = rt(x).retain(x.cpu, plistToObject(x, *d->info)); rt(x).makeImmortal(d->infoDict); }

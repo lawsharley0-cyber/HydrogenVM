@@ -2,6 +2,7 @@
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
 Version 1.0 · 39 automated cases (TL-A–TL-AM) · schema version 1.
+Version 1.0 · 35 automated cases (TL-A–TL-AG plus TL-AO/TL-AP) · schema version 1.
 
 ## Contents
 
@@ -26,6 +27,9 @@ separate process with an external timeout.
 The automated suite now covers 39 case IDs, including import integrity, CPU
 correctness, graphics, audio, persistence, threading, input, and lifecycle.
 TL-L is a host-driven termination check; 38 cases are guest-selectable.
+The automated suite now covers 35 case IDs, including import integrity, CPU
+correctness, graphics, audio, persistence, threading, input, and lifecycle.
+TL-L is a host-driven termination check and TL-AO uses an iPad-only fixture; 33 cases are guest-selectable.
 
 ---
 
@@ -107,6 +111,7 @@ report. A pass marker without a fresh complete guest result (or followed by a
 nonzero exit) is a failure. `objc_conformance.m` uses ARC;
 `objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
 convention. The menu scrolls so all 38 selectable cases and footer controls remain
+convention. The menu scrolls so all 33 selectable cases and footer controls remain
 reachable.
 
 These five cases pass on unchanged main; that is new coverage, not a runtime
@@ -508,3 +513,21 @@ Checks deferred delivery exactly once, scalar BOOL YES, and preserved animation 
 ### TL-AL / TL-AM — window ownership and UIKit timer pools
 
 TL-AL checks that the last application reference can release a visible window. TL-AM explicitly transfers an owned object into the autorelease pool from a timer and checks deallocation before the outer pool drains. Visibility must not own UIWindow, and UIKit must drain pools around the whole main-loop turn, including timers, queued work and nested main-loop pumps. Independent Foundation/worker loops remain caller-managed. Both cases fail on the corresponding pre-fix binaries.
+
+### Priority-folder regressions (AO/AP)
+
+TL-AO imports a separate project-authored TestLab iPad variant with device
+family [2], a generic portrait key, and an iPad-specific landscape-left key.
+It checks iPad idiom/model, 768x1024 logical points, scale1 and device-specific
+orientation. It fails on the original phone-only runtime. The generated variant
+changes only the owned fixture metadata, preserves its executable/resources,
+uses an isolated home, and records its own SHA256 in case diagnostics. AO is
+host-driven rather than a normal phone-fixture menu item. The runner also checks
+scalar family2, phone/universal/absent/empty/malformed family defaults.
+
+TL-AP reproduces Angry Birds Island HD delayed legacy CoreLocation availability
+query: class and deprecated instance getters must both report the configured
+disabled location source, without asking for GPS or fabricating coordinates.
+It interrupts on the original missing instance selector and passes after the
+shared compatibility method. AH–AN are reserved by the separate Canabalt #437
+and parked Super Hexagon #438 work; these IDs avoid integration collisions.

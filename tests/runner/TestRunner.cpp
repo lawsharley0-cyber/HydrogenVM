@@ -239,6 +239,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include "runtime/uikit/UIKit.hpp"
 #include "runtime/gl/HostGL.hpp"
 #include "runtime/foundation/Foundation.hpp"
+#include "SecCertTestData.hpp"
 #include "runtime/uikit/CoreGraphics.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "runtime/graphics/TrueType.hpp"
@@ -1121,6 +1122,113 @@ int runFullSubsystemTests() {
                              (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames,
                              st.musicVoices, st.effectVoices, st.peak);
         check(ok, "Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices");
+    }
+
+    // Games that mix sound effects into one OpenAL stream (Angry Birds Hatchery Island HD
+    // queues already-mixed PCM on a single source) were reported as music-only, because every
+    // stream voice is classified as music. A sharp energy rise on a stream that already had
+    // an audible bed must also count as an effect. Starting from silence, or a gradual swell,
+    // stays music. This is a reporting check only: the mixed samples are unchanged.
+    {
+        auto sine = [](int frames, int16_t amp) {
+            auto pcm = std::make_shared<std::vector<int16_t>>(size_t(frames) * 2);
+            constexpr double kTwoPi = 6.283185307179586;
+            for (int n = 0; n < frames; ++n) {
+                const auto v = int16_t(std::lround(double(amp) * std::sin(kTwoPi * double(n) / 100.0)));
+                (*pcm)[size_t(n) * 2] = v;
+                (*pcm)[size_t(n) * 2 + 1] = v;
+            }
+            return pcm;
+        };
+        auto pump = [](Audio::Mixer& m, size_t frames, std::vector<float>* left = nullptr) {
+            std::vector<float> l(512), r(512);
+            while (frames) {
+                const size_t n = std::min<size_t>(512, frames);
+                m.render(l.data(), r.data(), n);
+                if (left) left->insert(left->end(), l.begin(), l.begin() + long(n));
+                frames -= n;
+            }
+        };
+
+        // Fail-first: a 10x burst after an audible bed is an effect, and the bed before it is not.
+        {
+            Audio::Mixer m;
+            const uint32_t voice = m.createStream({});
+            const int rate = 44100;
+            m.enqueue(voice, sine(rate, 2000), rate, 1);
+            m.enqueue(voice, sine(rate / 10, 20000), rate, 2);
+            m.enqueue(voice, sine(rate, 2000), rate, 3);
+            std::vector<float> out;
+            pump(m, size_t(rate) * 6 / 10, &out);   // 600 ms of bed: music, already audible
+            const auto bed = m.stats();
+            const bool bedIsMusic = bed.musicVoices == 1 && bed.effectVoices == 0 &&
+                                    bed.effectFrames == 0 && bed.musicFrames == uint64_t(rate) * 6 / 10;
+            pump(m, size_t(rate) + size_t(rate) / 10 + size_t(rate) / 10, &out);
+            const auto st = m.stats();
+            const bool burstIsEffect = st.effectVoices >= 1 && st.effectFrames > 0 &&
+                                       st.musicVoices == 1 && st.musicFrames > st.effectFrames;
+            // Under the limiter ceiling the output is the input / 32768 (rate == mixer rate).
+            bool playback = out.size() >= size_t(rate) + size_t(rate) / 10;
+            const auto bedPcm = sine(rate, 2000);
+            for (size_t i = 0; playback && i < size_t(rate) * 6 / 10; ++i) {
+                const double want = double((*bedPcm)[i * 2]) / 32768.0;
+                if (std::fabs(double(out[i]) - want) > 1e-6) playback = false;
+            }
+            if (!(bedIsMusic && burstIsEffect && playback))
+                std::printf("    mixed-stream effects: bed mv=%u ev=%u mf=%llu ef=%llu; after ev=%u ef=%llu mf=%llu playback=%d\n",
+                            bed.musicVoices, bed.effectVoices,
+                            (unsigned long long)bed.musicFrames, (unsigned long long)bed.effectFrames,
+                            st.effectVoices, (unsigned long long)st.effectFrames,
+                            (unsigned long long)st.musicFrames, int(playback));
+            check(bedIsMusic && burstIsEffect && playback,
+                  "Mixer stats count a sharp burst on an already-audible stream as a sound effect, without changing the mixed samples");
+        }
+
+        // A stream that starts from silence is the beginning of music, not an effect.
+        {
+            Audio::Mixer m;
+            const uint32_t voice = m.createStream({});
+            m.enqueue(voice, sine(44100, 8000), 44100, 1);
+            pump(m, 44100);
+            const auto st = m.stats();
+            const bool ok = st.musicVoices == 1 && st.effectVoices == 0 && st.effectFrames == 0 && st.musicFrames == 44100;
+            if (!ok)
+                std::printf("    stream-from-silence: mv=%u ev=%u mf=%llu ef=%llu\n",
+                            st.musicVoices, st.effectVoices,
+                            (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames);
+            check(ok, "Mixer stats do not treat a stream starting from silence as a sound effect");
+        }
+
+        // A 10x swell over one second is music, not a sharp effect.
+        {
+            const int rate = 44100;
+            auto swell = std::make_shared<std::vector<int16_t>>(size_t(rate * 2) * 2);
+            constexpr double kTwoPi = 6.283185307179586;
+            for (int n = 0; n < rate * 2; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0);
+                double amp = 2000.0;
+                if (n >= rate / 2 && n < rate + rate / 2) {
+                    const double t = double(n - rate / 2) / double(rate);
+                    amp = 2000.0 + 18000.0 * t;
+                } else if (n >= rate + rate / 2) {
+                    amp = 20000.0;
+                }
+                const auto v = int16_t(std::lround(amp * w));
+                (*swell)[size_t(n) * 2] = v;
+                (*swell)[size_t(n) * 2 + 1] = v;
+            }
+            Audio::Mixer m;
+            const uint32_t voice = m.createStream({});
+            m.enqueue(voice, swell, rate, 1);
+            pump(m, size_t(rate) * 2);
+            const auto st = m.stats();
+            const bool ok = st.musicVoices == 1 && st.effectVoices == 0 && st.effectFrames == 0;
+            if (!ok)
+                std::printf("    gradual swell: mv=%u ev=%u mf=%llu ef=%llu\n",
+                            st.musicVoices, st.effectVoices,
+                            (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames);
+            check(ok, "Mixer stats do not treat a gradual swell on a stream as a sound effect");
+        }
     }
 
     // Mixer headroom and stream stitching (#260: audio blown out / buzzing on the device speaker).
@@ -2652,6 +2760,44 @@ int runFullSubsystemTests() {
     }
     const uint32_t outerPool = r.poolPush();
 
+    // NSOrderedSet keeps first-seen order and each object once; NSLocale splits identifiers;
+    // +stringWithString: of an immutable string is that string, retained (Crashlytics kept
+    // the result unretained); the audio session reports the render size as its I/O duration.
+    {
+        using namespace Foundation;
+        auto call=[&](uint32_t object,const char* sel,std::initializer_list<uint32_t> args={}) {return uint32_t(r.send(cpu,object,sel,args));};
+        const uint32_t a=makeString(cx,"a"), b=makeString(cx,"b"), a2=makeString(cx,"a",false,true);
+        const uint32_t set=call(r.getClass("NSMutableOrderedSet"),"orderedSet");
+        call(set,"addObject:",{b}); call(set,"addObject:",{a}); call(set,"addObject:",{a2}); call(set,"insertObject:atIndex:",{b,0});
+        const bool ordered=call(set,"count")==2 && call(set,"objectAtIndex:",{0})==b && call(set,"containsObject:",{a2}) &&
+                           call(call(set,"array"),"count")==2;
+        call(set,"removeObject:",{b});
+        check(ordered && call(set,"count")==1 && call(set,"firstObject")==a, "NSMutableOrderedSet keeps insertion order and ignores equal duplicates");
+
+        const uint32_t parts=call(r.getClass("NSLocale"),"componentsFromLocaleIdentifier:",{makeString(cx,"zh_Hant_TW")});
+        auto part=[&](const char* k){const uint32_t v=call(parts,"objectForKey:",{makeString(cx,k)});return v?utf8(cx,v):std::string("-");};
+        check(part("NSLocaleLanguageCode")=="zh" && part("NSLocaleScriptCode")=="Hant" && part("NSLocaleCountryCode")=="TW",
+              "+[NSLocale componentsFromLocaleIdentifier:] splits language, script and country");
+
+        const uint32_t literal=makeString(cx,"keychain-service");
+        const uint32_t pool=r.poolPush();
+        const uint32_t same=call(r.getClass("NSString"),"stringWithString:",{literal});
+        call(same,"retain");
+        r.poolPop(cpu,pool);
+        const bool alive=same==literal && utf8(cx,same)=="keychain-service";
+        call(same,"release");
+        check(alive, "+[NSString stringWithString:] returns an immutable string itself, still valid after the pool drains");
+    }
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const uint32_t size = proc.heap().allocZeroed(4), out = proc.heap().allocZeroed(8);
+        proc.mem().write<uint32_t>(size, 4);
+        call("_AudioSessionGetProperty", {0x63686264 /* 'chbd' */, size, out});
+        const float seconds = proc.mem().read<float>(out);
+        check(seconds > 0.005f && seconds < 0.03f && std::fabs(seconds * 44100 - 512) < 1,
+              "AudioSessionGetProperty('chbd') reports the render callback's buffer duration (512 frames at 44.1 kHz), not 0");
+    }
+
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.
     {
         using namespace Foundation;
@@ -3218,6 +3364,97 @@ int runFullSubsystemTests() {
               !call("_CFCharacterSetIsCharacterMember", {copy,'A'}),
               "CF mutable character sets and copies own their lifetime across autorelease pool drains");
         call("_CFRelease", {copy}); call("_CFRelease", {set});
+    }
+    // Security.framework certificates and public-key operations. Clash of Clans 1.70's
+    // InMobi tracker calls SecCertificateCreateWithData, wraps the cert in a CFArray,
+    // SecPolicyCreateBasicX509, SecTrustCreateWithCertificates, SecTrustEvaluate and
+    // SecTrustCopyPublicKey, then SecKeyEncrypt with kSecPaddingNone. The previous
+    // stubs returned NULL, and CFArrayCreate then stopped on a nil object.
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        auto callI = [&](const char* sym, std::initializer_list<uint32_t> args) -> int32_t {
+            return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+
+        // Garbage and an empty buffer are not certificates.
+        const uint32_t junk = Foundation::makeData(cx, "not a cert", 10, true);
+        const uint32_t empty = Foundation::makeData(cx, "", 0, true);
+        const bool rejectJunk = call("_SecCertificateCreateWithData", {0, junk}) == 0 &&
+                                call("_SecCertificateCreateWithData", {0, empty}) == 0 &&
+                                call("_SecCertificateCreateWithData", {0, 0}) == 0;
+
+        // A valid DER certificate becomes a SecCertificateRef (Create rule: +1).
+        const uint32_t der = Foundation::makeData(cx, kTestCertDer, uint32_t(sizeof kTestCertDer), true);
+        const uint32_t cert = call("_SecCertificateCreateWithData", {0, der});
+        const uint32_t copy = cert ? call("_SecCertificateCopyData", {cert}) : 0;
+        bool copyMatches = false;
+        if (copy) {
+            const auto got = Foundation::dataBytes(cx, copy);
+            copyMatches = got.size() == sizeof kTestCertDer &&
+                          std::memcmp(got.data(), kTestCertDer, sizeof kTestCertDer) == 0;
+        }
+        const uint32_t summary = cert ? call("_SecCertificateCopySubjectSummary", {cert}) : 0;
+        const bool summaryOk = summary && Foundation::utf8(cx, summary).find("HydrogenVM Test") != std::string::npos;
+
+        // The InMobi path: CFArray of the cert, basic X.509 policy, trust, public key.
+        const uint32_t vals = proc.heap().allocZeroed(4);
+        proc.mem().write<uint32_t>(vals, cert);
+        const uint32_t cb = *proc.lookupSymbol("_kCFTypeArrayCallBacks");
+        const uint32_t array = cert ? call("_CFArrayCreate", {0, vals, 1, cb}) : 0;
+        const uint32_t policy = call("_SecPolicyCreateBasicX509", {});
+        const uint32_t trustSlot = proc.heap().allocZeroed(4);
+        const int32_t created = (array && policy)
+            ? callI("_SecTrustCreateWithCertificates", {array, policy, trustSlot}) : 1;
+        const uint32_t trust = proc.mem().read<uint32_t>(trustSlot);
+        const uint32_t resultSlot = proc.heap().allocZeroed(4);
+        const int32_t evaluated = trust ? callI("_SecTrustEvaluate", {trust, resultSlot}) : 1;
+        const uint32_t key = trust ? call("_SecTrustCopyPublicKey", {trust}) : 0;
+        const uint32_t block = key ? call("_SecKeyGetBlockSize", {key}) : 0;
+
+        // kSecPaddingNone (0): 256-byte 0x00..0xFF plaintext, expected ciphertext is
+        // independent of the emulator (OpenSSL pkeyutl, rsa_padding_mode:none).
+        const uint32_t plain = proc.heap().alloc(256);
+        const uint32_t cipher = proc.heap().allocZeroed(256);
+        const uint32_t cipherLen = proc.heap().allocZeroed(4);
+        proc.mem().copyIn(plain, kTestPlainNone, 256);
+        proc.mem().write<uint32_t>(cipherLen, 256);
+        const int32_t enc = (key && block == 256)
+            ? callI("_SecKeyEncrypt", {key, 0, plain, 256, cipher, cipherLen}) : 1;
+        std::vector<uint8_t> gotCipher(256);
+        if (enc == 0) proc.mem().copyOut(gotCipher.data(), cipher, 256);
+        const bool encryptOk = enc == 0 && proc.mem().read<uint32_t>(cipherLen) == 256 &&
+                               std::memcmp(gotCipher.data(), kTestCipherNone, 256) == 0;
+
+        // A too-short raw-RSA buffer is rejected (errSecParam == -50).
+        proc.mem().write<uint32_t>(cipherLen, 256);
+        const int32_t shortEnc = key ? callI("_SecKeyEncrypt", {key, 0, plain, 16, cipher, cipherLen}) : 0;
+
+        if (!(rejectJunk && cert && copyMatches && summaryOk && array && policy &&
+              created == 0 && trust && evaluated == 0 && key && block == 256 &&
+              encryptOk && shortEnc == -50)) {
+            std::printf("    SecCertificate: junk=%d cert=%u copy=%d summary=%d (%s) array=%u policy=%u "
+                        "create=%d trust=%u eval=%d key=%u block=%u enc=%d short=%d\n",
+                        int(rejectJunk), cert, int(copyMatches), int(summaryOk),
+                        summary ? Foundation::utf8(cx, summary).c_str() : "",
+                        array, policy, created, trust, evaluated, key, block, enc, shortEnc);
+        }
+        check(rejectJunk && cert && copyMatches && summaryOk && array && policy &&
+              created == 0 && trust && evaluated == 0 && key && block == 256 &&
+              encryptOk && shortEnc == -50,
+              "SecCertificateCreateWithData accepts a DER certificate, and SecKeyEncrypt matches a known raw-RSA ciphertext");
+
+        if (key) call("_CFRelease", {key});
+        if (trust) call("_CFRelease", {trust});
+        if (policy) call("_CFRelease", {policy});
+        if (array) call("_CFRelease", {array});
+        if (summary) call("_CFRelease", {summary});
+        if (copy) call("_CFRelease", {copy});
+        if (cert) call("_CFRelease", {cert});
+        if (der) call("_CFRelease", {der});
+        if (junk) call("_CFRelease", {junk});
+        if (empty) call("_CFRelease", {empty});
     }
     {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
@@ -8186,7 +8423,7 @@ int runFullSubsystemTests() {
             callAT("_DisposeAUGraph", {graph});
             check(graph != 0 && mixer != 0 && nodeCount == 2 && fmtStatus == 0 && calls0 > 0 && calls1 > 0 && busSeen0 == 0 && busSeen1 == 1,
                   "AUGraphStart pulls every mixer input from its own callback, with its input number");
-            check(frames1 > 200 && frames1 < 240, "a 22050 Hz mixer input is asked for 22050 Hz worth of frames");
+            check(frames1 == 256, "a 22050 Hz mixer input is asked for 22050 Hz worth of frames (256, half of 44.1 kHz's 512)");
             check(calls2 == 0, "a mixer input disabled with k3DMixerParam_Enable is not pulled");
             check(formatReadBack, "a mixer input reads back the stream format set on it");
             check(mixed > 0 && !runningBefore && runningAfter, "the mixer inputs are audible, and AUGraphIsRunning follows start");
@@ -8422,6 +8659,118 @@ int runFullSubsystemTests() {
             call("_inflateEnd", {zs});
             check(rc1 == 0 && rc2 == 0 && same && packedLen < text.size() / 4 && rc3 == 0 && zr == 1 && got == text,
                   "zlib compress/uncompress and streaming inflate on guest buffers");
+        }
+
+        // shm_open: a segment that can be sized, mapped, reopened by name and unlinked (Unity/Mono, #441).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t name = proc.allocCString("/hvm-test-shm");
+            const int fd = call("_shm_open", {name, 0x0202 /* O_RDWR|O_CREAT */, 0600});
+            const int sized = fd >= 0 ? call("_ftruncate", {uint32_t(fd), 4096, 0})   /* iOS armv7: the 64-bit length is in r1:r2 */ : -1;
+            const int fd2 = call("_shm_open", {name, 0x0002 /* O_RDWR */, 0});
+            const int un = call("_shm_unlink", {name});
+            const int gone = call("_shm_open", {name, 0x0002, 0});
+            if (fd >= 0) call("_close", {uint32_t(fd)});
+            if (fd2 >= 0) call("_close", {uint32_t(fd2)});
+            check(fd >= 0 && sized == 0 && fd2 >= 0 && un == 0 && gone == -1,
+                  "shm_open creates, sizes and reopens a segment by name; shm_unlink removes it");
+        }
+
+        // std::istringstream >> double, then "was that the whole string?": the stringbuf's
+        // showmanyc is egptr()-gptr(), 0 once all is read (not -1). Minion Rush checks this
+        // on a parsed header and kept retrying its level download when it saw -1.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            auto showmanyc = [&](uint32_t is) {
+                const uint32_t sb = is + 8;   // basic_istringstream: vptr, gcount, then the stringbuf
+                const uint32_t vt = proc.mem().read<uint32_t>(sb);
+                return int32_t(proc.callGuest(cpu, proc.mem().read<uint32_t>(vt + 7 * 4), {sb}));
+            };
+            auto parse = [&](const char* text, double& v, int32_t& left) {
+                const uint32_t str = proc.heap().allocZeroed(4), alloc = proc.heap().allocZeroed(4);
+                call("__ZNSsC1EPKcRKSaIcE", {str, proc.allocCString(text), alloc});
+                const uint32_t is = proc.heap().allocZeroed(200), out = proc.heap().allocZeroed(8);
+                call("__ZNSt19basic_istringstreamIcSt11char_traitsIcESaIcEEC1ERKSsSt13_Ios_Openmode", {is, str, 8});
+                call("__ZNSi10_M_extractIdEERSiRT_", {is, out});
+                std::memcpy(&v, proc.mem().host(out), 8);
+                left = showmanyc(is);
+                call("__ZNSt19basic_istringstreamIcSt11char_traitsIcESaIcEED1Ev", {is});
+            };
+            double a = 0, b = 0; int32_t la = 9, lb = 9;
+            parse("18", a, la);
+            parse("18 bytes", b, lb);
+            check(a == 18 && la == 0 && b == 18 && lb == 6,
+                  "std::istringstream >> double leaves 0 characters for \"18\" and 6 for \"18 bytes\" (stringbuf showmanyc)");
+        }
+
+        // kqueue/kevent over a pipe and a user event: level reporting, EV_CLEAR edges, NOTE_TRIGGER
+        // (asio's reactor in Minion Rush 5.7 waits on these).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t fds = proc.heap().allocZeroed(8), ch = proc.heap().allocZeroed(40), ev = proc.heap().allocZeroed(80);
+            const uint32_t zero = proc.heap().allocZeroed(8), buf = proc.heap().allocZeroed(8);
+            const int kq = call("_kqueue", {});
+            const bool piped = call("_pipe", {fds}) == 0;
+            const uint32_t rfd = proc.mem().read<uint32_t>(fds), wfd = proc.mem().read<uint32_t>(fds + 4);
+            auto put = [&](uint32_t at, uint32_t ident, int16_t filter, uint16_t flags, uint32_t fflags, uint32_t udata) {
+                proc.mem().write<uint32_t>(at, ident); proc.mem().write<uint16_t>(at + 4, uint16_t(filter)); proc.mem().write<uint16_t>(at + 6, flags);
+                proc.mem().write<uint32_t>(at + 8, fflags); proc.mem().write<uint32_t>(at + 12, 0); proc.mem().write<uint32_t>(at + 16, udata);
+            };
+            put(ch, rfd, -1, 0x1 | 0x20, 0, 0x1234);       // EV_ADD|EV_CLEAR read
+            put(ch + 20, 7, -10, 0x1 | 0x20, 0, 0x5678);   // EV_ADD|EV_CLEAR user event
+            const int none = call("_kevent", {uint32_t(kq), ch, 2, ev, 4, zero});
+            call("_write", {wfd, proc.allocCString("ab"), 2});
+            const int one = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});
+            const bool readEv = proc.mem().read<uint32_t>(ev) == rfd && int16_t(proc.mem().read<uint16_t>(ev + 4)) == -1 &&
+                                proc.mem().read<uint32_t>(ev + 12) == 2 && proc.mem().read<uint32_t>(ev + 16) == 0x1234;
+            const int again = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});   // nothing new since: EV_CLEAR
+            call("_write", {wfd, proc.allocCString("c"), 1});
+            const int more = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});    // more bytes arrived
+            call("_read", {rfd, buf, 3});
+            put(ch, 7, -10, 0, 0x01000000, 0x5678);          // NOTE_TRIGGER
+            const int user = call("_kevent", {uint32_t(kq), ch, 1, ev, 4, zero});
+            const bool userEv = proc.mem().read<uint32_t>(ev) == 7 && int16_t(proc.mem().read<uint16_t>(ev + 4)) == -10;
+            const int cleared = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});
+            call("_close", {rfd}); call("_close", {wfd}); call("_close", {uint32_t(kq)});
+            if (!(kq >= 0 && piped && none == 0 && one == 1 && readEv && again == 0 && more == 1 && user == 1 && userEv && cleared == 0))
+                std::printf("    kqueue: kq=%d none=%d one=%d read=%d again=%d more=%d user=%d/%d cleared=%d\n", kq, none, one, readEv, again, more, user, userEv, cleared);
+            check(kq >= 0 && piped && none == 0 && one == 1 && readEv && again == 0 && more == 1 && user == 1 && userEv && cleared == 0,
+                  "kevent reports a readable pipe with its byte count, re-reports EV_CLEAR only after a change, and fires EVFILT_USER on NOTE_TRIGGER");
+        }
+
+        // std::system_category / generic_category: name, message, conditions (asio's error codes).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t sys = call("__ZNSt3__115system_categoryEv", {}), gen = call("__ZNSt3__116generic_categoryEv", {});
+            auto slot = [&](uint32_t obj, int i) { return proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(obj) + 4 * i); };
+            const std::string sysName = sys ? proc.readCString(proc.callGuest(cpu, slot(sys, 2), {sys})) : "";
+            const uint32_t msg = proc.heap().allocZeroed(12), cond = proc.heap().allocZeroed(8);
+            proc.callGuest(cpu, slot(sys, 6), {msg, sys, 2});
+            const uint8_t head = proc.mem().read<uint8_t>(msg);
+            const std::string text = (head & 1) ? proc.readCString(proc.mem().read<uint32_t>(msg + 8)) : proc.readCString(msg + 1);
+            proc.callGuest(cpu, slot(sys, 3), {cond, sys, 2});
+            const bool mapped = proc.mem().read<uint32_t>(cond) == 2 && proc.mem().read<uint32_t>(cond + 4) == gen;
+            check(sys && gen && sys != gen && sysName == "system" && text == std::strerror(2) && mapped,
+                  "std::system_category names itself, gives strerror messages and maps codes to generic_category");
+        }
+
+        // glob over the app's files, with paths mapped back to the app's view.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const std::filesystem::path dir = proc.homePath() + "/tmp/hvm-glob-" + std::to_string(::getpid());   // the app's tmp
+            std::filesystem::create_directories(dir);
+            for (const char* n : {"a.dat", "b.dat", "c.txt"}) std::ofstream(dir / n) << "x";
+            const std::string guestDir = proc.guestPath(dir.string());
+            const uint32_t g = proc.heap().allocZeroed(40);
+            const int rc = call("_glob", {proc.allocCString(guestDir + "/*.dat"), 0, 0, g});
+            const uint32_t n = proc.mem().read<uint32_t>(g), v = proc.mem().read<uint32_t>(g + 16);
+            const bool listed = rc == 0 && n == 2 && proc.readCString(proc.mem().read<uint32_t>(v)) == guestDir + "/a.dat" &&
+                                proc.readCString(proc.mem().read<uint32_t>(v + 4)) == guestDir + "/b.dat" && proc.mem().read<uint32_t>(v + 8) == 0;
+            call("_globfree", {g});
+            const int miss = call("_glob", {proc.allocCString(guestDir + "/*.none"), 0, 0, g});
+            std::filesystem::remove_all(dir);
+            if (!(listed && miss == -3)) std::printf("    glob: rc=%d n=%u miss=%d dir=%s first=%s\n", rc, n, miss, guestDir.c_str(), (rc == 0 && n) ? proc.readCString(proc.mem().read<uint32_t>(v)).c_str() : "-");
+            check(listed && miss == -3 && proc.mem().read<uint32_t>(g) == 0, "glob lists matches in order with app paths and returns GLOB_NOMATCH (-3) for none");
         }
 
         // std::ostringstream: formatted output through our stringbuf, read back with str().
@@ -12828,6 +13177,63 @@ int runFullSubsystemTests() {
         fs::remove_all(tmpRoot);
     }
 
+    {
+        bool profiles=true;
+        for(int scenario=0;scenario<7;++scenario) {
+            bool observed=false, correct=false;
+            ProcessConfig cfg; cfg.homePath="/tmp/hvm-tablet-profile-probe";
+            Process p(cfg); auto& c=p.mainThread().cpu;
+            c.r[13]=p.heap().allocZeroed(65536)+65536-16;
+            auto info=Plist::Value::makeDict();
+            if(scenario) {
+                auto family=Plist::Value::makeArray();
+                if(scenario==1 || scenario==3) family->array.push_back(Plist::Value::makeInt(1));
+                if(scenario==2 || scenario==3) family->array.push_back(Plist::Value::makeInt(2));
+                info->set("UIDeviceFamily",scenario==5 ? Plist::Value::makeString("2") : scenario==6 ? Plist::Value::makeInt(2) : family);
+            }
+            info->set("UIInterfaceOrientation",Plist::Value::makeString("UIInterfaceOrientationPortrait"));
+            info->set("UIInterfaceOrientation~ipad",Plist::Value::makeString("UIInterfaceOrientationLandscapeLeft"));
+            auto orientations=Plist::Value::makeArray();
+            orientations->array.push_back(Plist::Value::makeString("UIInterfaceOrientationLandscapeLeft"));
+            info->set("UISupportedInterfaceOrientations~ipad",orientations);
+            p.setInfoPlist(info);
+            auto& runtime=ObjC::rt(p);
+            auto delegate=runtime.defineClass("ProfileProbeDelegate","NSObject");
+            delegate.method("application:didFinishLaunchingWithOptions:",[&](Ctx& x) {
+                observed=true;
+                const bool tablet=scenario==2 || scenario==6;
+                auto& ui=UIKit::ui(x);
+                auto device=uint32_t(runtime.send(x.cpu,runtime.getClass("UIDevice"),"currentDevice"));
+                const auto idiom=uint32_t(runtime.send(x.cpu,device,"userInterfaceIdiom"));
+                const auto model=Foundation::utf8(x,uint32_t(runtime.send(x.cpu,device,"model")));
+                auto screen=uint32_t(runtime.send(x.cpu,runtime.getClass("UIScreen"),"mainScreen"));
+                const auto out=p.heap().allocZeroed(16);
+                const auto selector=runtime.sel("bounds");
+                p.callGuest(x.cpu,runtime.lookupForSend(runtime.classOf(screen),selector),{out,screen,selector});
+                const auto bounds=CG::readStruct<CG::CGRect>(x,out);
+                const auto scale=std::bit_cast<float>(uint32_t(runtime.send(x.cpu,screen,"scale")));
+                correct=idiom==(tablet ? 1u : 0u) && model==(tablet ? "iPad" : "iPhone") &&
+                    bounds.size.width==(tablet ? 768 : 320) && bounds.size.height==(tablet ? 1024 : 480) &&
+                    scale==(tablet ? 1 : 2) && ui.initialOrientation==(tablet ? 4 : 1) &&
+                    ui.plistLandscapeOnly==tablet;
+                p.requestStop(); x.cpu.r[0]=1;
+            },"c@:@@");
+            Ctx x{p,c,p.mem()};
+            try { p.callGuest(c,*p.lookupSymbol("_UIApplicationMain"),{0,0,0,Foundation::makeString(x,"ProfileProbeDelegate")}); }
+            catch(const CPU::GuestFault& e) { if(e.exit!=CPU::Exit::Halt) profiles=false; }
+            profiles &= observed && correct;
+        }
+        check(profiles,"iPad-only metadata selects tablet idiom, geometry, scale and orientation without changing phone/universal defaults");
+    }
+    {
+        const auto cls=r.getClass("CLLocationManager");
+        const auto manager=uint32_t(r.send(cpu,cls,"new"));
+        const auto selector=r.sel("locationServicesEnabled");
+        const bool legacy=uint32_t(r.send(cpu,manager,"respondsToSelector:",{selector}))!=0;
+        const bool same=legacy && uint32_t(r.send(cpu,cls,selector))==0 && uint32_t(r.send(cpu,manager,selector))==0;
+        check(same,"deprecated instance location-services query agrees with disabled class capability without starting GPS");
+        r.release(cpu,manager);
+    }
     check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
     check(runHostFaultTests() == 0, "host-fault bundle contains complete thread, arena, HLE and log evidence");
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
