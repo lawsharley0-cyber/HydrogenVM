@@ -382,3 +382,7 @@ retention; 15 guest tests pass. Donor fulfillment remains open; mailbox removal
 UI and real cooldown expiry are unqualified.
 Post-training names, arena deck/AI variation/research and original daily shop
 remain next in the owner's order. See LOCAL_CLANS for save/version limits.
+
+## BADLAND 1.0 startup (Codex, November 12)
+
+P1, Group D, [#423](https://github.com/lawsharley0-cyber/HydrogenVM/issues/423): Crashlytics startup calls the missing NSString range-to-byte conversion method before presenting a frame. Implement shared conversion semantics with fail-before runtime/Test Lab coverage, then continue the owner-requested Linux playability loop. Fixture SHA-256 `bd67dbc3af4c67190f5b87887773535619343c922101807e08df8d616c3866c1`; private files stay outside Git. No playability claim yet.

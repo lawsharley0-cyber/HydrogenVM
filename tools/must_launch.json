@@ -43,6 +43,15 @@
       "sound": true
     },
     {
+      "folder": "BADLAND_1.0",
+      "frames": 801,
+      "name": "BADLAND 1.0",
+      "picture": true,
+      "seconds": 60,
+      "sound": true,
+      "tap": "116,284@2"
+    },
+    {
       "folder": "com.fgol.HungrySharkEvolution-iOS4.3-_Clutch-2.0.4",
       "frames": 20,
       "name": "com.fgol.HungrySharkEvolution-iOS4.3-_Clutch-2.0.4",

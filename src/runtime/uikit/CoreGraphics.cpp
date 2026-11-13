@@ -80,6 +80,28 @@ bool r_equal(Ctx&, CGRect a, CGRect b) {
 }
 bool p_equal(Ctx&, CGPoint a, CGPoint b) { return a.x == b.x && a.y == b.y; }
 bool s_equal(Ctx&, CGSize a, CGSize b) { return a.width == b.width && a.height == b.height; }
+id r_createDictionary(Ctx& x, CGRect r) {
+    using namespace Foundation;
+    // Preserve the supplied components, including negative sizes. The Create
+    // rule gives the caller ownership of this CFDictionary (+1).
+    return makeDict(x, {
+        {constString(x.proc, "X"), makeNumberFloat(x, r.origin.x)},
+        {constString(x.proc, "Y"), makeNumberFloat(x, r.origin.y)},
+        {constString(x.proc, "Width"), makeNumberFloat(x, r.size.width)},
+        {constString(x.proc, "Height"), makeNumberFloat(x, r.size.height)},
+    }, true);
+}
+bool r_makeWithDictionary(Ctx& x, id dict, GuestPtr out) {
+    using namespace Foundation;
+    if (!out || !isDict(x, dict)) return false;
+    const id a = dictGet(x, dict, "X"), b = dictGet(x, dict, "Y");
+    const id c = dictGet(x, dict, "Width"), d = dictGet(x, dict, "Height");
+    if (!isNumber(x, a) || !isNumber(x, b) || !isNumber(x, c) || !isNumber(x, d)) return false;
+    const CGRect r{{float(numberDouble(x, a)), float(numberDouble(x, b))},
+                   {float(numberDouble(x, c)), float(numberDouble(x, d))}};
+    uint32_t fault = 0;
+    return x.mem.copyInWritable(out, &r, sizeof(r), fault);
+}
 void r_intersection(Ctx& x, GuestPtr ret, CGRect a, CGRect b) {
     if (isNull(a) || isNull(b)) { writeStruct(x, ret, nullRect()); return; }
     const G::Rect r = toG(a).intersect(toG(b));
@@ -1537,6 +1559,8 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&r_minX>("_CGRectGetMinX"); p.def<&r_minY>("_CGRectGetMinY"); p.def<&r_maxX>("_CGRectGetMaxX"); p.def<&r_maxY>("_CGRectGetMaxY");
     p.def<&r_midX>("_CGRectGetMidX"); p.def<&r_midY>("_CGRectGetMidY"); p.def<&r_width>("_CGRectGetWidth"); p.def<&r_height>("_CGRectGetHeight");
     p.def<&r_isEmpty>("_CGRectIsEmpty"); p.def<&r_isNull>("_CGRectIsNull"); p.def<&r_isInfinite>("_CGRectIsInfinite");
+    p.def<&r_createDictionary>("_CGRectCreateDictionaryRepresentation");
+    p.def<&r_makeWithDictionary>("_CGRectMakeWithDictionaryRepresentation");
     p.def<&r_containsPoint>("_CGRectContainsPoint"); p.def<&r_containsRect>("_CGRectContainsRect"); p.def<&r_intersects>("_CGRectIntersectsRect");
     p.def<&r_equal>("_CGRectEqualToRect"); p.def<&p_equal>("_CGPointEqualToPoint"); p.def<&s_equal>("_CGSizeEqualToSize");
     p.def<&r_intersection>("_CGRectIntersection"); p.def<&r_union>("_CGRectUnion"); p.def<&r_inset>("_CGRectInset");

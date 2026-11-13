@@ -84,6 +84,56 @@ char firstArgType(const std::string& t) {
     return '@';
 }
 
+id invocationFor(Ctx& x, id self, SEL selector, id* signature = nullptr) {
+    auto& r = rt(x);
+    const id sig = id(r.send(x.cpu, self, "methodSignatureForSelector:", {selector}));
+    if (!sig) throw ObjC::ObjCError("*** KVC method has no signature");
+    const id invocation = id(r.send(x.cpu, r.getClass("NSInvocation"), "invocationWithMethodSignature:", {sig}));
+    r.send(x.cpu, invocation, "setTarget:", {self});
+    r.send(x.cpu, invocation, "setSelector:", {selector});
+    if (signature) *signature = sig;
+    return invocation;
+}
+uint32_t structSize(Ctx& x, const std::string& type) {
+    auto& r = rt(x);
+    if (type.empty() || type[0] != '{') throw ObjC::ObjCError("*** KVC requires a struct NSValue");
+    const id signature = id(r.send(x.cpu, r.getClass("NSMethodSignature"), "signatureWithObjCTypes:", {x.proc.internCString(type + "@:")}));
+    const auto size = uint32_t(r.send(x.cpu, signature, "methodReturnLength"));
+    if (!size || size > 1024 * 1024) throw ObjC::ObjCError("*** KVC invalid struct size");
+    return size;
+}
+struct KvcBuffer {
+    Process& process; uint32_t pointer;
+    KvcBuffer(Process& p, uint32_t size) : process(p), pointer(p.heap().allocZeroed(size)) {
+        if (!pointer) throw ObjC::ObjCError("KVC temporary allocation failed");
+    }
+    ~KvcBuffer() { process.heap().free(pointer); }
+};
+id kvcStructGet(Ctx& x, id self, SEL selector) {
+    auto& r = rt(x); id signature = 0;
+    const id invocation = invocationFor(x, self, selector, &signature);
+    const auto type = x.proc.readCString(uint32_t(r.send(x.cpu, signature, "methodReturnType")));
+    const auto size = structSize(x, type);
+    KvcBuffer bytes(x.proc, size);
+    r.send(x.cpu, invocation, "invoke");
+    r.send(x.cpu, invocation, "getReturnValue:", {bytes.pointer});
+    return makeValue(x, x.mem.host(bytes.pointer), size, type);
+}
+void kvcStructSet(Ctx& x, id self, SEL selector, id value) {
+    auto& r = rt(x); id signature = 0;
+    const id invocation = invocationFor(x, self, selector, &signature);
+    if (!value || !r.isKindOf(value, r.getClass("NSValue")))
+        throw ObjC::ObjCError("*** KVC struct setter requires NSValue");
+    const auto expected = x.proc.readCString(uint32_t(r.send(x.cpu, signature, "getArgumentTypeAtIndex:", {2})));
+    const auto actual = x.proc.readCString(uint32_t(r.send(x.cpu, value, "objCType")));
+    const auto size = structSize(x, expected);
+    if (size != structSize(x, actual)) throw ObjC::ObjCError("*** KVC incompatible NSValue size");
+    KvcBuffer bytes(x.proc, size);
+    r.send(x.cpu, value, "getValue:", {bytes.pointer});
+    r.send(x.cpu, invocation, "setArgument:atIndex:", {bytes.pointer, 2});
+    r.send(x.cpu, invocation, "invoke");
+}
+
 id boxScalar(Ctx& x, char type, uint64_t v) {
     switch (type) {
         case '@': case '#': return id(v);
@@ -127,7 +177,7 @@ id kvcGet(Ctx& x, id self, const std::string& key, bool viaOverride = true) {
         const SEL s = r.sel(name);
         if (r.lookup(cls, s)) {
             const char t = returnType(x, cls, s);
-            if (t == '{') { x.proc.reportMissing("valueForKey: struct-valued key " + key); return 0; }
+            if (t == '{') return kvcStructGet(x, self, s);
             return boxScalar(x, t, r.send(x.cpu, self, s));
         }
     }
@@ -172,7 +222,7 @@ void kvcSet(Ctx& x, id self, const std::string& key, id value, bool viaOverride 
             case 'f': { const float f = float(numberDouble(x, value)); uint32_t b; std::memcpy(&b, &f, 4); r.send(x.cpu, self, s, {b}); return; }
             case 'd': { const double d = numberDouble(x, value); uint64_t b; std::memcpy(&b, &d, 8); r.send(x.cpu, self, s, {uint32_t(b), uint32_t(b >> 32)}); return; }
             case 'q': case 'Q': { const uint64_t v = uint64_t(numberInt(x, value)); r.send(x.cpu, self, s, {uint32_t(v), uint32_t(v >> 32)}); return; }
-            case '{': x.proc.reportMissing("setValue:forKey: struct-valued key " + key); return;
+            case '{': kvcStructSet(x, self, s, value); return;
             default: r.send(x.cpu, self, s, {uint32_t(numberInt(x, value))}); return;
         }
     }

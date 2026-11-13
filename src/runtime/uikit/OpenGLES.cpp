@@ -5,6 +5,7 @@
 // programs, uniforms, vertex attributes, VBOs, FBOs, textures) state tracker
 // and software rasterizer wired into CAEAGLLayer via LayerData::externalContents.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/MobileShaderSource.hpp"
 #include "runtime/Support.hpp"
 #include "UIKit.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
@@ -960,6 +961,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
     // An opaque layer (what GL games use) ignores the renderbuffer's alpha, as Core Animation does:
     // blending leaves alpha < 1 in places, which must not let the views behind show through.
     const bool opaqueLayer = layerData(x, rb.drawableLayer).opaque;
+    bool allOpaque = true;
     // Debugging aid: HVM_DUMP_RB=<file> keeps overwriting <file> with the latest presented renderbuffer (raw RGBA, GL row order).
     if (const char* f = std::getenv("HVM_DUMP_RB")) {
         if (std::FILE* fp = std::fopen(f, "wb")) {
@@ -977,6 +979,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
             const uint8_t g = srcRow[px * 4 + 1];
             const uint8_t b = srcRow[px * 4 + 2];
             const uint8_t a = opaqueLayer ? 255 : srcRow[px * 4 + 3];
+            allOpaque &= a == 255;
             if (a == 255) {
                 dstRow[px * 4 + 0] = r;
                 dstRow[px * 4 + 1] = g;
@@ -990,6 +993,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
             }
         }
     }
+    img->opaque = allOpaque;
     EAGLLayerData& ed = rt(x).host<EAGLLayerData>(rb.drawableLayer);
     ed.frontBuffer = img;
     LayerData& ld = layerData(x, rb.drawableLayer);
@@ -2209,7 +2213,7 @@ void gl_shaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings, G
 void gl_compileShader(Ctx& x, uint32_t shader) {
     if (auto* sg = currentSg(x, currentCtx(x)); sg && sg->shaders.count(shader)) {
         auto& sh = sg->shaders[shader];
-        sh.compiled = sh.executable.compile(sh.source, sh.type == GL_VERTEX_SHADER);
+        sh.compiled = sh.executable.compile(Shader::normalizeMobileSource(sh.source), sh.type == GL_VERTEX_SHADER);
         sh.infoLog = sh.compiled && !sh.executable.warnings.empty() ? sh.executable.warnings : sh.executable.error;
         if (!sh.compiled) x.proc.logf(LogLevel::Warning, "GLSL shader %u: %s", shader, sh.infoLog.c_str());
     }
