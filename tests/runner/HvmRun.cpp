@@ -385,6 +385,7 @@ int hvmRunMain(int argc, char** argv) {
                         inputOverflow=false;std::fprintf(stderr,"[hvm:warn] Desktop input exceeds bounded line size\n");continue;
                     }
                     if (DesktopInput::applyTouch(proc, command, quiet)) {   // "touch <phase> <x> <y> [finger]"
+                    } else if (DesktopInput::applyAccel(proc, command, quiet)) {   // "accel <x> <y> <z>" in g
                     } else if(command.starts_with("text ")) {
                         const auto digit=[](char c) {
                             if(c>='0' && c<='9')return c-'0';

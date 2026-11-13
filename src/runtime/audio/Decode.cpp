@@ -379,10 +379,34 @@ bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
         if (next == n) break;
         if (next + 4 <= n && parseMp3Header(data + next, second) && second.sampleRate == first.sampleRate && second.version == first.version) break;
     }
-    // A Xing/Info frame describes the stream and holds no audio: AudioFile does not count it.
+    // A Xing/Info frame describes the stream and holds no audio: AudioFile does not count it
+    // as a packet. A LAME-compatible tag (LAME itself, or ffmpeg's "Lavc") carries the
+    // encoder delay and padding that AudioFile exposes as AudioFilePacketTableInfo.
     const size_t side = first.version == 3 ? (first.channels == 1 ? 17 : 32) : (first.channels == 1 ? 9 : 17);
-    if (off + 4 + side + 4 <= n && (std::memcmp(data + off + 4 + side, "Xing", 4) == 0 || std::memcmp(data + off + 4 + side, "Info", 4) == 0))
+    uint32_t xingFrames = 0;
+    int32_t lameDelay = 0, lamePad = 0;
+    bool hasLame = false;
+    if (off + 4 + side + 4 <= n && (std::memcmp(data + off + 4 + side, "Xing", 4) == 0 || std::memcmp(data + off + 4 + side, "Info", 4) == 0)) {
+        const uint8_t* p = data + off + 4 + side + 4;
+        const uint8_t* const end = data + std::min(n, off + first.size);
+        if (p + 4 <= end) {
+            const uint32_t flags = readBE32(p);
+            p += 4;
+            if ((flags & 1) && p + 4 <= end) { xingFrames = readBE32(p); p += 4; }
+            if ((flags & 2) && p + 4 <= end) p += 4;           // bytes
+            if ((flags & 4) && p + 100 <= end) p += 100;       // TOC
+            if ((flags & 8) && p + 4 <= end) p += 4;           // quality
+            // Encoder delay (12 bits) and padding (12 bits) sit at offset 21 of the 9-byte
+            // encoder string. Apple's AudioFile uses these for 'pnfo'.
+            if (p + 24 <= end && (std::memcmp(p, "LAME", 4) == 0 || std::memcmp(p, "Lavc", 4) == 0)) {
+                const uint32_t d = (uint32_t(p[21]) << 16) | (uint32_t(p[22]) << 8) | uint32_t(p[23]);
+                lameDelay = int32_t((d >> 12) & 0xFFF);
+                lamePad = int32_t(d & 0xFFF);
+                hasLame = true;
+            }
+        }
         off += first.size;
+    }
     out = Mp3Packets{};
     out.sampleRate = first.sampleRate;
     out.channels = first.channels;
@@ -396,7 +420,17 @@ bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
         out.dataBytes += h.size;
         off += h.size;
     }
-    return !out.packets.empty();
+    if (out.packets.empty()) return false;
+    // Prefer the Xing frame count when it is present: that is what AudioFile uses.
+    const int64_t mpeg = int64_t(xingFrames ? xingFrames : out.packets.size()) * int64_t(out.framesPerPacket);
+    if (hasLame && mpeg > int64_t(lameDelay) + int64_t(lamePad)) {
+        out.primingFrames = lameDelay;
+        out.remainderFrames = lamePad;
+        out.validFrames = uint64_t(mpeg - lameDelay - lamePad);
+    } else {
+        out.validFrames = uint64_t(std::max(int64_t(0), mpeg));
+    }
+    return true;
 }
 struct Mp3Stream {
     mp3dec_t dec;
