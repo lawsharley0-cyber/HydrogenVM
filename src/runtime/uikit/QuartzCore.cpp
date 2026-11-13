@@ -5,6 +5,7 @@
 #include "UIKit.hpp"
 #include "runtime/gl/HostGL.hpp"
 #include <chrono>
+#include <cstdio>
 
 namespace Hydrogen::Runtime::UIKit {
 
@@ -737,24 +738,61 @@ void displayPass(Ctx& x, id layer, IMP baseDrawRect) {
 }
 }
 
+namespace {
+// A frame the player feels as a hitch (over 45 ms) gets one play-log line saying where the time
+// went, at most one line a second (the rest are counted into the next line). The phone's play
+// log is the only place a hitch that the bench cannot reproduce shows up.
+struct HitchLog {
+    std::chrono::steady_clock::time_point lastLine{};
+    unsigned unreported = 0;
+};
+double msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+}
+
 void runFrame(Ctx& x, double now) {
     auto& u = ui(x);
     using Clock = std::chrono::steady_clock;
     const auto t0 = Clock::now();
     auto& perf = x.proc.perf();
+    struct Sections { Clock::time_point input, links, display; size_t touches = 0; uint64_t presentNs0 = 0, presentCalls0 = 0; };
+    Sections sec{t0, t0, t0, 0, perf.presentCallNs.load(), perf.presentCalls.load()};
     struct FrameTimer {
+        Ctx& x;
         Runtime::Process::Perf& p;
         Clock::time_point t0;
+        Sections& sec;
         ~FrameTimer() {
-            const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
+            const auto end = Clock::now();
+            const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(end - t0).count());
             p.recordFrame(ns);
+            if (ns < 45'000'000) return;
+            static thread_local HitchLog h;
+            if (h.lastLine != Clock::time_point{} && end - h.lastLine < std::chrono::seconds(1)) { ++h.unreported; return; }
+            char line[320];
+            const double since = std::chrono::duration<double>(end - p.origin).count();
+            const double presentMs = double(p.presentCallNs.load() - sec.presentNs0) / 1e6;
+            const uint64_t presents = p.presentCalls.load() - sec.presentCalls0;
+            std::snprintf(line, sizeof line,
+                          "Hitch: %.0f ms frame at %.1f s (touches %zu: %.1f ms, game frame %.1f ms incl. %llu present%s %.1f ms, "
+                          "layout+draw %.1f ms, composite %.1f ms)%s",
+                          double(ns) / 1e6, since, sec.touches, msBetween(t0, sec.input), msBetween(sec.input, sec.links),
+                          static_cast<unsigned long long>(presents), presents == 1 ? "" : "s", presentMs,
+                          msBetween(sec.links, sec.display), msBetween(sec.display, end),
+                          h.unreported ? (" +" + std::to_string(h.unreported) + " more since the last line").c_str() : "");
+            x.proc.log(LogLevel::Info, line);
+            h.lastLine = end;
+            h.unreported = 0;
         }
-    } timer{perf, t0};
+    } timer{x, perf, t0, sec};
     if (u.deviceOrientationNotePending) {
         u.deviceOrientationNotePending = false;
         if (u.currentDevice) Foundation::postNotification(x, "UIDeviceOrientationDidChangeNotification", u.currentDevice);
     }
+    { std::lock_guard<std::mutex> lk(u.inputMu); sec.touches = u.pendingTouches.size(); }
     deliverPendingInput(x);
+    sec.input = Clock::now();
     rotateLegacyControllers(x, "frame");   // a controller view added after launch, or a new orientation
     layoutPass(x);
     // display links
@@ -772,9 +810,11 @@ void runFrame(Ctx& x, double now) {
         }
         u.links.erase(std::remove_if(u.links.begin(), u.links.end(), [](const UIState::Link& l) { return !l.obj; }), u.links.end());
     }
+    sec.links = Clock::now();
     layoutPass(x);
     const IMP baseDrawRect = rt(x).lookup(u.view, rt(x).sel("drawRect:"));
     for (id w : std::vector<id>(u.windows)) if (viewData(x, w).visible) displayPass(x, viewLayer(x, w), baseDrawRect);
+    sec.display = Clock::now();
     bool external = false;
     (void)now;
     if (u.needsComposite || external) {

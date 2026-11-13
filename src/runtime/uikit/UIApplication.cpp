@@ -4,6 +4,7 @@
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 #include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -916,7 +917,17 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
         }
         Foundation::mainRunLoop(p).post([&p](CPU::Cpu& c) {
             Ctx cx{p, c, p.mem()};
+            const auto t0 = std::chrono::steady_clock::now();
             deliverPendingInput(cx);
+            // The game's own touch handling, outside a frame: a slow one stalls everything after it.
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            static thread_local std::chrono::steady_clock::time_point last{};
+            if (ms >= 30 && std::chrono::steady_clock::now() - last > std::chrono::seconds(1)) {
+                last = std::chrono::steady_clock::now();
+                char line[96];
+                std::snprintf(line, sizeof line, "Hitch: the game took %.0f ms to handle a touch", ms);
+                p.log(LogLevel::Info, line);
+            }
         });
     });
     p.setAccelerationHandler([&p](float ax, float ay, float az) {
