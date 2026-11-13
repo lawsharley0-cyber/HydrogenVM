@@ -15,6 +15,14 @@
       "sound": false
     },
     {
+      "folder": "Angry_Birds_Hatchery_Island_1.7.0",
+      "frames": 382,
+      "name": "Angry Birds Hatchery Island HD 1.7.0",
+      "picture": true,
+      "seconds": 30,
+      "sound": true
+    },
+    {
       "folder": "AngryBirds_v1.0_os30",
       "frames": 119,
       "name": "AngryBirds_v1.0_os30",

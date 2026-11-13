@@ -2,8 +2,14 @@
 
 ## Current Linux playability queue
 
+Owner priority, November 13: the **Get these working** folder supersedes the
+earlier queue. Angry Birds Island HD is qualified below; Sonic Dash, LEGO
+Technic Pullback Racers, Groove Zero, Rayman Origins demo, Clash of Clans 1.70
+and ROBLOX internal 2.1.1 are queued. Server requirements are not yet verdicts.
+
 | App / fixture | Status | Evidence |
 |---|---|---|
+| Angry Birds Hatchery Island HD 1.7.0 | Playable with notes on Linux | Correct iPad canvas, real 28,870-point / one-star clear, next-level play, pause/resume, pinch zoom, source-matched music/effects, six-minute clean session and earned progress after relaunch. Average 21.15 ms, p99 26.74 ms; loading outliers remain. [Fixes, commands, gates and phone limits](ANGRY_BIRDS_ISLAND_PLAYABILITY_2026-11-13.md). |
 | BADLAND 1.0 (build 8) | In progress: core loop verified; frame-time outliers remain | Menus, controlled flight, earned completion, saves across relaunch, captured music/audio, pause/resume and four-minute clean sessions. Final post-review run: average 26.40 ms, p95 33.55 ms, p99 285.21 ms; an earlier run reached p99 30.41 ms. Must-launch registered. [Reproduction, shared fixes, gates and limits](BADLAND_PLAYABILITY_2026-11-12.md). |
 
 ## Scanner

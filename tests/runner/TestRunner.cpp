@@ -12851,6 +12851,63 @@ int runFullSubsystemTests() {
         fs::remove_all(tmpRoot);
     }
 
+    {
+        bool profiles=true;
+        for(int scenario=0;scenario<7;++scenario) {
+            bool observed=false, correct=false;
+            ProcessConfig cfg; cfg.homePath="/tmp/hvm-tablet-profile-probe";
+            Process p(cfg); auto& c=p.mainThread().cpu;
+            c.r[13]=p.heap().allocZeroed(65536)+65536-16;
+            auto info=Plist::Value::makeDict();
+            if(scenario) {
+                auto family=Plist::Value::makeArray();
+                if(scenario==1 || scenario==3) family->array.push_back(Plist::Value::makeInt(1));
+                if(scenario==2 || scenario==3) family->array.push_back(Plist::Value::makeInt(2));
+                info->set("UIDeviceFamily",scenario==5 ? Plist::Value::makeString("2") : scenario==6 ? Plist::Value::makeInt(2) : family);
+            }
+            info->set("UIInterfaceOrientation",Plist::Value::makeString("UIInterfaceOrientationPortrait"));
+            info->set("UIInterfaceOrientation~ipad",Plist::Value::makeString("UIInterfaceOrientationLandscapeLeft"));
+            auto orientations=Plist::Value::makeArray();
+            orientations->array.push_back(Plist::Value::makeString("UIInterfaceOrientationLandscapeLeft"));
+            info->set("UISupportedInterfaceOrientations~ipad",orientations);
+            p.setInfoPlist(info);
+            auto& runtime=ObjC::rt(p);
+            auto delegate=runtime.defineClass("ProfileProbeDelegate","NSObject");
+            delegate.method("application:didFinishLaunchingWithOptions:",[&](Ctx& x) {
+                observed=true;
+                const bool tablet=scenario==2 || scenario==6;
+                auto& ui=UIKit::ui(x);
+                auto device=uint32_t(runtime.send(x.cpu,runtime.getClass("UIDevice"),"currentDevice"));
+                const auto idiom=uint32_t(runtime.send(x.cpu,device,"userInterfaceIdiom"));
+                const auto model=Foundation::utf8(x,uint32_t(runtime.send(x.cpu,device,"model")));
+                auto screen=uint32_t(runtime.send(x.cpu,runtime.getClass("UIScreen"),"mainScreen"));
+                const auto out=p.heap().allocZeroed(16);
+                const auto selector=runtime.sel("bounds");
+                p.callGuest(x.cpu,runtime.lookupForSend(runtime.classOf(screen),selector),{out,screen,selector});
+                const auto bounds=CG::readStruct<CG::CGRect>(x,out);
+                const auto scale=std::bit_cast<float>(uint32_t(runtime.send(x.cpu,screen,"scale")));
+                correct=idiom==(tablet ? 1u : 0u) && model==(tablet ? "iPad" : "iPhone") &&
+                    bounds.size.width==(tablet ? 768 : 320) && bounds.size.height==(tablet ? 1024 : 480) &&
+                    scale==(tablet ? 1 : 2) && ui.initialOrientation==(tablet ? 4 : 1) &&
+                    ui.plistLandscapeOnly==tablet;
+                p.requestStop(); x.cpu.r[0]=1;
+            },"c@:@@");
+            Ctx x{p,c,p.mem()};
+            try { p.callGuest(c,*p.lookupSymbol("_UIApplicationMain"),{0,0,0,Foundation::makeString(x,"ProfileProbeDelegate")}); }
+            catch(const CPU::GuestFault& e) { if(e.exit!=CPU::Exit::Halt) profiles=false; }
+            profiles &= observed && correct;
+        }
+        check(profiles,"iPad-only metadata selects tablet idiom, geometry, scale and orientation without changing phone/universal defaults");
+    }
+    {
+        const auto cls=r.getClass("CLLocationManager");
+        const auto manager=uint32_t(r.send(cpu,cls,"new"));
+        const auto selector=r.sel("locationServicesEnabled");
+        const bool legacy=uint32_t(r.send(cpu,manager,"respondsToSelector:",{selector}))!=0;
+        const bool same=legacy && uint32_t(r.send(cpu,cls,selector))==0 && uint32_t(r.send(cpu,manager,selector))==0;
+        check(same,"deprecated instance location-services query agrees with disabled class capability without starting GPS");
+        r.release(cpu,manager);
+    }
     check(runThreadLifetimeTests() == 0, "Process owns native worker lifetime until arena release");
     check(runHostFaultTests() == 0, "host-fault bundle contains complete thread, arena, HLE and log evidence");
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");

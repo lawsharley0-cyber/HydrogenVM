@@ -418,8 +418,17 @@ id app_nextResponder(Ctx& x, id, SEL) {
 id dev_current(Ctx& x, id, SEL) { return ui(x).currentDevice; }
 id dev_systemVersion(Ctx& x, id, SEL) { return makeString(x, x.proc.config().systemVersion); }
 id dev_systemName(Ctx& x, id, SEL) { return makeString(x, "iPhone OS"); }
-id dev_model(Ctx& x, id, SEL) { return makeString(x, "iPhone"); }
-id dev_name(Ctx& x, id, SEL) { return makeString(x, "HydrogenVM iPhone"); }
+bool tabletOnly(Ctx& x) {
+    const auto* info=x.proc.infoPlist();
+    const auto* family=info ? info->get("UIDeviceFamily") : nullptr;
+    if(family && family->type==Plist::Value::Type::Integer) return family->i==2;
+    return family && family->type==Plist::Value::Type::Array && !family->array.empty() &&
+        std::all_of(family->array.begin(),family->array.end(),[](const auto& item) {
+            return item && item->type==Plist::Value::Type::Integer && item->i==2;
+        });
+}
+id dev_model(Ctx& x, id, SEL) { return makeString(x, tabletOnly(x) ? "iPad" : "iPhone"); }
+id dev_name(Ctx& x, id, SEL) { return makeString(x, tabletOnly(x) ? "HydrogenVM iPad" : "HydrogenVM iPhone"); }
 std::string hexHash(const std::string& s, size_t len) {
     uint64_t h1 = 1469598103934665603ull, h2 = 0x9E3779B97F4A7C15ull;
     for (unsigned char c : s) { h1 = (h1 ^ c) * 1099511628211ull; h2 = (h2 + c) * 6364136223846793005ull + 1; }
@@ -441,7 +450,7 @@ int32_t dev_orientation(Ctx& x, id, SEL) {
     // UIDeviceOrientation: LandscapeLeft(3) = interface LandscapeRight(4) and vice versa
     switch (ui(x).statusBarOrientation) { case 3: return 4; case 4: return 3; default: return ui(x).statusBarOrientation; }
 }
-int32_t dev_idiom(Ctx&, id, SEL) { return 0; }
+int32_t dev_idiom(Ctx& x, id, SEL) { return tabletOnly(x) ? 1 : 0; }
 struct DevFlags : ObjC::HostObject { bool battery = false, proximity = false, orientationNotes = false; };
 DevFlags& DF(Ctx& x, id d) { return rt(x).host<DevFlags>(d); }
 float dev_batteryLevel(Ctx& x, id self, SEL) { return DF(x, self).battery ? 1.0f : -1.0f; }
@@ -525,6 +534,7 @@ void acc_setInterval(Ctx& x, id self, SEL, double i) { AD(x, self).interval = st
 void configureScreen(Ctx& x) {
     auto& u = ui(x);
     const Plist::Value* info = x.proc.infoPlist();
+    const bool tablet=tabletOnly(x);
     const std::string bundle = x.proc.bundlePath();
     std::error_code ec;
     // 4-inch support is opted into with a Default-568h@2x launch image (or a launch storyboard / UILaunchImages).
@@ -540,22 +550,28 @@ void configureScreen(Ctx& x) {
     u.screenH = tall ? std::max(568.0f, float(x.proc.config().screenHeight)) : 480.0f;
     if (!tall && x.proc.config().screenHeight < 568) u.screenH = float(x.proc.config().screenHeight);
     u.scale = x.proc.config().screenScale;
+    // An iPad-only binary needs an iPad logical canvas, independently of the
+    // host phone/window displaying it. Universal apps retain the phone profile.
+    if(tablet) { u.screenW=768; u.screenH=1024; u.scale=1; }
     applyGuestScreenEnv(x);
     x.proc.setScreenSize(uint32_t(u.screenW), uint32_t(u.screenH));
     if (info) {
-        if (const Plist::Value* h = info->get("UIStatusBarHidden"); h && h->type == Plist::Value::Type::Bool) u.statusBarHidden = h->b;
-        std::string o = info->getString("UIInterfaceOrientation");
+        auto deviceValue=[&](const char* key) {
+            const auto* value=info->get(std::string(key)+(tablet ? "~ipad" : "~iphone"));
+            return value ? value : info->get(key);
+        };
+        if (const Plist::Value* h = deviceValue("UIStatusBarHidden"); h && h->type == Plist::Value::Type::Bool) u.statusBarHidden = h->b;
+        const auto* initial=deviceValue("UIInterfaceOrientation");
+        std::string o = initial && initial->type==Plist::Value::Type::String ? initial->s : "";
         if (o.empty()) {
-            const Plist::Value* sup = info->get("UISupportedInterfaceOrientations~iphone");
-            if (!sup) sup = info->get("UISupportedInterfaceOrientations");
+            const Plist::Value* sup = deviceValue("UISupportedInterfaceOrientations");
             if (sup && sup->type == Plist::Value::Type::Array && !sup->array.empty()) o = sup->array.front()->s;
         }
         u.initialOrientation = orientationFromString(o);
         u.statusBarOrientation = u.initialOrientation;
         if (const Plist::Value* min = info->get("MinimumOSVersion"); min && !min->s.empty())
             u.builtForIOS2 = std::atoi(min->s.c_str()) > 0 && std::atoi(min->s.c_str()) < 3;
-        const Plist::Value* list = info->get("UISupportedInterfaceOrientations~iphone");
-        if (!list) list = info->get("UISupportedInterfaceOrientations");
+        const Plist::Value* list = deviceValue("UISupportedInterfaceOrientations");
         if (list && list->type == Plist::Value::Type::Array && !list->array.empty()) {
             u.plistLandscapeOnly = true;
             for (const auto& v : list->array) if (orientationFromString(v->s) <= 2) u.plistLandscapeOnly = false;
