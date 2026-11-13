@@ -83,6 +83,7 @@ void registerCpu(Cpu* c) {
         if (s.claimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             s.active.store(false, std::memory_order_relaxed);
             s.generation.store(g_threadGeneration.fetch_add(1) + 1, std::memory_order_relaxed);
+            s.cpu.store(c, std::memory_order_release);
             c->fault_state = &s;
             return;
         }
@@ -93,6 +94,7 @@ void registerCpu(Cpu* c) {
 void unregisterCpu(Cpu* c) {
     if (!c->fault_state) { g_untrackedCpus.fetch_sub(1, std::memory_order_relaxed); return; }
     c->fault_state->active.store(false, std::memory_order_release);
+    c->fault_state->cpu.store(nullptr, std::memory_order_release);
     c->fault_state->claimed.store(false, std::memory_order_release);
 }
 
@@ -219,9 +221,16 @@ void faultHandler(int sig, siginfo_t* si, void* uctx) {
             auto& state = g_threads[i];
             if (!state.active.load(std::memory_order_acquire)) continue;
             const auto generation = state.generation.load(std::memory_order_acquire);
-            const auto pc = state.pc.load(std::memory_order_relaxed);
-            const auto lr = state.lr.load(std::memory_order_relaxed);
-            const auto block = state.block.load(std::memory_order_relaxed);
+            auto pc = state.pc.load(std::memory_order_relaxed);
+            auto lr = state.lr.load(std::memory_order_relaxed);
+            auto block = state.block.load(std::memory_order_relaxed);
+            // Running guest code: the block it is in now and its LR, read from its CPU (the
+            // samples above are from the last time slice or library call).
+            if (const Cpu* cc = state.cpu.load(std::memory_order_acquire); cc && state.inGuest.load(std::memory_order_relaxed)) {
+                block = __atomic_load_n(&cc->block_pc, __ATOMIC_RELAXED);
+                lr = __atomic_load_n(&cc->r[kLR], __ATOMIC_RELAXED);
+                pc = block;
+            }
             const auto arena = state.arena.load(std::memory_order_relaxed);
             const bool inGuest = state.inGuest.load(std::memory_order_relaxed);
             char name[sizeof state.hleName]{};
