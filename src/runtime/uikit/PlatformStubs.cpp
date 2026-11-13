@@ -400,7 +400,7 @@ void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
 int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr);
 // AudioQueueEnqueueBufferWithParameters(q, buf, nDescs, descs, trimStart, trimEnd, nParams, params, startTime, actualStart)
 void aq_enqueueWithParams(Ctx& x) {
-    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t sp = x.cpu.r[13];
     const uint32_t actual = x.mem.read<uint32_t>(sp + 20);
     if (actual) for (uint32_t i = 0; i < 64; i += 4) x.mem.write<uint32_t>(actual + i, 0);   // AudioTimeStamp: "now"
     x.cpu.r[0] = uint32_t(aq_enqueueBuffer(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]));
@@ -635,6 +635,20 @@ int32_t aq_reset(Ctx& x, uint32_t qid) {
 }
 int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate) {
     audioTrace("AudioQueueDispose", qid, immediate);
+    if (std::getenv("HVM_AUDIO_TRACE")) {
+        static int dumps = 0;
+        if (dumps++ < 8) {
+            std::fprintf(stderr, "[audio-trace] Dispose lr=%08x sp=%08x stack",
+                         x.cpu.r[14], x.cpu.r[13]);
+            const uint32_t sp = x.cpu.r[13];
+            for (int i = 0; i < 12; ++i) {
+                const uint32_t addr = sp + uint32_t(i) * 4;
+                if (!x.mem.isMapped(addr)) break;
+                std::fprintf(stderr, " %08x", x.mem.read<uint32_t>(addr));
+            }
+            std::fputc('\n', stderr);
+        }
+    }
     auto& st = ATS(x);
     if (st.queues.count(qid)) {
         auto& q = st.queues[qid];
@@ -828,6 +842,7 @@ uint32_t afPropertySize(const AudioFileInstance& af, uint32_t prop) {
     case 0x706E666F: return 16;   // 'pnfo' AudioFilePacketTableInfo
     case 0x62636E74: case 0x65647572: case 0x70636E74: return 8;   // 'bcnt' 'edur' 'pcnt'
     case 0x70737A65: case 0x706B7562: case 0x66666D74: return 4;   // 'psze' 'pkub' 'ffmt'
+    case 0x6672706B: case 0x706B6672: return 20;   // 'frpk' 'pkfr' AudioFramePacketTranslation (20 bytes on 32-bit)
     default: return 0;
     }
 }
@@ -864,8 +879,8 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
     x.mem.write<uint32_t>(ioSize, size);
     if (af.mp3) {
         const Audio::Mp3Packets& m = *af.mp3;
-        const uint64_t frames = uint64_t(m.packets.size()) * m.framesPerPacket;
-        const double seconds = double(frames) / double(m.sampleRate);
+        const uint64_t frames = m.validFrames ? m.validFrames : uint64_t(m.packets.size()) * m.framesPerPacket;
+        const double seconds = m.sampleRate ? double(frames) / double(m.sampleRate) : 0.0;
         auto format = [&](GuestPtr at) {   // AudioStreamBasicDescription of a variable-bit-rate compressed stream
             x.mem.write<double>(at, double(m.sampleRate));
             x.mem.write<uint32_t>(at + 8, kFormatMp3);
@@ -886,8 +901,8 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
             break;
         case 0x706E666F:                                                               // 'pnfo'
             x.mem.write<uint64_t>(outData, frames);
-            x.mem.write<uint32_t>(outData + 8, 0);
-            x.mem.write<uint32_t>(outData + 12, 0);
+            x.mem.write<uint32_t>(outData + 8, uint32_t(m.primingFrames));
+            x.mem.write<uint32_t>(outData + 12, uint32_t(m.remainderFrames));
             break;
         case 0x62636E74: x.mem.write<uint64_t>(outData, m.dataBytes); break;           // 'bcnt'
         case 0x65647572: x.mem.write<double>(outData, seconds); break;                 // 'edur'
@@ -896,7 +911,45 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         case 0x66666D74: x.mem.write<uint32_t>(outData, 0x4D504733); break;            // 'ffmt' = 'MPG3'
         case 0x646F6666: x.mem.write<uint64_t>(outData, m.dataOffset); break;          // 'doff'
         case 0x62726174: x.mem.write<uint32_t>(outData, seconds > 0 ? uint32_t(double(m.dataBytes) * 8.0 / seconds) : 0); break;   // 'brat'
+        case 0x6672706B: {   // 'frpk' FrameToPacket: mFrame in, mPacket and mFrameOffsetInPacket out
+            const int64_t fpp = int64_t(m.framesPerPacket ? m.framesPerPacket : 1);
+            const int64_t frame = int64_t(x.mem.read<uint64_t>(outData));
+            const int64_t packet = frame / fpp;
+            x.mem.write<uint64_t>(outData + 8, uint64_t(packet));
+            x.mem.write<uint32_t>(outData + 16, uint32_t(frame - packet * fpp));
+            break;
+        }
+        case 0x706B6672: {   // 'pkfr' PacketToFrame: mPacket in, mFrame out
+            const int64_t packet = int64_t(x.mem.read<uint64_t>(outData + 8));
+            x.mem.write<uint64_t>(outData, uint64_t(packet * int64_t(m.framesPerPacket)));
+            x.mem.write<uint32_t>(outData + 16, 0);
+            break;
+        }
         default: break;
+        }
+        if (std::getenv("HVM_AUDIO_TRACE")) {
+            const char a = char(prop >> 24), b = char(prop >> 16), c = char(prop >> 8), d = char(prop);
+            if (prop == 0x706E666F)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'pnfo' valid=%llu priming=%d remainder=%d\n",
+                             (unsigned long long)x.mem.read<uint64_t>(outData),
+                             int(x.mem.read<uint32_t>(outData + 8)), int(x.mem.read<uint32_t>(outData + 12)));
+            else if (prop == 0x65647572)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'edur' %f\n", x.mem.read<double>(outData));
+            else if (prop == 0x62636E74)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'bcnt' %llu\n", (unsigned long long)x.mem.read<uint64_t>(outData));
+            else if (prop == 0x70636E74)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'pcnt' %llu\n", (unsigned long long)x.mem.read<uint64_t>(outData));
+            else if (prop == 0x70737A65 || prop == 0x706B7562)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty '%c%c%c%c' %u\n", a, b, c, d, x.mem.read<uint32_t>(outData));
+            else if (prop == 0x64666D74)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'dfmt' rate=%g fmt=%08x fpp=%u ch=%u\n",
+                             x.mem.read<double>(outData), x.mem.read<uint32_t>(outData + 8),
+                             x.mem.read<uint32_t>(outData + 20), x.mem.read<uint32_t>(outData + 28));
+            else if (prop == 0x6672706B)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'frpk' frame=%llu packet=%llu offset=%u\n",
+                             (unsigned long long)x.mem.read<uint64_t>(outData),
+                             (unsigned long long)x.mem.read<uint64_t>(outData + 8),
+                             x.mem.read<uint32_t>(outData + 16));
         }
         return 0;
     }
@@ -925,6 +978,14 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<uint32_t>(outData, 2 * afChannels(af));
     } else if (prop == 0x66666D74 /* 'ffmt' file format */ && cap >= 4) {
         x.mem.write<uint32_t>(outData, 0x63616666 /* 'caff' */);
+    } else if (prop == 0x6672706B /* 'frpk' FrameToPacket: decoded PCM is one frame per packet */) {
+        const int64_t frame = int64_t(x.mem.read<uint64_t>(outData));
+        x.mem.write<uint64_t>(outData + 8, uint64_t(frame));
+        x.mem.write<uint32_t>(outData + 16, 0);
+    } else if (prop == 0x706B6672 /* 'pkfr' PacketToFrame */) {
+        const int64_t packet = int64_t(x.mem.read<uint64_t>(outData + 8));
+        x.mem.write<uint64_t>(outData, uint64_t(packet));
+        x.mem.write<uint32_t>(outData + 16, 0);
     }
     return 0;
 }
@@ -965,7 +1026,7 @@ int32_t af_close(Ctx& x, uint32_t fid) {
 // (32-bit iOS passes the SInt64 position in r1:r2, no register pairing.)
 void af_openWithCallbacks(Ctx& x) {
     const uint32_t client = x.cpu.r[0], readFn = x.cpu.r[1], getSizeFn = x.cpu.r[3];
-    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t sp = x.cpu.r[13];
     const uint32_t outFile = x.mem.read<uint32_t>(sp + 8);
     if (!readFn || !getSizeFn || !outFile) { x.cpu.r[0] = uint32_t(-50); return; }
     const int64_t size = int64_t(x.proc.callGuest(x.cpu, getSizeFn, {client}));
@@ -1000,7 +1061,7 @@ void af_openWithCallbacks(Ctx& x) {
 // ioNumPackets*, outBuffer). Our files present 16-bit stereo LPCM: one packet = one 4-byte frame.
 void af_readPackets(Ctx& x, bool numBytesIsInOut) {
     const uint32_t fid = x.cpu.r[0], ioNumBytes = x.cpu.r[2];
-    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t sp = x.cpu.r[13];
     const int64_t start = int64_t((uint64_t(x.mem.read<uint32_t>(sp + 4)) << 32) | x.mem.read<uint32_t>(sp));
     const uint32_t ioNumPackets = x.mem.read<uint32_t>(sp + 8), out = x.mem.read<uint32_t>(sp + 12);
     auto& st = ATS(x);
@@ -1167,7 +1228,7 @@ int32_t af_createWithURL(Ctx& x, uint32_t url, uint32_t fileType, GuestPtr fmt, 
 // AudioFileWriteBytes(fid, useCache, SInt64 startingByte (r2:r3), UInt32* ioNumBytes, const void* buffer)
 void af_writeBytes(Ctx& x) {
     auto& st = ATS(x);
-    const uint32_t fid = x.cpu.r[0], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fid = x.cpu.r[0], sp = x.cpu.r[13];
     const uint64_t start = (uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2];
     const uint32_t ioNum = x.mem.read<uint32_t>(sp), buf = x.mem.read<uint32_t>(sp + 4);
     auto it = st.files.find(fid);
@@ -1179,7 +1240,7 @@ void af_writeBytes(Ctx& x) {
 // AudioFileWritePackets(fid, useCache, numBytes, packetDescs, SInt64 startPacket (stack), UInt32* ioNumPackets, buffer)
 void af_writePackets(Ctx& x) {
     auto& st = ATS(x);
-    const uint32_t fid = x.cpu.r[0], numBytes = x.cpu.r[2], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fid = x.cpu.r[0], numBytes = x.cpu.r[2], sp = x.cpu.r[13];
     const uint64_t startPacket = (uint64_t(x.mem.read<uint32_t>(sp + 4)) << 32) | x.mem.read<uint32_t>(sp);
     const uint32_t ioPackets = x.mem.read<uint32_t>(sp + 8), buf = x.mem.read<uint32_t>(sp + 12);
     auto it = st.files.find(fid);
@@ -3337,7 +3398,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     }, "{CGSize=ff}@:");
     avItem.method("seekToTime:", [](Ctx&) {}, "v@:{?=qiIq}");
     avItem.method("seekToTime:completionHandler:", [](Ctx& x) {
-        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const uint32_t sp = x.cpu.r[13];
         const uint32_t handler = x.mem.read<uint32_t>(sp + 16);
         if (handler) ObjC::callBlock(x, handler, {1});
     }, "v@:{?=qiIq}@?");

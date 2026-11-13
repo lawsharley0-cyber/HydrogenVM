@@ -5442,6 +5442,45 @@ int runFullSubsystemTests() {
               "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
     }
 
+    // `hvm run --input-file` accel lines: three finite floats in g reach Process::setAcceleration
+    // (UIAcceleration axes) and a malformed line is rejected. Expected values are read off
+    // each literal line by hand. Until a host reading, gravity follows orientation.
+    {
+        using DesktopInput::parseAccel;
+        const auto upright = parseAccel("accel 0 -1 0");
+        const auto tilt = parseAccel("accel 0.25 -0.8 -0.5\r");
+        const auto signedZ = parseAccel("accel -0.1 0.2 +0.3");
+        const bool uprightOk = upright && upright->x == 0.0f && upright->y == -1.0f && upright->z == 0.0f;
+        const bool tiltOk = tilt && tilt->x == 0.25f && tilt->y == -0.8f && tilt->z == -0.5f;
+        const bool signedOk = signedZ && signedZ->x == -0.1f && signedZ->y == 0.2f && signedZ->z == 0.3f;
+        int wronglyAccepted = 0;
+        for (const char* bad : {"accel 0 -1", "accel 0 -1 0 extra", "accel 0 -1 0x", "accel 0 nan 0",
+                                "accel 0 -1 inf", "accel x -1 0", "acceleration 0 -1 0", "accel 0 -1 0 1",
+                                "touch 0 1 0"})
+            if (parseAccel(bad)) { std::printf("    accepted: %s\n", bad); ++wronglyAccepted; }
+        using namespace std::string_view_literals;
+        for (std::string_view bad : {"accel 0 -1 0\0x"sv, "accel 0 -1\0 0"sv})
+            if (parseAccel(bad)) { std::printf("    accepted a field with an embedded NUL\n"); ++wronglyAccepted; }
+        check(uprightOk && tiltOk && signedOk && wronglyAccepted == 0,
+              "input-file accel lines take three finite floats in g and reject a malformed field");
+
+        auto& u = UIKit::ui(proc);
+        const bool savedHost = u.accelFromHost;
+        const float saved[3] = {u.accel[0], u.accel[1], u.accel[2]};
+        const bool applied = DesktopInput::applyAccel(proc, "accel 0.25 -0.8 -0.5", true);
+        const bool reached = applied && u.accelFromHost &&
+                             u.accel[0] == 0.25f && u.accel[1] == -0.8f && u.accel[2] == -0.5f;
+        const bool rejected = !DesktopInput::applyAccel(proc, "accel 0 -1", true) &&
+                              u.accel[0] == 0.25f;   // a bad line must not change a previous reading
+        if (!(reached && rejected))
+            std::printf("    applyAccel: applied %d host %d accel %g,%g,%g rejected %d\n",
+                        applied, int(u.accelFromHost), u.accel[0], u.accel[1], u.accel[2], rejected);
+        u.accelFromHost = savedHost;
+        u.accel[0] = saved[0]; u.accel[1] = saved[1]; u.accel[2] = saved[2];
+        check(reached && rejected,
+              "an input-file accel line reaches UIKit as a host accelerometer reading");
+    }
+
     // NSGetSizeAndAlignment (armv7 iOS layout, worked out by hand): the size and alignment of the
     // first encoded type, and a pointer to the next one. Dungeon Raid's PHInvocation sizes its
     // argument buffers with it.
@@ -7156,6 +7195,48 @@ int runFullSubsystemTests() {
                   "std::string out-of-line members: replace(pos,n,const char*), rbegin, _M_set_length_and_sharable, clear, _Alloc_hider");
         }
 
+        // Out-of-line members Unity 4 imports (Lego Technic Pullback Racers 1.0):
+        // _M_data, _M_check_length, basic_string::_S_empty_rep, _S_copy_chars,
+        // insert(pos, string) and replace(iterator, iterator, const_iterator, const_iterator).
+        {
+            const uint32_t t = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {t, cstr("4.0.1f2"), 0});
+            const uint32_t data = call("__ZNKSs7_M_dataEv", {t});
+            const bool dataOk = data != 0xDEADu && data == m.read<uint32_t>(t) && proc.readCString(data) == "4.0.1f2";
+            bool checkOk = false;
+            try {
+                checkOk = call("__ZNKSs15_M_check_lengthEmmPKc", {t, 0, 3, cstr("basic_string::append")}) != 0xDEADu;
+            } catch (const std::exception&) { checkOk = false; }
+            bool threw = false;
+            try {
+                call("__ZNKSs15_M_check_lengthEmmPKc", {t, 0, 0x3FFFFFFCu, cstr("basic_string::append")});
+            } catch (const std::exception&) { threw = true; }
+            const uint32_t er1 = call("__ZNSs12_S_empty_repEv", {});
+            const uint32_t er2 = call("__ZNSs4_Rep12_S_empty_repEv", {});
+            const bool emptyOk = er1 != 0xDEADu && er1 == er2 && m.read<uint32_t>(er1 + 8) == 0xFFFFFFFFu;
+            const uint32_t dst = proc.heap().allocZeroed(16);
+            const uint32_t src = cstr("ABCDEF");
+            call("__ZNSs13_S_copy_charsEPcPKcS1_", {dst, src, src + 4});
+            const bool copyRaw = std::memcmp(m.host(dst), "ABCD", 4) == 0 && m.read<uint8_t>(dst + 4) == 0;
+            call("__ZNSs13_S_copy_charsEPcN9__gnu_cxx17__normal_iteratorIS_SsEES2_", {dst + 8, data, data + 3});
+            const bool copyIt = std::memcmp(m.host(dst + 8), "4.0", 3) == 0;
+            const uint32_t add = proc.heap().allocZeroed(4);
+            call("__ZNSsC1EPKcRKSaIcE", {add, cstr("XY"), 0});
+            const uint32_t ins = call("__ZNSs6insertEmRKSs", {t, 1, add});
+            const bool inserted = ins == t && str(t) == "4XY.0.1f2";
+            const uint32_t d = m.read<uint32_t>(t);
+            const uint32_t k = m.read<uint32_t>(add);
+            call("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_NS0_IPKcSsEES5_", {t, d, d + 3, k, k + 2});
+            const bool replacedIt = str(t) == "XY.0.1f2";
+            if (!(dataOk && checkOk && threw && emptyOk && copyRaw && copyIt && inserted && replacedIt))
+                std::printf("    Unity string imports: data %d check %d threw %d empty %d copy %d/%d insert %d replace %d\n",
+                            dataOk, checkOk, threw, emptyOk, copyRaw, copyIt, inserted, replacedIt);
+            call("__ZNSsD1Ev", {t});
+            call("__ZNSsD1Ev", {add});
+            check(dataOk && checkOk && threw && emptyOk && copyRaw && copyIt && inserted && replacedIt,
+                  "std::string out-of-line Unity imports: _M_data, _M_check_length, _S_empty_rep, _S_copy_chars, insert(pos,str), replace(iterators)");
+        }
+
         // libstdc++ __basic_file<char> tests
         const uint32_t bfile = proc.heap().allocZeroed(16);
         call("__ZNSt12__basic_fileIcEC1EP15__gthread_mutex", {bfile, 0});
@@ -7815,6 +7896,15 @@ int runFullSubsystemTests() {
             const bool rejects = !Audio::indexMp3(noise.data(), noise.size(), none) && !Audio::indexMp3(kToneMp3, 40, none);
             check(layout && cutShort && rejects,
                   "indexMp3 skips the ID3 tag and the Info frame, lists each MPEG frame as a packet, and rejects data that is not MP3");
+            // The Info/Xing tag on this fixture is LAME-compatible (encoder "Lavc60.31"):
+            // 21 frames, delay 576, padding 1566. AudioFile's packet table is the audible
+            // length (21*1152 - 576 - 1566 = 22050 = 0.5 s at 44.1 kHz), which ffmpeg also
+            // decodes. Reporting 21*1152 with priming 0 is the raw MPEG length, not Apple's.
+            if (!(index.validFrames == 22050 && index.primingFrames == 576 && index.remainderFrames == 1566))
+                std::printf("    indexMp3 packet table: valid %llu priming %d remainder %d (want 22050, 576, 1566)\n",
+                            (unsigned long long)index.validFrames, index.primingFrames, index.remainderFrames);
+            check(index.validFrames == 22050 && index.primingFrames == 576 && index.remainderFrames == 1566,
+                  "indexMp3 reads LAME/Xing delay and padding into the AudioFile packet table");
 
             // Packet by packet, and with one packet split across two calls: the same samples.
             std::vector<int16_t> whole, split;
@@ -7850,8 +7940,23 @@ int runFullSubsystemTests() {
             const bool formatList = listInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 48 && list == 0 &&
                                     proc.mem().read<uint32_t>(io + 16 + 8) == 0x2E6D7033 && proc.mem().read<uint32_t>(io + 16 + 40) == 0x00650002;
             prop(0x70636E74, 8, io + 72); prop(0x706B7562, 4, io + 80); prop(0x62636E74, 8, io + 88); prop(0x706E666F, 16, io + 96);
+            prop(0x65647572, 8, io + 112);
             const bool counts = proc.mem().read<uint64_t>(io + 72) == 21 && proc.mem().read<uint32_t>(io + 80) == 209 &&
-                                proc.mem().read<uint64_t>(io + 88) == 4388 && proc.mem().read<uint64_t>(io + 96) == 21 * 1152;
+                                proc.mem().read<uint64_t>(io + 88) == 4388;
+            // 'pnfo' / 'edur': Apple reports the audible length and the LAME encoder delay,
+            // not the raw MPEG sample count. FMOD's AudioQueue codec stores mNumberValidFrames
+            // as lengthpcm (and falls back to edur * sampleRate if 'pnfo' fails).
+            const bool packetTable = proc.mem().read<uint64_t>(io + 96) == 22050 &&
+                                     proc.mem().read<uint32_t>(io + 104) == 576 &&
+                                     proc.mem().read<uint32_t>(io + 108) == 1566 &&
+                                     proc.mem().read<double>(io + 112) == 0.5;
+            if (!packetTable)
+                std::printf("    AudioFile pnfo/edur: valid %llu priming %u remainder %u edur %f (want 22050, 576, 1566, 0.5)\n",
+                            (unsigned long long)proc.mem().read<uint64_t>(io + 96),
+                            proc.mem().read<uint32_t>(io + 104), proc.mem().read<uint32_t>(io + 108),
+                            proc.mem().read<double>(io + 112));
+            check(packetTable,
+                  "AudioFile 'pnfo' and 'edur' for a LAME-tagged MP3 are the audible length and encoder delay");
             // three packets from the start: 208 + 209 + 209 bytes, each described
             proc.mem().write<uint32_t>(io + 4, 0);
             proc.mem().write<uint32_t>(io + 8, 3);
@@ -7875,6 +7980,28 @@ int runFullSubsystemTests() {
                 std::printf("    mp3 file: open %x format %d list %d counts %d three %d bounded %d end %d\n", opened, format, formatList, counts, three, bounded, atEnd);
             check(opened == 0 && format && formatList && counts && three && bounded && atEnd,
                   "AudioFile presents an MP3 as compressed packets: format, format list, counts, and packet reads with descriptions");
+
+            // kAudioFilePropertyFrameToPacket ('frpk') and PacketToFrame ('pkfr').
+            // Unity 4 (Lego Technic Pullback Racers) asks for FrameToPacket after
+            // AudioQueueStart; an unsupported result made it dispose the queue every
+            // frame, so menu music never played.
+            const uint32_t tr = proc.heap().allocZeroed(24);
+            proc.mem().write<uint64_t>(tr, 1152ull * 3 + 50);
+            proc.mem().write<uint32_t>(io + 4, 20);
+            const uint32_t frpkStatus = audioCall("_AudioFileGetProperty", {mp3File, 0x6672706B, io + 4, tr});
+            const bool frpk = frpkStatus == 0 && proc.mem().read<uint64_t>(tr) == 1152ull * 3 + 50 &&
+                              proc.mem().read<uint64_t>(tr + 8) == 3 && proc.mem().read<uint32_t>(tr + 16) == 50;
+            proc.mem().write<uint64_t>(tr + 8, 5);
+            proc.mem().write<uint32_t>(io + 4, 20);
+            const uint32_t pkfrStatus = audioCall("_AudioFileGetProperty", {mp3File, 0x706B6672, io + 4, tr});
+            const bool pkfr = pkfrStatus == 0 && proc.mem().read<uint64_t>(tr) == 5ull * 1152 &&
+                              proc.mem().read<uint32_t>(tr + 16) == 0;
+            const uint32_t frpkInfo = audioCall("_AudioFileGetPropertyInfo", {mp3File, 0x6672706B, io + 8, 0});
+            if (!(frpk && pkfr && frpkInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 20))
+                std::printf("    FrameToPacket: frpk status %x ok %d pkfr %d info %x size %u\n",
+                            frpkStatus, frpk, pkfr, frpkInfo, proc.mem().read<uint32_t>(io + 8));
+            check(frpk && pkfr && frpkInfo == 0 && proc.mem().read<uint32_t>(io + 8) == 20,
+                  "AudioFile FrameToPacket and PacketToFrame for an MP3 (1152 frames per packet)");
 
             // The app's side of FMOD's decode: a queue in the file's format, one packet per
             // buffer, rendered offline to 16-bit stereo.
@@ -7922,6 +8049,95 @@ int runFullSubsystemTests() {
             check(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152,
                   "ExtAudioFileWrapAudioFileID on an MP3 AudioFile decodes it and reports its frames");
             audioCall("_ExtAudioFileDispose", {ext});
+
+            // FMOD's AudioQueue codec (Unity 4, Lego Technic Pullback Racers) opens a
+            // queue in the file's MP3 format, sets an offline 16-bit stereo LPCM format,
+            // Stop+Start, primes with a 0-frame OfflineRender, then OfflineRenders 4096-frame
+            // chunks. The output callback reads the next packets (up to 15) and enqueues,
+            // or Flushes at EOF. After four successful 4096-frame fills a later render must
+            // still return audio: mAudioDataByteSize == 0 is FMOD's stall-recovery path.
+            // This fixture passing shows OfflineRender is not that stall — in the game,
+            // FMOD closes after a 16384-frame prefetch (four 4096 fills) and retries.
+            {
+                static uint32_t fmodNext = 0, fmodCalls = 0, fmodFlushed = 0;
+                fmodNext = 0; fmodCalls = 0; fmodFlushed = 0;
+                const uint32_t fmodIo = proc.heap().allocZeroed(32);
+                const uint32_t fmodCb = proc.defineFunction("_test_aq_fmod_loop_callback", [&](Ctx& x) {
+                    const uint32_t qid = x.cpu.r[1], buf = x.cpu.r[2];
+                    ++fmodCalls;
+                    const uint32_t data = x.mem.read<uint32_t>(buf + 4);
+                    const uint32_t descs = x.mem.read<uint32_t>(buf + 20);
+                    x.mem.write<uint32_t>(fmodIo, 15u * 209u);
+                    x.mem.write<uint32_t>(fmodIo + 4, 15);
+                    const uint32_t st = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioFileReadPacketData"),
+                        {mp3File, 0, fmodIo, descs, fmodNext, 0, fmodIo + 4, data}));
+                    const uint32_t n = x.mem.read<uint32_t>(fmodIo + 4);
+                    const uint32_t bytes = x.mem.read<uint32_t>(fmodIo);
+                    (void)st;
+                    if (n) {
+                        x.mem.write<uint32_t>(buf + 8, bytes);
+                        x.mem.write<uint32_t>(buf + 24, n);   // mPacketDescriptionCount
+                        fmodNext += n;
+                        x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioQueueEnqueueBuffer"), {qid, buf, 0, 0});
+                    } else if (!fmodFlushed) {
+                        fmodFlushed = 1;
+                        x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioQueueFlush"), {qid});
+                    }
+                    x.cpu.r[0] = 0;
+                });
+                const uint32_t fOut = proc.heap().allocZeroed(32), fTs = proc.heap().allocZeroed(64);
+                const uint32_t fDst = proc.heap().allocZeroed(40);
+                proc.mem().write<double>(fDst, 44100.0);
+                proc.mem().write<uint32_t>(fDst + 8, 0x6C70636D);
+                proc.mem().write<uint32_t>(fDst + 12, 0x0C);
+                for (uint32_t o : {16u, 24u}) proc.mem().write<uint32_t>(fDst + o, 4);
+                proc.mem().write<uint32_t>(fDst + 20, 1);
+                proc.mem().write<uint32_t>(fDst + 28, 2);
+                proc.mem().write<uint32_t>(fDst + 32, 16);
+                audioCall("_AudioQueueNewOutput", {fmt, fmodCb, 0, 0, 0, 0, fOut});
+                const uint32_t fq = proc.mem().read<uint32_t>(fOut);
+                audioCall("_AudioQueueAllocateBufferWithPacketDescriptions", {fq, 15u * 209u, 15, fOut + 4});
+                audioCall("_AudioQueueAllocateBuffer", {fq, 16384, fOut + 8});
+                const uint32_t fIn = proc.mem().read<uint32_t>(fOut + 4), fRender = proc.mem().read<uint32_t>(fOut + 8);
+                audioCall("_AudioQueueSetOfflineRenderFormat", {fq, fDst, 0});
+                audioCall("_AudioQueueStop", {fq, 1});
+                audioCall("_AudioQueueStart", {fq, 0});
+                const uint32_t primeSt = audioCall("_AudioQueueOfflineRender", {fq, fTs, fRender, 0});
+                const uint32_t primeN = proc.mem().read<uint32_t>(fRender + 8);
+                // FMOD itself invokes the enqueue callback once after the 0-frame prime.
+                if (fmodCalls == 0) {
+                    Ctx fx{proc, cpu, proc.mem()};
+                    fx.cpu.r[1] = fq;
+                    fx.cpu.r[2] = fIn;
+                    proc.callGuest(cpu, fmodCb, {0, fq, fIn});
+                }
+                uint32_t chunk[8] = {}, nChunks = 0, fmodRendered = 0;
+                int fmodPeak = 0;
+                for (nChunks = 0; nChunks < 8; ++nChunks) {
+                    audioCall("_AudioQueueOfflineRender", {fq, fTs, fRender, 4096});
+                    const uint32_t gotBytes = proc.mem().read<uint32_t>(fRender + 8);
+                    const uint32_t got = gotBytes / 4;
+                    chunk[nChunks] = got;
+                    const uint32_t pcm = proc.mem().read<uint32_t>(fRender + 4);
+                    for (uint32_t i = 0; i < got * 2; ++i)
+                        fmodPeak = std::max(fmodPeak, std::abs(int(proc.mem().read<int16_t>(pcm + i * 2))));
+                    fmodRendered += got;
+                    if (got == 0) break;
+                }
+                audioCall("_AudioQueueDispose", {fq, 1});
+                // 21 packets of 1152: four 4096-frame fills are 16384, leftover must still
+                // render (the 5th chunk is the stall FMOD hit). Total close to the file.
+                const bool fourOk = chunk[0] == 4096 && chunk[1] == 4096 && chunk[2] == 4096 && chunk[3] == 4096;
+                const bool fifthOk = chunk[4] > 0;
+                const bool totalOk = fmodRendered >= 20 * 1152 - 2 && fmodRendered <= 21 * 1152 && fmodPeak > 2600;
+                const bool primeOk = primeSt == 0 && primeN == 0;
+                if (!(fourOk && fifthOk && totalOk && primeOk && fmodFlushed))
+                    std::printf("    fmod loop: prime %x/%u chunks %u/%u/%u/%u/%u/%u/%u/%u total %u peak %d calls %u flushed %u\n",
+                                primeSt, primeN, chunk[0], chunk[1], chunk[2], chunk[3],
+                                chunk[4], chunk[5], chunk[6], chunk[7], fmodRendered, fmodPeak, fmodCalls, fmodFlushed);
+                check(fourOk && fifthOk && totalOk && primeOk && fmodFlushed,
+                      "AudioQueueOfflineRender of 4096-frame FMOD chunks keeps returning audio after the fourth fill until Flush");
+            }
             audioCall("_AudioFileClose", {mp3File});
             std::filesystem::remove(mp3Path);
             // 8 packets: 7 or 8 frames of 1152 decoded; the resampler holds back the last sample.
@@ -9376,6 +9592,41 @@ int runFullSubsystemTests() {
             for (int i = 0; i < 400 && !flag("isFinished"); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
             const bool after = !flag("isExecuting") && flag("isFinished");
             check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
+        }
+
+        // 32-bit iOS PTHREAD_STACK_MIN is 8 KiB. FMOD Ex (Unity 4, official
+        // iphone/src/fmod_os_misc.cpp) calls pthread_attr_setstacksize with that
+        // size — it even clamps smaller requests *up* to 8192 — and maps any
+        // non-zero pthread return to FMOD error 33. System::createSound then
+        // releases the stream, so music is prefetched once and never plays.
+        {
+            const uint32_t attr = proc.allocStatic(64), out = proc.allocStatic(4), th = proc.allocStatic(4);
+            auto invoke = [&](const char* name, std::initializer_list<uint32_t> args) {
+                return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(name), args));
+            };
+            invoke("_pthread_attr_init", {attr});
+            const uint32_t set8k = invoke("_pthread_attr_setstacksize", {attr, 8192});
+            invoke("_pthread_attr_getstacksize", {attr, out});
+            const uint32_t got = proc.mem().read<uint32_t>(out);
+            const uint32_t setSmall = invoke("_pthread_attr_setstacksize", {attr, 8191});
+            if (!(set8k == 0 && got == 8192 && setSmall == 22))
+                std::printf("    pthread 8 KiB stack: set8k=%u got=%u set8191=%u (want 0, 8192, 22)\n",
+                            set8k, got, setSmall);
+            check(set8k == 0 && got == 8192 && setSmall == 22,
+                  "pthread_attr_setstacksize accepts 32-bit iOS PTHREAD_STACK_MIN (8 KiB)");
+            bool ranOk = false;
+            if (set8k == 0) {
+                invoke("_pthread_attr_setdetachstate", {attr, 2});   // PTHREAD_CREATE_DETACHED, as FMOD does
+                auto ran = std::make_shared<std::atomic<bool>>(false);
+                const auto worker = proc.defineFunction("FmodMinStackWorker", [ran](Ctx&) { *ran = true; });
+                const uint32_t created = invoke("_pthread_create", {th, attr, worker, 0});
+                for (int i = 0; i < 400 && !*ran; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                ranOk = created == 0 && *ran;
+                if (!ranOk)
+                    std::printf("    pthread 8 KiB create: result=%u ran=%d\n", created, int(*ran));
+            }
+            check(ranOk, "a detached thread with FMOD's 8 KiB stack runs");
+            invoke("_pthread_attr_destroy", {attr});
         }
 
         // Verify the configured size on the live guest thread, and the post-start contract.

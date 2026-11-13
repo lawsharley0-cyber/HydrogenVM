@@ -40,10 +40,16 @@ struct Mp3Packets {
     uint32_t maxPacketSize = 0;
     uint32_t dataOffset = 0;                      // of the first audio packet
     uint64_t dataBytes = 0;                       // sum of the packet sizes
+    // AudioFilePacketTableInfo ('pnfo'): audible length and the encoder's delay / padding,
+    // from a LAME-compatible Xing or Info tag when the file has one. AudioFile reports
+    // these, not the raw MPEG length (frames * 1152).
+    uint64_t validFrames = 0;
+    int32_t primingFrames = 0;
+    int32_t remainderFrames = 0;
 };
 // Indexes a layer III stream: skips an ID3v2 tag and a Xing/Info header frame, stops at the
 // first thing that is not a frame of the same rate and channel count. False if there is no
-// such stream.
+// such stream. Fills the packet-table fields from a LAME/Xing tag when present.
 bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out);
 // Decodes MP3 packets as they arrive, keeping the decoder's state between calls.
 struct Mp3Stream;
