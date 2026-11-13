@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <map>
 #include "runtime/libc/TlsBridge.hpp"
+#include <zlib.h>
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
 #include <csignal>
 #include <pthread.h>
@@ -2328,6 +2329,67 @@ int runFullSubsystemTests() {
                   "Allow internet: a connection to port 443 goes through the TLS bridge, named after the server the game looked up");
             if (peer >= 0) ::close(peer);
             if (fd >= 0) call(b, "_close", {uint32_t(fd)});
+        }
+        {
+            // Header names respelled for old parsers; values and lengths untouched; only response headers.
+            std::string r = "HTTP/1.1 200 OK\r\netag: \"abc\"\r\ncontent-encoding: gzip\r\nx-amz-cf-id: Q\r\nContent-Length: 2\r\n\r\netag: body";
+            const size_t before = r.size();
+            const int n = canonicalHeaderNames(r.data(), r.size());
+            std::string req = "GET / HTTP/1.1\r\netag: x\r\n\r\n";
+            const int m = canonicalHeaderNames(req.data(), req.size());
+            check(n == 3 && r.size() == before && r.find("\r\nETag: \"abc\"\r\nContent-Encoding: gzip\r\nX-Amz-Cf-Id: Q\r\nContent-Length: 2") != std::string::npos &&
+                  r.find("\r\n\r\netag: body") != std::string::npos && m == 0,
+                  "TLS bridge: response header names get their usual spelling (ETag), the body and requests are untouched");
+        }
+        {
+            // Body previews for the play log: gzip undone, secrets and queries blanked.
+            const std::string json = "{\"access_token\": \"abc123\", \"expires_in\": 3600, \"url\": \"https://cdn.example/f?sig=zz\"}";
+            std::string gz(256, '\0');
+            z_stream z{}; deflateInit2(&z, 6, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
+            z.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(json.data())); z.avail_in = uInt(json.size());
+            z.next_out = reinterpret_cast<Bytef*>(gz.data()); z.avail_out = uInt(gz.size());
+            deflate(&z, Z_FINISH); gz.resize(z.total_out); deflateEnd(&z);
+            const std::string resp = "HTTP/1.1 200 OK\r\ncontent-encoding: gzip\r\nContent-Length: " + std::to_string(gz.size()) + "\r\n\r\n" + gz;
+            const std::string preview = httpBodyPreview(resp.data(), resp.size());
+            check(preview.find("\"access_token\": \"******\"") != std::string::npos && preview.find("\"expires_in\": 3600") != std::string::npos &&
+                  preview.find("https://cdn.example/f?**") != std::string::npos && preview.find("abc123") == std::string::npos,
+                  "TLS bridge log: small bodies previewed with gzip undone and secrets blanked");
+            auto preview2 = [](const std::string& r) { return httpBodyPreview(r.data(), r.size()); };
+            const std::string spaced = preview2("HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n{\"access_token\":\n  \"abc123\", \"session\": 77}");
+            const std::string escaped = preview2("HTTP/1.1 200 OK\r\n\r\n{\"x\\\"y\": 1, \"password\": \"a\\\"bc\"}");
+            const std::string interim = preview2("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nSet-Cookie: sid=abc123\r\nContent-Length: 2\r\n\r\nok");
+            const std::string cut = preview2("HTTP/1.1 200 OK\r\n\r\n{\"token\": \"abc");
+            check(spaced.find("abc123") == std::string::npos && spaced.find("77") == std::string::npos &&
+                  escaped.find("bc") == std::string::npos && interim.empty() && cut.empty(),
+                  "TLS bridge log: secrets after newlines, escaped quotes and bare values are blanked; interim and cut-off bodies are not shown");
+        }
+        {
+            // The bridge's play-log lines: key headers kept, queries dropped, repeats folded, totals at the end.
+            std::vector<std::string> lines;
+            size_t gameBytes = 0, serverBytes = 0;
+            {
+                HttpLog http("cdn.example", [&](const std::string& l) { lines.push_back(l); });
+                const std::string head = "HEAD /1677/index_ios.4?sig=secret HTTP/1.1\r\nHost: cdn.example\r\nRange: bytes=0-99\r\n\r\n";
+                const std::string ok = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 4096\r\nSet-Cookie: x=y\r\n\r\n";
+                const std::string moved = "HTTP/1.1 302 Found\r\nLocation: https://cdn.example/f.bin?sig=secret2\r\n\r\n";
+                const std::string poll = "GET /status?id=7 HTTP/1.1\r\n\r\n";
+                http.chunk(true, head.data(), head.size());
+                http.chunk(false, ok.data(), ok.size());
+                http.chunk(false, moved.data(), moved.size());
+                const std::string pong = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                for (int i = 0; i < 12; ++i) { http.chunk(true, poll.data(), poll.size()); http.chunk(false, pong.data(), pong.size()); }
+                http.ended("closed by the game");
+                gameBytes = head.size() + 12 * poll.size(); serverBytes = ok.size() + moved.size() + 12 * pong.size();
+            }
+            auto has = [&](const std::string& t) { for (auto& l : lines) if (l.find(t) != std::string::npos) return true; return false; };
+            check(has("<- HEAD /1677/index_ios.4 HTTP/1.1 [Range: bytes=0-99]") &&
+                  has("-> HTTP/1.1 200 OK [Content-Type: application/octet-stream, Content-Length: 4096]") &&
+                  has("-> HTTP/1.1 302 Found [Location: https://cdn.example/f.bin]") && !has("secret") && !has("Cookie") && has("<- GET /status HTTP/1.1 (10 times so far)") &&
+                  has("<- GET /status HTTP/1.1 (12 times)") && has("-> HTTP/1.1 200 OK [Content-Length: 2] (10 times so far)") &&
+                  has("-> HTTP/1.1 200 OK [Content-Length: 2] (12 times)") &&
+                  has("connection ended, closed by the game (game sent " + std::to_string(gameBytes) + " bytes, server sent " +
+                      std::to_string(serverBytes) + ")") && has("   body: ok") && lines.size() == 11,
+                  "TLS bridge log: key headers, no queries or cookies, a poll's requests and replies folded per side, byte totals at the end");
         }
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
         {
@@ -7776,6 +7838,58 @@ int runFullSubsystemTests() {
                   "C strings in UTF-16 and UTF-32 carry no byte-order mark and end with a wide terminator");
             proc.heap().free(out);
             proc.heap().free(lit);
+        }
+
+        // NSString byte conversion: literal Unicode/encoding oracles, not game output.
+        {
+            auto& sr = ObjC::rt(proc);
+            const char* selector = "getBytes:maxLength:usedLength:encoding:options:range:remainingRange:";
+            const auto str = Foundation::constString(proc, "A\xc3\xa9\xf0\x9f\x98\x80Z");
+            const bool supported = (sr.send(cpu, str, "respondsToSelector:", {sr.sel(selector)}) & 0xff) != 0;
+            check(supported, "NSString range byte conversion is implemented (BADLAND Crashlytics startup)");
+            if (supported) {
+                const auto out = proc.heap().allocZeroed(64);
+                auto convert = [&](uint32_t max, uint32_t enc, uint32_t options, uint32_t loc, uint32_t len, bool countOnly = false) {
+                    std::memset(proc.mem().host(out), 0x55, 64);
+                    return (sr.send(cpu, str, selector, {countOnly ? 0u : out, max, out + 32, enc, options, loc, len, out + 36}) & 0xff) != 0;
+                };
+                auto used = [&] { return proc.mem().read<uint32_t>(out + 32); };
+                auto left = [&](uint32_t loc, uint32_t len) { return proc.mem().read<uint32_t>(out + 36) == loc && proc.mem().read<uint32_t>(out + 40) == len; };
+                check(convert(7, 4, 0, 0, 5) && used() == 7 && left(4, 1) &&
+                      std::memcmp(proc.mem().host(out), "A\xc3\xa9\xf0\x9f\x98\x80", 7) == 0 && proc.mem().read<uint8_t>(out + 7) == 0x55,
+                      "NSString getBytes writes partial UTF-8 without a terminator and counts UTF-16 units");
+                check(convert(3, 4, 0, 1, 3) && used() == 2 && left(2, 2) && proc.mem().read<uint8_t>(out + 2) == 0x55,
+                      "NSString getBytes never splits a UTF-8 scalar or surrogate pair");
+                check(!convert(1, 4, 0, 1, 1) && used() == 0 && left(1, 1) && proc.mem().read<uint8_t>(out) == 0x55,
+                      "NSString getBytes fails when no character fits");
+                check(convert(0, 4, 0, 0, 5, true) && used() == 8 && left(5, 0),
+                      "NSString getBytes NULL buffer measures the full range independent of maxLength");
+                check(convert(16, 1, 0, 0, 5) && used() == 1 && left(1, 4) && proc.mem().read<uint8_t>(out + 1) == 0x55,
+                      "NSString getBytes stops at an unrepresentable character with a successful prefix");
+                check(convert(16, 1, 1, 1, 1) && used() == 1 && proc.mem().read<uint8_t>(out) == 'e',
+                      "NSString lossy ASCII uses ASCII fallback, not the CF control byte 0xff");
+                check(convert(16, 10, 0, 1, 1) && used() == 2 && left(2, 0) && proc.mem().read<uint16_t>(out) == 0xe9 && proc.mem().read<uint8_t>(out + 2) == 0x55,
+                      "NSString getBytes UTF-16 has no byte-order mark by default");
+                check(convert(16, 10, 2, 1, 1) && used() == 4 && proc.mem().read<uint16_t>(out) == 0xfeff && proc.mem().read<uint16_t>(out + 2) == 0xe9,
+                      "NSString getBytes external representation includes the UTF-16 byte-order mark");
+                check(!convert(16, 0xdeadbeef, 0, 0, 5) && used() == 0 && left(0, 5),
+                      "NSString getBytes rejects unknown encodings");
+                bool rejected = false;
+                try { convert(16, 4, 0, 0xffffffff, 2); } catch (const CPU::GuestFault&) { rejected = true; }
+                check(rejected, "NSString getBytes rejects overflowing out-of-bounds ranges");
+                const uint32_t ro = 0xbf320000;
+                proc.mem().map(ro, 4096, Memory::kProtRead);
+                for (int output = 0; output < 3; ++output) {
+                    bool faulted = false;
+                    std::memset(proc.mem().host(ro), 0x55, 4096);
+                    try { sr.send(cpu, str, selector, {output == 0 ? ro : out, 16, output == 1 ? ro : out + 32,
+                                                     4, 0, 0, 1, output == 2 ? ro : out + 36}); }
+                    catch (const CPU::GuestFault& e) { faulted = e.exit == CPU::Exit::MemFault; }
+                    check(faulted && proc.mem().read<uint32_t>(ro) == 0x55555555,
+                          "NSString getBytes faults without modifying read-only buffer/used/range outputs");
+                }
+                proc.heap().free(out);
+            }
         }
 
         // AudioQueue test with guest ARMv7 callback

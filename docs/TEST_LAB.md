@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 32 automated cases (TL-A–TL-Z plus TL-AH–TL-AM) · schema version 1.
+Version 1.0 · 39 automated cases (TL-A–TL-AM) · schema version 1.
 
 ## Contents
 
@@ -23,9 +23,9 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-The automated suite now covers 32 case IDs, including import integrity, CPU
+The automated suite now covers 39 case IDs, including import integrity, CPU
 correctness, graphics, audio, persistence, threading, input, and lifecycle.
-TL-L is a host-driven termination check; 31 cases are guest-selectable.
+TL-L is a host-driven termination check; 38 cases are guest-selectable.
 
 ---
 
@@ -55,6 +55,24 @@ TL-L is a host-driven termination check; 31 cases are guest-selectable.
 | TL-Y | libstdc++ 4.2 ABI | Calls the GCC 4.2 libstdc++ entry points directly: std::string COW `_Rep` (empty rep, refcopy, dispose), `std::list` node hook/unhook, red-black tree insert/rebalance and increment, and the SJLJ unwinder frame chain. Oracle: the libstdc++ 4.2 ABI layouts the app binaries are compiled against |
 | TL-Z | Custom UIKeyInput | A UIView implementing UIKeyInput focuses, handles its own insert/delete, resigns and observes software-keyboard show/hide notifications. Proven red on main ff24df3 (focus/text/resign succeed, shown=hidden=0). The guest deletion also exercises NSString composed ranges for accents/surrogates; the fulltest covers joined emoji, flags, Hangul, CRLF and rejected bounds. Separate fulltest cases verify host requests, Unicode protocol forwarding, traits, focus identity and refused resignation. Phone keyboard presentation remains a device check. |
 
+### BADLAND regression cases
+
+| ID | Name | Independent oracle |
+|---|---|---|
+| TL-AA | NSString byte conversion | UTF-16 ranges, partial UTF-8 scalar conversion, byte limits and sizing queries follow NSString's conversion contract |
+| TL-AB | CGRect dictionaries | Signed fractional X/Y/Width/Height fields round-trip; malformed dictionaries fail |
+| TL-AC | Mobile shader preambles | Unconditional extension directives in generated preambles compile after translation; strict compiler validation remains enabled |
+| TL-AD | Initial and navigation layout | Layout occurs between appearance callbacks; managed navigation content fills landscape bounds without an autoresizing mask |
+| TL-AE | GKScore coding | Local category, date, signed 64-bit score, context and default-board properties survive keyed archiving |
+| TL-AF | Struct-valued KVC | Declared struct getters/setters preserve authored size and point values through NSValue boxing |
+| TL-AG | CMTime arithmetic | Rational sums/differences, scale, rounding, overflow and nonnumeric values follow CoreMedia's public contract |
+
+These cases reproduce shared framework failures found in BADLAND. Each was
+demonstrated failing before its runtime fix. Additional runner tests cover
+opaque quarter-turn presentation and the conservative shader translation rules.
+See [the investigation](BADLAND_PLAYABILITY_2026-11-12.md) for real-game evidence
+and the remaining playability limits.
+
 ### Canabalt regressions
 
 | ID | Name | Independent oracle |
@@ -66,9 +84,7 @@ TL-L is a host-driven termination check; 31 cases are guest-selectable.
 All three guest cases fail before their shared runtime corrections. Focused runners
 also cover supplementary scalar membership through a custom character set,
 protected output/read spans, text matrices, saved font state, invisible text and
-glyph clipping. TL-AA–TL-AG are reserved by the separate BADLAND draft PR #428;
-these IDs avoid colliding with that batch. This branch does not incorporate its
-unmerged runtime changes.
+glyph clipping. TL-AA–TL-AG are the integrated BADLAND cases; this batch adds AH–AM.
 
 ### Objective-C conformance (T8)
 
@@ -90,7 +106,7 @@ The host runner retains these dictionaries and the oracle description in its
 report. A pass marker without a fresh complete guest result (or followed by a
 nonzero exit) is a failure. `objc_conformance.m` uses ARC;
 `objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
-convention. The menu scrolls so all 28 selectable cases and footer controls remain
+convention. The menu scrolls so all 38 selectable cases and footer controls remain
 reachable.
 
 These five cases pass on unchanged main; that is new coverage, not a runtime
@@ -212,7 +228,7 @@ python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
    *Open in…* from Files, or drop it into the app's Files folder and pull to
    refresh.
 3. Tap `TestLab` in the library to run it.
-4. The menu shows the 28 guest-selectable cases (TL-A…TL-K, TL-M…TL-Z and TL-AH…TL-AJ)
+4. The menu shows the 25 guest-selectable cases (TL-A…TL-K and TL-M…TL-Z)
    with their last-known status. TL-L is a host-driven termination test.
 5. Tap a row to run an individual case.  Tap **Run All** to run every case.
 6. Tap **Export JSON** to write `Documents/testlab_result.json` — retrieve it
@@ -485,7 +501,6 @@ nothing in the schema unless fields change, and add the row to this file.
 - Empty zip entries are stored by some tools and deflated by others. Both must import (TL-A).
 - Re-importing an IPA must keep `Documents/`, `Library/` and `tmp/`; it replaces only the `.app` bundle (TL-E).
 - When you see "no `TESTLAB` line in stdout", run the case by hand: the failure is usually an import or loader error on stderr.
-
 ### TL-AK — legacy UIView animation delegate ABI
 
 Checks deferred delivery exactly once, scalar BOOL YES, and preserved animation ID/context. Canabalt Scores dismissal exposed an NSNumber pointer passed as BOOL; the callback then left its overlay window active. Both guest and runner fail before the scalar correction.

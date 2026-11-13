@@ -43,11 +43,13 @@
       "sound": true
     },
     {
-      "folder": "Canabalt_1.4",
-      "frames": 265,
-      "name": "Canabalt_1.4",
+      "folder": "BADLAND_1.0",
+      "frames": 801,
+      "name": "BADLAND 1.0",
       "picture": true,
-      "sound": true
+      "seconds": 60,
+      "sound": true,
+      "tap": "116,284@2"
     },
     {
       "folder": "com.fgol.HungrySharkEvolution-iOS4.3-_Clutch-2.0.4",
@@ -236,6 +238,13 @@
       "folder": "Tiny_Wings_v1.0_iOS3",
       "frames": 75,
       "name": "Tiny_Wings_v1.0_iOS3",
+      "picture": true,
+      "sound": true
+    },
+    {
+      "folder": "Canabalt_1.4",
+      "frames": 265,
+      "name": "Canabalt_1.4",
       "picture": true,
       "sound": true
     }

@@ -1,5 +1,6 @@
 // HydrogenVM — OpenGL ES forwarded to the host GPU. See HostGL.hpp.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/MobileShaderSource.hpp"
 #include "runtime/gl/HostGLInternal.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
@@ -789,6 +790,8 @@ void hg_glShaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings,
         if (len >= 0) fullSource.append(p, size_t(len));
         else fullSource.append(p);
     }
+
+    fullSource = Shader::normalizeMobileSource(fullSource);
 
     // Mesa and desktop GLSL reject duplicate #define directives without an intervening #undef,
     // whereas mobile PowerVR/Apple drivers allow redefinitions. Automatically insert #undef.

@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Thirty-two automated cases (TL-A--TL-Z plus TL-AH--TL-AM); see docs/TEST_LAB.md for the
+// Thirty-nine automated cases (TL-A--TL-AM); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
@@ -81,6 +81,13 @@ static const char *kAppBuild        = "1";
 #define CASE_X  @"TL-X"
 #define CASE_Y  @"TL-Y"
 #define CASE_Z  @"TL-Z"
+#define CASE_AA @"TL-AA"
+#define CASE_AB @"TL-AB"
+#define CASE_AC @"TL-AC"
+#define CASE_AD @"TL-AD"
+#define CASE_AE @"TL-AE"
+#define CASE_AF @"TL-AF"
+#define CASE_AG @"TL-AG"
 #define CASE_AH @"TL-AH"
 #define CASE_AI @"TL-AI"
 #define CASE_AJ @"TL-AJ"
@@ -1985,6 +1992,201 @@ static TLResult *runCaseAJ(void) {
     return r;
 }
 
+// TL-AA: independently specified UTF-8 bytes and UTF-16 character counts.
+static TLResult *runCaseAA(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AA version:1];
+    writeCheckpoint(CASE_AA); r.checkpointWritten = YES;
+    double start = monoMs();
+    unsigned char bytes[12]; memset(bytes, 0x55, sizeof(bytes));
+    NSUInteger used = 0; NSRange left = NSMakeRange(99, 99);
+    NSString *s = @"A\u00e9\U0001f600Z";
+    BOOL prefix = [s getBytes:bytes maxLength:7 usedLength:&used encoding:NSUTF8StringEncoding options:0 range:NSMakeRange(0, 5) remainingRange:&left];
+    const unsigned char expected[] = {0x41, 0xc3, 0xa9, 0xf0, 0x9f, 0x98, 0x80};
+    BOOL correct = prefix && used == 7 && left.location == 4 && left.length == 1 && memcmp(bytes, expected, 7) == 0 && bytes[7] == 0x55;
+    BOOL measured = [s getBytes:NULL maxLength:0 usedLength:&used encoding:NSUTF8StringEncoding options:0 range:NSMakeRange(0, 5) remainingRange:&left];
+    correct = correct && measured && used == 8 && left.location == 5 && left.length == 0;
+    BOOL ascii = [s getBytes:bytes maxLength:12 usedLength:&used encoding:NSASCIIStringEncoding options:1 range:NSMakeRange(1, 1) remainingRange:&left];
+    correct = correct && ascii && used == 1 && bytes[0] == 'e';
+    BOOL caughtRange = NO;
+    @try { [s getBytes:bytes maxLength:12 usedLength:&used encoding:NSUTF8StringEncoding options:0 range:NSMakeRange(999, 1) remainingRange:&left]; }
+    @catch (NSException *exception) { caughtRange = [exception.name isEqualToString:@"NSRangeException"]; }
+    correct = correct && caughtRange;
+    r.expected = @"UTF-8 prefix=41c3a9f09f9880; remaining UTF-16={4,1}; no terminator; measured=8";
+    r.actual = [NSString stringWithFormat:@"prefix=%d correct=%d measured=%d used=%u remaining={%u,%u}", prefix, correct, measured, (unsigned)used, (unsigned)left.location, (unsigned)left.length];
+    r.status = correct ? @"passed" : @"failed";
+    if (!correct) r.reason = @"NSString range-to-byte conversion contract mismatch";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+extern CFDictionaryRef CGRectCreateDictionaryRepresentation(CGRect rect);
+extern bool CGRectMakeWithDictionaryRepresentation(CFDictionaryRef dict, CGRect *rect);
+static TLResult *runCaseAB(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AB version:1];
+    writeCheckpoint(CASE_AB); r.checkpointWritten = YES;
+    double start = monoMs();
+    CGRect original = CGRectMake(-1.25f, 2.5f, -3.75f, 4.125f), restored;
+    CFDictionaryRef dict = CGRectCreateDictionaryRepresentation(original);
+    BOOL ok = dict && CGRectMakeWithDictionaryRepresentation(dict, &restored) &&
+        restored.origin.x == original.origin.x && restored.origin.y == original.origin.y &&
+        restored.size.width == original.size.width && restored.size.height == original.size.height;
+    if (dict) CFRelease(dict);
+    r.expected = @"rectangle dictionary roundtrip preserves {-1.25,2.5,-3.75,4.125}";
+    r.actual = ok ? @"all fields preserved" : @"geometry dictionary mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"CGRect dictionary conversion failed";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static TLResult *runCaseAC(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AC version:1];
+    writeCheckpoint(CASE_AC); r.checkpointWritten = YES;
+    double start = monoMs();
+    EAGLContext *prior = [EAGLContext currentContext];
+    EAGLContext *context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+    const char *source = "precision mediump float;\nuniform vec4 tint;\n"
+        "#extension GL_OES_standard_derivatives : enable\n"
+        "void main(){gl_FragColor=tint*fwidth(gl_FragCoord.x);}\n";
+    GLint compiled = 0;
+    if ([EAGLContext setCurrentContext:context]) {
+        GLuint shader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(shader, 1, &source, NULL); glCompileShader(shader);
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+        glDeleteShader(shader);
+    }
+    [EAGLContext setCurrentContext:prior];
+    r.expected = @"mobile shader with generated global header and unconditional derivative extension compiles";
+    r.actual = compiled ? @"compiled" : @"not compiled";
+    r.status = compiled ? @"passed" : @"failed";
+    if (!compiled) r.reason = @"Late mobile extension directive rejected";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static int tladStage, tladCorrect;
+@interface TLInitialLayoutView : UIView
+@end
+@implementation TLInitialLayoutView
+- (void)layoutSubviews { if (tladStage != 1) tladCorrect = 0; tladStage = 2; }
+@end
+@interface TLInitialLayoutController : UIViewController
+@end
+@implementation TLInitialLayoutController
+- (void)viewWillAppear:(BOOL)animated { if (tladStage != 0) tladCorrect = 0; tladStage = 1; }
+- (void)viewDidAppear:(BOOL)animated { if (tladStage != 2) tladCorrect = 0; tladStage = 3; }
+@end
+static UIWindow *tladHideWindow;
+static BOOL tladStaleAppear, tladDidDisappear;
+@interface TLReentrantLayoutController : UIViewController @end
+@implementation TLReentrantLayoutController
+- (void)viewWillAppear:(BOOL)animated { tladHideWindow.hidden = YES; }
+- (void)viewDidAppear:(BOOL)animated { tladStaleAppear = YES; }
+- (void)viewDidDisappear:(BOOL)animated { tladDidDisappear = YES; }
+@end
+static TLResult *runCaseAD(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AD version:1];
+    writeCheckpoint(CASE_AD); r.checkpointWritten = YES;
+    double start = monoMs();
+    UIWindow *prior = [UIApplication sharedApplication].keyWindow;
+    UIWindow *window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+    TLInitialLayoutController *controller = [[TLInitialLayoutController alloc] init];
+    TLInitialLayoutView *view = [[TLInitialLayoutView alloc] initWithFrame:window.bounds];
+    controller.view = view; window.rootViewController = controller;
+    tladStage = 0; tladCorrect = 1;
+    [view setNeedsLayout]; [window makeKeyAndVisible];
+    BOOL ok = tladCorrect && tladStage == 3;
+    window.hidden = YES; if (prior) [prior makeKeyAndVisible];
+    UIViewController *child = [[UIViewController alloc] init];
+    child.view = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 460)];
+    child.view.autoresizingMask = 0;
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:child];
+    [nav setNavigationBarHidden:YES];
+    nav.view.bounds = CGRectMake(0, 0, 568, 320);
+    [nav.view layoutIfNeeded];
+    ok = ok && child.view.bounds.size.width == 568 && child.view.bounds.size.height == 320;
+    tladHideWindow = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+    tladHideWindow.rootViewController = [[TLReentrantLayoutController alloc] init];
+    tladStaleAppear = NO; tladDidDisappear = NO;
+    [tladHideWindow makeKeyAndVisible];
+    ok = ok && tladDidDisappear && !tladStaleAppear;
+    tladHideWindow = nil; if (prior) [prior makeKeyAndVisible];
+    r.expected = @"initial appearance: willAppear -> layoutSubviews -> didAppear, synchronously";
+    r.actual = [NSString stringWithFormat:@"correct=%d stage=%d", tladCorrect, tladStage];
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Window appearance returned before initial layout";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+@interface GKScore : NSObject
+- (instancetype)initWithCategory:(NSString *)category;
+@property(nonatomic) long long value;
+@property(nonatomic) unsigned long long context;
+@property(nonatomic, readonly) NSString *category;
+@end
+static TLResult *runCaseAE(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AE version:1];
+    writeCheckpoint(CASE_AE); r.checkpointWritten = YES;
+    double start = monoMs();
+    GKScore *score = [[GKScore alloc] initWithCategory:@"test-board"];
+    score.value = -81985529216486897LL;
+    score.context = 0x1234567876543210ULL;
+    NSData *bytes = [NSKeyedArchiver archivedDataWithRootObject:score];
+    GKScore *restored = [NSKeyedUnarchiver unarchiveObjectWithData:bytes];
+    BOOL ok = restored && score.value == -81985529216486897LL && restored.value == -81985529216486897LL &&
+        score.context == 0x1234567876543210ULL && restored.context == 0x1234567876543210ULL && [restored.category isEqualToString:@"test-board"];
+    r.expected = @"offline GKScore NSCoding preserves signed 64-bit value, context and category";
+    r.actual = ok ? @"all local score fields survived" : @"local score archive mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"GameKit local score coding failed";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static TLResult *runCaseAF(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AF version:1];
+    writeCheckpoint(CASE_AF); r.checkpointWritten = YES;
+    double start = monoMs();
+    UIView *view = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
+    CGRect expected = CGRectMake(1.25f, 2.5f, 80.5f, 40.25f);
+    [view setValue:[NSValue valueWithCGRect:expected] forKey:@"frame"];
+    CGRect actual = [[view valueForKey:@"frame"] CGRectValue];
+    BOOL ok = actual.origin.x == expected.origin.x && actual.origin.y == expected.origin.y &&
+        actual.size.width == expected.size.width && actual.size.height == expected.size.height;
+    BOOL caught = NO;
+    @try { [view setValue:nil forKey:@"frame"]; }
+    @catch (NSException *exception) { caught = [exception.name isEqualToString:@"NSInvalidArgumentException"]; }
+    ok = ok && caught;
+    r.expected = @"KVC unboxes and boxes every CGRect field through NSValue";
+    r.actual = ok ? @"CGRect roundtrip preserved" : @"struct property mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"KVC struct property transfer failed";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+typedef struct { long long value; int timescale; unsigned flags; long long epoch; } TLMediaTime;
+extern TLMediaTime CMTimeAdd(TLMediaTime a, TLMediaTime b);
+extern TLMediaTime CMTimeSubtract(TLMediaTime a, TLMediaTime b);
+static TLResult *runCaseAG(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AG version:1];
+    writeCheckpoint(CASE_AG); r.checkpointWritten = YES;
+    double start = monoMs();
+    TLMediaTime a = {1, 2, 1, 0}, b = {1, 3, 1, 0};
+    TLMediaTime sum = CMTimeAdd(a, b), difference = CMTimeSubtract(a, b);
+    BOOL ok = sum.value == 5 && sum.timescale == 6 && sum.flags == 1 &&
+        difference.value == 1 && difference.timescale == 6 && difference.flags == 1;
+    TLMediaTime large = {15000000001LL, 3, 1, 0}, zero = {0, 715827883, 1, 0};
+    TLMediaTime reduced = CMTimeAdd(large, zero);
+    ok = ok && reduced.timescale == 1073741823 && reduced.flags == 1;
+    r.expected = @"1/2+1/3=5/6; 1/2-1/3=1/6 (24-byte ARMv7 struct ABI)";
+    r.actual = ok ? @"exact rational arithmetic" : @"media time arithmetic mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"CMTime addition/subtraction failed";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
 static TLResult *runCaseZ(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_Z version:1];
     writeCheckpoint(CASE_Z); r.checkpointWritten = YES;
@@ -2224,7 +2426,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -2283,6 +2485,20 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseY()];
         } else if ([cid isEqualToString:CASE_Z]) {
             [results addObject:runCaseZ()];
+        } else if ([cid isEqualToString:CASE_AA]) {
+            [results addObject:runCaseAA()];
+        } else if ([cid isEqualToString:CASE_AB]) {
+            [results addObject:runCaseAB()];
+        } else if ([cid isEqualToString:CASE_AC]) {
+            [results addObject:runCaseAC()];
+        } else if ([cid isEqualToString:CASE_AD]) {
+            [results addObject:runCaseAD()];
+        } else if ([cid isEqualToString:CASE_AE]) {
+            [results addObject:runCaseAE()];
+        } else if ([cid isEqualToString:CASE_AF]) {
+            [results addObject:runCaseAF()];
+        } else if ([cid isEqualToString:CASE_AG]) {
+            [results addObject:runCaseAG()];
         } else if ([cid isEqualToString:CASE_AH]) {
             [results addObject:runCaseAH()];
         } else if ([cid isEqualToString:CASE_AI]) {
@@ -2334,6 +2550,13 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_X]) return runCaseX();
     if ([caseId isEqualToString:CASE_Y]) return runCaseY();
     if ([caseId isEqualToString:CASE_Z]) return runCaseZ();
+    if ([caseId isEqualToString:CASE_AA]) return runCaseAA();
+    if ([caseId isEqualToString:CASE_AB]) return runCaseAB();
+    if ([caseId isEqualToString:CASE_AC]) return runCaseAC();
+    if ([caseId isEqualToString:CASE_AD]) return runCaseAD();
+    if ([caseId isEqualToString:CASE_AE]) return runCaseAE();
+    if ([caseId isEqualToString:CASE_AF]) return runCaseAF();
+    if ([caseId isEqualToString:CASE_AG]) return runCaseAG();
     if ([caseId isEqualToString:CASE_AH]) return runCaseAH();
     if ([caseId isEqualToString:CASE_AI]) return runCaseAI();
     if ([caseId isEqualToString:CASE_AJ]) return runCaseAJ();
@@ -2376,8 +2599,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AH: String search", @"AI: Legacy glyphs", @"AJ: Indexed format", @"AK: Animation BOOL", @"AL: Window lifetime", @"AM: Timer pool" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AH: String search", @"AI: Legacy glyphs", @"AJ: Indexed format", @"AK: Animation BOOL", @"AL: Window lifetime", @"AM: Timer pool" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -2406,6 +2629,13 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_X version:1],
         [[TLResult alloc] initWithId:CASE_Y version:1],
         [[TLResult alloc] initWithId:CASE_Z version:1],
+        [[TLResult alloc] initWithId:CASE_AA version:1],
+        [[TLResult alloc] initWithId:CASE_AB version:1],
+        [[TLResult alloc] initWithId:CASE_AC version:1],
+        [[TLResult alloc] initWithId:CASE_AD version:1],
+        [[TLResult alloc] initWithId:CASE_AE version:1],
+        [[TLResult alloc] initWithId:CASE_AF version:1],
+        [[TLResult alloc] initWithId:CASE_AG version:1],
         [[TLResult alloc] initWithId:CASE_AH version:1],
         [[TLResult alloc] initWithId:CASE_AI version:1],
         [[TLResult alloc] initWithId:CASE_AJ version:1],
@@ -2472,7 +2702,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
