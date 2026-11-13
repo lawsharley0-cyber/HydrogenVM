@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <map>
 #include "runtime/libc/TlsBridge.hpp"
+#include <zlib.h>
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
 #include <csignal>
 #include <pthread.h>
@@ -2341,6 +2342,20 @@ int runFullSubsystemTests() {
                   "TLS bridge: response header names get their usual spelling (ETag), the body and requests are untouched");
         }
         {
+            // Body previews for the play log: gzip undone, secrets and queries blanked.
+            const std::string json = "{\"access_token\": \"abc123\", \"expires_in\": 3600, \"url\": \"https://cdn.example/f?sig=zz\"}";
+            std::string gz(256, '\0');
+            z_stream z{}; deflateInit2(&z, 6, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
+            z.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(json.data())); z.avail_in = uInt(json.size());
+            z.next_out = reinterpret_cast<Bytef*>(gz.data()); z.avail_out = uInt(gz.size());
+            deflate(&z, Z_FINISH); gz.resize(z.total_out); deflateEnd(&z);
+            const std::string resp = "HTTP/1.1 200 OK\r\ncontent-encoding: gzip\r\nContent-Length: " + std::to_string(gz.size()) + "\r\n\r\n" + gz;
+            const std::string preview = httpBodyPreview(resp.data(), resp.size());
+            check(preview.find("\"access_token\": \"******\"") != std::string::npos && preview.find("\"expires_in\": 3600") != std::string::npos &&
+                  preview.find("https://cdn.example/f?**") != std::string::npos && preview.find("abc123") == std::string::npos,
+                  "TLS bridge log: small bodies previewed with gzip undone and secrets blanked");
+        }
+        {
             // The bridge's play-log lines: key headers kept, queries dropped, repeats folded, totals at the end.
             std::vector<std::string> lines;
             size_t gameBytes = 0, serverBytes = 0;
@@ -2365,7 +2380,7 @@ int runFullSubsystemTests() {
                   has("<- GET /status HTTP/1.1 (12 times)") && has("-> HTTP/1.1 200 OK [Content-Length: 2] (10 times so far)") &&
                   has("-> HTTP/1.1 200 OK [Content-Length: 2] (12 times)") &&
                   has("connection ended, closed by the game (game sent " + std::to_string(gameBytes) + " bytes, server sent " +
-                      std::to_string(serverBytes) + ")") && lines.size() == 10,
+                      std::to_string(serverBytes) + ")") && has("   body: ok") && lines.size() == 11,
                   "TLS bridge log: key headers, no queries or cookies, a poll's requests and replies folded per side, byte totals at the end");
         }
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)

@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <algorithm>
+#include <zlib.h>
 #include <cctype>
 #include <utility>
 
@@ -109,6 +110,56 @@ inline int canonicalHeaderNames(char* p, size_t n) {
     return changed;
 }
 
+// A short look at a small response body for the play log (so a game's exchange with its
+// servers can be rebuilt offline): gzip undone, values of secret-looking JSON keys and
+// query strings blanked, other control bytes shown as dots. Empty for large or absent bodies.
+inline std::string httpBodyPreview(const char* p, size_t n) {
+    const std::string all(p, n);
+    const size_t split = all.find("\r\n\r\n");
+    if (split == std::string::npos) return {};
+    std::string lowerHead = all.substr(0, split);
+    for (char& c : lowerHead) c = char(std::tolower(static_cast<unsigned char>(c)));
+    std::string body = all.substr(split + 4);
+    if (body.empty() || body.size() > 4096) return {};
+    if (lowerHead.find("content-encoding: gzip") != std::string::npos) {
+        std::string out(16384, '\0');
+        z_stream z{};
+        if (inflateInit2(&z, 16 + MAX_WBITS) != Z_OK) return {};
+        z.next_in = reinterpret_cast<Bytef*>(body.data()); z.avail_in = uInt(body.size());
+        z.next_out = reinterpret_cast<Bytef*>(out.data()); z.avail_out = uInt(out.size());
+        const int r = inflate(&z, Z_FINISH);
+        out.resize(z.total_out);
+        inflateEnd(&z);
+        if (r != Z_STREAM_END && r != Z_BUF_ERROR) return {};
+        body = out;
+    }
+    // Blank secrets: "...token...": "value", password=..., and URL queries.
+    static const char* const kSecret[] = {"token", "password", "secret", "credential", "session", "signature", "sig", "key", "email", "name"};
+    std::string lower = body;
+    for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (size_t i = 0; i < body.size(); ++i) {
+        if (body[i] != '"') continue;
+        const size_t end = body.find('"', i + 1);
+        if (end == std::string::npos) break;
+        const std::string k = lower.substr(i + 1, end - i - 1);
+        size_t v = end + 1;
+        while (v < body.size() && (body[v] == ' ' || body[v] == ':')) ++v;
+        bool secret = false;
+        for (const char* s : kSecret) if (k.find(s) != std::string::npos) { secret = true; break; }
+        if (secret && v > end + 1 && v < body.size() && body[v] == '"') {
+            const size_t ve = body.find('"', v + 1);
+            if (ve == std::string::npos) break;
+            for (size_t j = v + 1; j < ve; ++j) body[j] = '*';
+            i = ve;
+        } else i = end;
+    }
+    for (size_t q = body.find('?'); q != std::string::npos; q = body.find('?', q + 1))
+        for (size_t j = q + 1; j < body.size() && body[j] != '"' && body[j] != ' ' && body[j] != '\n' && body[j] != '<'; ++j) body[j] = '*';
+    if (body.size() > 600) body = body.substr(0, 600) + "...";
+    for (char& c : body) if (static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) >= 0x7F) c = '.';
+    return body;
+}
+
 // One bridged connection's lines for the play log: each request and response with its key
 // headers, repeats folded into a count (a game that polls would otherwise flood the log),
 // and the bytes each side sent when it ends.
@@ -131,6 +182,7 @@ public:
         side.last = tagged;
         side.count = 1;
         say(tagged);
+        if (!fromGame) if (const std::string body = httpBodyPreview(p, n); !body.empty()) say("   body: " + body);
     }
     void ended(const char* how) {
         if (!log_) return;
