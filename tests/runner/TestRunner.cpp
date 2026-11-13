@@ -6668,6 +6668,141 @@ int runFullSubsystemTests() {
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
     }
 
+    // 2f14. Backing-size fallback: a CAEAGLLayer drawable grows when glViewport
+    // exceeds it, and presentRenderbuffer scales the full frame into the layer
+    // (default kCAGravityResize). A pre-iPhone-5 app without Default-568h already
+    // runs at 320x480 points @2x; a game that then picks a design-sized viewport
+    // (Rayman Origins demo: 1024x682 into a 1x 480x320 drawable on iPhone5,2)
+    // would otherwise clip to a corner of the picture.
+    {
+        auto& uistate = UIKit::ui(cx);
+        const bool savedBar = uistate.statusBarHidden;
+        const auto savedWindows = uistate.windows;
+        uistate.statusBarHidden = true;
+        for (ObjC::id w : savedWindows) r.send(cpu, w, "setHidden:", {1});
+
+        auto callGL = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint64_t {
+            auto addr = proc.lookupSymbol(sym);
+            return proc.callGuest(cpu, *addr, args);
+        };
+
+        const ObjC::Class winCls = r.getClass("UIWindow");
+        const ObjC::id win = UIKit::sendRect(cx, ObjC::id(r.send(cpu, winCls, r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 240, 160});
+        r.send(cpu, win, "makeKeyAndVisible");
+        const ObjC::id glLayer = ObjC::id(r.send(cpu, r.getClass("CAEAGLLayer"), "layer"));
+        UIKit::sendRect(cx, glLayer, r.sel("setFrame:"), {0, 0, 240, 160});
+        r.send(cpu, UIKit::viewLayer(cx, win), "addSublayer:", {glLayer});
+
+        const ObjC::Class ctxCls = r.getClass("EAGLContext");
+        const ObjC::id glCtx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, ctxCls, r.selAlloc)), "initWithAPI:", {2}));
+        r.send(cpu, ctxCls, "setCurrentContext:", {glCtx});
+
+        const uint32_t ids = proc.heap().allocZeroed(32);
+        callGL("_glGenFramebuffers", {1, ids});
+        const uint32_t fbo = proc.mem().read<uint32_t>(ids);
+        callGL("_glBindFramebuffer", {0x8D40, fbo});
+        callGL("_glGenRenderbuffers", {2, ids + 4});
+        const uint32_t colorRb = proc.mem().read<uint32_t>(ids + 4);
+        const uint32_t depthRb = proc.mem().read<uint32_t>(ids + 8);
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        const bool rbOk = (r.send(cpu, glCtx, "renderbufferStorage:fromDrawable:", {0x8D41, glLayer}) & 0xFF) != 0;
+        callGL("_glFramebufferRenderbuffer", {0x8D40, 0x8CE0, 0x8D41, colorRb});
+        callGL("_glBindRenderbuffer", {0x8D41, depthRb});
+        callGL("_glRenderbufferStorage", {0x8D41, 0x81A5 /* GL_DEPTH_COMPONENT16 */, 240, 160});
+        callGL("_glFramebufferRenderbuffer", {0x8D40, 0x8D00, 0x8D41, depthRb});
+        const uint32_t complete0 = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
+
+        const uint32_t q = proc.heap().allocZeroed(8);
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int beforeW = int(proc.mem().read<int32_t>(q)), beforeH = int(proc.mem().read<int32_t>(q + 4));
+
+        callGL("_glViewport", {0, 0, 1024, 682});
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int afterW = int(proc.mem().read<int32_t>(q)), afterH = int(proc.mem().read<int32_t>(q + 4));
+        callGL("_glBindRenderbuffer", {0x8D41, depthRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int depthW = int(proc.mem().read<int32_t>(q)), depthH = int(proc.mem().read<int32_t>(q + 4));
+        const uint32_t complete1 = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
+        check(rbOk && complete0 == 0x8CD5 && beforeW == 240 && beforeH == 160 &&
+                  afterW >= 1024 && afterH >= 682 && depthW >= 1024 && depthH >= 682 && complete1 == 0x8CD5,
+              "glViewport larger than a CAEAGLLayer drawable grows the color and depth backing and keeps the FBO complete");
+
+        auto clear = [&](float r, float g, float b, int32_t sx, int32_t sy, int32_t sw, int32_t sh) {
+            callGL("_glScissor", {uint32_t(sx), uint32_t(sy), uint32_t(sw), uint32_t(sh)});
+            callGL("_glClearColor", {UIKit::fbits(r), UIKit::fbits(g), UIKit::fbits(b), UIKit::fbits(1.0f)});
+            callGL("_glClear", {0x00004000});
+        };
+        callGL("_glDisable", {0x0C11});
+        callGL("_glClearColor", {UIKit::fbits(0.1f), UIKit::fbits(0.1f), UIKit::fbits(0.1f), UIKit::fbits(1.0f)});
+        callGL("_glClear", {0x00004000});
+        callGL("_glEnable", {0x0C11 /* GL_SCISSOR_TEST */});
+        clear(1, 0, 0, 0, 0, 80, 80);                 // GL bottom-left: red
+        clear(0, 1, 0, 1024 - 80, 0, 80, 80);         // GL bottom-right: green
+        clear(0, 0, 1, 0, 682 - 80, 80, 80);          // GL top-left: blue
+        clear(1, 1, 1, 1024 - 80, 682 - 80, 80, 80);  // GL top-right: white
+        callGL("_glDisable", {0x0C11});
+
+        const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
+        UIKit::compositeFrame(cx);
+        const auto& fb = uistate.framebuffer;
+        auto rgb = [&](int x, int y) -> std::array<int, 3> {
+            if (x < 0 || y < 0 || x >= fb.width || y >= fb.height || fb.rgba.empty()) return {0, 0, 0};
+            const uint8_t* p = &fb.rgba[(size_t(y) * size_t(fb.width) + size_t(x)) * 4];
+            return {int(p[0]), int(p[1]), int(p[2])};
+        };
+        auto mostly = [&](std::array<int, 3> p, int r, int g, int b) {
+            return std::abs(p[0] - r) < 40 && std::abs(p[1] - g) < 40 && std::abs(p[2] - b) < 40;
+        };
+        // 240x160-point layer at (0,0) on a 2x screen is 480x320 pixels. 80-pixel
+        // corners of the 1024x682 viewport cover ~37 pixels after kCAGravityResize.
+        const auto tl = rgb(12, 12), tr = rgb(468, 12), bl = rgb(12, 308), br = rgb(468, 308);
+        const bool corners = presOk && fb.width >= 480 && fb.height >= 320 &&
+                             mostly(tl, 0, 0, 255) && mostly(tr, 255, 255, 255) &&
+                             mostly(bl, 255, 0, 0) && mostly(br, 0, 255, 0);
+        if (!corners)
+            std::printf("    backing-size corners tl=%d,%d,%d tr=%d,%d,%d bl=%d,%d,%d br=%d,%d,%d fb=%dx%d\n",
+                        tl[0], tl[1], tl[2], tr[0], tr[1], tr[2], bl[0], bl[1], bl[2], br[0], br[1], br[2],
+                        fb.width, fb.height);
+        check(corners, "presentRenderbuffer scales a grown 1024x682 backing into the layer so all four corners are visible");
+
+        // A viewport inside the original drawable does not shrink it; a large
+        // viewport on an offscreen FBO does not change the on-screen drawable.
+        const int grownW = afterW, grownH = afterH;
+        callGL("_glBindFramebuffer", {0x8D40, fbo});
+        callGL("_glViewport", {0, 0, 80, 60});
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int stayW = int(proc.mem().read<int32_t>(q)), stayH = int(proc.mem().read<int32_t>(q + 4));
+
+        callGL("_glGenFramebuffers", {1, ids + 12});
+        const uint32_t offFbo = proc.mem().read<uint32_t>(ids + 12);
+        callGL("_glGenTextures", {1, ids + 16});
+        const uint32_t offTex = proc.mem().read<uint32_t>(ids + 16);
+        callGL("_glBindTexture", {0x0DE1, offTex});
+        callGL("_glTexImage2D", {0x0DE1, 0, 0x1908 /* GL_RGBA */, 64, 64, 0, 0x1908, 0x1401, 0});
+        callGL("_glBindFramebuffer", {0x8D40, offFbo});
+        callGL("_glFramebufferTexture2D", {0x8D40, 0x8CE0, 0x0DE1, offTex, 0});
+        callGL("_glViewport", {0, 0, 256, 256});
+        callGL("_glBindFramebuffer", {0x8D40, fbo});
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int afterOffW = int(proc.mem().read<int32_t>(q)), afterOffH = int(proc.mem().read<int32_t>(q + 4));
+        check(stayW == grownW && stayH == grownH && afterOffW == grownW && afterOffH == grownH,
+              "a smaller viewport and an offscreen FBO viewport leave the grown drawable size alone");
+
+        r.send(cpu, win, "setHidden:", {1});
+        r.send(cpu, ctxCls, "setCurrentContext:", {0});
+        uistate.statusBarHidden = savedBar;
+        for (ObjC::id w : savedWindows) r.send(cpu, w, "setHidden:", {0});
+    }
+
     // 2f8. OpenAL spatial queries and HVMCFRawDictionary mutators
     {
         auto call_tmp = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint64_t {

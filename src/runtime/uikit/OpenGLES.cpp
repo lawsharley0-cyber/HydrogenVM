@@ -1080,8 +1080,75 @@ bool gl_isEnabled(Ctx& x, uint32_t cap) {
     }
 }
 
+// Grow a CAEAGLLayer drawable (and matching depth/stencil renderbuffers) when
+// the guest's glViewport is larger than the backing. presentRenderbuffer then
+// hands the full frame to the compositor, whose default gravity (resize) scales
+// it into the layer bounds. A pre-iPhone-5 app without Default-568h already
+// runs at 320x480 points @2x; this fallback is for games that still pick a
+// design-sized viewport (Rayman Origins demo: 1024x682 into a 1x 480x320
+// drawable on iPhone5,2) and would otherwise clip to a corner.
+constexpr int kMaxDrawableFallback = 4096;
+
+void resizeRenderbuffer(Renderbuffer& rb, int nw, int nh) {
+    if (nw == rb.width && nh == rb.height) return;
+    const int ow = rb.width, oh = rb.height;
+    const int cw = std::min(ow, nw), ch = std::min(oh, nh);
+    auto copyRows = [&](auto& dst, const auto& src, auto fill, int comps) {
+        using T = typename std::decay_t<decltype(dst)>::value_type;
+        std::vector<T> next(size_t(nw) * size_t(nh) * size_t(comps), fill);
+        if (!src.empty() && cw > 0 && ch > 0) {
+            for (int y = 0; y < ch; ++y)
+                std::memcpy(next.data() + (size_t(y) * size_t(nw) * size_t(comps)),
+                            src.data() + (size_t(y) * size_t(ow) * size_t(comps)),
+                            size_t(cw) * size_t(comps) * sizeof(T));
+        }
+        dst.swap(next);
+    };
+    if (!rb.rgba.empty() || rb.drawableLayer) copyRows(rb.rgba, rb.rgba, uint8_t(0), 4);
+    if (!rb.depth.empty()) copyRows(rb.depth, rb.depth, 1.0f, 1);
+    if (!rb.stencil.empty()) copyRows(rb.stencil, rb.stencil, uint8_t(0), 1);
+    rb.width = nw;
+    rb.height = nh;
+}
+
+void maybeGrowDrawableForViewport(Ctx& x, int32_t vw, int32_t vh) {
+    if (vw <= 0 || vh <= 0 || vw > kMaxDrawableFallback || vh > kMaxDrawableFallback) return;
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg) return;
+    Renderbuffer* color = nullptr;
+    Framebuffer* fb = nullptr;
+    if (c->framebuffer != 0) {
+        auto it = sg->framebuffers.find(c->framebuffer);
+        if (it == sg->framebuffers.end()) return;
+        fb = &it->second;
+        if (fb->colorAttachmentType != GL_RENDERBUFFER || fb->colorAttachmentId == 0) return;
+        auto rit = sg->renderbuffers.find(fb->colorAttachmentId);
+        if (rit != sg->renderbuffers.end()) color = &rit->second;
+    } else if (c->renderbuffer != 0) {
+        auto rit = sg->renderbuffers.find(c->renderbuffer);
+        if (rit != sg->renderbuffers.end()) color = &rit->second;
+    }
+    if (!color || !color->drawableLayer) return;   // offscreen targets keep OpenGL's clip
+    if (vw <= color->width && vh <= color->height) return;
+    const int nw = std::max(color->width, int(vw));
+    const int nh = std::max(color->height, int(vh));
+    resizeRenderbuffer(*color, nw, nh);
+    if (!fb) return;
+    auto growAtt = [&](uint32_t type, uint32_t id) {
+        if (type != GL_RENDERBUFFER || id == 0 || id == color->id) return;
+        auto it = sg->renderbuffers.find(id);
+        if (it != sg->renderbuffers.end()) resizeRenderbuffer(it->second, nw, nh);
+    };
+    growAtt(fb->depthAttachmentType, fb->depthAttachmentId);
+    growAtt(fb->stencilAttachmentType, fb->stencilAttachmentId);
+}
+
 void gl_viewport(Ctx& x, int32_t vx, int32_t vy, int32_t vw, int32_t vh) {
-    if (auto* c = currentCtx(x)) { c->viewport[0] = vx; c->viewport[1] = vy; c->viewport[2] = vw; c->viewport[3] = vh; }
+    if (auto* c = currentCtx(x)) {
+        maybeGrowDrawableForViewport(x, vw, vh);
+        c->viewport[0] = vx; c->viewport[1] = vy; c->viewport[2] = vw; c->viewport[3] = vh;
+    }
 }
 void gl_scissor(Ctx& x, int32_t sx, int32_t sy, int32_t sw, int32_t sh) {
     if (auto* c = currentCtx(x)) { c->scissor[0] = sx; c->scissor[1] = sy; c->scissor[2] = sw; c->scissor[3] = sh; }

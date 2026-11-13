@@ -543,9 +543,114 @@ static uint32_t toGuest(Ctx& x, const void* p) {
     return uint32_t(a);   // an offset into a bound buffer
 }
 
+#define hg_glViewport hg_glViewportGenerated
 #define HOSTGL_WRAPPERS
 #include "runtime/gl/HostGLTable.inc"
 #undef HOSTGL_WRAPPERS
+#undef hg_glViewport
+
+// Backing-size fallback (see OpenGLES.cpp maybeGrowDrawableForViewport): when
+// glViewport exceeds a CAEAGLLayer drawable, grow that drawable and its depth
+// and stencil renderbuffers. presentRenderbuffer reads the full frame back and
+// the compositor scales it into the layer (kCAGravityResize). Offscreen FBOs
+// are left alone so a large viewport there still clips as OpenGL specifies.
+constexpr int kMaxDrawableFallback = 4096;
+constexpr uint32_t kDepthAttachment = 0x8D00, kStencilAttachment = 0x8D20;
+constexpr uint32_t kRenderbufferInternalFormat = 0x8D44;
+
+void maybeGrowHostDrawable(Ctx& x, int32_t vw, int32_t vh) {
+    if (vw <= 0 || vh <= 0 || vw > kMaxDrawableFallback || vh > kMaxDrawableFallback) return;
+    HostContext* hc = hgCurrent(x);
+    if (!hc) return;
+    GuestErrorScope quiet(hc);
+    auto attachmentParam = hc->fn.glGetFramebufferAttachmentParameteriv
+        ? hc->fn.glGetFramebufferAttachmentParameteriv
+        : hc->fn.glGetFramebufferAttachmentParameterivOES;
+    auto bindRb = hc->fn.glBindRenderbuffer ? hc->fn.glBindRenderbuffer : hc->fn.glBindRenderbufferOES;
+    auto rbParam = hc->fn.glGetRenderbufferParameteriv
+        ? hc->fn.glGetRenderbufferParameteriv
+        : hc->fn.glGetRenderbufferParameterivOES;
+    auto storage = hc->fn.glRenderbufferStorage ? hc->fn.glRenderbufferStorage : hc->fn.glRenderbufferStorageOES;
+    if (!attachmentParam || !bindRb || !rbParam || !storage) return;
+
+    const int32_t fbo = hgGetInt(hc, kFramebufferBinding);
+    if (fbo == 0) return;
+    int32_t colorType = 0, colorName = 0;
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectType, &colorType);
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &colorName);
+    if (uint32_t(colorType) != kRenderbuffer || colorName == 0) return;
+
+    State& st = S(x.proc);
+    Drawable d;
+    const uint64_t key = key2(hc->guestSharegroup, uint32_t(colorName));
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        auto it = st.drawables.find(key);
+        if (it == st.drawables.end() || !it->second.layer) return;
+        d = it->second;
+    }
+    if (vw <= d.width && vh <= d.height) return;
+    const int nw = std::max(d.width, int(vw));
+    const int nh = std::max(d.height, int(vh));
+
+    const int32_t savedRb = hgGetInt(hc, kRenderbufferBinding);
+    auto resizeRb = [&](uint32_t name, uint32_t format) {
+        bindRb(kRenderbuffer, name);
+        bool handled = false;
+        bool ok = false;
+        if (name == uint32_t(colorName) && st.platform)
+            ok = st.platform->drawableStorage(hc->handle, d.layer, nw, nh, handled);
+        if (!handled) {
+            storage(kRenderbuffer, format, nw, nh);
+            ok = true;
+        }
+        return ok;
+    };
+    if (!resizeRb(uint32_t(colorName), kRgba8)) {
+        bindRb(kRenderbuffer, uint32_t(savedRb));
+        return;
+    }
+    const uint32_t points[] = {kDepthAttachment, kStencilAttachment};
+    for (uint32_t point : points) {
+        int32_t type = 0, name = 0;
+        attachmentParam(kFramebuffer, point, kFbAttachmentObjectType, &type);
+        attachmentParam(kFramebuffer, point, kFbAttachmentObjectName, &name);
+        if (uint32_t(type) != kRenderbuffer || name == 0 || name == colorName) continue;
+        bindRb(kRenderbuffer, uint32_t(name));
+        int32_t fmt = 0;
+        rbParam(kRenderbuffer, kRenderbufferInternalFormat, &fmt);
+        if (fmt) storage(kRenderbuffer, uint32_t(fmt), nw, nh);
+    }
+    bindRb(kRenderbuffer, uint32_t(savedRb));
+
+    Placement again;
+    bool resend = false;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        auto it = st.drawables.find(key);
+        if (it == st.drawables.end()) return;
+        const int oldW = it->second.width, oldH = it->second.height;
+        it->second.width = nw;
+        it->second.height = nh;
+        auto pl = st.placed.find(d.layer);
+        if (d.layer && pl != st.placed.end() && oldW > 0 && oldH > 0 && nw > 0 && nh > 0) {
+            const float fx = float(oldW) / float(nw), fy = float(oldH) / float(nh);
+            pl->second.unit[0] *= fx; pl->second.unit[1] *= fx;
+            pl->second.unit[2] *= fy; pl->second.unit[3] *= fy;
+            again = pl->second;
+            resend = true;
+        }
+    }
+    if (resend) st.platform->layerGeometry(d.layer, again.unit);
+    x.proc.log(LogLevel::Info, "GPU: drawable grown from " + std::to_string(d.width) + "x" + std::to_string(d.height) +
+                                   " to " + std::to_string(nw) + "x" + std::to_string(nh) +
+                                   " (viewport exceeds CAEAGLLayer backing)");
+}
+
+void hg_glViewport(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
+    maybeGrowHostDrawable(x, a_width, a_height);
+    hg_glViewportGenerated(x, a_x, a_y, a_width, a_height);
+}
 
 // ------------------------------------------------------------- hand wrappers ---
 
