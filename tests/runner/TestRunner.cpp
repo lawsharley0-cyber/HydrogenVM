@@ -2332,6 +2332,7 @@ int runFullSubsystemTests() {
         {
             // The bridge's play-log lines: key headers kept, queries dropped, repeats folded, totals at the end.
             std::vector<std::string> lines;
+            size_t gameBytes = 0, serverBytes = 0;
             {
                 HttpLog http("cdn.example", [&](const std::string& l) { lines.push_back(l); });
                 const std::string head = "HEAD /1677/index_ios.4?sig=secret HTTP/1.1\r\nHost: cdn.example\r\nRange: bytes=0-99\r\n\r\n";
@@ -2339,15 +2340,20 @@ int runFullSubsystemTests() {
                 const std::string poll = "GET /status?id=7 HTTP/1.1\r\n\r\n";
                 http.chunk(true, head.data(), head.size());
                 http.chunk(false, ok.data(), ok.size());
-                for (int i = 0; i < 12; ++i) http.chunk(true, poll.data(), poll.size());
+                const std::string pong = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                for (int i = 0; i < 12; ++i) { http.chunk(true, poll.data(), poll.size()); http.chunk(false, pong.data(), pong.size()); }
                 http.ended("closed by the game");
+                gameBytes = head.size() + 12 * poll.size(); serverBytes = ok.size() + 12 * pong.size();
             }
             auto has = [&](const std::string& t) { for (auto& l : lines) if (l.find(t) != std::string::npos) return true; return false; };
             check(has("<- HEAD /1677/index_ios.4 HTTP/1.1 [Range: bytes=0-99]") &&
                   has("-> HTTP/1.1 200 OK [Content-Type: application/octet-stream, Content-Length: 4096]") &&
                   !has("secret") && !has("Cookie") && has("<- GET /status HTTP/1.1 (10 times so far)") &&
-                  has("(12 times)") && has("connection ended, closed by the game (game sent ") && lines.size() == 6,
-                  "TLS bridge log: key headers, no queries or cookies, repeated requests folded, byte totals at the end");
+                  has("<- GET /status HTTP/1.1 (12 times)") && has("-> HTTP/1.1 200 OK [Content-Length: 2] (10 times so far)") &&
+                  has("-> HTTP/1.1 200 OK [Content-Length: 2] (12 times)") &&
+                  has("connection ended, closed by the game (game sent " + std::to_string(gameBytes) + " bytes, server sent " +
+                      std::to_string(serverBytes) + ")") && lines.size() == 9,
+                  "TLS bridge log: key headers, no queries or cookies, a poll's requests and replies folded per side, byte totals at the end");
         }
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
         {

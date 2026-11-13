@@ -82,33 +82,37 @@ public:
         if (!log_) return;
         const std::string line = httpSummary(p, n);
         if (line.empty()) return;
+        Side& side = fromGame ? toServer_ : toGame_;   // a poll alternates request and reply: fold each side alone
         const std::string tagged = std::string(fromGame ? "<- " : "-> ") + line;
-        if (tagged == last_) {
-            ++repeats_;
-            if (repeats_ == 10 || repeats_ == 100 || repeats_ == 1000) say(last_ + " (" + std::to_string(repeats_) + " times so far)");
+        if (tagged == side.last) {
+            ++side.count;
+            if (side.count == 10 || side.count == 100 || side.count == 1000) say(side.last + " (" + std::to_string(side.count) + " times so far)");
             return;
         }
-        flushRepeats();
-        last_ = tagged;
+        flush(side);
+        side.last = tagged;
+        side.count = 1;
         say(tagged);
     }
     void ended(const char* how) {
         if (!log_) return;
-        flushRepeats();
+        flush(toServer_);
+        flush(toGame_);
         log_("Internet: " + host_ + " connection ended, " + how + " (game sent " + std::to_string(game_) +
              " bytes, server sent " + std::to_string(server_) + ")");
     }
 private:
+    struct Side { std::string last; int count = 0; };   // count includes the first time
     void say(const std::string& s) { if (lines_++ < 400) log_("Internet: " + host_ + " " + s); }
-    void flushRepeats() {
-        if (repeats_ >= 1 && repeats_ != 10 && repeats_ != 100 && repeats_ != 1000)
-            say(last_ + " (" + std::to_string(repeats_ + 1) + " times)");
-        repeats_ = 0;
+    void flush(Side& side) {
+        if (side.count > 1 && side.count != 10 && side.count != 100 && side.count != 1000)
+            say(side.last + " (" + std::to_string(side.count) + " times)");
+        side.count = 0;
     }
     std::string host_;
     std::function<void(const std::string&)> log_;
-    std::string last_;
-    int repeats_ = 0, lines_ = 0;
+    Side toServer_, toGame_;
+    int lines_ = 0;
     uint64_t game_ = 0, server_ = 0;
 };
 
