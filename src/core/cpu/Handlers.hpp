@@ -185,7 +185,6 @@ HVM_H(H_TableBranch) {
             __atomic_store_n(&op->link, _f, __ATOMIC_RELEASE);                    \
         }                                                                         \
         c->block_pc = op->imm;                                                    \
-        c->recordFaultRegisters(op->imm);                                         \
         HVM_MUSTTAIL return _f->fn(c, _f, m);                              \
     } while (0)
 
@@ -311,7 +310,6 @@ HVM_H(H_BranchIndirect) {
         first = nb->ops.data();
     }
     c->block_pc = t;
-    c->recordFaultRegisters(t);
     HVM_MUSTTAIL return first->fn(c, first, m);
 }
 
@@ -337,7 +335,6 @@ HVM_H(H_CallIndirect) {
         first = nb->ops.data();
     }
     c->block_pc = t;
-    c->recordFaultRegisters(t);
     HVM_MUSTTAIL return first->fn(c, first, m);
 }
 
@@ -887,7 +884,6 @@ HVM_H(H_MultiPopPc) {
         first = nb->ops.data();
     }
     c->block_pc = t;
-    c->recordFaultRegisters(t);
     HVM_MUSTTAIL return first->fn(c, first, m);
 }
 

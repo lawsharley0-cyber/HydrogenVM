@@ -10383,6 +10383,8 @@ int runFullSubsystemTests() {
             "    \"avgFrameMs\": 0,\n"
             "    \"avgCompositeMs\": 0,\n"
             "    \"presentWaitMs\": 0,\n"
+            "    \"presentCalls\": 0,\n"
+            "    \"presentCallMs\": 0,\n"
             "    \"maxFrameMs\": 0,\n"
             "    \"slowFrames\": 0,\n"
             "    \"p50FrameMs\": 0,\n"
@@ -11677,6 +11679,11 @@ int runFullSubsystemTests() {
                 void* proc(void*, const char* n) override { return std::string(n) == "glGetIntegerv" ? reinterpret_cast<void*>(&PlacePlatform::getIntegerv) : nullptr; }
                 bool drawableStorage(void*, uint32_t, int, int, bool& handled) override { handled = true; ++storages; return true; }
                 void layerGeometry(uint32_t, const float unit[6]) override { told.push_back({unit[0], unit[1], unit[2], unit[3], unit[4], unit[5]}); }
+                bool presentShows = true;
+                bool presentDirect(void*, uint32_t) override {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(3));   // a driver that takes its time
+                    return presentShows;
+                }
             };
             auto place = std::make_shared<PlacePlatform>();
             ProcessConfig pcfg;
@@ -11701,6 +11708,18 @@ int runFullSubsystemTests() {
             const bool rescaled = place->told.size() == afterPlace + 2 && std::fabs(place->told.back()[1] - 2 * place->told[0][1]) < 1e-6f &&
                                   std::fabs(place->told.back()[2] - 2 * place->told[0][2]) < 1e-6f && place->told.back()[5] == place->told[0][5];
             check(rescaled, "a drawable made again at another size keeps its place on the screen");
+            // Present timing counts every direct-present attempt and the time spent inside it.
+            {
+                uint32_t lay = 0; int w = 0, h = 0; std::vector<uint8_t> rgba; bool direct = false;
+                const uint64_t calls0 = pproc.perf().presentCalls.load(), ns0 = pproc.perf().presentCallNs.load();
+                const bool shownOk = HostGL::presentRenderbuffer(pproc, pctx, lay, w, h, rgba, direct) && direct;
+                place->presentShows = false;
+                bool direct2 = true;
+                const bool fellBack = !HostGL::presentRenderbuffer(pproc, pctx, lay, w, h, rgba, direct2) && !direct2;   // no readback in the fake
+                const uint64_t calls = pproc.perf().presentCalls.load() - calls0, ns = pproc.perf().presentCallNs.load() - ns0;
+                check(shownOk && fellBack && calls == 2 && ns >= 6'000'000 && ns < 2'000'000'000,
+                      "present timing counts shown and failed direct presents and the time inside the driver");
+            }
             pr.send(pcpu, ObjC::id(pctxCls), "setCurrentContext:", {0});
         }
         FakeGL::mainId() = std::this_thread::get_id();

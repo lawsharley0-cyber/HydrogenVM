@@ -97,6 +97,9 @@ struct HostFaultThreadState {
     std::atomic<uint32_t> pc{0}, lr{0}, block{0};
     std::atomic<uintptr_t> arena{0};
     std::atomic<uint64_t> generation{0};
+    // The thread's CPU: a crash report reads its current block and LR from it directly
+    // (block transitions do not copy them here; that cost every branch about 5%).
+    std::atomic<const Cpu*> cpu{nullptr};
     std::atomic_flag nameBusy = ATOMIC_FLAG_INIT;
     uint32_t hleIndex = 0xFFFFFFFFu;  // protected by nameBusy; reader never waits
     uint64_t hleGeneration = 0;
