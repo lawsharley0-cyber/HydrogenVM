@@ -239,6 +239,7 @@ namespace Hydrogen::Runtime { std::vector<uint8_t> hvmDigest(int alg, const std:
 #include "runtime/uikit/UIKit.hpp"
 #include "runtime/gl/HostGL.hpp"
 #include "runtime/foundation/Foundation.hpp"
+#include "SecCertTestData.hpp"
 #include "runtime/uikit/CoreGraphics.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "runtime/graphics/TrueType.hpp"
@@ -3252,6 +3253,97 @@ int runFullSubsystemTests() {
               !call("_CFCharacterSetIsCharacterMember", {copy,'A'}),
               "CF mutable character sets and copies own their lifetime across autorelease pool drains");
         call("_CFRelease", {copy}); call("_CFRelease", {set});
+    }
+    // Security.framework certificates and public-key operations. Clash of Clans 1.70's
+    // InMobi tracker calls SecCertificateCreateWithData, wraps the cert in a CFArray,
+    // SecPolicyCreateBasicX509, SecTrustCreateWithCertificates, SecTrustEvaluate and
+    // SecTrustCopyPublicKey, then SecKeyEncrypt with kSecPaddingNone. The previous
+    // stubs returned NULL, and CFArrayCreate then stopped on a nil object.
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint32_t {
+            return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+        auto callI = [&](const char* sym, std::initializer_list<uint32_t> args) -> int32_t {
+            return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args));
+        };
+
+        // Garbage and an empty buffer are not certificates.
+        const uint32_t junk = Foundation::makeData(cx, "not a cert", 10, true);
+        const uint32_t empty = Foundation::makeData(cx, "", 0, true);
+        const bool rejectJunk = call("_SecCertificateCreateWithData", {0, junk}) == 0 &&
+                                call("_SecCertificateCreateWithData", {0, empty}) == 0 &&
+                                call("_SecCertificateCreateWithData", {0, 0}) == 0;
+
+        // A valid DER certificate becomes a SecCertificateRef (Create rule: +1).
+        const uint32_t der = Foundation::makeData(cx, kTestCertDer, uint32_t(sizeof kTestCertDer), true);
+        const uint32_t cert = call("_SecCertificateCreateWithData", {0, der});
+        const uint32_t copy = cert ? call("_SecCertificateCopyData", {cert}) : 0;
+        bool copyMatches = false;
+        if (copy) {
+            const auto got = Foundation::dataBytes(cx, copy);
+            copyMatches = got.size() == sizeof kTestCertDer &&
+                          std::memcmp(got.data(), kTestCertDer, sizeof kTestCertDer) == 0;
+        }
+        const uint32_t summary = cert ? call("_SecCertificateCopySubjectSummary", {cert}) : 0;
+        const bool summaryOk = summary && Foundation::utf8(cx, summary).find("HydrogenVM Test") != std::string::npos;
+
+        // The InMobi path: CFArray of the cert, basic X.509 policy, trust, public key.
+        const uint32_t vals = proc.heap().allocZeroed(4);
+        proc.mem().write<uint32_t>(vals, cert);
+        const uint32_t cb = *proc.lookupSymbol("_kCFTypeArrayCallBacks");
+        const uint32_t array = cert ? call("_CFArrayCreate", {0, vals, 1, cb}) : 0;
+        const uint32_t policy = call("_SecPolicyCreateBasicX509", {});
+        const uint32_t trustSlot = proc.heap().allocZeroed(4);
+        const int32_t created = (array && policy)
+            ? callI("_SecTrustCreateWithCertificates", {array, policy, trustSlot}) : 1;
+        const uint32_t trust = proc.mem().read<uint32_t>(trustSlot);
+        const uint32_t resultSlot = proc.heap().allocZeroed(4);
+        const int32_t evaluated = trust ? callI("_SecTrustEvaluate", {trust, resultSlot}) : 1;
+        const uint32_t key = trust ? call("_SecTrustCopyPublicKey", {trust}) : 0;
+        const uint32_t block = key ? call("_SecKeyGetBlockSize", {key}) : 0;
+
+        // kSecPaddingNone (0): 256-byte 0x00..0xFF plaintext, expected ciphertext is
+        // independent of the emulator (OpenSSL pkeyutl, rsa_padding_mode:none).
+        const uint32_t plain = proc.heap().alloc(256);
+        const uint32_t cipher = proc.heap().allocZeroed(256);
+        const uint32_t cipherLen = proc.heap().allocZeroed(4);
+        proc.mem().copyIn(plain, kTestPlainNone, 256);
+        proc.mem().write<uint32_t>(cipherLen, 256);
+        const int32_t enc = (key && block == 256)
+            ? callI("_SecKeyEncrypt", {key, 0, plain, 256, cipher, cipherLen}) : 1;
+        std::vector<uint8_t> gotCipher(256);
+        if (enc == 0) proc.mem().copyOut(gotCipher.data(), cipher, 256);
+        const bool encryptOk = enc == 0 && proc.mem().read<uint32_t>(cipherLen) == 256 &&
+                               std::memcmp(gotCipher.data(), kTestCipherNone, 256) == 0;
+
+        // A too-short raw-RSA buffer is rejected (errSecParam == -50).
+        proc.mem().write<uint32_t>(cipherLen, 256);
+        const int32_t shortEnc = key ? callI("_SecKeyEncrypt", {key, 0, plain, 16, cipher, cipherLen}) : 0;
+
+        if (!(rejectJunk && cert && copyMatches && summaryOk && array && policy &&
+              created == 0 && trust && evaluated == 0 && key && block == 256 &&
+              encryptOk && shortEnc == -50)) {
+            std::printf("    SecCertificate: junk=%d cert=%u copy=%d summary=%d (%s) array=%u policy=%u "
+                        "create=%d trust=%u eval=%d key=%u block=%u enc=%d short=%d\n",
+                        int(rejectJunk), cert, int(copyMatches), int(summaryOk),
+                        summary ? Foundation::utf8(cx, summary).c_str() : "",
+                        array, policy, created, trust, evaluated, key, block, enc, shortEnc);
+        }
+        check(rejectJunk && cert && copyMatches && summaryOk && array && policy &&
+              created == 0 && trust && evaluated == 0 && key && block == 256 &&
+              encryptOk && shortEnc == -50,
+              "SecCertificateCreateWithData accepts a DER certificate, and SecKeyEncrypt matches a known raw-RSA ciphertext");
+
+        if (key) call("_CFRelease", {key});
+        if (trust) call("_CFRelease", {trust});
+        if (policy) call("_CFRelease", {policy});
+        if (array) call("_CFRelease", {array});
+        if (summary) call("_CFRelease", {summary});
+        if (copy) call("_CFRelease", {copy});
+        if (cert) call("_CFRelease", {cert});
+        if (der) call("_CFRelease", {der});
+        if (junk) call("_CFRelease", {junk});
+        if (empty) call("_CFRelease", {empty});
     }
     {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
