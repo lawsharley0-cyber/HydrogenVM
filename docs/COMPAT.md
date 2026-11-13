@@ -4,9 +4,9 @@
 
 Owner priority, November 13: the **Get these working** folder supersedes the
 earlier queue. Angry Birds Island HD, LEGO Technic Pullback Racers and LEGO
-Technic Racer are qualified below; Sonic Dash, Groove Zero, Rayman Origins
-demo, Clash of Clans 1.70 and ROBLOX internal 2.1.1 are queued. Server
-requirements are not yet verdicts.
+Technic Racer are qualified below; Groove Zero is blocked on Taito's
+`start.php` (below). Sonic Dash, Rayman Origins demo, Clash of Clans 1.70
+and ROBLOX internal 2.1.1 are queued.
 
 | App / fixture | Status | Evidence |
 |---|---|---|
@@ -15,6 +15,7 @@ requirements are not yet verdicts.
 | LEGO Technic Pullback Racers 1.0-4 | Playable with notes on Linux | Authentic title, level-select and race; Touch-scheme pull-back (Tilt also, with a host accelerometer); looping menu music for 180 s (7,909,363 non-silent of 7,950,336 frames); track 1 finished in 00:21:19, `Level 1=1` and unlocked track 2 after relaunch. 180 s and 360 s sessions clean, average ~5–7 ms, p99 ~13–18 ms. FMOD needed 32-bit iOS `PTHREAD_STACK_MIN` of 8 KiB — HydrogenVM used to reject that with `EINVAL`. Must-launch registered (30 s, 264 frames, sound). Phone untested; the second title-menu car stays locked (a later unlock). [Fixes, commands, gates and phone limits](LEGO_TECHNIC_PULLBACK_RACERS_WIP_2026-11-13.md). |
 | LEGO Technic Racer 1.0 | Playable with notes on Linux | Same studio/engine as Pullback Racers (Unity 4.0.1f2, same bundle id, different binary). Authentic title, level-select and race; Touch-scheme pull-back; looping music for 180 s (7,747,402 non-silent of 7,950,336 frames, audible 4.6–180.2 s); track 1 finished in 00:17:12, `Level 1=1` after relaunch. 180 s clean, average 7.76 ms, p99 18.09 ms (load hitches up to 878 ms in the first 10 s). Needs #448's 8 KiB pthread / AudioFile / libstdc++ fixes; no further engine change. Must-launch registered (30 s, 232 frames, sound). Phone untested; the second title-menu car stays locked (a later unlock). This version shows all four tracks unlocked on level-select. [Fixes, commands, gates and phone limits](LEGO_TECHNIC_RACER_WIP_2026-11-13.md). |
 | Forlorn 1.9c | Blocked: TestFlight build asserts before the menu | Unencrypted RobTop cocos2d IPA. Authentic boot splash, then `NSAssert` in `CCParticleSystem initWithDictionary:` (`error loading the texture`). 116 particle plists name loose PNGs (`sun.png`, `snow.png`, …) that are not in the bundle — only frames in an NPOT 61×127 RGBA4444 `particleImgSheet.pvr.ccz` — and there is no `textureImageData`. `NSAssert` is compiled in, so a real iPhone with this binary would die the same way. Not a HydrogenVM API gap; not recorded in must_launch. [Evidence](FORLORN_1.9C_WIP_2026-11-13.md). |
+| Groove Zero 1.0.0 | Blocked: requires Taito's gczero.com start.php at boot | Unencrypted Taito Groove Coaster Zero. First crash was `strlen(NULL)` in `rfServerManager::GetMacAddress` because `ioctl(SIOCGIFCONF)` was a no-op and `ether_ntoa` was missing — both now implemented (Darwin ifconf for lo0+en0, unpadded `ether_ntoa`, fail-first tests). After the fix, `PrimaryMacAddress` is `02:00:00:00:00:00`, then the game GETs `http://gczero.com/start.php?tid=…&ver=1.0.0` and dies in `AnalyzeStartXML` on a null tree. `setting.cfg` lists that host for start, shop, sync, songs and save/load. HydrogenVM is offline by design; not recorded in must_launch. [Evidence](GROOVE_ZERO_1.0.0_WIP_2026-11-13.md). |
 
 ## Scanner
 
