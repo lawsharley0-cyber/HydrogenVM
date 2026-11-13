@@ -1,9 +1,11 @@
 # LEGO Technic Pullback Racers v1.0-4 — Linux bench, 13 November 2026
 
 In progress. Two shared runtime fixes get the unencrypted Unity 4.0.1f2 IPA
-to its authentic main menu, level-select and race start. Continuous music
-and the pull-back launch gesture are not done yet; the IPA is not fully
-playable. Draft PR: https://github.com/lawsharley0-cyber/HydrogenVM/pull/448
+to its authentic main menu, level-select and race start. The pull-back
+launch works (Touch scheme, or Tilt with a host accelerometer), and a
+180 s race ran cleanly (in-game timer 02:40:40). Continuous music is
+still open — the IPA is not yet recorded as fully playable. Draft PR:
+https://github.com/lawsharley0-cyber/HydrogenVM/pull/448
 
 ## IPA
 
@@ -112,70 +114,135 @@ translucent tutorial hand points at the rear bumper (the pull-back prompt).
 `PlayerPrefs` also wrote `Racer_FxOn=1`. A 45 s run presented 1309 frames,
 average 7.36 ms, p99 20.45 ms, first frame 639 ms, no crash, zero stub hits.
 
-## Sound (still not continuous)
+## Sound (short event bursts; music still not continuous)
 
-After FrameToPacket the FMOD offline-MP3 path really renders: each cycle is
-`AudioQueueNewOutput`, a 0-frame prime `OfflineRender` (FMOD then
-`AudioFileReadPacketData` + `Enqueue` of 15+15 packets from packet 0), four
-successful `AudioQueueOfflineRender` calls of 4096 frames, then
-`AudioQueueDispose`. In a 28 s race run that cycle ran 184 times
-(~6.5 / s). Menu-only runs stay at mixer peak 0.
+A fail-first AudioQueue fixture modelled on FMOD's sequence (21-packet
+tone MP3, output callback reading 15 packets at a time, 0-frame prime,
+then 4096-frame `OfflineRender` chunks) **passes**: the first four fills
+are 4096 frames, the fifth is nonzero, the total is the whole file, and
+`AudioQueueFlush` is called at EOF. So a later `AudioQueueOfflineRender`
+does **not** return `mAudioDataByteSize == 0` after the fourth fill.
+Apple semantics checked against that loop: offline render pulls from
+enqueued buffers; the output callback is invoked when a consumed input
+buffer can be reused (FMOD fills and enqueues the same buffer); a
+0-frame prime does not itself invoke the callback (FMOD calls it
+manually — a second call would double-enqueue); `mAudioDataByteSize` on
+the render buffer is the PCM produced, not the input size; the inTimestamp
+is ignored (FMOD passes a pointer to its running `mSampleTime` double).
+`AudioQueueFlush` is still a no-op (only needed at true EOF to drain
+decoder delay, a few frames).
 
-Starting the race produces a short, real burst: mixer peak **0.315521**,
-`musicVoices=1`, 6144–8192 audible / music frames (about 0.26–0.34 s at the
-24 kHz AudioUnit), then silence. A captured WAV of an earlier 20 s run was
-all zeros because that run never left the menu. ffmpeg can decode the asset,
-so this is not "AAC-only / phone-only".
+What the game actually does, from `HVM_AUDIO_TRACE` (20 s menu, 579
+identical cycles): `AudioQueueNewOutput`, 0-frame prime, two
+`ReadPacketData` (packets 0–14 and 15–29), four successful 4096-frame
+renders (16384 frames, FMOD's stream prefetch), then `AudioQueueDispose`
+on the codec close path (`0x57e170`), and a full `AudioFileOpenWithCallbacks`
+retry of the same 261,787-byte / 545-packet "LEGO Racer Menu Loop". That
+is 5.0 OfflineRenders per NewOutput (1 prime + 4 fills) — **no** fifth
+render with `done == 0`. Dispose is FMOD closing after a 16384-frame
+prefetch (~0.37 s at 44.1 kHz), not stall-recovery at `0x57e350`.
 
-FMOD's decode loop (ARM `0x57e24c`) copies `OfflineRender` output into the
-codec buffer. `AudioQueueDispose` + recreate at `0x57e350` is stall-recovery
-when a later `OfflineRender` returns `mAudioDataByteSize == 0` and the flush
-flag at codec `+0x170` is clear. Every cycle restarts `ReadPacketData` at
-packet 0; the file is never consumed past the first 30 packets (~0.78 s of
-source). `'pnfo'` reports 627840 valid frames (14.24 s), which is correct.
+FMOD's RemoteIO output runs at 24 kHz and is pumped at the right rate;
+on the menu its render callback is all zeros (`AudioUnitPcmNonzero` 0),
+so no sound is playing. Short AIFF effects (`wind-up*`, `pickup*`,
+`m_Stream=1`, `m_UseHardware=False`, in `resources.assets` /
+`sharedassets2`) do play: they fit in one 16384-frame prefetch, so
+createSound completes and the mixer hears them. Long MP3 loops (menu
+14.24 s, race "LEGO Racer Main Music") never stay open, so they never
+play through.
 
-## Pull-back gesture (not launching)
+A 180 s Touch-scheme race (WAV captured) had only ~2.9 s of audible
+audio, in bursts at 6.4 s (level-start sting), 18.4–19.9 s (wind-up /
+launch) and 25.5–28.4 s (collectible / race FX), then silence. Mixer
+peak 0.405914, `audibleFrames` 129024, `musicVoices` 1. Menu stays
+silent. This is not "AAC-only / phone-only" (ffmpeg peak 13639 on the
+real menu MP3, audible from frame 0). Continuous music is still the
+open audio question; the IPA is not recorded in `must_launch` or
+`COMPAT.md`.
 
-Three slow 1.5 s downward pulls were delivered in a 28 s race
-(`--input-file`, 123 `touch` events, logged): starting on the car body
-(160, 280), the rear bumper (160, 330) and the hood (160, 240), each
-dragged to y ≈ 500–530. The timer stayed `00:00:00`, gear stayed `00`, and
-the tutorial hand was still pointing at the car at the end of the run.
-An earlier same-frame `--drag` (10 steps over 160 ms) also did nothing.
+## Pull-back launch (works)
 
-Menu and level-select taps work (Unity OnGUI / `GetMouseButton`). The
-C# side (`WindUp`, `PullbackZone`, `TiltControl`) uses `GetMouseButton`,
-`GetTouch`, `ScreenPointToRay` and `PullbackZone.OnTriggerEnter`.
-`ControlScheme=Tilt` is the default (steering after launch). The IL in
-`Assembly-CSharp.dll` is AOT-stripped, so those methods live only as ARM
-in the executable. This is still an open general-accuracy question
-(Unity Input.touches vs mouse in the 3D scene, or a physics trigger),
-not a game-specific hack.
+`ControlScheme` defaults to `Tilt` (PlayerPrefs). Under that default,
+with only the static upright gravity `{0, -1, 0}` that UIAccelerometer
+reports until the host sends a reading, touch drags — including a 1.5 s
+pull starting on the tutorial hand at the rear bumper (160, 330) — did
+**not** launch.
+
+Two general ways to launch:
+
+1. **Touch scheme.** The settings gear on the menu is at **(66, 521)**
+   pt (left of the orange `>>`). The dialog shows Tilt (phone with roll
+   arrows, default check) and Touch (two hands). Tapping the Touch card
+   at **(230, 250)** moves the check and writes `ControlScheme=Touch`.
+   The same 1.5 s downward pulls then launch. A first pull at 14 s may
+   miss; a second at 18–19.7 s starting on the car body (160, 280) or
+   the rear bumper launches. The drag does **not** have to start on the
+   bumper once the scheme is Touch. A 28 s run reached timer **00:09:03**,
+   gear **02**, checkpoints **02**, with a collectible in the air, no
+   tutorial hand.
+
+2. **Tilt scheme with a host accelerometer.** `hvm run --input-file`
+   now accepts `accel X Y Z` (UIAcceleration, in g). Under default
+   `ControlScheme=Tilt`, accel-only pitch (upright → 90° back → snap
+   forward, twice) did not launch. The same touch pull at 18 s **while**
+   the accelerometer was pitched back (`accel 0 -0.3 -0.95`) **did**
+   launch: 25 s run, timer **00:05:36**, checkpoints **02**, no tutorial
+   hand, the car on the warehouse aisle. Tilt launch needs a real host
+   reading (not the static upright default) **and** the pull-back drag.
+   Tilt steering after launch is the left/right roll the settings icon
+   shows.
+
+Unity's touch path is fine for this game: menu and level-select taps
+use OnGUI / `GetMouseButton`; the race pull uses the same
+`--input-file` `touch` phases (`0` began, `1` moved, `3` ended),
+`deltaPosition` and timestamps. `GetMouseButton` emulation is not the
+blocker. Physics `OnTriggerEnter` / `DoPullZoneCheck` succeed once the
+control scheme and (for Tilt) accelerometer are right. Fail-first tests
+cover `parseAccel` / `applyAccel` (three finite floats, signs, rejected
+malformed lines, and a valid line reaching `UIState` as
+`accelFromHost`).
+
+## Three-minute play and saves
+
+180 s Touch-scheme run (`--run-for 180 --gpu --graceful`, pulls at 14
+and 18 s, occasional left/right holds after 28 s): **no crash**, still
+running, 5489 frames presented, average **6.99 ms**, p99 **17.83 ms**,
+max 136.6 ms (a load hitch), 0 stub hits. Final screenshot: authentic
+warehouse, timer **02:40:40**, gear **03**, checkpoints **02**, a
+collectible in the air, car still on the aisle. In-game time matches
+wall time minus the ~19 s launch (180 − 19 ≈ 161 s ≈ 2:41).
+
+`PlayerPrefs` (`ControlScheme`, `Racer_MusicOn`, `Racer_FxOn`, `Level 0`
+… `Level 9`) survive a relaunch of the same home: a 6 s run from the
+180 s home loaded `ControlScheme=Touch` and the same unlocks, and
+showed the authentic title menu. Level 1 stays 0 — the 180 s run did
+not finish the first track, so there is no earned-unlock evidence yet.
+Mid-race state is not saved (expected).
 
 ## Gates (Linux bench, this branch)
 
 | Gate | Result |
 |---|---|
-| `hvm_tests fulltest` | **815 passed, 0 failed** (two new checks: Unity string imports, FrameToPacket; string test failed first on unfixed main). Re-run after restoring the bench toolchain (ZLIB, ICU, SQLite3, OpenSSL 3, FFMPEG, libstdc++ 14 headers). |
-| support / stub / pytest / Test Lab / must_launch | not re-run after the second fix; the string-only tree had previously passed support 47, stub 0 new/changed, Test Lab 35, must_launch 1/0/34. Pytest still has the pre-existing #445 `TestCensus` fixture-path failure on this bench — not "fixed" in this PR. |
+| `hvm_tests fulltest` | **818 passed, 0 failed** (FMOD 4096-frame offline-render loop; `accel` parse and UIKit delivery). Earlier 815/0 after the two runtime fixes; 816/0 after the FMOD-loop test alone. Re-run after the accelerometer input. |
+| support / stub / pytest / Test Lab / must_launch | not re-run after these commits. Pytest still has the pre-existing #445 `TestCensus` fixture-path failure on this bench — not "fixed" in this PR. |
 
 No baseline was weakened. Required CI on this commit has not been reported green.
-The IPA is not recorded in `must_launch` (not fully playable). `docs/COMPAT.md`
+The IPA is not recorded in `must_launch` (music is not continuous). `docs/COMPAT.md`
 is left for when the verdict is settled (and to avoid a clash with #447's CoC row).
 
 ## Still needed for "playable"
 
-- Why FMOD disposes the queue after four 4096-frame offline renders and
-  retries from packet 0, so only a ~0.3 s burst reaches the mixer at
-  race start (menu stays silent)
-- Get the pull-back (or tilt) gesture to charge and launch the car
-- Three minutes without a crash once the car is moving; race-progress
-  saves across relaunch; confirm music and effects for the whole race
-- Phone: Mesa vs device GPU, real speed, 16 KB pages, headphones
+- Continuous music: FMOD's AudioQueue codec closes after a 16384-frame
+  prefetch of each long MP3 and retries ~6.5 / s; only short AIFF effects
+  reach the mixer. OfflineRender itself is not returning zero. A general
+  iOS-accurate reason FMOD's createSound does not keep the stream open is
+  still wanted.
+- Earned level-unlock across a relaunch (finish track 1).
+- Phone: Mesa vs device GPU, real speed, 16 KB pages, headphones.
 
-This is not a blocked verdict: both remaining gaps look like general
-iOS-accuracy work (AudioQueue / FMOD offline playback, Unity 4 input or
-physics in the 3D scene). Set-3 IPA 2 (Lego Technic Racer) is not started.
+This is not a blocked verdict: the remaining music gap is general
+AudioQueue / FMOD stream work. Set-3 IPA 2 (Lego Technic Racer) is not
+started.
 
 ## Phone-only / not checked
 
