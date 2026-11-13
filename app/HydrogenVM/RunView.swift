@@ -611,6 +611,9 @@ struct RunView: View {
         .statusBarHidden(true)
         .preferredColorScheme(.dark)
         .persistentSystemOverlays(.hidden)
+        // A game's touches near the screen edges go straight to it instead of waiting for iOS to
+        // decide whether they start a system swipe (Control Center, Home); the swipe takes a second try.
+        .defersSystemGestures(on: .all)
         .onAppear {
             OrientationLock.shared.lock(hostMask(for: effectiveOrientation), preferring: effectiveOrientation.mask)
             model.start(keepGoing: keepGoing)
