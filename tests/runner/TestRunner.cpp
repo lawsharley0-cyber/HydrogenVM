@@ -2354,6 +2354,14 @@ int runFullSubsystemTests() {
             check(preview.find("\"access_token\": \"******\"") != std::string::npos && preview.find("\"expires_in\": 3600") != std::string::npos &&
                   preview.find("https://cdn.example/f?**") != std::string::npos && preview.find("abc123") == std::string::npos,
                   "TLS bridge log: small bodies previewed with gzip undone and secrets blanked");
+            auto preview2 = [](const std::string& r) { return httpBodyPreview(r.data(), r.size()); };
+            const std::string spaced = preview2("HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n{\"access_token\":\n  \"abc123\", \"session\": 77}");
+            const std::string escaped = preview2("HTTP/1.1 200 OK\r\n\r\n{\"x\\\"y\": 1, \"password\": \"a\\\"bc\"}");
+            const std::string interim = preview2("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nSet-Cookie: sid=abc123\r\nContent-Length: 2\r\n\r\nok");
+            const std::string cut = preview2("HTTP/1.1 200 OK\r\n\r\n{\"token\": \"abc");
+            check(spaced.find("abc123") == std::string::npos && spaced.find("77") == std::string::npos &&
+                  escaped.find("bc") == std::string::npos && interim.empty() && cut.empty(),
+                  "TLS bridge log: secrets after newlines, escaped quotes and bare values are blanked; interim and cut-off bodies are not shown");
         }
         {
             // The bridge's play-log lines: key headers kept, queries dropped, repeats folded, totals at the end.

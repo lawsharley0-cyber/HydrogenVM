@@ -119,8 +119,10 @@ inline std::string httpBodyPreview(const char* p, size_t n) {
     if (split == std::string::npos) return {};
     std::string lowerHead = all.substr(0, split);
     for (char& c : lowerHead) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (all.size() > 9 && all.compare(0, 7, "HTTP/1.") == 0 && all[9] == '1') return {};   // interim (1xx): no body of its own
     std::string body = all.substr(split + 4);
     if (body.empty() || body.size() > 4096) return {};
+    if (body.compare(0, 5, "HTTP/") == 0) return {};   // another response, not a body
     if (lowerHead.find("content-encoding: gzip") != std::string::npos) {
         std::string out(16384, '\0');
         z_stream z{};
@@ -139,17 +141,29 @@ inline std::string httpBodyPreview(const char* p, size_t n) {
     for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
     for (size_t i = 0; i < body.size(); ++i) {
         if (body[i] != '"') continue;
-        const size_t end = body.find('"', i + 1);
-        if (end == std::string::npos) break;
+        size_t end = i + 1;
+        while (end < body.size() && body[end] != '"') end += body[end] == '\\' ? 2 : 1;
+        if (end >= body.size()) return {};   // cannot tell keys from values safely: no preview
         const std::string k = lower.substr(i + 1, end - i - 1);
         size_t v = end + 1;
-        while (v < body.size() && (body[v] == ' ' || body[v] == ':')) ++v;
+        bool colon = false;
+        while (v < body.size() && (body[v] == ' ' || body[v] == '\t' || body[v] == '\r' || body[v] == '\n' || body[v] == ':')) {
+            colon = colon || body[v] == ':';
+            ++v;
+        }
         bool secret = false;
         for (const char* s : kSecret) if (k.find(s) != std::string::npos) { secret = true; break; }
-        if (secret && v > end + 1 && v < body.size() && body[v] == '"') {
-            const size_t ve = body.find('"', v + 1);
-            if (ve == std::string::npos) break;
-            for (size_t j = v + 1; j < ve; ++j) body[j] = '*';
+        if (colon && secret && v < body.size()) {
+            // Blank the whole value: a string up to its unescaped quote, or a bare value up to , } ]
+            size_t ve = v;
+            if (body[v] == '"') {
+                ++ve;
+                while (ve < body.size() && body[ve] != '"') ve += body[ve] == '\\' ? 2 : 1;
+                if (ve >= body.size()) return {};
+                for (size_t j = v + 1; j < ve; ++j) body[j] = '*';
+            } else {
+                while (ve < body.size() && body[ve] != ',' && body[ve] != '}' && body[ve] != ']') body[ve++] = '*';
+            }
             i = ve;
         } else i = end;
     }
@@ -173,16 +187,18 @@ public:
         if (line.empty()) return;
         Side& side = fromGame ? toServer_ : toGame_;   // a poll alternates request and reply: fold each side alone
         const std::string tagged = std::string(fromGame ? "<- " : "-> ") + line;
-        if (tagged == side.last) {
+        const std::string body = fromGame ? std::string() : httpBodyPreview(p, n);
+        if (tagged == side.last && body == side.lastBody) {
             ++side.count;
             if (side.count == 10 || side.count == 100 || side.count == 1000) say(side.last + " (" + std::to_string(side.count) + " times so far)");
             return;
         }
         flush(side);
         side.last = tagged;
+        side.lastBody = body;
         side.count = 1;
         say(tagged);
-        if (!fromGame) if (const std::string body = httpBodyPreview(p, n); !body.empty()) say("   body: " + body);
+        if (!body.empty()) say("   body: " + body);   // a changed body with the same headers is a new line too
     }
     void ended(const char* how) {
         if (!log_) return;
@@ -192,7 +208,7 @@ public:
              " bytes, server sent " + std::to_string(server_) + ")");
     }
 private:
-    struct Side { std::string last; int count = 0; };   // count includes the first time
+    struct Side { std::string last, lastBody; int count = 0; };   // count includes the first time
     void say(const std::string& s) { if (lines_++ < 400) log_("Internet: " + host_ + " " + s); }
     void flush(Side& side) {
         if (side.count > 1 && side.count != 10 && side.count != 100 && side.count != 1000)
