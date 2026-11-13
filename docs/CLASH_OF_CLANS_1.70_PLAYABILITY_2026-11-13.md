@@ -84,6 +84,36 @@ sinks outbound names to 198.18.0.1, so a live login was not attempted here;
 a 2012 client is not expected to complete login on today's protocol either.
 `--internet` is off by default and was not left on.
 
+
+## Recheck: existing Clash sandbox on main (#414, #391)
+
+Before leaving the blocked verdict, main was searched for a local server the
+1.70 client could be pointed at (`clash`, `9339`, `Titan`, `forge`, `sandbox`,
+`magic`, `clashofclans`).
+
+- Merged #414 (`codex/clash-forge-runtime`) and closed #391 (Card Forge, Spell
+  Lab) are **Clash Royale** guest packages (`com.supercell.scroll` 2.1306.1):
+  sandbox editors, custom spells and menu music. They do not implement a Clash
+  of Clans village or the 2012 Titan protocol.
+- `ClashOffline` (`src/runtime/offline/ClashOffline.cpp`) is a session-owned
+  localhost service for that pinned Royale executable only (SHA-256
+  `3519d7954cb3dc16b9d7746cc5dbd2521d0209eea2bbc163f6ab7cdfa5e52397`).
+  `Process::load` throws `Offline Clash requires the unchanged pinned 2.1306.1
+  executable` for any other binary. Confirmed against this 1.70 IPA with
+  `--offline-clash`. The host app only auto-enables the backend for
+  `com.supercell.scroll` 2.1306.1. The wire path requires login version
+  `2.0.1306` and speaks Royale messages (`10101` / `20104` / `24101`).
+  `--loopback-alias game.clashofclans.com` cannot attach this service to 1.70:
+  the pin refuses to start it.
+- The per-game `--internet` switch (#424) does not create an offline village.
+  This bench's resolver sinks outbound names to 198.18.0.1, so a live
+  `game.clashofclans.com` login was not attempted; a 2012 client is not
+  expected to complete login on today's protocol either.
+- The TLS bridge (#429) applies only to guest TCP port 443. Clash of Clans
+  1.70 talks Titan TCP to port 9339.
+
+The blocked verdict stands.
+
 ## Gates (Linux bench, this branch)
 
 | Gate | Result |
