@@ -16,7 +16,14 @@ class ColdStartAnnotationTests(unittest.TestCase):
     def test_system_open_confirmation_precedes_marker_checks(self):
         self.exercise_driver(confirm=True)
 
-    def exercise_driver(self, confirm=False):
+    def test_confirmation_helper_is_retried_once(self):
+        result = self.exercise_driver(confirm=True, flaky_helper=True)
+        self.assertIn('Retrying the system URL confirmation once', result.stdout)
+        # The recovered first attempt is a warning, so the green run has no error annotation.
+        self.assertIn('::warning title=cold-start confirmation, attempt 1::', result.stdout)
+        self.assertNotIn('::error', result.stdout)
+
+    def exercise_driver(self, confirm=False, flaky_helper=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             guest = root / 'Guest.app'
@@ -78,8 +85,14 @@ elif command in ('openurl', 'confirm'):
                 # confirmation has been accepted by the UI-test helper.
                 helper = root / 'xcodebuild'
                 helper.write_text('''#!/usr/bin/env python3
-import os, pathlib, subprocess
+import os, pathlib, subprocess, sys
 data = pathlib.Path(os.environ['PROBE_DATA'])
+missed = data.parent / 'helper-missed'
+if os.environ.get('PROBE_FLAKY') == '1' and not missed.exists():
+    # First run: the alert ignored the tap, as on the hosted runner.
+    missed.touch()
+    print("/x/ColdStartPromptUITests.swift:16: error: -[ColdStartPromptUITests testAcceptSystemOpenConfirmation] : XCTAssertTrue failed")
+    sys.exit(65)
 subprocess.run([str(data.parent / 'xcrun'), 'simctl', 'confirm', (data / 'pending-url').read_text()], check=True)
 ''')
                 helper.chmod(0o755)
@@ -97,11 +110,13 @@ print('\\n'.join(map(str, range(first, last + 1))))
                     env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
                          'PROBE_DATA': str(data), 'PROBE_PID': str(worker.pid), 'PROBE_STOP': str(stop),
                          'PROBE_CONFIRM': '1' if confirm else '0',
+                         'PROBE_FLAKY': '1' if flaky_helper else '0',
                          'HVM_COLD_START_XCTESTRUN': str(root / 'Prompt.xctestrun') if confirm else ''},
                     cwd=root, capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('PASS: app launched', result.stdout)
                 self.assertIn('PASS: malformed URL resolved', result.stdout)
+                return result
             finally:
                 stop.touch()
                 reaper.join(timeout=5)

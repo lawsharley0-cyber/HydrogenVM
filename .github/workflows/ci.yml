@@ -274,6 +274,15 @@ jobs:
           mkdir -p report/simulator-gl-emu && cp -R sim-gl-emu-out/. report/simulator-gl-emu/ 2>/dev/null || true
           mkdir -p report/simulator-gl-landscape && cp -R sim-gl-landscape-out/. report/simulator-gl-landscape/ 2>/dev/null || true
           mkdir -p report/simulator-batch && cp -R sim-batch-out/. report/simulator-batch/ 2>/dev/null || true
+          # Cold-start URL handoff: text logs, markers and the screenshot only (no
+          # .xcresult bundles), so a failure on main can be read from ci-reports.
+          mkdir -p report/cold-start
+          cp build/cold-start-build.log build/cold-start-prompt-build.log report/cold-start/ 2>/dev/null || true
+          if [ -d build/cold-start-diagnostics ]; then
+            find build/cold-start-diagnostics -maxdepth 1 -type f \
+              \( -name '*.log' -o -name '*.txt' -o -name '*.png' -o -name 'cold-start-*' \) \
+              -exec cp {} report/cold-start/ \;
+          fi
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
