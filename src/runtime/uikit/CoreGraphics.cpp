@@ -5,6 +5,7 @@
 // CG objects are Objective-C instances of private host classes so CFRetain /
 // CFRelease / CFGetTypeID work on them like on iOS.
 #include "CoreGraphics.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/graphics/TrueType.hpp"
 #include <cmath>
 #include <fstream>
@@ -1799,9 +1800,9 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ctx_drawTiled>("_CGContextDrawTiledImage");
     p.def<&ctx_linearGradient>("_CGContextDrawLinearGradient");
     p.def<&ctx_radialGradient>("_CGContextDrawRadialGradient");
-    p.def<&ctx_selectFont>("_CGContextSelectFont");
+    supportDef<&ctx_selectFont>(p, "_CGContextSelectFont", SupportStatus::Approx, "Selects a named font for legacy text; glyph-ID drawing requires an explicit outline font");
     p.def<&ctx_setFontSize>("_CGContextSetFontSize");
-    p.def<&ctx_setFont>("_CGContextSetFont");
+    supportDef<&ctx_setFont>(p, "_CGContextSetFont", SupportStatus::Approx, "Retains available CGFont outlines in saved graphics state; absent system outlines remain unsupported");
     p.def<&ctx_setCharSpacing>("_CGContextSetCharacterSpacing");
     p.def<&ctx_setTextMode>("_CGContextSetTextDrawingMode");
     p.def<&ctx_setTextMatrix>("_CGContextSetTextMatrix");
@@ -1810,8 +1811,8 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ctx_getTextPos>("_CGContextGetTextPosition");
     p.def<&ctx_showTextAt>("_CGContextShowTextAtPoint");
     p.def<&ctx_showText>("_CGContextShowText");
-    p.def<&ctx_showGlyphs>("_CGContextShowGlyphs");
-    p.def<&ctx_showGlyphsAt>("_CGContextShowGlyphsAtPoint");
+    supportDef<&ctx_showGlyphs>(p, "_CGContextShowGlyphs", SupportStatus::Approx, "Draws selected outline-font glyphs with text state and clipping; unavailable system outlines report missing");
+    supportDef<&ctx_showGlyphsAt>(p, "_CGContextShowGlyphsAtPoint", SupportStatus::Approx, "Positions and draws selected outline-font glyphs with the legacy ABI; unavailable outlines report missing");
     p.def<&font_createWithName>("_CGFontCreateWithFontName");
     p.def<&font_createWithProvider>("_CGFontCreateWithDataProvider");
     p.def<&font_copyName>("_CGFontCopyFullName");

@@ -3,7 +3,7 @@
 #include <cstdio>
 using namespace Hydrogen;
 using namespace Hydrogen::Runtime;
-int main() {
+int runLegacyAnimationTests() {
     ProcessConfig cfg; cfg.homePath = "/tmp/hvm-legacy-animation-tests";
     Process p(cfg); CPU::Cpu cpu; cpu.r[13] = p.heap().allocZeroed(65536)+65536-16;
     Ctx x{p,cpu,p.mem()}; auto& r = ObjC::rt(p);
@@ -48,4 +48,9 @@ int main() {
     if(disposed!=1) { std::puts("FAIL: UIKit timer autoreleases must drain at end of loop turn"); return 1; }
     r.poolPop(cpu,outer);
     std::puts("legacy animation callback and window lifetime: passed");
+    return 0;
 }
+
+#ifndef HVM_CANABALT_CASES_NO_MAIN
+int main() { return runLegacyAnimationTests(); }
+#endif

@@ -4,7 +4,7 @@
 #include <cstdio>
 using namespace Hydrogen;
 using namespace Hydrogen::Runtime;
-int main() {
+int runLegacyGlyphTests() {
     ProcessConfig cfg; cfg.homePath = "/tmp/hvm-legacy-glyph-tests";
     Process p(cfg); CPU::Cpu cpu; cpu.r[13] = p.heap().allocZeroed(65536)+65536-16;
     Ctx x{p,cpu,p.mem()}; auto& r = ObjC::rt(p);
@@ -56,4 +56,9 @@ int main() {
     catch (const CPU::GuestFault& e) { faulted = e.exit==CPU::Exit::MemFault; }
     if (!faulted) { std::puts("FAIL: invalid glyph array must raise a controlled guest read fault"); return 1; }
     std::puts("legacy CGContext glyphs: passed");
+    return 0;
 }
+
+#ifndef HVM_CANABALT_CASES_NO_MAIN
+int main() { return runLegacyGlyphTests(); }
+#endif

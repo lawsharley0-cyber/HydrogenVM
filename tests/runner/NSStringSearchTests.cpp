@@ -7,7 +7,7 @@ namespace {
 bool astral(Ctx&, uint32_t, uint32_t, uint32_t c) { return c == 0x1f600; }
 bool noBmp(Ctx&, uint32_t, uint32_t, uint32_t) { return false; }
 }
-int main() {
+int runNSStringSearchTests() {
     ProcessConfig cfg; cfg.homePath = "/tmp/hvm-string-search-tests";
     Process p(cfg); CPU::Cpu cpu;
     cpu.r[13] = p.heap().allocZeroed(65536) + 65536 - 16;
@@ -61,4 +61,9 @@ int main() {
     try { search(text,newline,0,0,7,ro); } catch (const CPU::GuestFault& e) { faulted = e.exit == CPU::Exit::MemFault; }
     if (!faulted || p.mem().read<uint32_t>(ro) != 0x55555555) { std::puts("FAIL: protected NSRange output was written"); return 1; }
     std::puts("NSString character-set searches: passed");
+    return 0;
 }
+
+#ifndef HVM_CANABALT_CASES_NO_MAIN
+int main() { return runNSStringSearchTests(); }
+#endif

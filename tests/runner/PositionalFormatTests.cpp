@@ -4,7 +4,7 @@
 #include <cstdio>
 using namespace Hydrogen;
 using namespace Hydrogen::Runtime;
-int main() {
+int runPositionalFormatTests() {
     ProcessConfig cfg; cfg.homePath = "/tmp/hvm-positional-format-tests";
     Process p(cfg); CPU::Cpu cpu; cpu.r[13]=p.heap().allocZeroed(65536)+65536-256;
     Ctx x{p,cpu,p.mem()};
@@ -43,4 +43,9 @@ int main() {
     const auto result=uint32_t(r.send(cpu,r.getClass("NSString"),"stringWithFormat:",{text,song}));
     if (Foundation::utf8(x,result)!="Now Playing: \"RUN\"") { std::puts("FAIL: NSString variadic call uses indexed formatting"); return 1; }
     std::puts("positional guest formatting: passed");
+    return 0;
 }
+
+#ifndef HVM_CANABALT_CASES_NO_MAIN
+int main() { return runPositionalFormatTests(); }
+#endif
