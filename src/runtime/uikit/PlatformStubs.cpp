@@ -185,12 +185,17 @@ struct AudioToolboxState {
 };
 AudioToolboxState& ATS(Ctx& x) { return x.proc.service<AudioToolboxState>(); }
 
+uint32_t auRenderFrames(double sampleRate, double rate = 1.0);
+// The I/O buffer duration the audio session reports: what one render callback is asked for.
+float ioBufferSeconds() { return float(auRenderFrames(44100.0)) / 44100.0f; }
 int32_t as_init(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t as_setProperty(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t as_getProperty(Ctx& x, uint32_t prop, GuestPtr size, GuestPtr out) {
     if (out && size) {
         const uint32_t n = x.mem.read<uint32_t>(size);
         if (prop == 0x63687372 /* 'chsr' hw sample rate */ && n >= 8) x.mem.write<double>(out, 44100.0);
+        else if ((prop == 0x63686264 /* 'chbd' hw I/O buffer duration */ || prop == 0x696f6264 /* 'iobd' preferred */) && n >= 4)
+            x.mem.write<float>(out, ioBufferSeconds());   // zero sent Minion Rush's mixer into an endless loop
         else if (prop == 0x6368766C /* 'chvl' output volume */ && n >= 4) x.mem.write<float>(out, 1.0f);
         else if (prop == 0x61696176 /* 'aiav' audio input available */ && n >= 4) x.mem.write<uint32_t>(out, 1);
         else if (prop == 0x63686963 /* 'chic' input channels */ && n >= 4) x.mem.write<uint32_t>(out, 1);
@@ -1537,6 +1542,17 @@ int32_t au_uninit(Ctx& x, uint32_t uid) {
     it->second.initialized = false;
     return 0;
 }
+// Frames per render call. iOS asks a RemoteIO callback for a power of two (1024 by default,
+// 256-512 with a short preferred I/O duration), and mixers written for it process in blocks
+// that divide it: Minion Rush's mixer loops forever when asked for 441 frames. About 10 ms,
+// rounded up to a power of two; an input played faster or slower is consumed at that rate.
+uint32_t auRenderFrames(double sampleRate, double rate) {
+    const double ideal = sampleRate * 0.01;
+    uint32_t n = 64;
+    while (n < ideal && n < 4096) n <<= 1;
+    if (rate == 1.0) return n;
+    return std::clamp<uint32_t>(uint32_t(std::lround(n * rate)), 1, 4096);
+}
 bool auPrepareBuffers(Ctx& x, AudioUnitInstance& u, uint32_t frames) {
     const bool nonInterleaved = (u.formatFlags & 32) != 0;
     const uint32_t bps = u.bits / 8, nbuf = nonInterleaved ? u.channels : 1;
@@ -1572,7 +1588,7 @@ void auPump(Process& p, CPU::Cpu& c, uint32_t uid) {
     if (!it->second.renderCallback) { audioTrace("AudioUnitPumpNoCallback", uid); return; }
     AudioUnitInstance& u = it->second;
     // A mixer input played faster or slower is consumed at that rate.
-    const uint32_t frames = std::clamp<uint32_t>(uint32_t(std::lround(u.sampleRate * double(u.rate) * 0.01)), 1, 4096);
+    const uint32_t frames = auRenderFrames(u.sampleRate, double(u.rate));
     Ctx x{p, c, p.mem()};
     if (!auPrepareBuffers(x, u, frames)) { audioTrace("AudioUnitPumpBufferFailure", uid); return; }
     const uint32_t cb = u.renderCallback, ud = u.renderUserData;
@@ -1692,7 +1708,7 @@ void auNotify(Ctx& x, AudioToolboxState& st, uint32_t uid, uint32_t action) {
     auto it = st.units.find(uid);
     if (it == st.units.end() || it->second.notifies.empty()) return;
     AudioUnitInstance& u = it->second;
-    const uint32_t frames = std::clamp<uint32_t>(uint32_t(std::lround(u.sampleRate * 0.01)), 1, 4096);
+    const uint32_t frames = auRenderFrames(u.sampleRate);
     // After a render of the unit's own callback, the post-render notice sees what was rendered
     // and that render's time stamp: the buffers are left as the render filled them.
     const bool rendered = action == 8 && u.renderCallback && u.bufferList;
@@ -1712,12 +1728,15 @@ void au_thread(Ctx& x, uint32_t uid) {
     // slow Unity/CADisplayLink frame starve music and sound effects.
     auto next = std::chrono::steady_clock::now();
     while (!x.proc.stopping()) {
+        std::chrono::microseconds period(10000);   // one render's worth of the output unit's time
         {
             auto& st = ATS(x);
             std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
             auto it = st.units.find(uid);
             if (it == st.units.end()) return;
             std::vector<uint32_t> notified;
+            if (it->second.sampleRate > 0)
+                period = std::chrono::microseconds(int64_t(1e6 * auRenderFrames(it->second.sampleRate) / it->second.sampleRate));
             if (it->second.running) auChainUnits(st, uid, 0, notified);
             for (uint32_t n : notified) auNotify(x, st, n, 4);
             it = st.units.find(uid);
@@ -1733,7 +1752,7 @@ void au_thread(Ctx& x, uint32_t uid) {
             for (uint32_t n : notified) auNotify(x, st, n, 8);
             if (st.units.find(uid) == st.units.end()) return;
         }
-        next += std::chrono::milliseconds(10);
+        next += period;
         const auto now = std::chrono::steady_clock::now();
         if (next + std::chrono::milliseconds(50) < now) next = now;
         std::this_thread::sleep_until(next);
@@ -2172,7 +2191,7 @@ uint32_t avs_zero(Ctx&, id, SEL) { return 0; }
 uint32_t avs_two(Ctx&, id, SEL) { return 2; }
 uint32_t avs_one(Ctx&, id, SEL) { return 1; }
 bool avs_yes(Ctx&, id, SEL) { return true; }
-double avs_ioDuration(Ctx&, id, SEL) { return 0.0058; }   // 256 frames at 44.1 kHz
+double avs_ioDuration(Ctx&, id, SEL) { return ioBufferSeconds(); }   // one render callback's frames
 id avs_emptyArray(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
 
 // ============================================================ AVAudioPlayer ===
@@ -2803,7 +2822,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // AudioSession & AudioServices
     p.def<&as_init>("_AudioSessionInitialize");
     p.def<&as_setProperty>("_AudioSessionSetProperty");
-    p.def<&as_getProperty>("_AudioSessionGetProperty");
+    supportDef<&as_getProperty>(p, "_AudioSessionGetProperty", SupportStatus::Approx, "fixed device answers: 44.1 kHz, stereo out, mono in, a 512-frame I/O buffer; other properties read 0");
     p.def<&as_getPropertySize>("_AudioSessionGetPropertySize");
     p.def<&as_setActive>("_AudioSessionSetActive");
     p.def<&as_addListener>("_AudioSessionAddPropertyListener");

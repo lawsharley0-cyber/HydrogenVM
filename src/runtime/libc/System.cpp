@@ -496,6 +496,28 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     ofs.tracks[fd] = {h, 0};
     return fd;
 }
+// POSIX shared memory: Unity's Mono runtime opens a shared-handle segment at startup (Subway
+// Surfers, #441). One process is all there is here, so a segment is a file in the app's tmp
+// folder; mmap of its descriptor works like any file's.
+std::string shmHostPath(Ctx& x, GuestPtr name) {
+    std::string n = x.proc.readCString(name, 256);
+    while (!n.empty() && n.front() == '/') n.erase(n.begin());
+    for (char& c : n) if (c == '/' || c == '\0') c = '_';
+    const std::string dir = x.proc.config().homePath + "/tmp/.shm";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir + "/" + (n.empty() ? std::string("_") : n);
+}
+int32_t f_shmOpen(Ctx& x, GuestPtr name, uint32_t flags, VarArgs va) {
+    if (!name) { errno = EINVAL; return failD<int32_t>(x); }
+    const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
+    const int fd = ::open(shmHostPath(x, name).c_str(), hostOpenFlags(flags) | O_CLOEXEC, mode & 0777);
+    return fd < 0 ? failD<int32_t>(x) : fd;
+}
+int32_t f_shmUnlink(Ctx& x, GuestPtr name) {
+    if (!name) { errno = EINVAL; return failD<int32_t>(x); }
+    return ::unlink(shmHostPath(x, name).c_str()) < 0 ? failD<int32_t>(x) : 0;
+}
 int32_t f_close(Ctx& x, int32_t fd) {
     if (fd >= 0 && fd <= 2) return 0;
     {
@@ -1241,6 +1263,8 @@ void registerLibcSystem(Process& p) {
     p.def<&d_local_arch_info>("_NXGetLocalArchInfo");
     p.def<&d_arch_from_cputype>("_NXGetArchInfoFromCpuType");
     p.def<&f_open>("_open");
+    supportDef<&f_shmOpen>(p, "_shm_open", SupportStatus::Real, "a file in the app's tmp folder (one process, so sharing needs nothing more)");
+    supportDef<&f_shmUnlink>(p, "_shm_unlink", SupportStatus::Real, "removes the tmp-folder file");
     p.def<&f_close>("_close");
     p.def<&f_read>("_read");
     p.def<&f_write>("_write");

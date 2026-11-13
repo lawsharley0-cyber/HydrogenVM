@@ -1011,6 +1011,27 @@ id loc_objectForKey(Ctx& x, id, SEL, id key) {
     return 0;
 }
 id loc_initWithIdentifier(Ctx&, id self, SEL, id) { return self; }
+// +componentsFromLocaleIdentifier: "zh_Hant_TW" or "en-US" -> {language, script, country},
+// keyed by the NSLocale*Code constants (whose values here are their own names).
+id locc_components(Ctx& x, id, SEL, id ident) {
+    std::string s = utf8(x, ident);
+    s = s.substr(0, s.find('@'));
+    std::vector<std::string> parts;
+    for (size_t i = 0; i <= s.size();) {
+        size_t e = s.find_first_of("_-", i);
+        if (e == std::string::npos) e = s.size();
+        if (e > i) parts.push_back(s.substr(i, e - i));
+        i = e + 1;
+    }
+    std::vector<std::pair<id, id>> entries;
+    auto add = [&](const char* k, const std::string& v) { entries.emplace_back(makeString(x, k), makeString(x, v)); };
+    if (!parts.empty()) add("NSLocaleLanguageCode", parts[0]);
+    for (size_t i = 1; i < parts.size(); ++i) {
+        if (parts[i].size() == 4) add("NSLocaleScriptCode", parts[i]);
+        else if (parts[i].size() == 2 || parts[i].size() == 3) { add("NSLocaleCountryCode", parts[i]); break; }
+    }
+    return makeDict(x, entries);
+}
 id locc_withIdentifier(Ctx& x, id, SEL, id) { return loc_current(x, 0, 0); }
 id loc_displayName(Ctx& x, id, SEL, id, id value) { return value; }
 
@@ -1432,11 +1453,11 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     loc.cm<&loc_current>("currentLocale").cm<&loc_current>("systemLocale").cm<&loc_current>("autoupdatingCurrentLocale")
        .cm<&locc_preferredLanguages>("preferredLanguages").cm<&locc_available>("availableLocaleIdentifiers")
        .cm<&locc_characterDirection>("characterDirectionForLanguage:")
-       .cm<&locc_withIdentifier>("localeWithLocaleIdentifier:");
+       .cm<&locc_withIdentifier>("localeWithLocaleIdentifier:").cm<&locc_components>("componentsFromLocaleIdentifier:");
     loc.m<&loc_identifier>("localeIdentifier").m<&loc_objectForKey>("objectForKey:").m<&loc_initWithIdentifier>("initWithLocaleIdentifier:")
        .m<&loc_displayName>("displayNameForKey:value:").m<&retainedCopy>("copyWithZone:");
     for (const char* n : {"NSLocaleCountryCode", "NSLocaleLanguageCode", "NSLocaleCurrencyCode", "NSLocaleCurrencySymbol",
-                          "NSLocaleDecimalSeparator", "NSLocaleGroupingSeparator", "NSLocaleUsesMetricSystem", "NSLocaleIdentifier",
+                          "NSLocaleDecimalSeparator", "NSLocaleGroupingSeparator", "NSLocaleUsesMetricSystem", "NSLocaleIdentifier", "NSLocaleScriptCode",
                           "NSCurrentLocaleDidChangeNotification"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, constString(p, n));

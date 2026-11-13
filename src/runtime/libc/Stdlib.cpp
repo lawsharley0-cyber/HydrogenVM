@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <random>
 #include <fcntl.h>
+#include <glob.h>
 #include <unistd.h>
 
 namespace Hydrogen::Runtime {
@@ -308,6 +309,78 @@ uint32_t e_realpath(Ctx& x, GuestPtr path, GuestPtr resolved) {
     x.mem.copyIn(resolved, s.c_str(), std::min<size_t>(s.size() + 1, 1024));
     return resolved;
 }
+// glob(3) over the host's glob, with the pattern mapped to the app's files and the matches
+// mapped back. Darwin's 32-bit glob_t: pathc, matchc, offs, flags, pathv, then five
+// callback pointers (GLOB_ALTDIRFUNC, not supported). The match list is one guest block:
+// the pointer array followed by the strings, released by globfree.
+int32_t e_glob(Ctx& x, GuestPtr pattern, int32_t flags, GuestPtr errfunc, GuestPtr g) {
+    constexpr int kAppend = 0x1, kDoOffs = 0x2, kErr = 0x4, kMark = 0x8, kNoCheck = 0x10, kNoSort = 0x20, kAltDir = 0x40,
+                  kBrace = 0x80, kNoEscape = 0x2000, kTilde = 0x800;
+    if (!pattern || !g || (flags & kAltDir) || errfunc) {
+        if (errfunc || (flags & kAltDir)) x.proc.logf(LogLevel::Warning, "glob: error callbacks and GLOB_ALTDIRFUNC are not supported");
+        if (!pattern || !g || (flags & kAltDir)) return -1;   // GLOB_NOSPACE
+    }
+    const std::string pat = x.proc.readCString(pattern);
+    int hf = 0;
+    if (flags & kErr) hf |= GLOB_ERR;
+    if (flags & kMark) hf |= GLOB_MARK;
+    if (flags & kNoSort) hf |= GLOB_NOSORT;
+    if (flags & kNoEscape) hf |= GLOB_NOESCAPE;
+#ifdef GLOB_BRACE
+    if (flags & kBrace) hf |= GLOB_BRACE;
+#endif
+#ifdef GLOB_TILDE
+    if (flags & kTilde) hf |= GLOB_TILDE;
+#endif
+    const bool absolute = !pat.empty() && pat[0] == '/';
+    const std::string hostPat = absolute ? x.proc.hostPath(pat) : pat;
+    glob_t hg{};
+    const int r = ::glob(hostPat.c_str(), hf, nullptr, &hg);
+    std::vector<std::string> found;
+    if (r == 0) for (size_t i = 0; i < hg.gl_pathc; ++i) found.push_back(absolute ? x.proc.guestPath(hg.gl_pathv[i]) : std::string(hg.gl_pathv[i]));
+    ::globfree(&hg);
+    if (r == GLOB_NOSPACE) return -1;
+    if (r == GLOB_ABORTED) return -2;
+    const bool noMatch = found.empty();
+    if (noMatch && (flags & kNoCheck)) found.push_back(pat);
+    // Keep what an earlier call put there (GLOB_APPEND), then add the new matches.
+    std::vector<std::string> all;
+    const uint32_t offs = (flags & kDoOffs) ? x.mem.read<uint32_t>(g + 8) : 0;
+    const GuestPtr oldv = x.mem.read<uint32_t>(g + 16);
+    if ((flags & kAppend) && oldv) {
+        const uint32_t n = x.mem.read<uint32_t>(g);
+        for (uint32_t i = 0; i < n; ++i) all.push_back(x.proc.readCString(x.mem.read<uint32_t>(oldv + (offs + i) * 4)));
+    }
+    all.insert(all.end(), found.begin(), found.end());
+    if (!(flags & kAppend)) {
+        x.mem.write<uint32_t>(g, 0);
+        x.mem.write<uint32_t>(g + 4, 0);
+        x.mem.write<uint32_t>(g + 16, 0);
+    }
+    if (noMatch && !(flags & kNoCheck)) return -3;   // GLOB_NOMATCH
+    uint32_t bytes = (offs + uint32_t(all.size()) + 1) * 4;
+    for (const auto& s : all) bytes += uint32_t(s.size()) + 1;
+    const GuestPtr block = x.proc.heap().allocZeroed(bytes);
+    if (!block) return -1;
+    GuestPtr str = block + (offs + uint32_t(all.size()) + 1) * 4;
+    for (size_t i = 0; i < all.size(); ++i) {
+        x.mem.write<uint32_t>(block + (offs + uint32_t(i)) * 4, str);
+        x.mem.copyIn(str, all[i].c_str(), all[i].size() + 1);
+        str += uint32_t(all[i].size()) + 1;
+    }
+    if ((flags & kAppend) && oldv) x.proc.heap().free(oldv);
+    x.mem.write<uint32_t>(g, uint32_t(all.size()));
+    x.mem.write<uint32_t>(g + 4, uint32_t(found.size()));
+    x.mem.write<uint32_t>(g + 12, uint32_t(flags));
+    x.mem.write<uint32_t>(g + 16, block);
+    return 0;
+}
+void e_globfree(Ctx& x, GuestPtr g) {
+    if (!g) return;
+    if (const GuestPtr v = x.mem.read<uint32_t>(g + 16)) x.proc.heap().free(v);
+    x.mem.write<uint32_t>(g, 0);
+    x.mem.write<uint32_t>(g + 16, 0);
+}
 uint32_t e_mktemp(Ctx& x, GuestPtr tmpl) {
     std::string t = x.proc.readCString(tmpl);
     static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -432,6 +505,9 @@ void registerLibcStdlib(Process& p) {
     p.def<&e_putenv>("_putenv");
     p.def<&e_realpath>("_realpath");
     p.def<&e_realpath>("_realpath$DARWIN_EXTSN");
+    supportDef<&e_glob>(p, "_glob", SupportStatus::Approx, "host glob on the app's files; no error callback or GLOB_ALTDIRFUNC");
+    supportDef<&e_glob>(p, "_glob$INODE64", SupportStatus::Approx, "host glob on the app's files; no error callback or GLOB_ALTDIRFUNC");
+    supportDef<&e_globfree>(p, "_globfree", SupportStatus::Real, "frees the match list glob made");
     p.def<&e_mktemp>("_mktemp");
     p.def<&e_mkstemp>("_mkstemp");
     p.def<&e_system>("_system");

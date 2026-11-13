@@ -2648,6 +2648,44 @@ int runFullSubsystemTests() {
     }
     const uint32_t outerPool = r.poolPush();
 
+    // NSOrderedSet keeps first-seen order and each object once; NSLocale splits identifiers;
+    // +stringWithString: of an immutable string is that string, retained (Crashlytics kept
+    // the result unretained); the audio session reports the render size as its I/O duration.
+    {
+        using namespace Foundation;
+        auto call=[&](uint32_t object,const char* sel,std::initializer_list<uint32_t> args={}) {return uint32_t(r.send(cpu,object,sel,args));};
+        const uint32_t a=makeString(cx,"a"), b=makeString(cx,"b"), a2=makeString(cx,"a",false,true);
+        const uint32_t set=call(r.getClass("NSMutableOrderedSet"),"orderedSet");
+        call(set,"addObject:",{b}); call(set,"addObject:",{a}); call(set,"addObject:",{a2}); call(set,"insertObject:atIndex:",{b,0});
+        const bool ordered=call(set,"count")==2 && call(set,"objectAtIndex:",{0})==b && call(set,"containsObject:",{a2}) &&
+                           call(call(set,"array"),"count")==2;
+        call(set,"removeObject:",{b});
+        check(ordered && call(set,"count")==1 && call(set,"firstObject")==a, "NSMutableOrderedSet keeps insertion order and ignores equal duplicates");
+
+        const uint32_t parts=call(r.getClass("NSLocale"),"componentsFromLocaleIdentifier:",{makeString(cx,"zh_Hant_TW")});
+        auto part=[&](const char* k){const uint32_t v=call(parts,"objectForKey:",{makeString(cx,k)});return v?utf8(cx,v):std::string("-");};
+        check(part("NSLocaleLanguageCode")=="zh" && part("NSLocaleScriptCode")=="Hant" && part("NSLocaleCountryCode")=="TW",
+              "+[NSLocale componentsFromLocaleIdentifier:] splits language, script and country");
+
+        const uint32_t literal=makeString(cx,"keychain-service");
+        const uint32_t pool=r.poolPush();
+        const uint32_t same=call(r.getClass("NSString"),"stringWithString:",{literal});
+        call(same,"retain");
+        r.poolPop(cpu,pool);
+        const bool alive=same==literal && utf8(cx,same)=="keychain-service";
+        call(same,"release");
+        check(alive, "+[NSString stringWithString:] returns an immutable string itself, still valid after the pool drains");
+    }
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const uint32_t size = proc.heap().allocZeroed(4), out = proc.heap().allocZeroed(8);
+        proc.mem().write<uint32_t>(size, 4);
+        call("_AudioSessionGetProperty", {0x63686264 /* 'chbd' */, size, out});
+        const float seconds = proc.mem().read<float>(out);
+        check(seconds > 0.005f && seconds < 0.03f && std::fabs(seconds * 44100 - 512) < 1,
+              "AudioSessionGetProperty('chbd') reports the render callback's buffer duration (512 frames at 44.1 kHz), not 0");
+    }
+
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.
     {
         using namespace Foundation;
@@ -8182,7 +8220,7 @@ int runFullSubsystemTests() {
             callAT("_DisposeAUGraph", {graph});
             check(graph != 0 && mixer != 0 && nodeCount == 2 && fmtStatus == 0 && calls0 > 0 && calls1 > 0 && busSeen0 == 0 && busSeen1 == 1,
                   "AUGraphStart pulls every mixer input from its own callback, with its input number");
-            check(frames1 > 200 && frames1 < 240, "a 22050 Hz mixer input is asked for 22050 Hz worth of frames");
+            check(frames1 == 256, "a 22050 Hz mixer input is asked for 22050 Hz worth of frames (256, half of 44.1 kHz's 512)");
             check(calls2 == 0, "a mixer input disabled with k3DMixerParam_Enable is not pulled");
             check(formatReadBack, "a mixer input reads back the stream format set on it");
             check(mixed > 0 && !runningBefore && runningAfter, "the mixer inputs are audible, and AUGraphIsRunning follows start");
@@ -8420,6 +8458,21 @@ int runFullSubsystemTests() {
                   "zlib compress/uncompress and streaming inflate on guest buffers");
         }
 
+        // shm_open: a segment that can be sized, mapped, reopened by name and unlinked (Unity/Mono, #441).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t name = proc.allocCString("/hvm-test-shm");
+            const int fd = call("_shm_open", {name, 0x0202 /* O_RDWR|O_CREAT */, 0600});
+            const int sized = fd >= 0 ? call("_ftruncate", {uint32_t(fd), 4096, 0})   /* iOS armv7: the 64-bit length is in r1:r2 */ : -1;
+            const int fd2 = call("_shm_open", {name, 0x0002 /* O_RDWR */, 0});
+            const int un = call("_shm_unlink", {name});
+            const int gone = call("_shm_open", {name, 0x0002, 0});
+            if (fd >= 0) call("_close", {uint32_t(fd)});
+            if (fd2 >= 0) call("_close", {uint32_t(fd2)});
+            check(fd >= 0 && sized == 0 && fd2 >= 0 && un == 0 && gone == -1,
+                  "shm_open creates, sizes and reopens a segment by name; shm_unlink removes it");
+        }
+
         // std::istringstream >> double, then "was that the whole string?": the stringbuf's
         // showmanyc is egptr()-gptr(), 0 once all is read (not -1). Minion Rush checks this
         // on a parsed header and kept retrying its level download when it saw -1.
@@ -8445,6 +8498,76 @@ int runFullSubsystemTests() {
             parse("18 bytes", b, lb);
             check(a == 18 && la == 0 && b == 18 && lb == 6,
                   "std::istringstream >> double leaves 0 characters for \"18\" and 6 for \"18 bytes\" (stringbuf showmanyc)");
+        }
+
+        // kqueue/kevent over a pipe and a user event: level reporting, EV_CLEAR edges, NOTE_TRIGGER
+        // (asio's reactor in Minion Rush 5.7 waits on these).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t fds = proc.heap().allocZeroed(8), ch = proc.heap().allocZeroed(40), ev = proc.heap().allocZeroed(80);
+            const uint32_t zero = proc.heap().allocZeroed(8), buf = proc.heap().allocZeroed(8);
+            const int kq = call("_kqueue", {});
+            const bool piped = call("_pipe", {fds}) == 0;
+            const uint32_t rfd = proc.mem().read<uint32_t>(fds), wfd = proc.mem().read<uint32_t>(fds + 4);
+            auto put = [&](uint32_t at, uint32_t ident, int16_t filter, uint16_t flags, uint32_t fflags, uint32_t udata) {
+                proc.mem().write<uint32_t>(at, ident); proc.mem().write<uint16_t>(at + 4, uint16_t(filter)); proc.mem().write<uint16_t>(at + 6, flags);
+                proc.mem().write<uint32_t>(at + 8, fflags); proc.mem().write<uint32_t>(at + 12, 0); proc.mem().write<uint32_t>(at + 16, udata);
+            };
+            put(ch, rfd, -1, 0x1 | 0x20, 0, 0x1234);       // EV_ADD|EV_CLEAR read
+            put(ch + 20, 7, -10, 0x1 | 0x20, 0, 0x5678);   // EV_ADD|EV_CLEAR user event
+            const int none = call("_kevent", {uint32_t(kq), ch, 2, ev, 4, zero});
+            call("_write", {wfd, proc.allocCString("ab"), 2});
+            const int one = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});
+            const bool readEv = proc.mem().read<uint32_t>(ev) == rfd && int16_t(proc.mem().read<uint16_t>(ev + 4)) == -1 &&
+                                proc.mem().read<uint32_t>(ev + 12) == 2 && proc.mem().read<uint32_t>(ev + 16) == 0x1234;
+            const int again = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});   // nothing new since: EV_CLEAR
+            call("_write", {wfd, proc.allocCString("c"), 1});
+            const int more = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});    // more bytes arrived
+            call("_read", {rfd, buf, 3});
+            put(ch, 7, -10, 0, 0x01000000, 0x5678);          // NOTE_TRIGGER
+            const int user = call("_kevent", {uint32_t(kq), ch, 1, ev, 4, zero});
+            const bool userEv = proc.mem().read<uint32_t>(ev) == 7 && int16_t(proc.mem().read<uint16_t>(ev + 4)) == -10;
+            const int cleared = call("_kevent", {uint32_t(kq), 0, 0, ev, 4, zero});
+            call("_close", {rfd}); call("_close", {wfd}); call("_close", {uint32_t(kq)});
+            if (!(kq >= 0 && piped && none == 0 && one == 1 && readEv && again == 0 && more == 1 && user == 1 && userEv && cleared == 0))
+                std::printf("    kqueue: kq=%d none=%d one=%d read=%d again=%d more=%d user=%d/%d cleared=%d\n", kq, none, one, readEv, again, more, user, userEv, cleared);
+            check(kq >= 0 && piped && none == 0 && one == 1 && readEv && again == 0 && more == 1 && user == 1 && userEv && cleared == 0,
+                  "kevent reports a readable pipe with its byte count, re-reports EV_CLEAR only after a change, and fires EVFILT_USER on NOTE_TRIGGER");
+        }
+
+        // std::system_category / generic_category: name, message, conditions (asio's error codes).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const uint32_t sys = call("__ZNSt3__115system_categoryEv", {}), gen = call("__ZNSt3__116generic_categoryEv", {});
+            auto slot = [&](uint32_t obj, int i) { return proc.mem().read<uint32_t>(proc.mem().read<uint32_t>(obj) + 4 * i); };
+            const std::string sysName = sys ? proc.readCString(proc.callGuest(cpu, slot(sys, 2), {sys})) : "";
+            const uint32_t msg = proc.heap().allocZeroed(12), cond = proc.heap().allocZeroed(8);
+            proc.callGuest(cpu, slot(sys, 6), {msg, sys, 2});
+            const uint8_t head = proc.mem().read<uint8_t>(msg);
+            const std::string text = (head & 1) ? proc.readCString(proc.mem().read<uint32_t>(msg + 8)) : proc.readCString(msg + 1);
+            proc.callGuest(cpu, slot(sys, 3), {cond, sys, 2});
+            const bool mapped = proc.mem().read<uint32_t>(cond) == 2 && proc.mem().read<uint32_t>(cond + 4) == gen;
+            check(sys && gen && sys != gen && sysName == "system" && text == std::strerror(2) && mapped,
+                  "std::system_category names itself, gives strerror messages and maps codes to generic_category");
+        }
+
+        // glob over the app's files, with paths mapped back to the app's view.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            const std::filesystem::path dir = proc.homePath() + "/tmp/hvm-glob-" + std::to_string(::getpid());   // the app's tmp
+            std::filesystem::create_directories(dir);
+            for (const char* n : {"a.dat", "b.dat", "c.txt"}) std::ofstream(dir / n) << "x";
+            const std::string guestDir = proc.guestPath(dir.string());
+            const uint32_t g = proc.heap().allocZeroed(40);
+            const int rc = call("_glob", {proc.allocCString(guestDir + "/*.dat"), 0, 0, g});
+            const uint32_t n = proc.mem().read<uint32_t>(g), v = proc.mem().read<uint32_t>(g + 16);
+            const bool listed = rc == 0 && n == 2 && proc.readCString(proc.mem().read<uint32_t>(v)) == guestDir + "/a.dat" &&
+                                proc.readCString(proc.mem().read<uint32_t>(v + 4)) == guestDir + "/b.dat" && proc.mem().read<uint32_t>(v + 8) == 0;
+            call("_globfree", {g});
+            const int miss = call("_glob", {proc.allocCString(guestDir + "/*.none"), 0, 0, g});
+            std::filesystem::remove_all(dir);
+            if (!(listed && miss == -3)) std::printf("    glob: rc=%d n=%u miss=%d dir=%s first=%s\n", rc, n, miss, guestDir.c_str(), (rc == 0 && n) ? proc.readCString(proc.mem().read<uint32_t>(v)).c_str() : "-");
+            check(listed && miss == -3 && proc.mem().read<uint32_t>(g) == 0, "glob lists matches in order with app paths and returns GLOB_NOMATCH (-3) for none");
         }
 
         // std::ostringstream: formatted output through our stringbuf, read back with str().
