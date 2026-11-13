@@ -1119,6 +1119,113 @@ int runFullSubsystemTests() {
         check(ok, "Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices");
     }
 
+    // Games that mix sound effects into one OpenAL stream (Angry Birds Hatchery Island HD
+    // queues already-mixed PCM on a single source) were reported as music-only, because every
+    // stream voice is classified as music. A sharp energy rise on a stream that already had
+    // an audible bed must also count as an effect. Starting from silence, or a gradual swell,
+    // stays music. This is a reporting check only: the mixed samples are unchanged.
+    {
+        auto sine = [](int frames, int16_t amp) {
+            auto pcm = std::make_shared<std::vector<int16_t>>(size_t(frames) * 2);
+            constexpr double kTwoPi = 6.283185307179586;
+            for (int n = 0; n < frames; ++n) {
+                const auto v = int16_t(std::lround(double(amp) * std::sin(kTwoPi * double(n) / 100.0)));
+                (*pcm)[size_t(n) * 2] = v;
+                (*pcm)[size_t(n) * 2 + 1] = v;
+            }
+            return pcm;
+        };
+        auto pump = [](Audio::Mixer& m, size_t frames, std::vector<float>* left = nullptr) {
+            std::vector<float> l(512), r(512);
+            while (frames) {
+                const size_t n = std::min<size_t>(512, frames);
+                m.render(l.data(), r.data(), n);
+                if (left) left->insert(left->end(), l.begin(), l.begin() + long(n));
+                frames -= n;
+            }
+        };
+
+        // Fail-first: a 10x burst after an audible bed is an effect, and the bed before it is not.
+        {
+            Audio::Mixer m;
+            const uint32_t voice = m.createStream({});
+            const int rate = 44100;
+            m.enqueue(voice, sine(rate, 2000), rate, 1);
+            m.enqueue(voice, sine(rate / 10, 20000), rate, 2);
+            m.enqueue(voice, sine(rate, 2000), rate, 3);
+            std::vector<float> out;
+            pump(m, size_t(rate) * 6 / 10, &out);   // 600 ms of bed: music, already audible
+            const auto bed = m.stats();
+            const bool bedIsMusic = bed.musicVoices == 1 && bed.effectVoices == 0 &&
+                                    bed.effectFrames == 0 && bed.musicFrames == uint64_t(rate) * 6 / 10;
+            pump(m, size_t(rate) + size_t(rate) / 10 + size_t(rate) / 10, &out);
+            const auto st = m.stats();
+            const bool burstIsEffect = st.effectVoices >= 1 && st.effectFrames > 0 &&
+                                       st.musicVoices == 1 && st.musicFrames > st.effectFrames;
+            // Under the limiter ceiling the output is the input / 32768 (rate == mixer rate).
+            bool playback = out.size() >= size_t(rate) + size_t(rate) / 10;
+            const auto bedPcm = sine(rate, 2000);
+            for (size_t i = 0; playback && i < size_t(rate) * 6 / 10; ++i) {
+                const double want = double((*bedPcm)[i * 2]) / 32768.0;
+                if (std::fabs(double(out[i]) - want) > 1e-6) playback = false;
+            }
+            if (!(bedIsMusic && burstIsEffect && playback))
+                std::printf("    mixed-stream effects: bed mv=%u ev=%u mf=%llu ef=%llu; after ev=%u ef=%llu mf=%llu playback=%d\n",
+                            bed.musicVoices, bed.effectVoices,
+                            (unsigned long long)bed.musicFrames, (unsigned long long)bed.effectFrames,
+                            st.effectVoices, (unsigned long long)st.effectFrames,
+                            (unsigned long long)st.musicFrames, int(playback));
+            check(bedIsMusic && burstIsEffect && playback,
+                  "Mixer stats count a sharp burst on an already-audible stream as a sound effect, without changing the mixed samples");
+        }
+
+        // A stream that starts from silence is the beginning of music, not an effect.
+        {
+            Audio::Mixer m;
+            const uint32_t voice = m.createStream({});
+            m.enqueue(voice, sine(44100, 8000), 44100, 1);
+            pump(m, 44100);
+            const auto st = m.stats();
+            const bool ok = st.musicVoices == 1 && st.effectVoices == 0 && st.effectFrames == 0 && st.musicFrames == 44100;
+            if (!ok)
+                std::printf("    stream-from-silence: mv=%u ev=%u mf=%llu ef=%llu\n",
+                            st.musicVoices, st.effectVoices,
+                            (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames);
+            check(ok, "Mixer stats do not treat a stream starting from silence as a sound effect");
+        }
+
+        // A 10x swell over one second is music, not a sharp effect.
+        {
+            const int rate = 44100;
+            auto swell = std::make_shared<std::vector<int16_t>>(size_t(rate * 2) * 2);
+            constexpr double kTwoPi = 6.283185307179586;
+            for (int n = 0; n < rate * 2; ++n) {
+                const double w = std::sin(kTwoPi * double(n) / 100.0);
+                double amp = 2000.0;
+                if (n >= rate / 2 && n < rate + rate / 2) {
+                    const double t = double(n - rate / 2) / double(rate);
+                    amp = 2000.0 + 18000.0 * t;
+                } else if (n >= rate + rate / 2) {
+                    amp = 20000.0;
+                }
+                const auto v = int16_t(std::lround(amp * w));
+                (*swell)[size_t(n) * 2] = v;
+                (*swell)[size_t(n) * 2 + 1] = v;
+            }
+            Audio::Mixer m;
+            const uint32_t voice = m.createStream({});
+            m.enqueue(voice, swell, rate, 1);
+            pump(m, size_t(rate) * 2);
+            const auto st = m.stats();
+            const bool ok = st.musicVoices == 1 && st.effectVoices == 0 && st.effectFrames == 0;
+            if (!ok)
+                std::printf("    gradual swell: mv=%u ev=%u mf=%llu ef=%llu\n",
+                            st.musicVoices, st.effectVoices,
+                            (unsigned long long)st.musicFrames, (unsigned long long)st.effectFrames);
+            check(ok, "Mixer stats do not treat a gradual swell on a stream as a sound effect");
+        }
+    }
+
     // Mixer headroom and stream stitching (#260: audio blown out / buzzing on the device speaker).
     // Every expected value is analytic, never taken from the mixer: the inputs are int16 sines with an
     // integer period (441 Hz at 44.1 kHz = 100 frames), so the ideal bus value of every output frame
