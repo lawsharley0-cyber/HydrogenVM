@@ -1,15 +1,32 @@
 // HydrogenVM — Security.framework: the keychain item API (SecItem*) over a
 // per-app store in <home>/Library/Keychains/hvm-keychain.plist, the constants
-// apps build queries from, and SecRandomCopyBytes.
+// apps build queries from, SecRandomCopyBytes, and certificates / public-key
+// operations (SecCertificate*, SecPolicy*, SecTrust*, SecKeyEncrypt).
 //
 // Apps mostly use the keychain to keep a save-game checksum, a device id or a
-// login token across launches; that's what this supports. Keys, certificates
-// and trust evaluation aren't implemented (SecKey*, SecTrust* stay missing).
+// login token across launches. Certificates and public-key encryption are used
+// by embedded analytics SDKs (InMobi in Clash of Clans 1.70 calls
+// SecCertificateCreateWithData, wraps the cert in a CFArray, builds a basic
+// X.509 trust, copies the public key and SecKeyEncrypts with kSecPaddingNone).
+// Those APIs are implemented with the host Security.framework on Apple and
+// OpenSSL on Linux; they return NULL / errSecUnimplemented when neither is
+// available. Trust evaluation does not consult a system root store: a parsed
+// leaf yields a public key and kSecTrustResultRecoverableTrustFailure.
 #include "Foundation.hpp"
 #include "loader/Plist.hpp"
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <vector>
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#elif defined(HVM_HAVE_OPENSSL)
+#include <openssl/evp.h>
+#include <openssl/x509.h>
+#include <openssl/rsa.h>
+#endif
 
 namespace Hydrogen::Runtime::Foundation {
 namespace {
@@ -224,9 +241,307 @@ int32_t s_randomBytes(Ctx& x, GuestPtr, uint32_t count, GuestPtr out) {
     return 0;
 }
 
+constexpr int32_t errSecUnimplemented = -4, errSecBufferTooSmall = -25301;
+constexpr uint32_t kSecPaddingNone = 0, kSecPaddingPKCS1 = 1, kSecPaddingOAEP = 2;
+constexpr uint32_t kSecTrustResultRecoverableTrustFailure = 5;
+
+const char* kCertClass = "__HVMSecCertificate";
+const char* kPolicyClass = "__HVMSecPolicy";
+const char* kTrustClass = "__HVMSecTrust";
+const char* kKeyClass = "__HVMSecKey";
+
+struct SecCertObj : ObjC::HostObject {
+    std::vector<uint8_t> der;
+#if defined(__APPLE__)
+    ::SecCertificateRef host = nullptr;
+    ~SecCertObj() override { if (host) ::CFRelease(host); }
+#endif
+};
+struct SecPolicyObj : ObjC::HostObject {};
+struct SecKeyObj : ObjC::HostObject {
+#if defined(__APPLE__)
+    ::SecKeyRef host = nullptr;
+    ~SecKeyObj() override { if (host) ::CFRelease(host); }
+#elif defined(HVM_HAVE_OPENSSL)
+    EVP_PKEY* key = nullptr;
+    ~SecKeyObj() override { EVP_PKEY_free(key); }
+#endif
+};
+struct SecTrustObj : ObjC::HostObject {
+    id cert = 0, key = 0;
+#if defined(__APPLE__)
+    ::SecTrustRef host = nullptr;
+    ~SecTrustObj() override { if (host) ::CFRelease(host); }
+#endif
+};
+
+ObjC::Class secClass(Ctx& x, const char* n) { return ObjC::rt(x).getClass(n); }
+
+id makeCert(Ctx& x, std::vector<uint8_t> der) {
+#if defined(__APPLE__)
+    CFDataRef data = CFDataCreate(kCFAllocatorDefault, der.data(), CFIndex(der.size()));
+    if (!data) return 0;
+    ::SecCertificateRef host = ::SecCertificateCreateWithData(nullptr, data);
+    CFRelease(data);
+    if (!host) return 0;
+    const id o = ObjC::rt(x).createInstance(secClass(x, kCertClass));
+    auto h = std::make_unique<SecCertObj>();
+    h->der = std::move(der);
+    h->host = host;
+    ObjC::rt(x).setHost(o, std::move(h));
+    return o;
+#elif defined(HVM_HAVE_OPENSSL)
+    const unsigned char* p = der.data();
+    X509* cert = d2i_X509(nullptr, &p, long(der.size()));
+    if (!cert) return 0;
+    X509_free(cert);
+    const id o = ObjC::rt(x).createInstance(secClass(x, kCertClass));
+    auto h = std::make_unique<SecCertObj>();
+    h->der = std::move(der);
+    ObjC::rt(x).setHost(o, std::move(h));
+    return o;
+#else
+    (void)x; (void)der;
+    return 0;
+#endif
+}
+
+id makeKeyFromCert(Ctx& x, const SecCertObj& cert) {
+#if defined(__APPLE__)
+    if (!cert.host) return 0;
+    ::SecPolicyRef policy = ::SecPolicyCreateBasicX509();
+    if (!policy) return 0;
+    ::SecTrustRef trust = nullptr;
+    if (::SecTrustCreateWithCertificates(cert.host, policy, &trust) != errSecSuccess || !trust) {
+        CFRelease(policy);
+        return 0;
+    }
+    // CopyPublicKey works before or after Evaluate (Apple's contract).
+    (void)::SecTrustEvaluate(trust, nullptr);
+    ::SecKeyRef hostKey = ::SecTrustCopyPublicKey(trust);
+    CFRelease(trust);
+    CFRelease(policy);
+    if (!hostKey) return 0;
+    const id o = ObjC::rt(x).createInstance(secClass(x, kKeyClass));
+    auto h = std::make_unique<SecKeyObj>();
+    h->host = hostKey;
+    ObjC::rt(x).setHost(o, std::move(h));
+    return o;
+#elif defined(HVM_HAVE_OPENSSL)
+    const unsigned char* p = cert.der.data();
+    X509* c = d2i_X509(nullptr, &p, long(cert.der.size()));
+    if (!c) return 0;
+    EVP_PKEY* pk = X509_get_pubkey(c);
+    X509_free(c);
+    if (!pk) return 0;
+    const id o = ObjC::rt(x).createInstance(secClass(x, kKeyClass));
+    auto h = std::make_unique<SecKeyObj>();
+    h->key = pk;
+    ObjC::rt(x).setHost(o, std::move(h));
+    return o;
+#else
+    (void)x; (void)cert;
+    return 0;
+#endif
+}
+
+uint32_t sec_certificateCreateWithData(Ctx& x, uint32_t, id data) {
+    if (!data || !isData(x, data)) return 0;
+    return makeCert(x, dataBytes(x, data));
+}
+uint32_t sec_certificateCopyData(Ctx& x, id cert) {
+    auto* c = ObjC::rt(x).hostIf<SecCertObj>(cert);
+    if (!c) return 0;
+    return makeData(x, c->der.data(), uint32_t(c->der.size()), true);
+}
+uint32_t sec_certificateCopySubjectSummary(Ctx& x, id cert) {
+    auto* c = ObjC::rt(x).hostIf<SecCertObj>(cert);
+    if (!c) return 0;
+#if defined(__APPLE__)
+    if (!c->host) return 0;
+    CFStringRef s = ::SecCertificateCopySubjectSummary(c->host);
+    if (!s) return 0;
+    char buf[256] = {};
+    CFStringGetCString(s, buf, sizeof buf, kCFStringEncodingUTF8);
+    CFRelease(s);
+    return makeString(x, std::string(buf), true);
+#elif defined(HVM_HAVE_OPENSSL)
+    const unsigned char* p = c->der.data();
+    X509* xc = d2i_X509(nullptr, &p, long(c->der.size()));
+    if (!xc) return 0;
+    char cn[256] = {};
+    X509_NAME_get_text_by_NID(X509_get_subject_name(xc), NID_commonName, cn, sizeof cn);
+    X509_free(xc);
+    return makeString(x, std::string(cn[0] ? cn : "certificate"), true);
+#else
+    (void)x;
+    return 0;
+#endif
+}
+
+uint32_t sec_policyCreateBasicX509(Ctx& x) {
+    return ObjC::rt(x).createInstance(secClass(x, kPolicyClass));
+}
+
+id leafCert(Ctx& x, id certificates) {
+    if (!certificates) return 0;
+    if (ObjC::rt(x).hostIf<SecCertObj>(certificates)) return certificates;
+    if (isArray(x, certificates)) {
+        const auto items = arrayItems(x, certificates);
+        if (!items.empty() && ObjC::rt(x).hostIf<SecCertObj>(items[0])) return items[0];
+    }
+    return 0;
+}
+
+int32_t sec_trustCreate(Ctx& x, id certificates, id /*policies*/, GuestPtr trustOut) {
+    if (!trustOut) return errSecParam;
+    x.mem.write<uint32_t>(trustOut, 0);
+    const id leaf = leafCert(x, certificates);
+    auto* c = leaf ? ObjC::rt(x).hostIf<SecCertObj>(leaf) : nullptr;
+    if (!c) return errSecParam;
+    const id key = makeKeyFromCert(x, *c);
+    if (!key) return errSecParam;
+    const id trust = ObjC::rt(x).createInstance(secClass(x, kTrustClass));
+    auto h = std::make_unique<SecTrustObj>();
+    h->cert = ObjC::rt(x).retain(x.cpu, leaf);
+    h->key = key;   // already +1 from createInstance
+#if defined(__APPLE__)
+    if (c->host) {
+        ::SecPolicyRef policy = ::SecPolicyCreateBasicX509();
+        ::SecTrustRef ht = nullptr;
+        if (policy && ::SecTrustCreateWithCertificates(c->host, policy, &ht) == errSecSuccess) h->host = ht;
+        if (policy) CFRelease(policy);
+    }
+#endif
+    ObjC::rt(x).setHost(trust, std::move(h));
+    x.mem.write<uint32_t>(trustOut, trust);
+    return errSecSuccess;
+}
+
+int32_t sec_trustEvaluate(Ctx& x, id trust, GuestPtr result) {
+    auto* t = ObjC::rt(x).hostIf<SecTrustObj>(trust);
+    if (!t || !t->key) return errSecParam;
+    if (result) x.mem.write<uint32_t>(result, kSecTrustResultRecoverableTrustFailure);
+    return errSecSuccess;
+}
+
+uint32_t sec_trustCopyPublicKey(Ctx& x, id trust) {
+    auto* t = ObjC::rt(x).hostIf<SecTrustObj>(trust);
+    if (!t || !t->key) return 0;
+    return ObjC::rt(x).retain(x.cpu, t->key);
+}
+
+uint32_t sec_trustGetCertificateCount(Ctx& x, id trust) {
+    auto* t = ObjC::rt(x).hostIf<SecTrustObj>(trust);
+    return t && t->cert ? 1 : 0;
+}
+uint32_t sec_trustGetCertificateAtIndex(Ctx& x, id trust, uint32_t index) {
+    auto* t = ObjC::rt(x).hostIf<SecTrustObj>(trust);
+    if (!t || !t->cert || index != 0) return 0;
+    return t->cert;   // Apple does not give a +1 here (borrowed)
+}
+
+uint32_t sec_keyGetBlockSize(Ctx& x, id key) {
+    auto* k = ObjC::rt(x).hostIf<SecKeyObj>(key);
+    if (!k) return 0;
+#if defined(__APPLE__)
+    return k->host ? uint32_t(::SecKeyGetBlockSize(k->host)) : 0;
+#elif defined(HVM_HAVE_OPENSSL)
+    return k->key ? uint32_t(EVP_PKEY_get_size(k->key)) : 0;
+#else
+    return 0;
+#endif
+}
+
+int opensslPadding(uint32_t padding) {
+#if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
+    if (padding == kSecPaddingNone) return RSA_NO_PADDING;
+    if (padding == kSecPaddingPKCS1) return RSA_PKCS1_PADDING;
+    if (padding == kSecPaddingOAEP) return RSA_PKCS1_OAEP_PADDING;
+#else
+    (void)padding;
+#endif
+    return -1;
+}
+
+int32_t sec_keyEncrypt(Ctx& x, id key, uint32_t padding, GuestPtr plain, uint32_t plainLen,
+                       GuestPtr cipher, GuestPtr cipherLen) {
+    auto* k = ObjC::rt(x).hostIf<SecKeyObj>(key);
+    if (!k || !plain || !cipher || !cipherLen) return errSecParam;
+    const uint32_t outCap = x.mem.read<uint32_t>(cipherLen);
+    const uint32_t block = sec_keyGetBlockSize(x, key);
+    if (!block) return errSecParam;
+    if (outCap < block) return errSecBufferTooSmall;
+    if (padding == kSecPaddingNone && plainLen != block) return errSecParam;
+    std::vector<uint8_t> in(plainLen), out(block);
+    if (plainLen) x.mem.copyOut(in.data(), plain, plainLen);
+#if defined(__APPLE__)
+    if (!k->host) return errSecParam;
+    size_t n = out.size();
+    const OSStatus st = ::SecKeyEncrypt(k->host, ::SecPadding(padding), in.data(), in.size(), out.data(), &n);
+    if (st != errSecSuccess) return int32_t(st);
+    x.mem.copyIn(cipher, out.data(), n);
+    x.mem.write<uint32_t>(cipherLen, uint32_t(n));
+    return errSecSuccess;
+#elif defined(HVM_HAVE_OPENSSL)
+    if (!k->key) return errSecParam;
+    const int pad = opensslPadding(padding);
+    if (pad < 0) return errSecParam;
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(k->key, nullptr);
+    if (!ctx) return errSecParam;
+    size_t n = out.size();
+    bool ok = EVP_PKEY_encrypt_init(ctx) == 1 && EVP_PKEY_CTX_set_rsa_padding(ctx, pad) == 1 &&
+              EVP_PKEY_encrypt(ctx, out.data(), &n, in.data(), in.size()) == 1;
+    EVP_PKEY_CTX_free(ctx);
+    if (!ok) return errSecParam;
+    x.mem.copyIn(cipher, out.data(), n);
+    x.mem.write<uint32_t>(cipherLen, uint32_t(n));
+    return errSecSuccess;
+#else
+    return errSecUnimplemented;
+#endif
+}
+
+int32_t sec_keyDecrypt(Ctx& x, id key, uint32_t padding, GuestPtr cipher, uint32_t cipherLen,
+                       GuestPtr plain, GuestPtr plainLen) {
+    // Public-only keys cannot decrypt. A private key is not produced by this path.
+    (void)x; (void)key; (void)padding; (void)cipher; (void)cipherLen; (void)plain; (void)plainLen;
+    return errSecUnimplemented;
+}
+
+int32_t sec_keyRawVerify(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {
+    return errSecUnimplemented;
+}
+
+void trust_dealloc(Ctx& x, id self, SEL s) {
+    if (auto* t = ObjC::rt(x).hostIf<SecTrustObj>(self)) {
+        if (t->cert) { ObjC::rt(x).release(x.cpu, t->cert); t->cert = 0; }
+        if (t->key) { ObjC::rt(x).release(x.cpu, t->key); t->key = 0; }
+    }
+    ObjC::rt(x).sendSuper(x.cpu, self, ObjC::rt(x).getClass("NSObject"), s, {});
+}
+
 } // namespace
 
-void registerSecurity(Process& p, ObjC::Runtime&) {
+void registerSecurity(Process& p, ObjC::Runtime& r) {
+    r.defineClass(kCertClass, "NSObject");
+    r.defineClass(kPolicyClass, "NSObject");
+    r.defineClass(kKeyClass, "NSObject");
+    r.defineClass(kTrustClass, "NSObject").m<&trust_dealloc>("dealloc", "v@:");
+    p.def<&sec_certificateCreateWithData>("_SecCertificateCreateWithData");
+    p.def<&sec_certificateCopySubjectSummary>("_SecCertificateCopySubjectSummary");
+    p.def<&sec_certificateCopyData>("_SecCertificateCopyData");
+    p.def<&sec_keyGetBlockSize>("_SecKeyGetBlockSize");
+    p.def<&sec_keyEncrypt>("_SecKeyEncrypt");
+    p.def<&sec_keyDecrypt>("_SecKeyDecrypt");
+    p.def<&sec_keyRawVerify>("_SecKeyRawVerify");
+    p.def<&sec_trustCreate>("_SecTrustCreateWithCertificates");
+    p.def<&sec_trustEvaluate>("_SecTrustEvaluate");
+    p.def<&sec_trustCopyPublicKey>("_SecTrustCopyPublicKey");
+    p.def<&sec_trustGetCertificateCount>("_SecTrustGetCertificateCount");
+    p.def<&sec_trustGetCertificateAtIndex>("_SecTrustGetCertificateAtIndex");
+    p.def<&sec_policyCreateBasicX509>("_SecPolicyCreateBasicX509");
+
     // CFStringRef constants: each symbol is a pointer-sized variable holding the string.
     static const std::pair<const char*, const char*> kConstants[] = {
         {"_kSecClass", "class"}, {"_kSecClassGenericPassword", "genp"}, {"_kSecClassInternetPassword", "inet"},
