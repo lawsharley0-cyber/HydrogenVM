@@ -1,5 +1,13 @@
 # Compatibility workflow
 
+## Current Linux playability queue
+
+| App / fixture | Status | Evidence |
+|---|---|---|
+| BADLAND 1.0 (build 8) | In progress; not yet qualified playable | Startup/menu/scene, music signal, pause/resume, 200-second clean save/close and same-home relaunch. Median whole-frame 35.13 ms exceeds the <33 ms target; earned progression/effects remain under investigation. [Reproduction, shared fixes and gates](BADLAND_PLAYABILITY_2026-11-12.md). |
+
+## Scanner
+
 `tools/hvm_compat.py` is the scanner. It runs strict app checks, screenshots,
 frame analysis, and shared-gap ranking through `tools/compat_harness`.
 

@@ -107,6 +107,7 @@ void glVertexPointer(GLint size, GLenum type, GLsizei stride, const GLvoid *poin
 void glColorPointer(GLint size, GLenum type, GLsizei stride, const GLvoid *pointer);
 void glTexCoordPointer(GLint size, GLenum type, GLsizei stride, const GLvoid *pointer);
 GLuint glCreateShader(GLenum type);
+void glDeleteShader(GLuint shader);
 void glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length);
 void glCompileShader(GLuint shader);
 void glGetShaderiv(GLuint shader, GLenum pname, GLint *params);

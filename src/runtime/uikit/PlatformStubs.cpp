@@ -20,6 +20,8 @@
 
 namespace Hydrogen::Runtime::UIKit {
 
+void registerCoreMediaTime(Process& p);
+
 using Foundation::autoreleased;
 using Foundation::makeString;
 using Foundation::utf8;
@@ -3138,6 +3140,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     defCMTimeConst("_kCMTimePositiveInfinity", 0, 0, 5);
     defCMTimeConst("_kCMTimeNegativeInfinity", 0, 0, 9);
     defCMTimeConst("_kCMTimeIndefinite", 0, 0, 17);
+    registerCoreMediaTime(p);
 
     struct AVAssetData : ObjC::HostObject { id url = 0; };
     ObjC::ClassBuilder avAsset = r.defineClass("AVAsset", "NSObject");

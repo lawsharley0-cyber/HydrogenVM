@@ -961,6 +961,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
     // An opaque layer (what GL games use) ignores the renderbuffer's alpha, as Core Animation does:
     // blending leaves alpha < 1 in places, which must not let the views behind show through.
     const bool opaqueLayer = layerData(x, rb.drawableLayer).opaque;
+    bool allOpaque = true;
     // Debugging aid: HVM_DUMP_RB=<file> keeps overwriting <file> with the latest presented renderbuffer (raw RGBA, GL row order).
     if (const char* f = std::getenv("HVM_DUMP_RB")) {
         if (std::FILE* fp = std::fopen(f, "wb")) {
@@ -978,6 +979,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
             const uint8_t g = srcRow[px * 4 + 1];
             const uint8_t b = srcRow[px * 4 + 2];
             const uint8_t a = opaqueLayer ? 255 : srcRow[px * 4 + 3];
+            allOpaque &= a == 255;
             if (a == 255) {
                 dstRow[px * 4 + 0] = r;
                 dstRow[px * 4 + 1] = g;
@@ -991,6 +993,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
             }
         }
     }
+    img->opaque = allOpaque;
     EAGLLayerData& ed = rt(x).host<EAGLLayerData>(rb.drawableLayer);
     ed.frontBuffer = img;
     LayerData& ld = layerData(x, rb.drawableLayer);

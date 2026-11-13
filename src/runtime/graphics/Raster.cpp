@@ -521,6 +521,31 @@ void drawImage(Surface& dst, const Image& img, const Affine& m, const Clip& clip
         const uint8_t* p = src + (size_t(y) * size_t(iw) + size_t(x)) * 4;
         return {p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f, p[3] / 255.0f};
     };
+    // An opaque drawable rotated onto a pixel-aligned portrait surface has a
+    // one-to-one mapping. Avoid a floating-point bilinear blend for every pixel
+    // merely because a legacy root controller is rotated by 90 degrees.
+    const bool quarterTurn = std::fabs(inv.a) < 1e-6f && std::fabs(inv.d) < 1e-6f &&
+        std::fabs(std::fabs(inv.b) - 1) < 1e-6f && std::fabs(std::fabs(inv.c) - 1) < 1e-6f &&
+        std::fabs(inv.tx - std::round(inv.tx)) < 1e-4f && std::fabs(inv.ty - std::round(inv.ty)) < 1e-4f;
+    if (quarterTurn && img.opaque && alpha >= 1 && !tint && mode == BlendMode::Normal && !clip.mask && bpp == 4) {
+        int ro, go, bo, ao;
+        channelOffsets(dst.format, ro, go, bo, ao);
+        std::vector<int> sourceRows(size_t(x1 - x0), 0);
+        for (int x = x0; x < x1; ++x) sourceRows[size_t(x - x0)] = int(std::floor(inv.b * (float(x) + 0.5f) + inv.ty));
+        for (int y = y0; y < y1; ++y) {
+            const int sx = int(std::floor(inv.c * (float(y) + 0.5f) + inv.tx));
+            if (sx < 0 || sx >= iw) continue;
+            uint8_t* row = dst.data + size_t(y) * size_t(dst.stride);
+            for (int x = x0; x < x1; ++x) {
+                const int sy = sourceRows[size_t(x - x0)];
+                if (sy < 0 || sy >= ih) continue;
+                const uint8_t* q = src + (size_t(sy) * size_t(iw) + size_t(sx)) * 4;
+                uint8_t* p = row + size_t(x) * 4;
+                p[ro] = q[0]; p[go] = q[1]; p[bo] = q[2]; p[ao] = 255;
+            }
+        }
+        return;
+    }
     // Axis-aligned (the usual case: a view's image, scaled or not): the source column of each
     // destination column and the source row of each destination row are the same for the whole
     // draw, so they are worked out once instead of per pixel. Same arithmetic, same results.
