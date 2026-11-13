@@ -77,7 +77,8 @@ add_executable(hvm_guest_call_boundary_tests tests/runner/GuestCallBoundaryTests
 target_link_libraries(hvm_guest_call_boundary_tests PRIVATE hvm_core)
 add_executable(hvm_thread_lifetime_tests tests/runner/ThreadLifetimeTests.cpp)
 target_link_libraries(hvm_thread_lifetime_tests PRIVATE hvm_core)
-target_compile_definitions(hvm_tests PRIVATE MINIMP3_HWCAP_NO_MAIN HVM_HOST_FAULT_NO_MAIN HVM_THREAD_PROGRESS_NO_MAIN HVM_GUEST_CALL_BOUNDARY_NO_MAIN HVM_THREAD_LIFETIME_NO_MAIN HVM_ARENA_POOL_NO_MAIN)
+target_sources(hvm_tests PRIVATE tests/runner/NSStringSearchTests.cpp tests/runner/LegacyGlyphTests.cpp tests/runner/PositionalFormatTests.cpp tests/runner/LegacyAnimationTests.cpp)
+target_compile_definitions(hvm_tests PRIVATE HVM_CANABALT_CASES_NO_MAIN MINIMP3_HWCAP_NO_MAIN HVM_HOST_FAULT_NO_MAIN HVM_THREAD_PROGRESS_NO_MAIN HVM_GUEST_CALL_BOUNDARY_NO_MAIN HVM_THREAD_LIFETIME_NO_MAIN HVM_ARENA_POOL_NO_MAIN)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
 
 # GNU-style linker wrapping keeps host thread failure injection in the test binary.
@@ -129,6 +130,18 @@ target_link_libraries(hvm_arena_pool_tests PRIVATE hvm_core)
 
 add_executable(hvm_support_tests tests/runner/SupportTests.cpp)
 target_link_libraries(hvm_support_tests PRIVATE hvm_core)
+add_executable(hvm_string_search_tests tests/runner/NSStringSearchTests.cpp)
+target_link_libraries(hvm_string_search_tests PRIVATE hvm_core)
+add_test(NAME hvm_string_search_tests COMMAND hvm_string_search_tests)
+add_executable(hvm_legacy_glyph_tests tests/runner/LegacyGlyphTests.cpp)
+target_link_libraries(hvm_legacy_glyph_tests PRIVATE hvm_core)
+add_test(NAME hvm_legacy_glyph_tests COMMAND hvm_legacy_glyph_tests)
+add_executable(hvm_legacy_animation_tests tests/runner/LegacyAnimationTests.cpp)
+target_link_libraries(hvm_legacy_animation_tests PRIVATE hvm_core)
+add_test(NAME hvm_legacy_animation_tests COMMAND hvm_legacy_animation_tests)
+add_executable(hvm_positional_format_tests tests/runner/PositionalFormatTests.cpp)
+target_link_libraries(hvm_positional_format_tests PRIVATE hvm_core)
+add_test(NAME hvm_positional_format_tests COMMAND hvm_positional_format_tests)
 
 add_executable(hvm_entry_tests tests/runner/EntryObserverTests.cpp)
 target_link_libraries(hvm_entry_tests PRIVATE hvm_core)

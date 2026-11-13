@@ -125,6 +125,7 @@ struct RunLoop {
     std::deque<std::function<void(CPU::Cpu&)>> queue;   // performSelectorOnMainThread, dispatch main queue
     std::vector<std::function<void(CPU::Cpu&, double now)>> frameHooks;   // CADisplayLink, input pumping
     bool stopFlag = false;
+    bool autoreleasePerTurn = false; // UIKit main loop; worker/Foundation loops keep caller ownership.
     double nextFrameAt = 0;     // next frame-hook deadline (60 Hz)
     void addFrameHook(std::function<void(CPU::Cpu&, double)> h) { std::lock_guard<std::mutex> lk(mu); frameHooks.push_back(std::move(h)); }
 

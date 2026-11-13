@@ -515,21 +515,43 @@ bool s_containsString(Ctx& x, id self, SEL, id needle) { return findString(sv(x,
 }   // namespace
 namespace {
 
-void s_rangeOfCharacterFromSet(Ctx& x, GuestPtr out, id self, SEL, id set) {
+// Range coordinates are UTF-16 units; membership is by Unicode scalar when
+// both halves of a surrogate pair lie in the requested range. Only backwards
+// and anchored are search options for this API; it does no normalization.
+// https://developer.apple.com/documentation/foundation/nsstring/rangeofcharacter(from:options:range:)
+void s_rangeOfCharacterFromSetOptionsRange(Ctx& x, GuestPtr out, id self, SEL, id set, uint32_t opts, uint32_t loc, uint32_t len) {
     const U16 v = sv(x, self);
-    for (size_t i = 0; i < v.size(); ++i)
-        if (characterSetContains(x, set, v[i])) { writeRange(x, out, {uint32_t(i), 1}); return; }
-    writeRange(x, out, {kNotFound, 0});
-}
-void s_rangeOfCharacterFromSetOptions(Ctx& x, GuestPtr out, id self, SEL, id set, uint32_t opts) {
-    const U16 v = sv(x, self);
-    if (opts & kBackwards) {
-        for (size_t i = v.size(); i-- > 0;) if (characterSetContains(x, set, v[i])) { writeRange(x, out, {uint32_t(i), 1}); return; }
-    } else {
-        for (size_t i = 0; i < v.size(); ++i) if (characterSetContains(x, set, v[i])) { writeRange(x, out, {uint32_t(i), 1}); return; }
+    if (!set) throw ObjC::ObjCError("*** NSString character search requires a non-nil character set");
+    if (loc > v.size() || len > v.size() - loc)
+        throw ObjC::ObjCError("*** rangeOfCharacterFromSet: search range out of bounds");
+    const uint32_t end = loc + len;
+    const bool backwards = opts & kBackwards;
+    uint32_t cursor = backwards ? end : loc;
+    Range result{kNotFound,0};
+    while (backwards ? cursor > loc : cursor < end) {
+        uint32_t first = backwards ? cursor - 1 : cursor;
+        uint32_t scalar = v[first], units = 1;
+        if (backwards && scalar >= 0xdc00 && scalar <= 0xdfff && first > loc && v[first-1] >= 0xd800 && v[first-1] <= 0xdbff) {
+            scalar = 0x10000 + ((uint32_t(v[first-1]) - 0xd800) << 10) + scalar - 0xdc00;
+            --first; units = 2;
+        } else if (!backwards && scalar >= 0xd800 && scalar <= 0xdbff && first + 1 < end && v[first+1] >= 0xdc00 && v[first+1] <= 0xdfff) {
+            scalar = 0x10000 + ((scalar - 0xd800) << 10) + uint32_t(v[first+1]) - 0xdc00;
+            units = 2;
+        }
+        const bool member = scalar <= 0xffff ? characterSetContains(x,set,char16_t(scalar)) :
+            (rt(x).send(x.cpu,set,"longCharacterIsMember:",{scalar}) & 0xff) != 0;
+        if (member) { result = {first,units}; break; }
+        if (opts & kAnchored) break;
+        cursor = backwards ? first : first + units;
     }
-    writeRange(x, out, {kNotFound, 0});
+    uint32_t fault = 0;
+    if (!x.mem.copyInWritable(out,&result,sizeof(result),fault))
+        throw CPU::GuestFault(CPU::Exit::MemFault,fault,x.cpu.r[CPU::kPC],uint32_t(x.cpu.thumb),"NSString search output is not writable");
 }
+void s_rangeOfCharacterFromSetOptions(Ctx& x, GuestPtr out, id self, SEL sel, id set, uint32_t opts) {
+    s_rangeOfCharacterFromSetOptionsRange(x,out,self,sel,set,opts,0,uint32_t(sv(x,self).size()));
+}
+void s_rangeOfCharacterFromSet(Ctx& x, GuestPtr out, id self, SEL sel, id set) { s_rangeOfCharacterFromSetOptions(x,out,self,sel,set,0); }
 // Forward segmentation to the host Unicode engine. UTF-16 code units are the
 // guest API's coordinates; a surrogate-pair-only approximation splits accents,
 // joined emoji, regional indicators and other multi-code-point characters.
@@ -1084,7 +1106,9 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_hasPrefix>("hasPrefix:", "c@:@").m<&s_hasSuffix>("hasSuffix:", "c@:@")
       .m<&s_rangeOfString>("rangeOfString:", "{_NSRange=II}@:@").m<&s_rangeOfStringOptions>("rangeOfString:options:")
       .m<&s_rangeOfStringOptionsRange>("rangeOfString:options:range:").m<&s_containsString>("containsString:")
-      .m<&s_rangeOfCharacterFromSet>("rangeOfCharacterFromSet:").m<&s_rangeOfCharacterFromSetOptions>("rangeOfCharacterFromSet:options:")
+      .m<&s_rangeOfCharacterFromSet>("rangeOfCharacterFromSet:","{_NSRange=II}@:@")
+      .m<&s_rangeOfCharacterFromSetOptions>("rangeOfCharacterFromSet:options:","{_NSRange=II}@:@I")
+      .m<&s_rangeOfCharacterFromSetOptionsRange>("rangeOfCharacterFromSet:options:range:","{_NSRange=II}@:@I{_NSRange=II}")
       .m<&s_rangeOfComposed>("rangeOfComposedCharacterSequenceAtIndex:", "{_NSRange=II}@:I")
       .m<&s_rangeOfComposedRange>("rangeOfComposedCharacterSequencesForRange:", "{_NSRange=II}@:{_NSRange=II}")
       .m<&s_substringFromIndex>("substringFromIndex:").m<&s_substringToIndex>("substringToIndex:").m<&s_substringWithRange>("substringWithRange:")

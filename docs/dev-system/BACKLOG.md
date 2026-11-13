@@ -1,5 +1,18 @@
 # Backlog
 
+- Owner IPA queue, November 13: Canabalt 1.4 startup/text-wrapping crash on
+  main ea5a6d2e, tracked in [#436](https://github.com/lawsharley0-cyber/HydrogenVM/issues/436).
+  Group D, `codex/canabalt-compat`: implement the missing bounded NSString
+  character-set search and shared family semantics, real legacy glyph outlines
+  for blank labels, positional printf/NSString formats for the song title,
+  scalar animation completion BOOL, application-owned windows, and UIKit
+  per-turn timer autorelease pools. Each has failing runner/Test Lab coverage;
+  latest-main fresh 230 s play earned 553 m and relaunch preserved scores.
+  Integrated gates pass (806 fulltest, 39 Test Lab, 14 available must-launch);
+  see `docs/CANABALT_PLAYABILITY_2026-11-13.md`. Linux playable with frame
+  outlier/device notes; draft for independent review, not merged by Codex.
+  No game assets or saves
+  in Git; no hotspot edit planned.
 - Owner priority override, November 13: Desktop/IPA/Get these working comes
   before the earlier game queue. First: Angry Birds Hatchery Island HD1.7.0,
   issue #442, branch `codex/angry-birds-island-compat`, GroupD single editor.

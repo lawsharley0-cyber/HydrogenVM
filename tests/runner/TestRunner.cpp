@@ -256,6 +256,10 @@ int runHostFaultChild(int fd, bool stress, bool afterUnwind);
 int runThreadProgressTests();
 int runGuestCallBoundaryTests();
 int runSuspendTests();
+int runNSStringSearchTests();
+int runLegacyGlyphTests();
+int runPositionalFormatTests();
+int runLegacyAnimationTests();
 int runGuestCallBoundaryChild(int mode);
 int runThreadLifetimeTests();
 int runThreadLifetimeChild();
@@ -13486,6 +13490,10 @@ int runFullSubsystemTests() {
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
+    check(runNSStringSearchTests() == 0, "bounded character-set search contract");
+    check(runLegacyGlyphTests() == 0, "legacy CGContext glyph outlines and ABI");
+    check(runPositionalFormatTests() == 0, "positional formatting arguments and ABI");
+    check(runLegacyAnimationTests() == 0, "UIKit animation, window and timer-pool lifetime");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

@@ -60,6 +60,13 @@
       "tap": "116,284@2"
     },
     {
+      "folder": "Canabalt_1.4",
+      "frames": 265,
+      "name": "Canabalt_1.4",
+      "picture": true,
+      "sound": true
+    },
+    {
       "folder": "com.fgol.HungrySharkEvolution-iOS4.3-_Clutch-2.0.4",
       "frames": 20,
       "name": "com.fgol.HungrySharkEvolution-iOS4.3-_Clutch-2.0.4",

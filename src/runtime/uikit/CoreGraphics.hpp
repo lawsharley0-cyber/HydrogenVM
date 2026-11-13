@@ -3,6 +3,8 @@
 #include "runtime/foundation/Foundation.hpp"
 #include "runtime/graphics/Graphics.hpp"
 
+namespace Hydrogen::Graphics { class TrueTypeFont; }
+
 namespace Hydrogen::Runtime::CG {
 
 using Foundation::id;
@@ -39,6 +41,7 @@ struct GState {
     bool antialias = true, smoothImages = true;
     // text
     std::string fontName = "Helvetica";
+    std::shared_ptr<G::TrueTypeFont> fontFace;
     float fontSize = 12;
     G::Affine textMatrix;
     float charSpacing = 0;
