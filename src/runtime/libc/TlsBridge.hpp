@@ -65,7 +65,11 @@ inline std::string httpSummary(const char* p, size_t n) {
         std::string lower = line;
         for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
         for (const char* k : kKeep)
-            if (lower.rfind(k, 0) == 0 && line.size() < 200) { extra += (extra.empty() ? "" : ", ") + line; break; }
+            if (lower.rfind(k, 0) == 0 && line.size() < 200) {
+                if (lower.rfind("location:", 0) == 0) line = line.substr(0, line.find('?'));   // signed URLs stay out of shared logs
+                extra += (extra.empty() ? "" : ", ") + line;
+                break;
+            }
         i = e + 1;
     }
     return extra.empty() ? out : out + " [" + extra + "]";
