@@ -9426,6 +9426,80 @@ int runFullSubsystemTests() {
             invoke("_pthread_attr_destroy", {attr});
         }
 
+        // SIOCGIFCONF (_IOWR('i', 36, struct ifconf) = 0xc0086924 on 32-bit) and
+        // ether_ntoa: a real iPhone reports lo0 and en0, and Darwin's ether_ntoa
+        // uses unpadded %x. Groove Coaster Zero's NetworkInformation walks that
+        // list, and rfServerManager::GetMacAddress does strlen on the result —
+        // a NULL when the ioctl returns an empty list is a guest crash.
+        {
+            auto invoke = [&](const char* name, std::initializer_list<uint32_t> args) -> uint32_t {
+                const auto sym = proc.lookupSymbol(name);
+                return sym ? uint32_t(proc.callGuest(cpu, *sym, args)) : 0xFFFFFFFFu;
+            };
+            const auto etherSym = proc.lookupSymbol("_ether_ntoa");
+            bool etherOk = false;
+            if (etherSym) {
+                const uint32_t mac = proc.heap().alloc(6);
+                const uint8_t bytes[6] = {0x02, 0x00, 0x00, 0x0a, 0x0b, 0xcc};
+                proc.mem().copyIn(mac, bytes, 6);
+                const uint32_t s = invoke("_ether_ntoa", {mac});
+                const std::string got = s && s != 0xFFFFFFFFu ? proc.readCString(s) : "";
+                etherOk = got == "2:0:0:a:b:cc";
+                if (!etherOk) std::printf("    ether_ntoa: got \"%s\"\n", got.c_str());
+            } else {
+                std::printf("    ether_ntoa: symbol not registered\n");
+            }
+            check(etherOk, "ether_ntoa matches Darwin's unpadded \"%x:%x:%x:%x:%x:%x\" format");
+
+            const uint32_t fd = invoke("_socket", {2, 2, 0});   // AF_INET, SOCK_DGRAM
+            const uint32_t buf = proc.heap().allocZeroed(1024);
+            const uint32_t ifc = proc.heap().allocZeroed(8);
+            proc.mem().write<int32_t>(ifc, 1024);
+            proc.mem().write<uint32_t>(ifc + 4, buf);
+            constexpr uint32_t kSIOCGIFCONF = 0xc0086924u;   // _IOWR('i', 36, struct ifconf)
+            const uint32_t rc = invoke("_ioctl", {fd, kSIOCGIFCONF, ifc});
+            const int32_t used = int32_t(proc.mem().read<uint32_t>(ifc));
+            bool loInet = false, enLink = false, enInet = false;
+            uint8_t enMac[6] = {};
+            uint32_t enIp = 0;
+            if (rc == 0 && used > 0 && used <= 1024) {
+                uint32_t p = buf, end = buf + uint32_t(used);
+                while (p + 18 <= end) {
+                    char name[17] = {};
+                    proc.mem().copyOut(name, p, 16);
+                    const uint8_t saLen = proc.mem().read<uint8_t>(p + 16);
+                    const uint8_t family = proc.mem().read<uint8_t>(p + 17);
+                    const uint32_t rec = (saLen >= 16) ? (16u + saLen) : 32u;
+                    if (p + rec > end) break;
+                    if (family == 2 /* AF_INET */) {
+                        const uint32_t addr = proc.mem().read<uint32_t>(p + 20);
+                        if (std::string(name) == "lo0" && addr == 0x0100007Fu) loInet = true;
+                        if (std::string(name) == "en0") { enInet = true; enIp = addr; }
+                    } else if (family == 18 /* AF_LINK */) {
+                        const uint8_t nlen = proc.mem().read<uint8_t>(p + 16 + 5);
+                        const uint8_t alen = proc.mem().read<uint8_t>(p + 16 + 6);
+                        if (std::string(name) == "en0" && alen == 6 && nlen == 3) {
+                            proc.mem().copyOut(enMac, p + 16 + 8 + nlen, 6);
+                            enLink = enMac[0] == 0x02 && enMac[1] == 0 && enMac[2] == 0 &&
+                                     enMac[3] == 0 && enMac[4] == 0 && enMac[5] == 0;
+                        }
+                    }
+                    p += rec;
+                }
+            }
+            // A NULL ifc_buf should report the size needed, as Darwin's ifconf does.
+            proc.mem().write<int32_t>(ifc, 0);
+            proc.mem().write<uint32_t>(ifc + 4, 0);
+            const uint32_t rcNeed = invoke("_ioctl", {fd, kSIOCGIFCONF, ifc});
+            const int32_t needed = int32_t(proc.mem().read<uint32_t>(ifc));
+            invoke("_close", {fd});
+            if (!(rc == 0 && loInet && enLink && enInet && rcNeed == 0 && needed == used && used > 0))
+                std::printf("    SIOCGIFCONF: rc=%u used=%d loInet=%d enLink=%d enInet=%d rcNeed=%u needed=%d enIp=%08x\n",
+                            rc, used, int(loInet), int(enLink), int(enInet), rcNeed, needed, enIp);
+            check(rc == 0 && loInet && enLink && enInet && rcNeed == 0 && needed == used && used > 0,
+                  "SIOCGIFCONF lists lo0 (127.0.0.1) and en0 (AF_LINK MAC 02:00:00:00:00:00, AF_INET)");
+        }
+
         // Verify the configured size on the live guest thread, and the post-start contract.
         {
             struct StackProbe { std::atomic<uint32_t> id{0}, threadObject{0}; std::atomic<bool> release{false}, done{false}; };

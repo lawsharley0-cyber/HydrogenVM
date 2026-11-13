@@ -26,6 +26,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
 #include <fcntl.h>
 #include <netdb.h>
 #include <map>
@@ -625,6 +626,21 @@ uint32_t n_inetNtop(Ctx& x, int32_t af, GuestPtr src, GuestPtr dst, uint32_t siz
     return dst;
 }
 
+// ether_ntoa: Darwin Libc (net/ether_addr.c) uses unpadded %x, not Linux's %02x.
+// Groove Coaster Zero sscanf's the result with "%x:%x:%x:%x:%x:%x" and sprintf's
+// a padded uppercase MAC into its interface dictionary.
+uint32_t n_etherNtoa(Ctx& x, GuestPtr addr) {
+    static const char bufKey = 0;
+    uint32_t& buf = x.proc.threadSlot(&bufKey);
+    if (!buf) buf = x.proc.heap().alloc(18);
+    uint8_t m[6] = {};
+    x.mem.copyOut(m, addr, 6);
+    char s[18];
+    std::snprintf(s, sizeof s, "%x:%x:%x:%x:%x:%x", m[0], m[1], m[2], m[3], m[4], m[5]);
+    x.mem.copyIn(buf, s, std::strlen(s) + 1);
+    return buf;
+}
+
 // ---- getifaddrs: lo0 only (AF_LINK + AF_INET 127.0.0.1).
 // struct ifaddrs { next, name, flags, addr, netmask, dstaddr, data } (28 bytes).
 int32_t n_getifaddrs(Ctx& x, GuestPtr out) {
@@ -925,6 +941,7 @@ void registerLibcNet(Process& p) {
     p.def<&n_inetAddr>("_inet_addr");
     p.def<&n_inetAton>("_inet_aton");
     p.def<&n_inetNtoa>("_inet_ntoa");
+    p.def<&n_etherNtoa>("_ether_ntoa");
     p.def<&n_inetPton>("_inet_pton");
     p.def<&n_inetNtop>("_inet_ntop");
     p.def<&n_getifaddrs>("_getifaddrs");

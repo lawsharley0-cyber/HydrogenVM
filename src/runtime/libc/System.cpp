@@ -29,6 +29,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <unistd.h>
+#include <algorithm>
+#include <vector>
 
 namespace Hydrogen::Runtime {
 
@@ -215,8 +217,81 @@ GuestPtr s_basename(Ctx& x, GuestPtr p) {
     if (slash != std::string::npos) s = s.substr(slash + 1);
     return x.proc.internCString(s.empty() ? "." : s);
 }
+// 32-bit Darwin _IOWR('i', 36, struct ifconf): {int ifc_len; caddr_t ifc_buf}.
+constexpr uint32_t kSIOCGIFCONF = 0xc0086924;
+
+// Phone interfaces: lo0 and en0, matching sysctl(NET_RT_IFLIST) and
+// if_nametoindex. en0's MAC is 02:00:00:00:00:00 (the locally-administered
+// address iOS 7+ reports). Packed as Darwin ifconf (IFNAMSIZ + sa_len).
+// lo0's sockaddr_dl is padded to 16 so walkers that use
+// max(sizeof(ifreq), IFNAMSIZ+sa_len) stay aligned.
+void ifconfName(std::vector<uint8_t>& b, const char* name) {
+    const size_t n = b.size();
+    b.resize(n + 16, 0);
+    std::memcpy(b.data() + n, name, std::strlen(name));
+}
+void ifconfInet(std::vector<uint8_t>& b, const char* name, uint32_t addrHost) {
+    ifconfName(b, name);
+    uint8_t sa[16] = {};
+    sa[0] = 16;
+    sa[1] = 2;   // AF_INET
+    sa[4] = uint8_t(addrHost >> 24);
+    sa[5] = uint8_t(addrHost >> 16);
+    sa[6] = uint8_t(addrHost >> 8);
+    sa[7] = uint8_t(addrHost);
+    b.insert(b.end(), sa, sa + 16);
+}
+void ifconfLink(std::vector<uint8_t>& b, const char* name, uint16_t index, uint8_t type,
+                const uint8_t* mac, uint8_t alen) {
+    ifconfName(b, name);
+    const uint8_t nlen = uint8_t(std::strlen(name));
+    uint8_t sdlLen = uint8_t(8 + nlen + alen);
+    if (sdlLen < 16) sdlLen = 16;   // pad to sizeof(struct sockaddr)
+    std::vector<uint8_t> sdl(sdlLen, 0);
+    sdl[0] = sdlLen;
+    sdl[1] = 18;   // AF_LINK
+    std::memcpy(sdl.data() + 2, &index, 2);
+    sdl[4] = type;
+    sdl[5] = nlen;
+    sdl[6] = alen;
+    std::memcpy(sdl.data() + 8, name, nlen);
+    if (alen && mac) std::memcpy(sdl.data() + 8 + nlen, mac, alen);
+    b.insert(b.end(), sdl.begin(), sdl.end());
+}
+std::vector<uint8_t> darwinIfconf() {
+    std::vector<uint8_t> b;
+    static const uint8_t kEn0Mac[6] = {0x02, 0, 0, 0, 0, 0};
+    ifconfLink(b, "lo0", 1, 24, nullptr, 0);          // IFT_LOOP
+    ifconfInet(b, "lo0", 0x7F000001);                  // 127.0.0.1
+    ifconfLink(b, "en0", 2, 6, kEn0Mac, 6);            // IFT_ETHER
+    ifconfInet(b, "en0", 0x0A000002);                  // 10.0.0.2
+    return b;
+}
+int32_t ioctlIfconf(Ctx& x, GuestPtr arg) {
+    const auto body = darwinIfconf();
+    const int32_t need = int32_t(body.size());
+    const uint32_t buf = x.mem.read<uint32_t>(arg + 4);
+    if (!buf) {
+        x.mem.write<int32_t>(arg, need);
+        return 0;
+    }
+    const uint32_t limit = uint32_t(std::max(0, x.mem.read<int32_t>(arg)));
+    uint32_t n = 0, p = 0;
+    while (p < body.size()) {
+        const uint8_t saLen = p + 16 < body.size() ? body[p + 16] : 0;
+        const uint32_t rec = (saLen >= 16) ? (16u + saLen) : 32u;
+        if (p + rec > body.size() || n + rec > limit) break;
+        n += rec;
+        p += rec;
+    }
+    if (n) x.mem.copyIn(buf, body.data(), n);
+    x.mem.write<int32_t>(arg, int32_t(n));
+    return 0;
+}
+
 int32_t s_ioctl(Ctx& x, int32_t fd, uint32_t req, GuestPtr arg) {
-    // Sockets: FIONBIO (non-blocking) and FIONREAD (bytes waiting) matter to network code.
+    // Sockets: FIONBIO (non-blocking), FIONREAD (bytes waiting), SIOCGIFCONF
+    // (lo0 + en0). Apps such as Groove Coaster Zero walk SIOCGIFCONF for a MAC.
     if (isNetworkSocket(x.proc, fd) && arg) {
         if (req == 0x8004667e) {
             const int flags = ::fcntl(fd, F_GETFL);
@@ -230,6 +305,7 @@ int32_t s_ioctl(Ctx& x, int32_t fd, uint32_t req, GuestPtr arg) {
             x.mem.write<int32_t>(arg, n);
             return 0;
         }
+        if (req == kSIOCGIFCONF) return ioctlIfconf(x, arg);
     }
     return 0;
 }
