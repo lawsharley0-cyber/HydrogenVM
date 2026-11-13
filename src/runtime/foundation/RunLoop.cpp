@@ -1,4 +1,5 @@
 // HydrogenVM — run loops, timers, dates, delayed/cross-thread performs, NSThread.
+#include <exception>
 #include "Foundation.hpp"
 #include "runtime/Support.hpp"
 #include <algorithm>
@@ -185,10 +186,17 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
             nextFrameAt = std::max(nextFrameAt + 1.0 / 60.0, t + 0.001);
         }
     }
+    // Drains the turn's autorelease pool. Draining runs guest -dealloc code, which can itself
+    // throw the process-stop exception, so the pool is left alone while one is already
+    // unwinding (watchdog or exit): a second throw from a destructor would abort the host.
     struct TurnPool {
-        Process& p; CPU::Cpu& cpu; uint32_t token; bool enabled;
-        TurnPool(Process& proc, CPU::Cpu& c, bool on) : p(proc), cpu(c), token(on ? ObjC::rt(proc).poolPush() : 0), enabled(on) {}
-        ~TurnPool() noexcept(false) { if (enabled) ObjC::rt(p).poolPop(cpu,token); }
+        Process& p; CPU::Cpu& cpu; uint32_t token; bool enabled; int unwinding;
+        TurnPool(Process& proc, CPU::Cpu& c, bool on)
+            : p(proc), cpu(c), token(on ? ObjC::rt(proc).poolPush() : 0), enabled(on), unwinding(std::uncaught_exceptions()) {}
+        ~TurnPool() noexcept(false) {
+            if (!enabled || std::uncaught_exceptions() > unwinding || p.stopping() || p.terminating()) return;
+            ObjC::rt(p).poolPop(cpu, token);
+        }
     } turnPool(proc,c,autoreleasePerTurn);
     bool ran = !work.empty();
     for (auto& fn : work) {
