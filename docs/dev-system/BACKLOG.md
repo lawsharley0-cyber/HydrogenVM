@@ -1,5 +1,14 @@
 # Backlog
 
+- Owner IPA queue, November 13: Canabalt 1.4 startup/text-wrapping crash on
+  main ea5a6d2e, tracked in [#436](https://github.com/lawsharley0-cyber/HydrogenVM/issues/436).
+  Group D, `codex/canabalt-compat`: implement the missing bounded NSString
+  character-set search and shared family semantics, real legacy glyph outlines
+  for blank labels, and positional printf/NSString formats for the song title.
+  Each has failing runner/Test Lab coverage; complete the Linux playability loop.
+  No game assets or saves
+  in Git; no hotspot edit planned.
+
 Latest owner-prioritized modding continuation: [MOD_LAB.md](../clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
 
 November 6 owner override: start the in-game Mod Lab now (per-unit/card tuning,

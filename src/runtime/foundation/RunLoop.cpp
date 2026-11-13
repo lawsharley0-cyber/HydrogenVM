@@ -185,6 +185,11 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
             nextFrameAt = std::max(nextFrameAt + 1.0 / 60.0, t + 0.001);
         }
     }
+    struct TurnPool {
+        Process& p; CPU::Cpu& cpu; uint32_t token; bool enabled;
+        TurnPool(Process& proc, CPU::Cpu& c, bool on) : p(proc), cpu(c), token(on ? ObjC::rt(proc).poolPush() : 0), enabled(on) {}
+        ~TurnPool() noexcept(false) { if (enabled) ObjC::rt(p).poolPop(cpu,token); }
+    } turnPool(proc,c,autoreleasePerTurn);
     bool ran = !work.empty();
     for (auto& fn : work) {
         if (proc.terminating() || proc.stopping()) return ran;

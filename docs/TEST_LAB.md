@@ -1,7 +1,7 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 26 automated cases (TL-A–TL-Z) · schema version 1.
+Version 1.0 · 32 automated cases (TL-A–TL-Z plus TL-AH–TL-AM) · schema version 1.
 
 ## Contents
 
@@ -23,9 +23,9 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-The automated suite now covers 23 case IDs, including import integrity, CPU
+The automated suite now covers 32 case IDs, including import integrity, CPU
 correctness, graphics, audio, persistence, threading, input, and lifecycle.
-TL-L is a host-driven termination check; 22 cases are guest-selectable.
+TL-L is a host-driven termination check; 31 cases are guest-selectable.
 
 ---
 
@@ -55,6 +55,21 @@ TL-L is a host-driven termination check; 22 cases are guest-selectable.
 | TL-Y | libstdc++ 4.2 ABI | Calls the GCC 4.2 libstdc++ entry points directly: std::string COW `_Rep` (empty rep, refcopy, dispose), `std::list` node hook/unhook, red-black tree insert/rebalance and increment, and the SJLJ unwinder frame chain. Oracle: the libstdc++ 4.2 ABI layouts the app binaries are compiled against |
 | TL-Z | Custom UIKeyInput | A UIView implementing UIKeyInput focuses, handles its own insert/delete, resigns and observes software-keyboard show/hide notifications. Proven red on main ff24df3 (focus/text/resign succeed, shown=hidden=0). The guest deletion also exercises NSString composed ranges for accents/surrogates; the fulltest covers joined emoji, flags, Hangul, CRLF and rejected bounds. Separate fulltest cases verify host requests, Unicode protocol forwarding, traits, focus identity and refused resignation. Phone keyboard presentation remains a device check. |
 
+### Canabalt regressions
+
+| ID | Name | Independent oracle |
+|---|---|---|
+| TL-AH | Bounded character-set search | Literal UTF-16 newline positions, forward/backward/anchored search and caught nil/range exceptions; reproduces Canabalt menu text wrapping |
+| TL-AI | Legacy CGContext glyphs | The project-authored CC0 triangle font has units/em=1000 and advance=600; size-20 glyphs must paint known interior pixels, advance the text position and survive provider/font wrapper release. Also checks the float/pointer ABI of ShowGlyphsAtPoint |
+| TL-AJ | Positional formatting | Authored object order/repetition and numeric width/precision oracles check `%n$` formatting through an actual NSString variadic call |
+
+All three guest cases fail before their shared runtime corrections. Focused runners
+also cover supplementary scalar membership through a custom character set,
+protected output/read spans, text matrices, saved font state, invisible text and
+glyph clipping. TL-AA–TL-AG are reserved by the separate BADLAND draft PR #428;
+these IDs avoid colliding with that batch. This branch does not incorporate its
+unmerged runtime changes.
+
 ### Objective-C conformance (T8)
 
 TL-S–TL-W are project-authored behavioral ports of selected public API test
@@ -75,7 +90,7 @@ The host runner retains these dictionaries and the oracle description in its
 report. A pass marker without a fresh complete guest result (or followed by a
 nonzero exit) is a failure. `objc_conformance.m` uses ARC;
 `objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
-convention. The menu scrolls so all 22 selectable cases and footer controls remain
+convention. The menu scrolls so all 28 selectable cases and footer controls remain
 reachable.
 
 These five cases pass on unchanged main; that is new coverage, not a runtime
@@ -197,7 +212,7 @@ python3 -m unittest discover -s tools/tests -p test_hvm_testlab.py -v
    *Open in…* from Files, or drop it into the app's Files folder and pull to
    refresh.
 3. Tap `TestLab` in the library to run it.
-4. The menu shows the 25 guest-selectable cases (TL-A…TL-K and TL-M…TL-Z)
+4. The menu shows the 28 guest-selectable cases (TL-A…TL-K, TL-M…TL-Z and TL-AH…TL-AJ)
    with their last-known status. TL-L is a host-driven termination test.
 5. Tap a row to run an individual case.  Tap **Run All** to run every case.
 6. Tap **Export JSON** to write `Documents/testlab_result.json` — retrieve it
@@ -470,3 +485,11 @@ nothing in the schema unless fields change, and add the row to this file.
 - Empty zip entries are stored by some tools and deflated by others. Both must import (TL-A).
 - Re-importing an IPA must keep `Documents/`, `Library/` and `tmp/`; it replaces only the `.app` bundle (TL-E).
 - When you see "no `TESTLAB` line in stdout", run the case by hand: the failure is usually an import or loader error on stderr.
+
+### TL-AK — legacy UIView animation delegate ABI
+
+Checks deferred delivery exactly once, scalar BOOL YES, and preserved animation ID/context. Canabalt Scores dismissal exposed an NSNumber pointer passed as BOOL; the callback then left its overlay window active. Both guest and runner fail before the scalar correction.
+
+### TL-AL / TL-AM — window ownership and UIKit timer pools
+
+TL-AL checks that the last application reference can release a visible window. TL-AM explicitly transfers an owned object into the autorelease pool from a timer and checks deallocation before the outer pool drains. Visibility must not own UIWindow, and UIKit must drain pools around the whole main-loop turn, including timers, queued work and nested main-loop pumps. Independent Foundation/worker loops remain caller-managed. Both cases fail on the corresponding pre-fix binaries.

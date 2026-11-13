@@ -924,7 +924,7 @@ void showText(Ctx& x, ContextData& d, const std::string& s, G::Point pos) {
     d.textPos = {pos.x + lay.width + g.charSpacing * float(s.size()), pos.y};
 }
 void ctx_selectFont(Ctx& x, id c, GuestPtr name, float size, uint32_t) {
-    if (ContextData* d = cx(x, c)) { d->gs().fontName = x.proc.readCString(name); d->gs().fontSize = size; }
+    if (ContextData* d = cx(x, c)) { d->gs().fontName = x.proc.readCString(name); d->gs().fontSize = size; d->gs().fontFace.reset(); }
 }
 void ctx_setFontSize(Ctx& x, id c, float size) { if (ContextData* d = cx(x, c)) d->gs().fontSize = size; }
 struct FontData : ObjC::HostObject {
@@ -933,7 +933,14 @@ struct FontData : ObjC::HostObject {
     float size = 12;
     G::Affine matrix;
 };
-void ctx_setFont(Ctx& x, id c, id font) { if (ContextData* d = cx(x, c)) if (FontData* f = hd<FontData>(x, font)) d->gs().fontName = f->name; }
+void ctx_setFont(Ctx& x, id c, id font) {
+    if (ContextData* d = cx(x,c)) if (FontData* f = hd<FontData>(x,font)) {
+        d->gs().fontName = f->name;
+        // Saved graphics states own the selected outline independently of the
+        // CGFont/provider wrappers, which the guest may release immediately.
+        d->gs().fontFace = f->face;
+    }
+}
 void ctx_setCharSpacing(Ctx& x, id c, float v) { if (ContextData* d = cx(x, c)) d->gs().charSpacing = v; }
 void ctx_setTextMode(Ctx& x, id c, int32_t m) { if (ContextData* d = cx(x, c)) d->gs().textMode = m; }
 void ctx_setTextMatrix(Ctx& x, id c, CGAffineTransform t) { if (ContextData* d = cx(x, c)) d->gs().textMatrix = toG(t); }
@@ -946,7 +953,43 @@ void ctx_showTextAt(Ctx& x, id c, float px, float py, GuestPtr str, uint32_t len
     showText(x, *d, std::string(reinterpret_cast<const char*>(x.mem.host(str)), len), {px, py});
 }
 void ctx_showText(Ctx& x, id c, GuestPtr str, uint32_t len) { ContextData* d = cx(x, c); if (d) ctx_showTextAt(x, c, d->textPos.x, d->textPos.y, str, len); }
-void ctx_showGlyphs(Ctx& x, id, GuestPtr, uint32_t) { x.proc.reportMissing("CGContextShowGlyphs (glyph IDs need font tables)"); }
+void ctx_showGlyphs(Ctx& x, id c, GuestPtr glyphs, uint32_t count) {
+    auto* d = cx(x,c);
+    if (!d || !count) return;
+    const uint64_t end = uint64_t(glyphs) + uint64_t(count)*2;
+    auto fault = [&](uint32_t at) {
+        throw CPU::GuestFault(CPU::Exit::MemFault,at,x.cpu.r[CPU::kPC],uint32_t(x.cpu.thumb),"CGContextShowGlyphs glyph array is not readable");
+    };
+    if (end > (uint64_t(1)<<32)) fault(glyphs);
+    for (uint64_t at = glyphs; at < end; at = ((at>>12)+1)<<12)
+        if (!(x.mem.protAt(uint32_t(at)) & Memory::kProtRead)) fault(uint32_t(at));
+    auto& g = d->gs();
+    if (!g.fontFace) { x.proc.reportMissing("CGContextShowGlyphs system font outlines"); return; }
+    const auto origin = d->textPos;
+    float advance = 0;
+    G::Path clipPath;
+    for (uint32_t i=0;i<count;++i) {
+        const auto glyph = x.mem.read<uint16_t>(glyphs+i*2);
+        const auto transform = G::Affine::translate(advance,0).then(g.textMatrix)
+            .then(G::Affine::translate(origin.x,origin.y)).then(g.ctm);
+        if (g.textMode != 3) {
+            const auto path = g.fontFace->outline(glyph,g.fontSize).transformed(transform);
+            if (g.textMode==0 || g.textMode==2 || g.textMode==4 || g.textMode==6) doFill(*d,path,false);
+            if (g.textMode==1 || g.textMode==2 || g.textMode==5 || g.textMode==6) doStroke(*d,path);
+            if (g.textMode>=4 && g.textMode<=7) {
+                clipPath.subpaths.insert(clipPath.subpaths.end(),path.subpaths.begin(),path.subpaths.end());
+                clipPath.closed.insert(clipPath.closed.end(),path.closed.begin(),path.closed.end());
+            }
+        }
+        advance += g.fontFace->advance(glyph,g.fontSize) + g.charSpacing;
+    }
+    if (g.textMode>=4 && g.textMode<=7) g.clip = G::intersectClip(g.clip,clipPath,false);
+    const auto delta = g.textMatrix.applyVector({advance,0});
+    d->textPos = {origin.x+delta.x,origin.y+delta.y};
+}
+void ctx_showGlyphsAt(Ctx& x, id c, float px, float py, GuestPtr glyphs, uint32_t count) {
+    if (auto* d = cx(x,c)) { d->textPos = {px,py}; ctx_showGlyphs(x,c,glyphs,count); }
+}
 uint32_t font_createWithName(Ctx& x, id name) {
     auto h = std::make_unique<FontData>();
     h->name = name ? Foundation::utf8(x, name) : "Helvetica";
@@ -1744,7 +1787,7 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ctx_showTextAt>("_CGContextShowTextAtPoint");
     p.def<&ctx_showText>("_CGContextShowText");
     p.def<&ctx_showGlyphs>("_CGContextShowGlyphs");
-    p.def<&ctx_showGlyphs>("_CGContextShowGlyphsAtPoint");
+    p.def<&ctx_showGlyphsAt>("_CGContextShowGlyphsAtPoint");
     p.def<&font_createWithName>("_CGFontCreateWithFontName");
     p.def<&font_createWithProvider>("_CGFontCreateWithDataProvider");
     p.def<&font_copyName>("_CGFontCopyFullName");

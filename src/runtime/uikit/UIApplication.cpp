@@ -650,6 +650,7 @@ void installLifecycle(Process& p) {
 int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id delegateName) {
     auto& u = ui(x);
     auto& r = rt(x);
+    Foundation::mainRunLoop(x.proc).autoreleasePerTurn = true;
     configureScreen(x);
     const Plist::Value* info = x.proc.infoPlist();
     const uint32_t pool = r.poolPush();
@@ -745,6 +746,10 @@ std::array<double, 3> restingGravity(const UIState& u) { return gravityFor(u); }
 // source a component added in another mode waits for a run in that mode instead of firing on a
 // frame. Host pumps that are not the app loop (dispatch_main, -[NSRunLoop run]) stay unfiltered.
 void runApplicationLoop(Ctx& x, double until) {
+    // UIKit drains a pool every main-loop turn, including timers and queued
+    // selectors, not only display/input callbacks. Nested main-loop pumps use
+    // the same policy; independent worker loops remain caller-managed.
+    Foundation::mainRunLoop(x.proc).autoreleasePerTurn = true;
     Foundation::mainRunLoop(x.proc).runUntil(x.cpu, until, false, Foundation::defaultRunLoopModeKey());
 }
 

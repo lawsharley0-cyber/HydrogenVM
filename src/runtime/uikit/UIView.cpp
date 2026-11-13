@@ -527,7 +527,8 @@ void vc_commit(Ctx& x, id, SEL) {
         Process* p = &x.proc;
         Foundation::mainRunLoop(x.proc).addTimer(b.duration + b.delay, 0, false, [p, b](CPU::Cpu& c) {
             Ctx cx{*p, c, p->mem()};
-            rt(cx).send(c, b.delegate, b.didStop, {b.animID, Foundation::makeBool(cx, true), b.context});
+            // animationDidStop:finished:context: takes a scalar BOOL, not NSNumber.
+            rt(cx).send(c, b.delegate, b.didStop, {b.animID, 1, b.context});
             rt(cx).release(c, b.delegate);
             if (b.animID) rt(cx).release(c, b.animID);
         });
@@ -563,14 +564,14 @@ void setVisible(Ctx& x, id self, bool vis) {
     auto& u = ui(x);
     if (vis) {
         if (std::find(u.windows.begin(), u.windows.end(), self) == u.windows.end()) u.windows.push_back(self);
-        rt(x).retain(x.cpu, self);   // visible windows are kept alive by the app
+        // UIApplication tracks windows without owning them. The application
+        // must retain its windows; releasing a visible overlay dismisses it.
         layerData(x, viewLayer(x, self)).hidden = false;
         vcAppearance(x, self, true);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeVisibleNotification", self);
     } else {
         vcAppearance(x, self, false);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeHiddenNotification", self);
-        rt(x).release(x.cpu, self);
     }
     setNeedsComposite(x);
 }
