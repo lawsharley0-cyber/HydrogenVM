@@ -8420,6 +8420,33 @@ int runFullSubsystemTests() {
                   "zlib compress/uncompress and streaming inflate on guest buffers");
         }
 
+        // std::istringstream >> double, then "was that the whole string?": the stringbuf's
+        // showmanyc is egptr()-gptr(), 0 once all is read (not -1). Minion Rush checks this
+        // on a parsed header and kept retrying its level download when it saw -1.
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+            auto showmanyc = [&](uint32_t is) {
+                const uint32_t sb = is + 8;   // basic_istringstream: vptr, gcount, then the stringbuf
+                const uint32_t vt = proc.mem().read<uint32_t>(sb);
+                return int32_t(proc.callGuest(cpu, proc.mem().read<uint32_t>(vt + 7 * 4), {sb}));
+            };
+            auto parse = [&](const char* text, double& v, int32_t& left) {
+                const uint32_t str = proc.heap().allocZeroed(4), alloc = proc.heap().allocZeroed(4);
+                call("__ZNSsC1EPKcRKSaIcE", {str, proc.allocCString(text), alloc});
+                const uint32_t is = proc.heap().allocZeroed(200), out = proc.heap().allocZeroed(8);
+                call("__ZNSt19basic_istringstreamIcSt11char_traitsIcESaIcEEC1ERKSsSt13_Ios_Openmode", {is, str, 8});
+                call("__ZNSi10_M_extractIdEERSiRT_", {is, out});
+                std::memcpy(&v, proc.mem().host(out), 8);
+                left = showmanyc(is);
+                call("__ZNSt19basic_istringstreamIcSt11char_traitsIcESaIcEED1Ev", {is});
+            };
+            double a = 0, b = 0; int32_t la = 9, lb = 9;
+            parse("18", a, la);
+            parse("18 bytes", b, lb);
+            check(a == 18 && la == 0 && b == 18 && lb == 6,
+                  "std::istringstream >> double leaves 0 characters for \"18\" and 6 for \"18 bytes\" (stringbuf showmanyc)");
+        }
+
         // std::ostringstream: formatted output through our stringbuf, read back with str().
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
