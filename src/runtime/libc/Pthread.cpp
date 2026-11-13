@@ -329,6 +329,11 @@ int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) {
 
 // Private guest pthread_attr_t: signature, size, detach state, base, top.
 constexpr uint32_t kAttrSignature = 0x54484441;
+// PTHREAD_STACK_MIN is 8 KiB on 32-bit Darwin/iOS (16 KiB on 64-bit and on
+// armv7k). FMOD Ex's iPhone port (fmod_os_misc.cpp) passes 8192 — it even
+// clamps smaller requests *up* to that — and maps a failed setstacksize to
+// FMOD error 33, which System::createSound treats as fatal.
+constexpr uint32_t kPthreadStackMin = 8u << 10;
 bool validAttr(Ctx& x, GuestPtr a) { return a && x.mem.read<uint32_t>(a) == kAttrSignature; }
 bool validCustomSize(uint32_t size) { return size >= (16u << 10) && !(size & 4095); }
 int32_t attrWrite(Ctx& x, GuestPtr out, uint32_t value) {
@@ -342,7 +347,7 @@ int32_t pa_init(Ctx& x, GuestPtr a) {
 }
 int32_t pa_destroy(Ctx& x, GuestPtr a) { return validAttr(x, a) ? attrWrite(x, a, 0) : 22; }
 int32_t pa_setstacksize(Ctx& x, GuestPtr a, uint32_t s) {
-    if (!validAttr(x, a) || s < (16u << 10)) return 22;
+    if (!validAttr(x, a) || s < kPthreadStackMin) return 22;
     if ((x.mem.read<uint32_t>(a + 12) || x.mem.read<uint32_t>(a + 16)) && !validCustomSize(s)) return 22;
     return attrWrite(x, a + 4, s);
 }

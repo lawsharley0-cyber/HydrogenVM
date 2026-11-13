@@ -9391,6 +9391,41 @@ int runFullSubsystemTests() {
             check(before && during && after, "NSThread isExecuting/isFinished follow start and the end of its work");
         }
 
+        // 32-bit iOS PTHREAD_STACK_MIN is 8 KiB. FMOD Ex (Unity 4, official
+        // iphone/src/fmod_os_misc.cpp) calls pthread_attr_setstacksize with that
+        // size — it even clamps smaller requests *up* to 8192 — and maps any
+        // non-zero pthread return to FMOD error 33. System::createSound then
+        // releases the stream, so music is prefetched once and never plays.
+        {
+            const uint32_t attr = proc.allocStatic(64), out = proc.allocStatic(4), th = proc.allocStatic(4);
+            auto invoke = [&](const char* name, std::initializer_list<uint32_t> args) {
+                return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(name), args));
+            };
+            invoke("_pthread_attr_init", {attr});
+            const uint32_t set8k = invoke("_pthread_attr_setstacksize", {attr, 8192});
+            invoke("_pthread_attr_getstacksize", {attr, out});
+            const uint32_t got = proc.mem().read<uint32_t>(out);
+            const uint32_t setSmall = invoke("_pthread_attr_setstacksize", {attr, 8191});
+            if (!(set8k == 0 && got == 8192 && setSmall == 22))
+                std::printf("    pthread 8 KiB stack: set8k=%u got=%u set8191=%u (want 0, 8192, 22)\n",
+                            set8k, got, setSmall);
+            check(set8k == 0 && got == 8192 && setSmall == 22,
+                  "pthread_attr_setstacksize accepts 32-bit iOS PTHREAD_STACK_MIN (8 KiB)");
+            bool ranOk = false;
+            if (set8k == 0) {
+                invoke("_pthread_attr_setdetachstate", {attr, 2});   // PTHREAD_CREATE_DETACHED, as FMOD does
+                auto ran = std::make_shared<std::atomic<bool>>(false);
+                const auto worker = proc.defineFunction("FmodMinStackWorker", [ran](Ctx&) { *ran = true; });
+                const uint32_t created = invoke("_pthread_create", {th, attr, worker, 0});
+                for (int i = 0; i < 400 && !*ran; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                ranOk = created == 0 && *ran;
+                if (!ranOk)
+                    std::printf("    pthread 8 KiB create: result=%u ran=%d\n", created, int(*ran));
+            }
+            check(ranOk, "a detached thread with FMOD's 8 KiB stack runs");
+            invoke("_pthread_attr_destroy", {attr});
+        }
+
         // Verify the configured size on the live guest thread, and the post-start contract.
         {
             struct StackProbe { std::atomic<uint32_t> id{0}, threadObject{0}; std::atomic<bool> release{false}, done{false}; };
