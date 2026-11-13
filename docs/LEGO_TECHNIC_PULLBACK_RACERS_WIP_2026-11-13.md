@@ -1,10 +1,17 @@
 # LEGO Technic Pullback Racers v1.0-4 — Linux bench, 13 November 2026
 
-In progress. Two shared runtime fixes get the unencrypted Unity 4.0.1f2 IPA
-to its authentic main menu, level-select and race start. The pull-back
-launch works (Touch scheme, or Tilt with a host accelerometer), and a
-180 s race ran cleanly (in-game timer 02:40:40). Continuous music is
-still open — the IPA is not yet recorded as fully playable. Draft PR:
+The unencrypted Unity 4.0.1f2 IPA is playable on the Linux bench: authentic
+main menu, level-select and race start, pull-back launch (Touch scheme, or
+Tilt with a host accelerometer), and looping menu music. Menu music was
+audible for a full three minutes (0.9–180.2 s, 7,909,363 non-silent of
+7,950,336 frames, mixer peak 0.36, one music voice). A clean Touch-scheme
+pull-back finished track 1 in **00:21:19** (five gears); PlayerPrefs
+`Level 1=1` survived a relaunch, and level-select then shows tracks 1 and
+2 unlocked (3 and 4 still padlocked). The previous silent stream was FMOD's
+`System::createSound` releasing the Sound after
+`pthread_attr_setstacksize(8192)` failed: 32-bit iOS `PTHREAD_STACK_MIN`
+is 8 KiB, and HydrogenVM used to return `EINVAL` below 16 KiB. Recorded
+in `must_launch.json` (30 s, 264 frames, sound). Draft PR:
 https://github.com/lawsharley0-cyber/HydrogenVM/pull/448
 
 ## IPA
@@ -114,7 +121,7 @@ translucent tutorial hand points at the rear bumper (the pull-back prompt).
 `PlayerPrefs` also wrote `Racer_FxOn=1`. A 45 s run presented 1309 frames,
 average 7.36 ms, p99 20.45 ms, first frame 639 ms, no crash, zero stub hits.
 
-## Sound (short event bursts; music still not continuous)
+## Sound (historical: short event bursts; music was not continuous)
 
 A fail-first AudioQueue fixture modelled on FMOD's sequence (21-packet
 tone MP3, output callback reading 15 packets at a time, 0-frame prime,
@@ -156,8 +163,10 @@ audio, in bursts at 6.4 s (level-start sting), 18.4–19.9 s (wind-up /
 launch) and 25.5–28.4 s (collectible / race FX), then silence. Mixer
 peak 0.405914, `audibleFrames` 129024, `musicVoices` 1. Menu stays
 silent. This is not "AAC-only / phone-only" (ffmpeg peak 13639 on the
-real menu MP3, audible from frame 0). Continuous music is still the
-open audio question; the IPA is not recorded in `must_launch` or
+real menu MP3, audible from frame 0). That close is now explained: it was `createSound`'s failure path after
+`pthread_attr_setstacksize(8192)` returned `EINVAL`, not a wrong length
+or a Channel "finished" state — see the 8 KiB pthread section below.
+Music now loops for three minutes; the IPA is in `must_launch` and
 `COMPAT.md`.
 
 ## AudioFile packet table (Apple-accurate; did not keep the stream open)
@@ -209,7 +218,52 @@ FMOD mode on the stack is `0x0100c0ca` =
 plus UNICODE: this **is** a stream, so the codec should have stayed
 open. Length is not 16384; FMOD knows the file is 14.183 s and still
 destroys the Sound after the first stream buffer. That remaining
-close is not a missing or wrong AudioFile property.
+close was not a missing or wrong AudioFile property — see the next
+section.
+
+## Why FMOD released the stream (and the 8 KiB pthread fix)
+
+The destructor at `0x56750c` is not Unity unloading an AudioClip. It is
+the virtual `Sound::release` (vtable +0x14) of a parent object, called
+from FMOD `System::createSound` (`0x56dea4`, Unity wrapper at
+`0x576084`) on the **failure path** at `0x570058`. After a successful
+16384-frame prefetch, createSound calls a stream-finalize helper at
+`0x555208`. That helper first runs `0x553e08`, which creates the
+**"FMOD file thread"** (`0x5772bc` → `0x55a278` in
+`iphone/src/fmod_os_misc.cpp`).
+
+`0x55a278` is the iOS pthread wrapper: `pthread_attr_init`,
+`pthread_attr_setdetachstate(PTHREAD_CREATE_DETACHED)`, then
+`pthread_attr_setstacksize`. FMOD clamps the requested stack **up** to
+8192 if it is smaller (`cmp r1, #8192; movle r1, #8192`) and maps any
+non-zero pthread return to **FMOD error 33**. createSound treats 33 as
+fatal, releases the Sound (codec close → `AudioQueueDispose`), and
+returns the error. Unity retries `createSound` about once a frame, so a
+traced 12 s menu opened hundreds of queues, each prefetched and thrown
+away. `createSound` was also starting the mixer and stream threads
+(`"FMOD mixer thread"`, `"FMOD stream thread"`) the same way.
+
+HydrogenVM's `pthread_attr_setstacksize` rejected any size below 16 KiB
+with Darwin `EINVAL` (22). That is correct for 64-bit and armv7k
+`PTHREAD_STACK_MIN`, but **32-bit iOS is 8 KiB**, which is exactly the
+floor FMOD's official iPhone port uses. The fail-first tests require
+`setstacksize(8192) == 0`, `getstacksize == 8192`, `setstacksize(8191)
+== 22`, and a detached thread started with that attribute to run. They
+failed (`set8k=22`, default 512 KiB still in the attr) and pass after
+the floor is 8 KiB. `pthread_attr_setstack` (caller-supplied buffer)
+and NSThread's documented 16 KiB minimum are unchanged. Guest threads
+that only set a size still get at least a 16 KiB mapped stack from
+`Process::startThread`.
+
+After the fix, `createSound` is called **once**, the helper returns 0,
+and all three FMOD threads start. A 20 s menu was audible from 0.8–20.2 s
+(855,161 non-silent of 892,928 frames, peak 0.36, loop correlation 0.72
+across the 14.183 s LAME length). A 180 s menu was audible from
+**0.9–180.2 s** (7,909,363 / 7,950,336 non-silent, mixer 7,911,424
+music frames, one music voice, peak 0.36). 5,382 frames presented,
+average **4.99 ms**, p99 **12.58 ms**, 0 stub hits, graceful "The app
+saved and closed". RMS and peak stay in the same band for every 5 s
+window — the 14.183 s menu loop runs for the whole three minutes.
 
 ## Pull-back launch (works)
 
@@ -266,34 +320,57 @@ wall time minus the ~19 s launch (180 − 19 ≈ 161 s ≈ 2:41).
 `PlayerPrefs` (`ControlScheme`, `Racer_MusicOn`, `Racer_FxOn`, `Level 0`
 … `Level 9`) survive a relaunch of the same home: a 6 s run from the
 180 s home loaded `ControlScheme=Touch` and the same unlocks, and
-showed the authentic title menu. Level 1 stays 0 — the 180 s run did
-not finish the first track, so there is no earned-unlock evidence yet.
-Mid-race state is not saved (expected).
+showed the authentic title menu. That 180 s run did not finish the
+first track (`Level 1` stayed 0) — leftover left/right steering after
+launch kept the car on the aisle. Mid-race state is not saved (expected).
+The finish and earned unlock are in the next section.
+
+## Level 1 finish and unlock across relaunch
+
+A 48 s Touch-scheme run with only the same play taps (`162,521` at 3 s
+and 6 s) and pull-backs (14 / 18 / 22 s, plus one at 35 s) — no mid-race
+left/right holds — reached the authentic finish dialog: timer
+**00:21:19**, gears **05**, checkpoint display **01**, car 98, a
+checkered flag, home and a green continue arrow. PlayerPrefs then had
+`Level 1=1` (earned, not pre-seeded; only `ControlScheme=Touch` and the
+music/FX flags were seeded so settings did not have to stay open).
+Upgrade keys for the second car (`Car2UpgradePoints`,
+`RedCarUpgrade*Level`) were written at 0 — that car stays padlocked on
+the title menu, which is a later unlock.
+
+A 16 s relaunch of the **same** home (`/tmp/lego-explore-home-Jgkq`)
+kept `Level 1=1`. The title menu is authentic. Tapping play opened
+level-select with **tracks 1 and 2 unlocked** (previews and gear score
+`00`) and tracks 3 and 4 still padlocked. Before this finish, a fresh
+race wrote `Level 1=0` and level-select locked 2–4.
+
+A separate 360 s attempt that opened settings to set Touch, then tapped
+play *while the settings sheet was still up*, never left that sheet and
+did not write the Level keys. Menu music in that run was still audible
+for the full 360 s (15,843,889 non-silent of 15,890,432 frames, peak
+0.61, average 5.99 ms, p99 14.94 ms, 0 stub hits).
+
+`tools/must_launch.py --apps ~/bench/apps --only Lego_Technic_Pullback_Racers_1.0-4 --seconds 30 --record`
+passed (264 frames, picture, sound) and is in `tools/must_launch.json`.
 
 ## Gates (Linux bench, this branch)
 
 | Gate | Result |
 |---|---|
-| `hvm_tests fulltest` | **820 passed, 0 failed** (LAME/Xing `'pnfo'`/`'edur'` audible length; plus the earlier FMOD-loop and `accel` tests). 818/0 before the packet-table fix. |
-| support / stub / pytest / Test Lab / must_launch | not re-run after these commits. Pytest still has the pre-existing #445 `TestCensus` fixture-path failure on this bench — not "fixed" in this PR. |
+| `hvm_tests fulltest` | **822 passed, 0 failed**. The two new 8 KiB `pthread_attr_setstacksize` tests were red first (`set8k=22 got=524288`) and pass after the floor change. 820/0 after the LAME packet-table tests; 818/0 before those. |
+| support / stub / pytest / Test Lab | not re-run after this commit. Pytest still has the pre-existing #445 `TestCensus` fixture-path failure on this bench — not "fixed" in this PR. |
 
 No baseline was weakened. Required CI on this commit has not been reported green.
-The IPA is not recorded in `must_launch` (music is not continuous). `docs/COMPAT.md`
-is left for when the verdict is settled (and to avoid a clash with #447's CoC row).
 
 ## Still needed for "playable"
 
-- Continuous music: AudioFile properties FMOD queries now match Apple
-  (LAME packet table, 14.183 s). FMOD still `CREATESTREAM`s, fills one
-  16384-frame buffer, and runs the Sound destructor (`0x56750c` from
-  `0x565048`). Why that destructor runs after a successful prefetch is
-  the remaining question — not a wrong file length.
-- Earned level-unlock across a relaunch (finish track 1).
-- Phone: Mesa vs device GPU, real speed, 16 KB pages, headphones.
+Linux playability criteria are met (menu, authentic picture, pull-back
+input, continuous music, 3 min clean session, frame times well under
+33 ms, earned Level 1 unlock across a relaunch, must_launch recorded).
+The second title-menu car is still locked — that is a later unlock,
+not a missing Level 1 save.
 
-This is not a blocked verdict: the remaining music gap is general
-AudioQueue / FMOD stream work. Set-3 IPA 2 (Lego Technic Racer) is not
-started.
+- Phone: Mesa vs device GPU, real speed, 16 KB pages, headphones.
 
 ## Phone-only / not checked
 

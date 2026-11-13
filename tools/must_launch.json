@@ -116,6 +116,14 @@
       "sound": false
     },
     {
+      "folder": "Lego_Technic_Pullback_Racers_1.0-4",
+      "frames": 264,
+      "name": "Lego_Technic_Pullback_Racers_1.0-4",
+      "picture": true,
+      "seconds": 30,
+      "sound": true
+    },
+    {
       "folder": "Mega_Jump_v2.0_os30",
       "frames": 21,
       "name": "Mega_Jump_v2.0_os30",
