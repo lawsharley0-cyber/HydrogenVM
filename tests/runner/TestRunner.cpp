@@ -5239,6 +5239,45 @@ int runFullSubsystemTests() {
               "input-file touch lines keep their finger id (default 1) and reject a malformed finger field");
     }
 
+    // `hvm run --input-file` accel lines: three finite floats in g reach Process::setAcceleration
+    // (UIAcceleration axes) and a malformed line is rejected. Expected values are read off
+    // each literal line by hand. Until a host reading, gravity follows orientation.
+    {
+        using DesktopInput::parseAccel;
+        const auto upright = parseAccel("accel 0 -1 0");
+        const auto tilt = parseAccel("accel 0.25 -0.8 -0.5\r");
+        const auto signedZ = parseAccel("accel -0.1 0.2 +0.3");
+        const bool uprightOk = upright && upright->x == 0.0f && upright->y == -1.0f && upright->z == 0.0f;
+        const bool tiltOk = tilt && tilt->x == 0.25f && tilt->y == -0.8f && tilt->z == -0.5f;
+        const bool signedOk = signedZ && signedZ->x == -0.1f && signedZ->y == 0.2f && signedZ->z == 0.3f;
+        int wronglyAccepted = 0;
+        for (const char* bad : {"accel 0 -1", "accel 0 -1 0 extra", "accel 0 -1 0x", "accel 0 nan 0",
+                                "accel 0 -1 inf", "accel x -1 0", "acceleration 0 -1 0", "accel 0 -1 0 1",
+                                "touch 0 1 0"})
+            if (parseAccel(bad)) { std::printf("    accepted: %s\n", bad); ++wronglyAccepted; }
+        using namespace std::string_view_literals;
+        for (std::string_view bad : {"accel 0 -1 0\0x"sv, "accel 0 -1\0 0"sv})
+            if (parseAccel(bad)) { std::printf("    accepted a field with an embedded NUL\n"); ++wronglyAccepted; }
+        check(uprightOk && tiltOk && signedOk && wronglyAccepted == 0,
+              "input-file accel lines take three finite floats in g and reject a malformed field");
+
+        auto& u = UIKit::ui(proc);
+        const bool savedHost = u.accelFromHost;
+        const float saved[3] = {u.accel[0], u.accel[1], u.accel[2]};
+        const bool applied = DesktopInput::applyAccel(proc, "accel 0.25 -0.8 -0.5", true);
+        const bool reached = applied && u.accelFromHost &&
+                             u.accel[0] == 0.25f && u.accel[1] == -0.8f && u.accel[2] == -0.5f;
+        const bool rejected = !DesktopInput::applyAccel(proc, "accel 0 -1", true) &&
+                              u.accel[0] == 0.25f;   // a bad line must not change a previous reading
+        if (!(reached && rejected))
+            std::printf("    applyAccel: applied %d host %d accel %g,%g,%g rejected %d\n",
+                        applied, int(u.accelFromHost), u.accel[0], u.accel[1], u.accel[2], rejected);
+        u.accelFromHost = savedHost;
+        u.accel[0] = saved[0]; u.accel[1] = saved[1]; u.accel[2] = saved[2];
+        check(reached && rejected,
+              "an input-file accel line reaches UIKit as a host accelerometer reading");
+    }
+
     // NSGetSizeAndAlignment (armv7 iOS layout, worked out by hand): the size and alignment of the
     // first encoded type, and a pointer to the next one. Dungeon Raid's PHInvocation sizes its
     // argument buffers with it.
@@ -7783,6 +7822,95 @@ int runFullSubsystemTests() {
             check(wrapped == 0 && extFrames >= 20 * 1152 && extFrames <= 21 * 1152,
                   "ExtAudioFileWrapAudioFileID on an MP3 AudioFile decodes it and reports its frames");
             audioCall("_ExtAudioFileDispose", {ext});
+
+            // FMOD's AudioQueue codec (Unity 4, Lego Technic Pullback Racers) opens a
+            // queue in the file's MP3 format, sets an offline 16-bit stereo LPCM format,
+            // Stop+Start, primes with a 0-frame OfflineRender, then OfflineRenders 4096-frame
+            // chunks. The output callback reads the next packets (up to 15) and enqueues,
+            // or Flushes at EOF. After four successful 4096-frame fills a later render must
+            // still return audio: mAudioDataByteSize == 0 is FMOD's stall-recovery path.
+            // This fixture passing shows OfflineRender is not that stall — in the game,
+            // FMOD closes after a 16384-frame prefetch (four 4096 fills) and retries.
+            {
+                static uint32_t fmodNext = 0, fmodCalls = 0, fmodFlushed = 0;
+                fmodNext = 0; fmodCalls = 0; fmodFlushed = 0;
+                const uint32_t fmodIo = proc.heap().allocZeroed(32);
+                const uint32_t fmodCb = proc.defineFunction("_test_aq_fmod_loop_callback", [&](Ctx& x) {
+                    const uint32_t qid = x.cpu.r[1], buf = x.cpu.r[2];
+                    ++fmodCalls;
+                    const uint32_t data = x.mem.read<uint32_t>(buf + 4);
+                    const uint32_t descs = x.mem.read<uint32_t>(buf + 20);
+                    x.mem.write<uint32_t>(fmodIo, 15u * 209u);
+                    x.mem.write<uint32_t>(fmodIo + 4, 15);
+                    const uint32_t st = uint32_t(x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioFileReadPacketData"),
+                        {mp3File, 0, fmodIo, descs, fmodNext, 0, fmodIo + 4, data}));
+                    const uint32_t n = x.mem.read<uint32_t>(fmodIo + 4);
+                    const uint32_t bytes = x.mem.read<uint32_t>(fmodIo);
+                    (void)st;
+                    if (n) {
+                        x.mem.write<uint32_t>(buf + 8, bytes);
+                        x.mem.write<uint32_t>(buf + 24, n);   // mPacketDescriptionCount
+                        fmodNext += n;
+                        x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioQueueEnqueueBuffer"), {qid, buf, 0, 0});
+                    } else if (!fmodFlushed) {
+                        fmodFlushed = 1;
+                        x.proc.callGuest(x.cpu, *x.proc.lookupSymbol("_AudioQueueFlush"), {qid});
+                    }
+                    x.cpu.r[0] = 0;
+                });
+                const uint32_t fOut = proc.heap().allocZeroed(32), fTs = proc.heap().allocZeroed(64);
+                const uint32_t fDst = proc.heap().allocZeroed(40);
+                proc.mem().write<double>(fDst, 44100.0);
+                proc.mem().write<uint32_t>(fDst + 8, 0x6C70636D);
+                proc.mem().write<uint32_t>(fDst + 12, 0x0C);
+                for (uint32_t o : {16u, 24u}) proc.mem().write<uint32_t>(fDst + o, 4);
+                proc.mem().write<uint32_t>(fDst + 20, 1);
+                proc.mem().write<uint32_t>(fDst + 28, 2);
+                proc.mem().write<uint32_t>(fDst + 32, 16);
+                audioCall("_AudioQueueNewOutput", {fmt, fmodCb, 0, 0, 0, 0, fOut});
+                const uint32_t fq = proc.mem().read<uint32_t>(fOut);
+                audioCall("_AudioQueueAllocateBufferWithPacketDescriptions", {fq, 15u * 209u, 15, fOut + 4});
+                audioCall("_AudioQueueAllocateBuffer", {fq, 16384, fOut + 8});
+                const uint32_t fIn = proc.mem().read<uint32_t>(fOut + 4), fRender = proc.mem().read<uint32_t>(fOut + 8);
+                audioCall("_AudioQueueSetOfflineRenderFormat", {fq, fDst, 0});
+                audioCall("_AudioQueueStop", {fq, 1});
+                audioCall("_AudioQueueStart", {fq, 0});
+                const uint32_t primeSt = audioCall("_AudioQueueOfflineRender", {fq, fTs, fRender, 0});
+                const uint32_t primeN = proc.mem().read<uint32_t>(fRender + 8);
+                // FMOD itself invokes the enqueue callback once after the 0-frame prime.
+                if (fmodCalls == 0) {
+                    Ctx fx{proc, cpu, proc.mem()};
+                    fx.cpu.r[1] = fq;
+                    fx.cpu.r[2] = fIn;
+                    proc.callGuest(cpu, fmodCb, {0, fq, fIn});
+                }
+                uint32_t chunk[8] = {}, nChunks = 0, fmodRendered = 0;
+                int fmodPeak = 0;
+                for (nChunks = 0; nChunks < 8; ++nChunks) {
+                    audioCall("_AudioQueueOfflineRender", {fq, fTs, fRender, 4096});
+                    const uint32_t gotBytes = proc.mem().read<uint32_t>(fRender + 8);
+                    const uint32_t got = gotBytes / 4;
+                    chunk[nChunks] = got;
+                    const uint32_t pcm = proc.mem().read<uint32_t>(fRender + 4);
+                    for (uint32_t i = 0; i < got * 2; ++i)
+                        fmodPeak = std::max(fmodPeak, std::abs(int(proc.mem().read<int16_t>(pcm + i * 2))));
+                    fmodRendered += got;
+                    if (got == 0) break;
+                }
+                audioCall("_AudioQueueDispose", {fq, 1});
+                // 21 packets of 1152: four 4096-frame fills are 16384, leftover must still
+                // render (the 5th chunk is the stall FMOD hit). Total close to the file.
+                const bool fourOk = chunk[0] == 4096 && chunk[1] == 4096 && chunk[2] == 4096 && chunk[3] == 4096;
+                const bool fifthOk = chunk[4] > 0;
+                const bool totalOk = fmodRendered >= 20 * 1152 - 2 && fmodRendered <= 21 * 1152 && fmodPeak > 2600;
+                const bool primeOk = primeSt == 0 && primeN == 0;
+                if (!(fourOk && fifthOk && totalOk && primeOk && fmodFlushed))
+                    std::printf("    fmod loop: prime %x/%u chunks %u/%u/%u/%u/%u/%u/%u/%u total %u peak %d calls %u flushed %u\n",
+                                primeSt, primeN, chunk[0], chunk[1], chunk[2], chunk[3],
+                                chunk[4], chunk[5], chunk[6], chunk[7], fmodRendered, fmodPeak, fmodCalls, fmodFlushed);
+                check(fourOk && fifthOk && totalOk && primeOk && fmodFlushed,
+                      "AudioQueueOfflineRender of 4096-frame FMOD chunks keeps returning audio after the fourth fill until Flush");
+            }
             audioCall("_AudioFileClose", {mp3File});
             std::filesystem::remove(mp3Path);
             // 8 packets: 7 or 8 frames of 1152 decoded; the resampler holds back the last sample.

@@ -107,11 +107,14 @@ or WSLg is needed for the visible window; automation can use
 The CLI preview interface uses `--frame-file` and `--input-file`. Preview frames
 are atomic replacements at up to 10 Hz: `HVF1`, little-endian uint32 width/height,
 float32 screen scale, and RGBA bytes. The regular input file receives newline
-commands `touch PHASE X Y [FINGER]`, `background`, `foreground`, or `stop`. Phases are
+commands `touch PHASE X Y [FINGER]`, `accel X Y Z`, `background`, `foreground`, or `stop`. Phases are
 0 down, 1 move, 3 up, and 4 cancel. FINGER (0-10, default 1) names the finger, so two
 fingers can be down at once (hold a move button with one, look around with another).
 A line whose finger field is not a whole number from 0 to 10 is rejected and logged as invalid.
-No socket or guest networking is involved.
+`accel X Y Z` is a host accelerometer reading in g, in UIAcceleration's device axes
+(x right, y up, z toward the user). Until one is sent, UIAccelerometer reports gravity
+for the interface orientation (upright, not lying flat). Signs are allowed; a malformed
+line is rejected. No socket or guest networking is involved.
 
 ## Must-launch check before a phone build
 
