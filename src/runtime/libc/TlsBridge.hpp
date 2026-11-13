@@ -14,6 +14,8 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <cctype>
+#include <utility>
 
 namespace Hydrogen::Runtime {
 
@@ -45,6 +47,70 @@ inline std::string httpFirstLine(const char* p, size_t n) {
     }
     return line;
 }
+
+// The first line plus the headers that say what is being fetched and how big it is.
+inline std::string httpSummary(const char* p, size_t n) {
+    std::string out = httpFirstLine(p, n);
+    if (out.empty()) return out;
+    static const char* const kKeep[] = {"content-length:", "content-range:", "range:", "location:", "content-type:",
+                                        "transfer-encoding:", "content-encoding:", "connection:"};
+    std::string extra;
+    size_t i = 0;
+    while (i < n) {
+        size_t e = i;
+        while (e < n && p[e] != '\n') ++e;
+        std::string line(p + i, e - i);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (i && line.empty()) break;   // end of the headers
+        std::string lower = line;
+        for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* k : kKeep)
+            if (lower.rfind(k, 0) == 0 && line.size() < 200) { extra += (extra.empty() ? "" : ", ") + line; break; }
+        i = e + 1;
+    }
+    return extra.empty() ? out : out + " [" + extra + "]";
+}
+
+// One bridged connection's lines for the play log: each request and response with its key
+// headers, repeats folded into a count (a game that polls would otherwise flood the log),
+// and the bytes each side sent when it ends.
+class HttpLog {
+public:
+    HttpLog(std::string host, std::function<void(const std::string&)> log) : host_(std::move(host)), log_(std::move(log)) {}
+    void chunk(bool fromGame, const char* p, size_t n) {
+        (fromGame ? game_ : server_) += n;
+        if (!log_) return;
+        const std::string line = httpSummary(p, n);
+        if (line.empty()) return;
+        const std::string tagged = std::string(fromGame ? "<- " : "-> ") + line;
+        if (tagged == last_) {
+            ++repeats_;
+            if (repeats_ == 10 || repeats_ == 100 || repeats_ == 1000) say(last_ + " (" + std::to_string(repeats_) + " times so far)");
+            return;
+        }
+        flushRepeats();
+        last_ = tagged;
+        say(tagged);
+    }
+    void ended(const char* how) {
+        if (!log_) return;
+        flushRepeats();
+        log_("Internet: " + host_ + " connection ended, " + how + " (game sent " + std::to_string(game_) +
+             " bytes, server sent " + std::to_string(server_) + ")");
+    }
+private:
+    void say(const std::string& s) { if (lines_++ < 400) log_("Internet: " + host_ + " " + s); }
+    void flushRepeats() {
+        if (repeats_ >= 1 && repeats_ != 10 && repeats_ != 100 && repeats_ != 1000)
+            say(last_ + " (" + std::to_string(repeats_ + 1) + " times)");
+        repeats_ = 0;
+    }
+    std::string host_;
+    std::function<void(const std::string&)> log_;
+    std::string last_;
+    int repeats_ = 0, lines_ = 0;
+    uint64_t game_ = 0, server_ = 0;
+};
 
 // The version a TLS ClientHello asks for (0x0301 TLS 1.0, 0x0302 TLS 1.1, 0x0303 TLS 1.2 and
 // later), or 0 when the bytes are not a ClientHello. A game that already speaks TLS 1.2 or

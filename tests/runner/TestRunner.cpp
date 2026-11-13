@@ -2329,6 +2329,26 @@ int runFullSubsystemTests() {
             if (peer >= 0) ::close(peer);
             if (fd >= 0) call(b, "_close", {uint32_t(fd)});
         }
+        {
+            // The bridge's play-log lines: key headers kept, queries dropped, repeats folded, totals at the end.
+            std::vector<std::string> lines;
+            {
+                HttpLog http("cdn.example", [&](const std::string& l) { lines.push_back(l); });
+                const std::string head = "HEAD /1677/index_ios.4?sig=secret HTTP/1.1\r\nHost: cdn.example\r\nRange: bytes=0-99\r\n\r\n";
+                const std::string ok = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 4096\r\nSet-Cookie: x=y\r\n\r\n";
+                const std::string poll = "GET /status?id=7 HTTP/1.1\r\n\r\n";
+                http.chunk(true, head.data(), head.size());
+                http.chunk(false, ok.data(), ok.size());
+                for (int i = 0; i < 12; ++i) http.chunk(true, poll.data(), poll.size());
+                http.ended("closed by the game");
+            }
+            auto has = [&](const std::string& t) { for (auto& l : lines) if (l.find(t) != std::string::npos) return true; return false; };
+            check(has("<- HEAD /1677/index_ios.4 HTTP/1.1 [Range: bytes=0-99]") &&
+                  has("-> HTTP/1.1 200 OK [Content-Type: application/octet-stream, Content-Length: 4096]") &&
+                  !has("secret") && !has("Cookie") && has("<- GET /status HTTP/1.1 (10 times so far)") &&
+                  has("(12 times)") && has("connection ended, closed by the game (game sent ") && lines.size() == 6,
+                  "TLS bridge log: key headers, no queries or cookies, repeated requests folded, byte totals at the end");
+        }
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
         {
             // The test's own TLS ends write with write(); a closed peer must fail a check, not raise SIGPIPE.

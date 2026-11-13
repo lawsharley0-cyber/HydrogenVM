@@ -195,31 +195,26 @@ private:
     // Copies application data both ways until either side closes.
     static void pump(SSL* g, int gfd, SSL* u, int ufd, const std::string& host, const std::function<void(const std::string&)>& log) {
         char buf[16384];
-        int told = 0;
-        auto tell = [&](const char* dir, int n) {
-            if (!log || told >= 40) return;
-            const std::string line = httpFirstLine(buf, size_t(n));
-            if (!line.empty()) { ++told; log("Internet: " + host + " " + dir + " " + line); }
-        };
+        HttpLog http(host, log);
         for (;;) {
             bool gr = SSL_pending(g) > 0, ur = SSL_pending(u) > 0;
             if (!gr && !ur) {
                 pollfd fds[2] = {{gfd, POLLIN, 0}, {ufd, POLLIN, 0}};
                 const int r = ::poll(fds, 2, 120000);
-                if (r <= 0) return;   // two quiet minutes: the game has moved on
+                if (r <= 0) { http.ended("idle for two minutes"); return; }
                 gr = fds[0].revents != 0; ur = fds[1].revents != 0;
             }
             if (gr) {
                 const int n = SSL_read(g, buf, sizeof buf);
-                if (n <= 0) { if (SSL_get_error(g, n) == SSL_ERROR_WANT_READ) continue; return; }
-                tell("<-", n);
-                if (SSL_write(u, buf, n) != n) return;
+                if (n <= 0) { if (SSL_get_error(g, n) == SSL_ERROR_WANT_READ) continue; http.ended("closed by the game"); return; }
+                http.chunk(true, buf, size_t(n));
+                if (SSL_write(u, buf, n) != n) { http.ended("server stopped taking data"); return; }
             }
             if (ur) {
                 const int n = SSL_read(u, buf, sizeof buf);
-                if (n <= 0) { if (SSL_get_error(u, n) == SSL_ERROR_WANT_READ) continue; return; }
-                tell("->", n);
-                if (SSL_write(g, buf, n) != n) return;
+                if (n <= 0) { if (SSL_get_error(u, n) == SSL_ERROR_WANT_READ) continue; http.ended("closed by the server"); return; }
+                http.chunk(false, buf, size_t(n));
+                if (SSL_write(g, buf, n) != n) { http.ended("game stopped taking data"); return; }
             }
         }
     }
