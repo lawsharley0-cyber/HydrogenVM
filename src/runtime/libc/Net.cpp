@@ -101,6 +101,14 @@ std::string nameFor(Ctx& x, uint32_t ipNetworkOrder) {
     inet_ntop(AF_INET, &a, b, sizeof b);
     return b;
 }
+// The bridge's workers outlive a guest call and may outlive the process: they log through
+// this sink, which the process clears as it goes away.
+struct BridgeLogSink { std::mutex mu; Process* proc = nullptr; };
+struct BridgeLogState {
+    explicit BridgeLogState(Process& p) : sink(std::make_shared<BridgeLogSink>()) { sink->proc = &p; }
+    ~BridgeLogState() { std::lock_guard lock(sink->mu); sink->proc = nullptr; }
+    std::shared_ptr<BridgeLogSink> sink;
+};
 bool isUdp(Ctx& x, int fd) { auto& s = x.proc.service<SocketState>(); std::lock_guard lock(s.mu); return s.udp.count(fd) != 0; }
 int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
     if (family == kAF_INET && type == SOCK_DGRAM && (protocol == 0 || protocol == IPPROTO_UDP)) {
@@ -235,9 +243,9 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
         // talks to a local bridge that speaks modern TLS to the server (TlsBridge.hpp).
         tellInternetOnce(x);
         const std::string server = nameFor(x, host.sin_addr.s_addr);
-        Process* proc = &x.proc;
+        auto sink = x.proc.service<BridgeLogState>().sink;
         const uint16_t local = x.proc.config().tlsBridge->open(server, host.sin_addr.s_addr, origPort,
-            [proc](const std::string& line) { proc->log(LogLevel::Info, line); });
+            [sink](const std::string& line) { std::lock_guard lock(sink->mu); if (sink->proc) sink->proc->log(LogLevel::Info, line); });
         if (!local) return failWith(x, 61);   // ECONNREFUSED
         x.proc.logf(LogLevel::Info, "Internet: secure connection to %s (%s:%d) goes through the TLS bridge", server.c_str(), ipBuf, origPort);
         host.sin_addr.s_addr = htonl(INADDR_LOOPBACK);

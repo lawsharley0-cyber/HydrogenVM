@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -117,6 +118,8 @@ SecIdentityRef makeIdentity(std::string& why) {
 }
 
 // ---- nonblocking sockets for SecureTransport
+// Which way the last would-block went on this thread, so a handshake waits for the right event.
+thread_local short tWaitFor = POLLIN;
 OSStatus readFn(SSLConnectionRef c, void* data, size_t* len) {
     const int fd = int(intptr_t(c));
     size_t want = *len, got = 0;
@@ -126,7 +129,8 @@ OSStatus readFn(SSLConnectionRef c, void* data, size_t* len) {
         *len = got;
         if (n == 0) return errSSLClosedGraceful;
         if (errno == EINTR) continue;
-        return (errno == EAGAIN || errno == EWOULDBLOCK) ? errSSLWouldBlock : errSSLClosedAbort;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) { tWaitFor = POLLIN; return errSSLWouldBlock; }
+        return errSSLClosedAbort;
     }
     *len = got;
     return noErr;
@@ -139,7 +143,8 @@ OSStatus writeFn(SSLConnectionRef c, const void* data, size_t* len) {
         if (n > 0) { put += size_t(n); continue; }
         *len = put;
         if (n < 0 && errno == EINTR) continue;
-        return (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) ? errSSLWouldBlock : errSSLClosedAbort;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) { tWaitFor = POLLOUT; return errSSLWouldBlock; }
+        return errSSLClosedAbort;
     }
     *len = put;
     return noErr;
@@ -156,8 +161,11 @@ bool waitFd(int fd, short events, int ms) {
 }
 OSStatus handshake(SSLContextRef ctx, int fd) {
     OSStatus s;
-    while ((s = SSLHandshake(ctx)) == errSSLWouldBlock)
-        if (!waitFd(fd, POLLIN | POLLOUT, 20000)) return errSSLClosedAbort;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while ((s = SSLHandshake(ctx)) == errSSLWouldBlock) {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+        if (left <= 0 || !waitFd(fd, tWaitFor, int(left))) return errSSLClosedAbort;
+    }
     return s;
 }
 bool writeAll(SSLContextRef to, int fd, const uint8_t* p, size_t n) {
@@ -178,12 +186,48 @@ bool writeAll(SSLContextRef to, int fd, const uint8_t* p, size_t n) {
     return true;
 }
 // One read from `from` passed on to `to`; false when `from` closed or failed.
-bool transfer(SSLContextRef from, SSLContextRef to, int toFd) {
+using Log = std::function<void(const std::string&)>;
+bool transfer(SSLContextRef from, SSLContextRef to, int toFd, const char* dir, const std::string& host, const Log& log, int& told) {
     uint8_t buf[16384];
     size_t n = 0;
     const OSStatus s = SSLRead(from, buf, sizeof buf, &n);
+    if (n && log && told < 40) {
+        const std::string line = Hydrogen::Runtime::httpFirstLine(reinterpret_cast<const char*>(buf), n);
+        if (!line.empty()) { ++told; log("Internet: " + host + " " + dir + " " + line); }
+    }
     if (n && !writeAll(to, toFd, buf, n)) return false;
     return s == noErr || s == errSSLWouldBlock;
+}
+uint16_t peekHello(int fd) {
+    unsigned char b[11];
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const ssize_t n = ::recv(fd, b, sizeof b, MSG_PEEK);
+        if (n >= 11) return Hydrogen::Runtime::clientHelloVersion(b, size_t(n));
+        if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) return 0;
+        waitFd(fd, POLLIN, 100);
+    }
+    return 0;
+}
+// Bytes both ways, unchanged (nonblocking sockets).
+void relay(int a, int b) {
+    char buf[16384];
+    for (;;) {
+        pollfd fds[2] = {{a, POLLIN, 0}, {b, POLLIN, 0}};
+        if (::poll(fds, 2, 120000) <= 0) return;
+        for (int i = 0; i < 2; ++i) {
+            if (!fds[i].revents) continue;
+            const ssize_t n = ::recv(fds[i].fd, buf, sizeof buf, 0);
+            if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) return;
+            const int to = i ? a : b;
+            for (ssize_t done = 0; n > 0 && done < n;) {
+                const ssize_t w = ::send(to, buf + done, size_t(n - done), 0);
+                if (w > 0) { done += w; continue; }
+                if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && waitFd(to, POLLOUT, 20000)) continue;
+                return;
+            }
+        }
+    }
 }
 std::string status(OSStatus s) { return std::to_string(int(s)); }
 
@@ -217,6 +261,15 @@ private:
             ::close(listener);
             if (guest < 0) return;
             prepare(guest);
+            // A game whose own TLS is modern keeps it, end to end (it may check certificates).
+            if (peekHello(guest) >= Hydrogen::Runtime::kModernTls) {
+                const int up = connectUpstream(ip, port);
+                if (up < 0) { if (log) log("Internet: could not reach " + host + ":" + std::to_string(port)); ::close(guest); return; }
+                if (log) log("Internet: secure connection to " + host + " passed through (the game's own TLS is modern)");
+                relay(guest, up);
+                ::close(up); ::close(guest);
+                return;
+            }
             SecIdentityRef ident = identity(log);
             SSLContextRef g = ident ? SSLCreateContext(nullptr, kSSLServerSide, kSSLStreamType) : nullptr;
             SSLContextRef u = nullptr;
@@ -236,13 +289,13 @@ private:
                     SSLSetIOFuncs(u, readFn, writeFn);
                     SSLSetConnection(u, SSLConnectionRef(intptr_t(up)));
                     SSLSetProtocolVersionMin(u, kTLSProtocol12);
-                    if (inet_addr(host.c_str()) == INADDR_NONE) SSLSetPeerDomainName(u, host.c_str(), host.size());
+                    SSLSetPeerDomainName(u, host.c_str(), host.size());   // a name or an address: the certificate must match it
                     const OSStatus hu = handshake(u, up);
                     if (hu != noErr) {
                         if (log) log("Internet: modern TLS to " + host + " failed (" + status(hu) + ")");
                     } else {
                         if (log) log("Internet: secure connection to " + host + " bridged");
-                        pump(g, guest, u, up);
+                        pump(g, guest, u, up, host, log);
                     }
                 }
             }
@@ -262,7 +315,8 @@ private:
         if (!waitFd(fd, POLLOUT, 20000) || ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err) { ::close(fd); return -1; }
         return fd;
     }
-    static void pump(SSLContextRef g, int gfd, SSLContextRef u, int ufd) {
+    static void pump(SSLContextRef g, int gfd, SSLContextRef u, int ufd, const std::string& host, const Log& log) {
+        int told = 0;
         for (;;) {
             size_t ga = 0, ua = 0;
             SSLGetBufferedReadSize(g, &ga);
@@ -271,7 +325,7 @@ private:
                 pollfd fds[2] = {{gfd, POLLIN, 0}, {ufd, POLLIN, 0}};
                 if (::poll(fds, 2, 120000) <= 0) return;   // two quiet minutes: the game has moved on
             }
-            if (!transfer(g, u, ufd) || !transfer(u, g, gfd)) return;
+            if (!transfer(g, u, ufd, "<-", host, log, told) || !transfer(u, g, gfd, "->", host, log, told)) return;
         }
     }
     std::mutex mu_;

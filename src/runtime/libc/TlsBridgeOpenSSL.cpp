@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -40,6 +41,44 @@ int localListener(uint16_t& port) {
     return fd;
 }
 
+// Every socket the bridge touches gets send and receive deadlines, so a peer that stops
+// talking ends the connection instead of holding a worker forever.
+void deadlines(int fd, int seconds) {
+    timeval tv{seconds, 0};
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+}
+// Waits until the first 11 bytes (enough for a ClientHello's version) can be peeked.
+uint16_t peekHello(int fd) {
+    unsigned char b[11];
+    for (int i = 0; i < 200; ++i) {
+        const ssize_t n = ::recv(fd, b, sizeof b, MSG_PEEK);
+        if (n <= 0) return 0;
+        if (n >= 11) return clientHelloVersion(b, size_t(n));
+        pollfd p{fd, POLLIN, 0};
+        if (::poll(&p, 1, 100) < 0) return 0;
+    }
+    return 0;
+}
+// Bytes both ways, unchanged, for a game whose own TLS is new enough.
+void relay(int a, int b) {
+    char buf[16384];
+    for (;;) {
+        pollfd fds[2] = {{a, POLLIN, 0}, {b, POLLIN, 0}};
+        if (::poll(fds, 2, 120000) <= 0) return;
+        for (int i = 0; i < 2; ++i) {
+            if (!fds[i].revents) continue;
+            const ssize_t n = ::recv(fds[i].fd, buf, sizeof buf, 0);
+            if (n <= 0) return;
+            for (ssize_t done = 0; done < n;) {
+                const ssize_t w = ::send(i ? a : b, buf + done, size_t(n - done), MSG_NOSIGNAL);
+                if (w <= 0) return;
+                done += w;
+            }
+        }
+    }
+}
+
 int connectUpstream(uint32_t ip, uint16_t port) {
     const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
@@ -53,7 +92,7 @@ int connectUpstream(uint32_t ip, uint16_t port) {
     return fd;
 }
 
-class OpenSslBridge final : public TlsBridge {
+class OpenSslBridge final : public TlsBridge, public std::enable_shared_from_this<OpenSslBridge> {
 public:
     explicit OpenSslBridge(bool verify) : verify_(verify) {}
     ~OpenSslBridge() override {
@@ -95,7 +134,8 @@ public:
         uint16_t local = 0;
         const int listener = localListener(local);
         if (listener < 0) return 0;
-        std::thread([this, listener, host, ip, port, log] { run(listener, host, ip, port, log); }).detach();
+        // The worker keeps the bridge (and its TLS contexts) alive until it returns.
+        std::thread([self = shared_from_this(), listener, host, ip, port, log] { self->run(listener, host, ip, port, log); }).detach();
         return local;
     }
 
@@ -105,6 +145,16 @@ private:
         const int guest = ::poll(&p, 1, 30000) == 1 ? ::accept4(listener, nullptr, nullptr, SOCK_CLOEXEC) : -1;
         ::close(listener);
         if (guest < 0) return;
+        deadlines(guest, 30);
+        const uint16_t asked = peekHello(guest);
+        if (asked >= kModernTls) {
+            const int up = connectUpstream(ip, port);
+            if (up < 0) { if (log) log("Internet: could not reach " + host + ":" + std::to_string(port)); ::close(guest); return; }
+            if (log) log("Internet: secure connection to " + host + " passed through (the game's own TLS is modern)");
+            relay(guest, up);
+            ::close(up); ::close(guest);
+            return;
+        }
         SSL* g = SSL_new(server_);
         SSL* u = nullptr;
         int up = -1;
@@ -114,19 +164,22 @@ private:
         } else if ((up = connectUpstream(ip, port)) < 0) {
             if (log) log("Internet: could not reach " + host + ":" + std::to_string(port));
         } else {
+            deadlines(up, 30);
             u = SSL_new(client_);
             SSL_set_fd(u, up);
             const bool named = inet_addr(host.c_str()) == INADDR_NONE;
             if (named) {
                 SSL_set_tlsext_host_name(u, host.c_str());
                 if (verify_) SSL_set1_host(u, host.c_str());
+            } else if (verify_) {
+                X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(u), host.c_str());   // an address: its certificate must name it
             }
             if (SSL_connect(u) != 1) {
                 if (log) log("Internet: modern TLS to " + host + " failed (" + sslError() + ")");
             } else {
                 if (log) log("Internet: secure connection to " + host + " bridged (game TLS " + SSL_get_version(g) +
                              ", server " + SSL_get_version(u) + ")");
-                pump(g, guest, u, up);
+                pump(g, guest, u, up, host, log);
             }
         }
         if (u) { SSL_shutdown(u); SSL_free(u); }
@@ -135,8 +188,14 @@ private:
         ::close(guest);
     }
     // Copies application data both ways until either side closes.
-    static void pump(SSL* g, int gfd, SSL* u, int ufd) {
+    static void pump(SSL* g, int gfd, SSL* u, int ufd, const std::string& host, const std::function<void(const std::string&)>& log) {
         char buf[16384];
+        int told = 0;
+        auto tell = [&](const char* dir, int n) {
+            if (!log || told >= 40) return;
+            const std::string line = httpFirstLine(buf, size_t(n));
+            if (!line.empty()) { ++told; log("Internet: " + host + " " + dir + " " + line); }
+        };
         for (;;) {
             bool gr = SSL_pending(g) > 0, ur = SSL_pending(u) > 0;
             if (!gr && !ur) {
@@ -148,11 +207,13 @@ private:
             if (gr) {
                 const int n = SSL_read(g, buf, sizeof buf);
                 if (n <= 0) { if (SSL_get_error(g, n) == SSL_ERROR_WANT_READ) continue; return; }
+                tell("<-", n);
                 if (SSL_write(u, buf, n) != n) return;
             }
             if (ur) {
                 const int n = SSL_read(u, buf, sizeof buf);
                 if (n <= 0) { if (SSL_get_error(u, n) == SSL_ERROR_WANT_READ) continue; return; }
+                tell("->", n);
                 if (SSL_write(g, buf, n) != n) return;
             }
         }
