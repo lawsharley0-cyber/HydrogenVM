@@ -3,16 +3,17 @@
 ## Current Linux playability queue
 
 Owner priority, November 13: the **Get these working** folder supersedes the
-earlier queue. Angry Birds Island HD and LEGO Technic Pullback Racers are
-qualified below; Sonic Dash, Groove Zero, Rayman Origins demo, Clash of Clans
-1.70 and ROBLOX internal 2.1.1 are queued. Server requirements are not yet
-verdicts.
+earlier queue. Angry Birds Island HD, LEGO Technic Pullback Racers and LEGO
+Technic Racer are qualified below; Sonic Dash, Groove Zero, Rayman Origins
+demo, Clash of Clans 1.70 and ROBLOX internal 2.1.1 are queued. Server
+requirements are not yet verdicts.
 
 | App / fixture | Status | Evidence |
 |---|---|---|
 | Angry Birds Hatchery Island HD 1.7.0 | Playable with notes on Linux | Correct iPad canvas, real 28,870-point / one-star clear, next-level play, pause/resume, pinch zoom, source-matched music/effects, six-minute clean session and earned progress after relaunch. Average 21.15 ms, p99 26.74 ms; loading outliers remain. [Fixes, commands, gates and phone limits](ANGRY_BIRDS_ISLAND_PLAYABILITY_2026-11-13.md). |
 | BADLAND 1.0 (build 8) | In progress: core loop verified; frame-time outliers remain | Menus, controlled flight, earned completion, saves across relaunch, captured music/audio, pause/resume and four-minute clean sessions. Final post-review run: average 26.40 ms, p95 33.55 ms, p99 285.21 ms; an earlier run reached p99 30.41 ms. Must-launch registered. [Reproduction, shared fixes, gates and limits](BADLAND_PLAYABILITY_2026-11-12.md). |
 | LEGO Technic Pullback Racers 1.0-4 | Playable with notes on Linux | Authentic title, level-select and race; Touch-scheme pull-back (Tilt also, with a host accelerometer); looping menu music for 180 s (7,909,363 non-silent of 7,950,336 frames); track 1 finished in 00:21:19, `Level 1=1` and unlocked track 2 after relaunch. 180 s and 360 s sessions clean, average ~5–7 ms, p99 ~13–18 ms. FMOD needed 32-bit iOS `PTHREAD_STACK_MIN` of 8 KiB — HydrogenVM used to reject that with `EINVAL`. Must-launch registered (30 s, 264 frames, sound). Phone untested; the second title-menu car stays locked (a later unlock). [Fixes, commands, gates and phone limits](LEGO_TECHNIC_PULLBACK_RACERS_WIP_2026-11-13.md). |
+| LEGO Technic Racer 1.0 | Playable with notes on Linux | Same studio/engine as Pullback Racers (Unity 4.0.1f2, same bundle id, different binary). Authentic title, level-select and race; Touch-scheme pull-back; looping music for 180 s (7,747,402 non-silent of 7,950,336 frames, audible 4.6–180.2 s); track 1 finished in 00:17:12, `Level 1=1` after relaunch. 180 s clean, average 7.76 ms, p99 18.09 ms (load hitches up to 878 ms in the first 10 s). Needs #448's 8 KiB pthread / AudioFile / libstdc++ fixes; no further engine change. Must-launch registered (30 s, 232 frames, sound). Phone untested; the second title-menu car stays locked (a later unlock). This version shows all four tracks unlocked on level-select. [Fixes, commands, gates and phone limits](LEGO_TECHNIC_RACER_WIP_2026-11-13.md). |
 
 ## Scanner
 
