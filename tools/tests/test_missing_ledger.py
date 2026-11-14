@@ -52,6 +52,18 @@ class Parsing(unittest.TestCase):
         self.assertIn(("function", "std::__1::foo(int, char)"), app["imported"])
         self.assertNotIn(("function", "SecTrustSetAn"), app["imported"])
 
+    def test_defaulted_and_stall_lines(self):
+        text = ("Loaded Racer: armv7\n[hvm:warn] Defaulted: AudioSessionGetProperty('chbd') answered 0 (from Racer+0x10)\n"
+                "[hvm:warn] Stall: the main thread has waited 5.5 s in pthread_mutex_lock (0x1, held by thread 3)\n")
+        app = ml.parse_log_text(text, "x.log")
+        self.assertIn(("defaulted", "AudioSessionGetProperty('chbd') answered 0"), app["called"])
+        self.assertTrue(app["stall"].startswith("the main thread has waited 5.5 s"))
+        led = ml.build_ledger(ml.merge_apps([app]), {})
+        self.assertEqual(led["apps"][0]["openCalled"], [])   # a default answer is not a missing API
+        md = ml.markdown(led, 10)
+        self.assertIn("Made-up answers", md)
+        self.assertIn("## Stalls", md)
+
     def test_hvm_report_and_batch_report(self):
         rep = ml.parse_bytes(json.dumps(hvm_report("/x/Racer.app", ["sem_open"], ["sem_open", "fork"])).encode(), "r.json")
         self.assertEqual([a["id"] for a in rep], ["Racer"])
