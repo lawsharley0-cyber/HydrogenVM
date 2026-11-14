@@ -102,3 +102,19 @@ CLI. The original build, production sources and Test Lab app are untouched.
 TL-A must pass on the original executable and fail on the planted one. A/A must
 report IDENTICAL and A/B DIFFERENT. This is an intentionally invalid test artifact,
 never a proposed runtime change. Inspect `validation.json` and both guest logs.
+
+## missing_ledger.py — which missing APIs block the most games
+
+Ranks every missing function, class, data symbol and selector by how many
+distinct apps reached it at run time ("called", what stops a game) and how
+many only import it. Reads `hvm run --report` JSON, the phone's Test All
+Games `report.json` (each app's log is inside), play logs, and exported
+`.zip` bundles, so the owner's phone exports and bench runs land in one table.
+With `--hvm build/hvm` (or `--support` a `--dump-support` file) each row says
+whether the current build implements it, so old phone logs show what is left.
+
+```sh
+python3 tools/missing_ledger.py scan ~/exports bench-reports/ --hvm build/hvm --md ledger.md --json ledger.json
+python3 tools/missing_ledger.py run --hvm build/hvm --apps ~/bench/apps --out bench-reports --seconds 25 --jobs 3
+python3 tools/missing_ledger.py diff old-ledger.json new-ledger.json   # for a PR description
+```
