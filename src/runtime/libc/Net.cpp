@@ -130,6 +130,19 @@ void bumpIoGen(Process& p, int fd) {
     std::lock_guard lock(k.mu);
     if (!k.queues.empty()) ++k.ioGen[fd];
 }
+// Plain (unencrypted) web traffic of a game allowed online gets the same play-log lines as a
+// bridged connection: what was asked, what came back, how it ended.
+struct PlainHttpState {
+    explicit PlainHttpState(Process&) {}
+    std::mutex mu;
+    std::map<int, std::unique_ptr<HttpLog>> byFd;
+};
+void plainHttpChunk(Process& p, int fd, bool fromGame, const void* data, size_t n) {
+    auto& s = p.service<PlainHttpState>();
+    std::lock_guard lock(s.mu);
+    auto it = s.byFd.find(fd);
+    if (it != s.byFd.end() && n) it->second->chunk(fromGame, static_cast<const char*>(data), n);
+}
 bool isUdp(Ctx& x, int fd) { auto& s = x.proc.service<SocketState>(); std::lock_guard lock(s.mu); return s.udp.count(fd) != 0; }
 int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
     if (family == kAF_INET && type == SOCK_DGRAM && (protocol == 0 || protocol == IPPROTO_UDP)) {
@@ -273,7 +286,13 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
         host.sin_port = htons(local);
     } else if ((ntohl(host.sin_addr.s_addr) >> 24) != 127 && internet(x)) {
         tellInternetOnce(x);
-        x.proc.logf(LogLevel::Info, "Internet: connecting to %s:%d", ipBuf, origPort);
+        const std::string server = nameFor(x, host.sin_addr.s_addr);
+        x.proc.logf(LogLevel::Info, "Internet: connecting to %s (%s:%d)", server.c_str(), ipBuf, origPort);
+        auto sink = x.proc.service<BridgeLogState>().sink;
+        auto& plain = x.proc.service<PlainHttpState>();
+        std::lock_guard lock(plain.mu);
+        plain.byFd[fd] = std::make_unique<HttpLog>(server + ":" + std::to_string(origPort),
+            [sink](const std::string& line) { std::lock_guard l(sink->mu); if (sink->proc) sink->proc->log(LogLevel::Info, line); });
     } else if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) {
         x.proc.logf(LogLevel::Warning, "connect rejected: non-loopback %s:%d", ipBuf, origPort);
         return failWith(x, 51);
@@ -323,7 +342,7 @@ int32_t n_send(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
     bool nonblocking = (flags & 128) || (::fcntl(fd, F_GETFL) & O_NONBLOCK);
     for (;;) {
         ssize_t out = ::send(fd, x.mem.host(buf), n, hostFlags | MSG_DONTWAIT);
-        if (out >= 0) { bumpIoGen(x.proc, fd); return int32_t(out); }
+        if (out >= 0) { plainHttpChunk(x.proc, fd, true, x.mem.host(buf), size_t(out)); bumpIoGen(x.proc, fd); return int32_t(out); }
         if (errno != EAGAIN || nonblocking) return hostFailure(x);
         if (!waitSocket(x, fd, POLLOUT)) return -1;
     }
@@ -340,6 +359,7 @@ int32_t n_recv(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
         ssize_t out = ::recv(fd, x.mem.host(buf + received), n - received, hostFlags | MSG_DONTWAIT);
         bumpIoGen(x.proc, fd);
         if (out >= 0) {
+            if (out > 0 && !(hostFlags & MSG_PEEK)) plainHttpChunk(x.proc, fd, false, x.mem.host(buf + received), size_t(out));
             received += uint32_t(out);
             if (!out || received == n || nonblocking || !(flags & 64)) return int32_t(received);
         } else if (errno != EAGAIN || nonblocking) return received ? int32_t(received) : hostFailure(x);
@@ -892,7 +912,11 @@ bool isNetworkSocket(Process& p, int fd) {
 int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
-    p.logf(LogLevel::Debug, "guest closeNetworkSocket fd=%d", fd);
+    {
+        auto& plain = p.service<PlainHttpState>();
+        std::lock_guard lock(plain.mu);
+        if (auto it = plain.byFd.find(fd); it != plain.byFd.end()) { it->second->ended("closed by the game"); plain.byFd.erase(it); }
+    }
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
     if (!s.fds.erase(fd)) return -2;
     s.udp.erase(fd);
