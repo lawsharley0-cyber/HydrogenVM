@@ -403,21 +403,32 @@ def diff(old: dict, new: dict) -> str:
 # --------------------------------------------------------------------- run
 
 def find_apps(root: Path) -> list[Path]:
-    """Each bench folder holds one .app (possibly under Payload/), or an .ipa."""
+    """Each bench folder holds one .app somewhere in its first few levels (a bundle folder,
+    Payload/, or the app's container), or is an .ipa itself."""
     found = []
-    for d in sorted(p for p in root.iterdir() if p.is_dir() or p.suffix == ".ipa"):
+    for d in sorted(root.iterdir()):
         if d.suffix in (".app", ".ipa"):
             found.append(d)
             continue
-        apps = sorted(d.glob("*.app")) or sorted(d.glob("Payload/*.app")) or sorted(d.glob("*.ipa"))
-        if apps:
-            found.append(apps[0])
+        if not d.is_dir():
+            continue
+        app = None
+        for base, dirs, _ in os.walk(d):
+            dirs.sort()
+            if Path(base).relative_to(d).parts.__len__() > 3:
+                dirs[:] = []
+                continue
+            hit = next((x for x in dirs if x.endswith(".app")), None)
+            if hit:
+                app = Path(base) / hit
+                break
+        if app:
+            found.append(app)
     return found
 
 
 def run_one(hvm: str, app: Path, out: Path, seconds: int) -> Path:
-    name = app.parent.name if app.parent.name not in ("Payload",) else app.parent.parent.name
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", name if app.suffix == ".app" else app.stem)
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", app.stem)
     report = out / f"{name}.json"
     home = out / "homes" / name
     home.mkdir(parents=True, exist_ok=True)
