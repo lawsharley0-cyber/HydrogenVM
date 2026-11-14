@@ -639,7 +639,7 @@ void registerLibcPthread(Process& p) {
     p.def<&t_testcancel>("_pthread_testcancel");
     p.def<&t_cancelstate>("_pthread_setcancelstate");
     p.def<&t_canceltype>("_pthread_setcanceltype");
-    p.def<&pm_init>("_pthread_mutex_init");
+    supportDef<&pm_init>(p, "_pthread_mutex_init", SupportStatus::Real, "host-backed guest mutex: normal, recursive or error-check from the attribute");
     p.def<&pm_lock>("_pthread_mutex_lock");
     p.def<&pm_trylock>("_pthread_mutex_trylock");
     p.def<&pm_unlock>("_pthread_mutex_unlock");
@@ -662,13 +662,13 @@ void registerLibcPthread(Process& p) {
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");
     p.def<&rw_init>("_pthread_rwlock_init");
-    p.def<&rw_rdlock>("_pthread_rwlock_rdlock");
+    supportDef<&rw_rdlock>(p, "_pthread_rwlock_rdlock", SupportStatus::Real, "blocks while a writer holds the lock");
     p.def<&rw_tryrdlock>("_pthread_rwlock_tryrdlock");
-    p.def<&rw_wrlock>("_pthread_rwlock_wrlock");
+    supportDef<&rw_wrlock>(p, "_pthread_rwlock_wrlock", SupportStatus::Real, "blocks while a writer or readers hold the lock");
     p.def<&rw_trywrlock>("_pthread_rwlock_trywrlock");
     p.def<&rw_unlock>("_pthread_rwlock_unlock");
     p.def<&rw_destroy>("_pthread_rwlock_destroy");
-    p.def<&p_once>("_pthread_once");
+    supportDef<&p_once>(p, "_pthread_once", SupportStatus::Real, "runs the routine once; other callers wait for it");
     p.def<&k_create>("_pthread_key_create");
     p.def<&k_delete>("_pthread_key_delete");
     p.def<&k_get>("_pthread_getspecific");

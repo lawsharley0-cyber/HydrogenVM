@@ -2988,7 +2988,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_setProp>("_AudioUnitSetProperty");
     supportDef<&au_getProp>(p, "_AudioUnitGetProperty", SupportStatus::Approx, "Stream format (per mixer input) and maximum frames per slice; other properties are left untouched");
     p.def<&au_setParam>("_AudioUnitSetParameter");
-    p.def<&au_getParam>("_AudioUnitGetParameter");
+    supportDef<&au_getParam>(p, "_AudioUnitGetParameter", SupportStatus::Approx, "every parameter reads 1.0 (logged as Defaulted)");
     p.def<&au_render>("_AudioUnitRender");
     p.def<&aug_new>("_NewAUGraph");
     // Tuning of the converter inside an ExtAudioFile (bit rate, quality): accepted, the
