@@ -111,6 +111,7 @@ struct GuestThread {
     std::atomic<const char*> blockedIn{nullptr};
     std::atomic<uint32_t> blockedObject{0}, blockedOwner{0};
     std::atomic<int64_t> blockedSinceMs{0};
+    std::atomic<const char*> role{nullptr};   // set by threads HydrogenVM starts ("audio render")
     void* objcState = nullptr;    // per-thread ObjC runtime data (autorelease pools)
     void (*objcStateFree)(void*) = nullptr;
     ~GuestThread() { if (objcState && objcStateFree) objcStateFree(objcState); }

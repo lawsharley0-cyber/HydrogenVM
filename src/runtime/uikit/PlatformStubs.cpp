@@ -1793,6 +1793,7 @@ void auNotify(Ctx& x, AudioToolboxState& st, uint32_t uid, uint32_t action) {
     }
 }
 void au_thread(Ctx& x, uint32_t uid) {
+    if (GuestThread* t = x.proc.currentThreadIfGuest()) t->role.store("audio render thread: runs the app's AudioUnit callback");
     // RemoteIO has real-time deadlines independent of the app's main run loop.
     // A guest thread gives its callback a real CPU context without letting a
     // slow Unity/CADisplayLink frame starve music and sound effects.

@@ -124,6 +124,7 @@ int unlockMutex(Ctx& x, GuestMutex& m) {
 int32_t pm_init(Ctx& x, GuestPtr mu, GuestPtr attr) {
     auto& t = T(x);
     auto m = std::make_unique<GuestMutex>();
+    m->addr = mu;
     if (attr) {
         const uint32_t type = x.mem.read<uint32_t>(attr + 4);
         m->type = type == 2 ? kRecursive : type == 1 ? kErrorCheck : kNormal;

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <deque>
+#include <map>
 #include <vector>
 #include <cstdio>
 #include <sstream>
@@ -127,7 +128,11 @@ void Process::checkStall(StallWatch& w) {
         std::snprintf(b, sizeof b, "%.1fM instructions in the last %.0f s", double(di) / 1e6, dt);
         return b;
     };
-    auto name = [&](const Row& r) { return r.main ? std::string("main") : "thread " + std::to_string(r.t->id); };
+    auto name = [&](const Row& r) {
+        std::string n = r.main ? std::string("main") : "thread " + std::to_string(r.t->id);
+        if (const char* role = r.t->role.load(std::memory_order_relaxed)) n += std::string(" (") + role + ")";
+        return n;
+    };
     std::ostringstream out;
     out << "Stall: " << headline << "\n";
     // Who the main thread is waiting for, and who that thread is waiting for, until a thread
@@ -150,16 +155,41 @@ void Process::checkStall(StallWatch& w) {
         }
         out << "\n";
     }
+    // Threads that matter get a line each: main, everyone in the wait chain, threads that hold
+    // what someone waits for, and threads executing guest code. The rest (worker pools waiting
+    // for work, sleepers) are counted by what they wait in.
+    std::vector<uint32_t> relevant;
+    for (const Row& r : rows) if (r.owner) relevant.push_back(r.owner);
+    auto ran = [&](const Row& r) {
+        const auto& h = w.history[r.t->id];
+        return h.size() >= 2 && h.back().instructions != h.front().instructions;
+    };
+    std::map<std::string, int> quiet;
     for (const Row& r : rows) {
+        const bool holder = std::find(relevant.begin(), relevant.end(), r.t->id) != relevant.end();
+        if (!r.main && !holder && !r.owner && (r.in || !ran(r))) {
+            ++quiet[r.in ? "in " + std::string(r.in) : std::string("idle")];
+            continue;
+        }
         out << "  " << name(r) << ": ";
         if (r.in) {
             out << "waiting " << secs(now - r.sinceMs) << " in " << r.in;
             if (r.object) out << " " << hex(r.object);
             if (r.owner) out << ", held by thread " << r.owner;
+        } else if (!ran(r)) {
+            out << "in HydrogenVM, no guest instructions in the last 5 s, near " << describeAddress(r.t->cpu.r[CPU::kPC]);
         } else {
             // The thread is running: its registers change under us, so only an approximate place.
             out << "running guest code, " << rate(r) << ", near " << describeAddress(r.t->cpu.r[CPU::kPC]);
         }
+        out << "\n";
+    }
+    if (!quiet.empty()) {
+        int n = 0;
+        for (auto& [what, count] : quiet) n += count;
+        out << "  " << n << " other thread" << (n == 1 ? "" : "s") << ":";
+        bool first = true;
+        for (auto& [what, count] : quiet) { out << (first ? " " : ", ") << count << " " << what; first = false; }
         out << "\n";
     }
     for (const Row& r : rows) {
