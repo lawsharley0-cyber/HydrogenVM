@@ -427,14 +427,17 @@ def find_apps(root: Path) -> list[Path]:
     return found
 
 
-def run_one(hvm: str, app: Path, out: Path, seconds: int) -> Path:
+def run_one(hvm: str, app: Path, out: Path, seconds: int, resume: bool = False) -> Path:
     name = re.sub(r"[^A-Za-z0-9._-]", "_", app.stem)
     report = out / f"{name}.json"
+    if resume and report.exists():
+        return report
     home = out / "homes" / name
     home.mkdir(parents=True, exist_ok=True)
     cmd = [hvm, "run", str(app), "--home", str(home), "--keep-going", "--run-for", str(seconds), "--report", str(report)]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 90, check=False)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=seconds + 90, check=False)   # games print raw bytes
         (out / f"{name}.log").write_text(r.stdout + r.stderr)
     except subprocess.TimeoutExpired:
         (out / f"{name}.log").write_text(f"timed out after {seconds + 90} s\n")
@@ -449,7 +452,7 @@ def cmd_run(args) -> int:
         apps = [a for a in apps if any(s.lower() in str(a).lower() for s in args.only)]
     print(f"running {len(apps)} apps for {args.seconds} s each, {args.jobs} at a time", file=sys.stderr)
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
-        for report in pool.map(lambda a: run_one(args.hvm, a, out, args.seconds), apps):
+        for report in pool.map(lambda a: run_one(args.hvm, a, out, args.seconds, args.resume), apps):
             print(f"  {report.name}{'' if report.exists() else ' (no report)'}", file=sys.stderr)
     shutil.rmtree(out / "homes", ignore_errors=True)
     args.inputs = [str(out) + "/" + p.name for p in sorted(out.glob("*.json"))]
@@ -498,6 +501,7 @@ def main(argv=None) -> int:
     r.add_argument("--seconds", type=int, default=20)
     r.add_argument("--jobs", type=int, default=3)
     r.add_argument("--only", nargs="*", help="substrings of app paths to run")
+    r.add_argument("--resume", action="store_true", help="keep reports already in --out")
     outputs(r)
     r.set_defaults(func=cmd_run)
 
