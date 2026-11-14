@@ -8877,6 +8877,29 @@ int runFullSubsystemTests() {
                   "zlib compress/uncompress and streaming inflate on guest buffers");
         }
 
+        // sem_open and friends: one counting semaphore per name (Geometry Dash's worker threads).
+        {
+            auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return proc.callGuest(cpu, *proc.lookupSymbol(sym), args); };
+            const uint32_t name = proc.allocCString("/hvm-test-sem");
+            const uint32_t sem = call("_sem_open", {name, 0x200 /* O_CREAT */, 0600, 0});
+            const int32_t emptyTry = int32_t(call("_sem_trywait", {sem}));
+            const uint32_t again = call("_sem_open", {name, 0, 0, 0});
+            const uint32_t exclusive = call("_sem_open", {name, 0x200 | 0x800 /* O_CREAT|O_EXCL */, 0600, 0});
+            const int32_t posted = int32_t(call("_sem_post", {sem}));
+            const int32_t taken = int32_t(call("_sem_trywait", {sem}));
+            call("_sem_post", {again});
+            const int32_t waited = int32_t(call("_sem_wait", {sem}));   // count is 1: returns at once
+            const int32_t closed = int32_t(call("_sem_close", {again}));
+            const int32_t unlinked = int32_t(call("_sem_unlink", {name}));
+            const uint32_t gone = call("_sem_open", {name, 0, 0, 0});
+            const int32_t badPost = int32_t(call("_sem_post", {0x1234}));
+            const bool ok = sem != 0xFFFFFFFFu && emptyTry == -1 && again == sem && exclusive == 0xFFFFFFFFu && posted == 0 && taken == 0 &&
+                            waited == 0 && closed == 0 && unlinked == 0 && gone == 0xFFFFFFFFu && badPost == -1;
+            if (!ok) std::printf("    sem: sem=%x try=%d again=%x excl=%x post=%d take=%d wait=%d close=%d unlink=%d gone=%x bad=%d\n",
+                                 sem, emptyTry, again, exclusive, posted, taken, waited, closed, unlinked, gone, badPost);
+            check(ok, "sem_open/post/wait/trywait/close/unlink: one semaphore per name, counts, EAGAIN at zero, EEXIST with O_EXCL");
+        }
+
         // shm_open: a segment that can be sized, mapped, reopened by name and unlinked (Unity/Mono, #441).
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return int32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
