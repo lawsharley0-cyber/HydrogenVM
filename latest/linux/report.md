@@ -1,29 +1,29 @@
-# HydrogenVM report — cb36506
+# HydrogenVM report — 70ac319
 
-2026-11-13T22:58:03+00:00 · Intel(R) Xeon(R) 6975P-C (x86_64, Linux 7.0.0-1014-aws)
+2026-11-14T02:07:23+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 224.6s |
-| tools | 1 | 0 | 0 | 5.4s |
-| cpu | 15 | 0 | 0 | 0.4s |
-| ios | 6 | 0 | 0 | 2.1s |
-| bench | 5 | 0 | 0 | 19.0s |
+| build | 1 | 0 | 0 | 261.1s |
+| tools | 1 | 0 | 0 | 9.3s |
+| cpu | 15 | 0 | 0 | 0.6s |
+| ios | 6 | 0 | 0 | 2.2s |
+| bench | 5 | 0 | 0 | 18.6s |
 
 ## Speed
 
-CoreMark **2750.5** iterations/s (920.0 guest MIPS)
+CoreMark **2275.7** iterations/s (760.8 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **191.0%** | 1146 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **143.3%** | 1146 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **114.6%** | 917 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **60.4%** | 786 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **158.0%** | 948 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **118.5%** | 948 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **94.8%** | 759 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **50.0%** | 650 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 600 MIPS, ctests_arm 650 MIPS, ftests_vfp_thumb_softfp 655 MIPS, ftests_neon_thumb 584 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 578 MIPS, ctests_arm 619 MIPS, ftests_vfp_thumb_softfp 542 MIPS, ftests_neon_thumb 480 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,14 +31,14 @@ Raw interpreter speed (CPU test programs): ctests_thumb 600 MIPS, ctests_arm 650
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.23 ms | 4.10 ms | 0 |
+| FoundationTest | 0.67s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.35 ms | 7.84 ms | 0 |
 
 ## Problems (49)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 60.4% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 50.0% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (48)
 
@@ -76,7 +76,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 600 MIPS, ctests_arm 650
 - **build / compiler**: src/runtime/libc/LibStdcxxStreams.cpp:108:60: warning: unused variable 'mTrunc' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/libc/LibcxxStreams.cpp:594:9: warning: unused function 'wsbEof' [-Wunused-function]
 - **build / compiler**: src/runtime/libc/LibcxxStreams.cpp:595:9: warning: unused function 'wsbEofChar' [-Wunused-function]
-- **build / compiler**: src/runtime/libc/Net.cpp:540:10: warning: unused function 'n_nullHost' [-Wunused-function]
+- **build / compiler**: src/runtime/libc/Net.cpp:560:10: warning: unused function 'n_nullHost' [-Wunused-function]
 - **build / compiler**: src/runtime/libc/Posix.cpp:59:64: warning: unused variable 'KERN_ABORTED' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/objc/Runtime.cpp:101:10: warning: 'atomic_store<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
