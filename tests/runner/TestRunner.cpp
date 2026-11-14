@@ -18,6 +18,7 @@
 #include <atomic>
 #include <sys/file.h>
 #include <chrono>
+#include <mutex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -2796,6 +2797,39 @@ int runFullSubsystemTests() {
         const float seconds = proc.mem().read<float>(out);
         check(seconds > 0.005f && seconds < 0.03f && std::fabs(seconds * 44100 - 512) < 1,
               "AudioSessionGetProperty('chbd') reports the render callback's buffer duration (512 frames at 44.1 kHz), not 0");
+    }
+    {
+        // An unknown property still answers 0, but now says so: "Defaulted: ..." once, with a count.
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const uint32_t size = proc.heap().allocZeroed(4), out = proc.heap().allocZeroed(8);
+        for (int i = 0; i < 3; ++i) { proc.mem().write<uint32_t>(size, 4); call("_AudioSessionGetProperty", {0x7a7a7a7a /* 'zzzz' */, size, out}); }
+        bool found = false;
+        for (const auto& r : proc.defaultedApis().records())
+            if (r.name == "AudioSessionGetProperty('zzzz') answered 0" && r.count == 3) found = true;
+        check(found && proc.mem().read<uint32_t>(out) == 0, "a made-up default answer is recorded as Defaulted, once per text with a count");
+    }
+    {
+        // Stall report: the main thread waiting 6 s on a mutex held by another thread.
+        ProcessConfig scfg; scfg.homePath = "/tmp/hvm-stall-test";
+        std::string logged;
+        std::mutex logMu;
+        scfg.log = [&](LogLevel, const std::string& m) { std::lock_guard<std::mutex> lk(logMu); logged += m + "\n"; };
+        Process sp(scfg);
+        GuestThread& m = sp.mainThread();
+        const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        m.blockedObject = 0x10b36a00; m.blockedOwner = 7; m.blockedSinceMs = now - 6000; m.blockedIn = "pthread_mutex_lock";
+        Process::StallWatch* w = Process::newStallWatch();
+        sp.checkStall(*w);
+        const bool reported = logged.find("Stall: the main thread has waited 6.0 s in pthread_mutex_lock (0x10b36a00, held by thread 7)") != std::string::npos &&
+                              logged.find("wait chain: main -> thread 7 (finished or unknown)") != std::string::npos &&
+                              logged.find("main backtrace:") != std::string::npos;
+        const size_t len = logged.size();
+        sp.checkStall(*w);   // the same stall is not reported again within a minute
+        const bool once = logged.size() == len;
+        m.blockedIn = nullptr;
+        Process::deleteStallWatch(w);
+        if (!reported) std::printf("%s", logged.c_str());
+        check(reported && once, "a main thread waiting 5 s logs one Stall report with the lock, its holder and the wait chain");
     }
 
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.

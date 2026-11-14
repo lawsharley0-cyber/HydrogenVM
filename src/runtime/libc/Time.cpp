@@ -30,6 +30,7 @@ std::tm loadTm(Ctx& x, GuestPtr in) {
 
 // Sleep in slices so a stop request isn't held up by a long sleep.
 void sleepFor(Ctx& x, std::chrono::nanoseconds d) {
+    BlockedScope blocked(x.proc, "sleep (usleep/nanosleep/sleep)");
     const auto end = Clock::now() + d;
     while (Clock::now() < end) {
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");

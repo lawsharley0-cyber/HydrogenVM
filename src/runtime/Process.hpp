@@ -20,6 +20,7 @@
 #include <thread>
 #include <typeindex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <algorithm>
 #include <chrono>
@@ -104,9 +105,27 @@ struct GuestThread {
     uint32_t sjljTop = 0;
     std::unordered_map<uint32_t, bool> sjljThumb;
     std::vector<uint32_t> caughtExceptions;
+    // What the thread is waiting in, for stall reports: set only inside waits (BlockedScope),
+    // so running code pays nothing. `object` is the guest address or handle waited on and
+    // `owner` the guest thread holding it (0 when that is not known).
+    std::atomic<const char*> blockedIn{nullptr};
+    std::atomic<uint32_t> blockedObject{0}, blockedOwner{0};
+    std::atomic<int64_t> blockedSinceMs{0};
     void* objcState = nullptr;    // per-thread ObjC runtime data (autorelease pools)
     void (*objcStateFree)(void*) = nullptr;
     ~GuestThread() { if (objcState && objcStateFree) objcStateFree(objcState); }
+};
+
+// Marks the current guest thread as waiting in `what` (a string literal) for its lifetime.
+// Nested scopes keep the outermost wait. Threads that are not guest threads are ignored.
+struct BlockedScope {
+    BlockedScope(Process& p, const char* what, uint32_t object = 0, uint32_t owner = 0);
+    ~BlockedScope();
+    void setOwner(uint32_t owner) { if (t_) t_->blockedOwner.store(owner, std::memory_order_relaxed); }
+    BlockedScope(const BlockedScope&) = delete;
+    BlockedScope& operator=(const BlockedScope&) = delete;
+private:
+    GuestThread* t_ = nullptr;
 };
 
 // Thrown by HLE functions to end the process (exit(), abort(), fatal errors).
@@ -265,6 +284,14 @@ public:
     static bool memoryDiagEnabled() { return std::getenv("HVM_MEMORY_DIAG") != nullptr; }
     std::string memorySamplesJson() const;
     void recordThreadLiveness(const char* event);
+    // Stall reports: called once a second by the run's watcher. When the main thread has
+    // waited 5 s (or no frame has been presented for 20 s), logs "Stall: ..." with every
+    // thread's state, who holds what each waiter needs, and the waiters' backtraces.
+    struct StallWatch;
+    void checkStall(StallWatch& w);
+    static StallWatch* newStallWatch();
+    static void deleteStallWatch(StallWatch* w);
+    GuestThread* currentThreadIfGuest();
     std::string threadLivenessJson() const;
     const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;
@@ -407,6 +434,12 @@ public:
     void log(LogLevel lvl, const std::string& msg) const;
     void logf(LogLevel lvl, const char* fmt, ...) const __attribute__((format(printf, 3, 4)));
     void reportMissing(const std::string& what);   // logs once per name
+    // A host function answered with a made-up default because it does not handle what the app
+    // asked for (an unknown property ID, sysctl name, ...). Not a missing function and not a
+    // taint, but the most common silent wrong value: logged once per text as "Defaulted: ...
+    // (from <caller>)" and kept with counts and the first caller for the run report.
+    void reportDefaulted(const std::string& what);
+    const MissingApiLog& defaultedApis() const { return defaultedApis_; }
     size_t missingCount() { std::lock_guard<std::mutex> lk(missingMu_); return missing_.size(); }
     // Every call to a missing or approximated API with its count, caller and first backtrace (T2a, #257).
     const MissingApiLog& missingApis() const { return missingApis_; }
@@ -560,6 +593,8 @@ private:
     mutable std::mutex missingMu_;
     std::set<std::string> missing_;
     MissingApiLog missingApis_;
+    MissingApiLog defaultedApis_;
+    std::unordered_set<std::string> defaulted_;
     std::set<std::string> calledImports_;   // symbols the app reaches through lazy (call) stubs
 };
 

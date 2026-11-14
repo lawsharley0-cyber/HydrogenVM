@@ -294,6 +294,7 @@ int32_t sysctlValue(Ctx& x, const std::string& name, GuestPtr oldp, GuestPtr old
     if (name == "kern.version") return str("Darwin Kernel Version 13.0.0: HydrogenVM; root:xnu/RELEASE_ARM_S5L8950X");
     if (name == "kern.boottime") { const uint32_t tv[2] = {uint32_t(std::time(nullptr) - 86400), 0}; return writeSysctl(x, oldp, oldlenp, tv, 8); }
     if (name == "kern.maxproc") return u32(512);
+    x.proc.reportDefaulted("sysctl \"" + name + "\" is not known (answered ENOENT)");
     setErrno(x, ENOENT);
     return -1;
 }
@@ -348,6 +349,7 @@ int32_t s_sysctl(Ctx& x, GuestPtr mib, uint32_t n, GuestPtr oldp, GuestPtr oldle
         if (en0) sdl[11] = 0x02;         // 02:00:00:00:00:00
         return writeSysctl(x, oldp, oldlenp, msg, sizeof msg);
     }
+    x.proc.reportDefaulted("sysctl mib {" + std::to_string(a) + ", " + std::to_string(b) + "} is not known (answered ENOENT)");
     setErrno(x, ENOENT);
     return -1;
 }

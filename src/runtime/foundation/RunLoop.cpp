@@ -776,6 +776,7 @@ void o_performOnMain(Ctx& x, id self, SEL, SEL sel, id arg, bool wait) {
         done->set_value();
     });
     if (wait && !onMain) {
+        BlockedScope blocked(x.proc, "performSelectorOnMainThread:waitUntilDone:YES (waiting for the main thread)");
         while (fut.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
             if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     }
@@ -881,6 +882,7 @@ void o_performOnThread(Ctx& x, id self, SEL, SEL sel, id thread, id arg, bool wa
         done->set_value();
     });
     if (wait && t != &x.proc.currentThread()) {
+        BlockedScope blocked(x.proc, "performSelector:onThread:waitUntilDone:YES", t->id);
         while (fut.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
             if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     }
