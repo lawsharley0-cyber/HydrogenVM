@@ -8954,6 +8954,25 @@ int runFullSubsystemTests() {
                   "kevent reports a readable pipe with its byte count, re-reports EV_CLEAR only after a change, and fires EVFILT_USER on NOTE_TRIGGER");
         }
 
+        // std::stoi family over libc++ short strings (Minion Rush 5.7 parses with stoi while loading).
+        {
+            auto shortString = [&](const char* text) {
+                const uint32_t at = proc.heap().allocZeroed(12);
+                const size_t n = std::strlen(text);
+                proc.mem().write<uint8_t>(at, uint8_t(n << 1));
+                proc.mem().copyIn(at + 1, text, n + 1);
+                return at;
+            };
+            const std::string tail = "ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPm";
+            const uint32_t idx = proc.heap().allocZeroed(4);
+            auto fn = [&](const std::string& name) { return *proc.lookupSymbol(name); };
+            const int32_t a = int32_t(proc.callGuest(cpu, fn("__ZNSt3__14stoi" + tail + "i"), {shortString("  -42xyz"), idx, 10}));
+            const uint32_t used = proc.mem().read<uint32_t>(idx);
+            const uint32_t hex = uint32_t(proc.callGuest(cpu, fn("__ZNSt3__14stoi" + tail + "i"), {shortString("ff"), 0, 16}));
+            const uint32_t autoBase = uint32_t(proc.callGuest(cpu, fn("__ZNSt3__15stoul" + tail + "i"), {shortString("0x10"), 0, 0}));
+            check(a == -42 && used == 5 && hex == 255 && autoBase == 16, "std::stoi/stoul parse sign, base and report the characters used");
+        }
+
         // std::system_category / generic_category: name, message, conditions (asio's error codes).
         {
             auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
