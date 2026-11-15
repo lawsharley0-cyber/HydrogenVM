@@ -16,9 +16,10 @@ by path only. Replies are XML; the root element's name is not checked. `code` 0 
 
 | Request | When | Stand-in reply | Status |
 |---|---|---|---|
-| `start.php` | launch | `code message en ja my_coin event_id taito_id m4a_path is_tutorial` | verified: accepted |
-| `event.php` | launch | unreachable (connection fails) | verified: game logs an error and carries on. A successful reply (even `code` 0 and `event_id` 0 only) sends the game to a "Download : n/3 [0%]" screen that never finishes: an event comes with three pak downloads (`stage_pak model_pak tuneFile_pak`, format open) |
-| `shop_list.php` | launch | unreachable | verified: with any successful reply (even empty lists) the game stops on a "Download" screen; when unreachable it carries on |
+| `start.php` | launch | `code message en ja my_coin event_id taito_id m4a_path is_tutorial`, then `stage_pak` / `model_pak` / `tuneFile_pak`, each with a `date` and a `url` child (see "Data update") | verified: accepted |
+| `event.php` | launch | `code` 0, `message` OK | verified: no event fields are read. Its success is what makes the game run the data update; unreachable, the update is skipped (and the song menu stays dim) |
+| `<url>` of a pak | first launch, and when a pak's `date` changes | the game's own bundled pak (unchanged copy) | verified (see "Data update") |
+| `shop_list.php` | launch | unreachable | verified: when unreachable it carries on. Before the data update was answered, any successful reply (even empty lists) stopped on a "Download" screen; with the update in place, `code` 0 / `message` OK also carries on to the menu (bench) |
 | `sync.php` | after TOUCH TO START | `code my_coin friend_num m4a_path cm_stage buy_id play_id friend_info` | verified: accepted; `my_coin` shows on the menu |
 | `<m4a_path><name>.m4a.zip` | starting a song | a zip holding `<name>.m4a` (see below) | verified |
 | `result.php`, `save.php`, `score.php`, `load.php`, ... (listed in the bundle's `setting.cfg`) | after play, saving, events | none yet | open |
@@ -72,7 +73,8 @@ stored zip by the stand-in. HydrogenVM ships no music.
 | `stage.pak` (7,278,147 bytes) | charts: `<song>_easy.dat`, `_normal.dat`, `_hard.dat` per song, e.g. `plot3_easy.dat`. Chart records name their music (`plot3_bgm`) and hit sound (`plot3_shot`). About 44 `_easy` charts, more than the 14 songs in the menu | observed (plot3 charts verified by playing) |
 | `tuneFile.pak` (8,108,149 bytes) | song list and jackets: e.g. "Music Plot Type Three", COSIO, "(1:33)", one number byte 0x29 (41), the three chart names; other songs also name a `<name>_sample` preview | observed |
 | `model.pak`, `skin.pak` | 3D models, UI skin | observed |
-| `Library/Caches/<pak>` | the game looks there first for each pak (downloaded updates) | verified (opens attempted) |
+| `Library/Caches/<pak>` | the game looks there first for each pak (downloaded updates) | verified (opens attempted; read after a data update) |
+| `Library/Caches/version.cfg` | written after a data update (`versionFile` in `setting.cfg`): one `[stage_pak]` / `[model_pak]` / `[tuneFile_pak]` section each with `date = ...` and `url = ...` | verified |
 
 Pak layout (big-endian): u32 file size - 4, then header words, then an index of 13-byte entries
 from offset 0x1c (u32, u32 data offset, u32 size, u8 0), data contiguous. The first field
@@ -87,17 +89,59 @@ entries reliably. **open**.
 `kiki_bgm`, `niji_bgm`, `backon_bgm`, `treeclimb_bgm` (title matches for the last six are
 **open**). Each also needs `<name minus _bgm>_shot` if its chart names one.
 
+## Data update (start.php paks, version.cfg)
+
+Worked out on the bench, 2026-11-15, with `HVM_TRACE_COMPARE=1` and `HVM_FILE_TRACE=1`:
+
+1. After `event.php` succeeds, the game looks up `stage_pak`, `model_pak` and `tuneFile_pak` in
+   the **start.php** reply (`ogXmlTreeManager::SarchCurrentChildren_ElementName`), and under each
+   one a `date` child, then a `url` child. **verified**
+   - Without the pak elements: a "Download : n/3" screen whose count runs past 3, "失敗".
+   - With a pak element but no `date`: a crash in `TuneAppMain::UpdateVersionFile` (NULL read).
+2. When a pak's `date` differs from `Library/Caches/version.cfg`, the game downloads its `url`
+   with `-[rfNetworkObjC DownloadContents:path:...]` to `Library/Caches/<last path part>`
+   ("Download : 1/3 [..%]"). Then it writes `version.cfg`:
+   ```
+   [stage_pak]
+   date = 20120920
+   url = http://gczero.com/pak/stage.pak
+   ```
+   (and the same for the other two). **verified**
+3. On the next launch, with the dates unchanged, nothing is downloaded. **verified**
+4. A download saved under that name is what the game loads from then on (`NSFileHandle` opens of
+   `Library/Caches/tuneFile.pak`, `model.pak` and `stage.pak` before the bundle's). **verified**
+
+The stand-in dates all three paks `20120920` (the build, "ver:20120920-A"), points them at
+`http://gczero.com/pak/<name>`, and answers those with the game's own bundled paks, read from
+the app bundle unchanged (verified byte-identical with `cmp`). So a first launch goes through
+the update once and ends up with the 1.0.0 data, as before. Taito's later pak versions are not
+known to survive.
+
 ## Song menu (after TOUCH TO START)
 
-The menu shows the first song ("Music Plot Type Three", COSIO, (1:33)) dimmed and does not
-answer taps, on the bench and on an iPhone, with the stand-in replies above. **open**. Not
-changed by: listing songs in `sync.php`'s `buy_id` / `play_id` (`my_coin` does show), the song's
-music being cached, the "connection cancelled" line (harmless). After `sync.php` the game looks
-up `my_coin friend_num m4a_path cm_stage buy_id play_id coin gp badge cm_description description
-friend_info en product_id num title artist icon_no play_time difficulty bpm stage_pak model_pak
-tuneFile_pak`, then names that are not part of any reply (pieces of the game's own symbol
-strings), so the lookup list runs past its end. No UIKit dialog is involved (the menu draws in
-GL only).
+**Solved.** The menu was dim and ignored taps because `Library/Caches/version.cfg` did not
+exist: the game only writes it after a data update, and with `event.php` unreachable it never
+ran one. **verified**, by elimination on copies of one game home:
+- `version.cfg` present, no cached paks: menu works.
+- Cached paks, no `version.cfg`: dim.
+- An empty `version.cfg`: works.
+- A `version.cfg` with dates only: works.
+
+With the update done, the normal flow works on the bench:
+1. TOUCH TO START.
+2. A "Track "Play merrily" acquired." notice.
+3. The menu answers taps.
+4. Choosing the song opens MODE (EASY, high score, rating, AVATAR / ITEM / SKIN) with first-play
+   tutorials ("AD-LIB", "a free VISIBLE item").
+5. EASY starts the song: music and hit sound are downloaded as in "Song music download", and the
+   track plays. **verified**
+
+Earlier notes, still true:
+- Listing songs in `sync.php`'s `buy_id` / `play_id` does not change the menu.
+- The "connection cancelled" line is harmless.
+- After `sync.php` the game looks up `my_coin friend_num m4a_path cm_stage buy_id play_id coin gp
+  badge cm_description description friend_info en product_id num title artist icon_no play_time
+  difficulty bpm stage_pak model_pak tuneFile_pak`.
 
 ## Song files (bench sweep, 2026-11-15)
 
