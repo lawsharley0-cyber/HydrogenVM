@@ -1429,9 +1429,11 @@ struct StallWatcher {
     StallWatcher(Process& process, Process::StallWatch* w) : p(process), watch(w) {
         thread = std::thread([this] {
             std::unique_lock<std::mutex> lock(mu);
-            while (!cv.wait_for(lock, std::chrono::seconds(1), [this] { return stopped; })) {
+            // 20 ms ticks: a sample of where main is each tick, the stall check every second.
+            for (unsigned tick = 1; !cv.wait_for(lock, std::chrono::milliseconds(20), [this] { return stopped; }); ++tick) {
                 lock.unlock();
-                try { p.checkStall(*watch); } catch (...) {}
+                try { p.sampleMain(*watch); } catch (...) {}
+                if (tick % 50 == 0) { try { p.checkStall(*watch); } catch (...) {} }
                 lock.lock();
             }
         });
