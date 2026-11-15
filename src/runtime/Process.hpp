@@ -34,6 +34,7 @@ enum class LogLevel { Debug, Info, Warning, Error, GuestStdout, GuestStderr };
 
 namespace HostGL { class Platform; }
 struct TlsBridge;
+struct HttpClient;
 
 struct ProcessConfig {
     std::string bundlePath;            // …/Foo.app
@@ -48,6 +49,9 @@ struct ProcessConfig {
     bool internetAccess = false;      // per-game opt-in (player's "Allow internet" switch): real TCP/UDP and DNS
     // With internetAccess: guest TCP to port 443 goes through this (old game TLS in, modern TLS out).
     std::shared_ptr<TlsBridge> tlsBridge;
+    // With internetAccess: Foundation downloads (NSURLConnection, NSURLSession, contents of a URL)
+    // go through the host's HTTP stack (libc/HttpClient.hpp). Without one they stay offline.
+    std::shared_ptr<HttpClient> httpClient;
     bool offlineClash = false;        // pinned client only: session-owned local NPC service
     std::map<uint16_t,uint16_t> loopbackPortOverrides; // explicit localhost-only service routing
     std::vector<std::string> loopbackAliases; // explicitly route these names to 127.0.0.1

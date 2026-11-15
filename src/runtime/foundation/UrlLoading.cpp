@@ -1,5 +1,6 @@
-// HydrogenVM — NSURLRequest / NSMutableURLRequest / NSURLConnection, offline (except for
-// shut-down servers with a stand-in: ServerStandIn.cpp).
+// HydrogenVM — NSURLRequest / NSMutableURLRequest / NSURLConnection. Offline unless the player
+// allowed the game online (then the host's HTTP client fetches: libc/HttpClient.hpp); shut-down
+// servers with a stand-in are answered locally either way (ServerStandIn.cpp).
 //
 // Requests are real value objects (URL, method, headers, body, cache/timeout
 // policy), so apps build and inspect them. Connections behave like a device
@@ -10,6 +11,8 @@
 #include "Foundation.hpp"
 #include <cstring>
 #include <memory>
+#include <future>
+#include "runtime/libc/HttpClient.hpp"
 
 namespace Hydrogen::Runtime::Foundation {
 namespace {
@@ -166,6 +169,58 @@ id notConnectedError(Ctx& x, id url) {
                         {constString(x.proc, "NSURLErrorDomain"), uint32_t(kNotConnected), ui}));
 }
 
+// ---- Online downloads (the player allowed this game online; libc/HttpClient.hpp)
+std::shared_ptr<HttpClient> onlineClient(Ctx& x) {
+    return x.proc.config().internetAccess ? x.proc.config().httpClient : nullptr;
+}
+HttpRequest toHttp(Ctx& x, Request* r) {
+    HttpRequest h;
+    h.url = urlString(x, r->url);
+    h.method = r->method ? utf8(x, r->method) : "GET";
+    h.timeoutSeconds = r->timeout > 0 ? r->timeout : 60;
+    if (r->headers)
+        for (auto& [k, v] : dictEntries(x, r->headers))
+            if (k && v) h.headers.push_back({utf8(x, k), utf8(x, id(R(x).send(x.cpu, v, "description")))});
+    if (r->body) { const auto b = dataBytes(x, r->body); h.body.assign(b.begin(), b.end()); }
+    return h;
+}
+// "GET https://host/path" without the query (signed URLs stay out of shared logs).
+std::string logUrl(const HttpRequest& h) { return h.method + " " + h.url.substr(0, h.url.find('?')); }
+void logOnline(Ctx& x, const HttpRequest& h, const HttpResponse& r) {
+    if (r.status) x.proc.logf(LogLevel::Info, "Internet: %s -> %d (%zu bytes)", logUrl(h).c_str(), r.status, r.body.size());
+    else x.proc.logf(LogLevel::Info, "Internet: %s failed: %s", logUrl(h).c_str(), r.error.c_str());
+}
+id httpResponseObject(Ctx& x, id url, const HttpResponse& r) {
+    std::vector<std::pair<id, id>> hs;
+    for (auto& [k, v] : r.headers) hs.push_back({makeString(x, k), makeString(x, v)});
+    const id headers = makeDict(x, hs);
+    const id finalUrl = r.url.empty() ? url : id(R(x).send(x.cpu, R(x).getClass("NSURL"), "URLWithString:", {makeString(x, r.url)}));
+    const id o = id(R(x).send(x.cpu, R(x).getClass("NSHTTPURLResponse"), R(x).selAlloc));
+    return autoreleased(x, id(R(x).send(x.cpu, o, "initWithURL:statusCode:HTTPVersion:headerFields:",
+                                         {finalUrl ? finalUrl : url, uint32_t(r.status), makeString(x, "HTTP/1.1"), headers})));
+}
+id onlineError(Ctx& x, id url, const HttpResponse& r) {
+    std::vector<std::pair<id, id>> info = {{constString(x.proc, "NSLocalizedDescription"), makeString(x, r.error.empty() ? "network error" : r.error)}};
+    if (url) {
+        info.push_back({constString(x.proc, "NSErrorFailingURLStringKey"), makeString(x, urlString(x, url))});
+        info.push_back({constString(x.proc, "NSErrorFailingURLKey"), url});
+    }
+    return id(R(x).send(x.cpu, R(x).getClass("NSError"), "errorWithDomain:code:userInfo:",
+                        {constString(x.proc, "NSURLErrorDomain"), uint32_t(r.errorCode ? r.errorCode : -1), makeDict(x, info)}));
+}
+// Blocks this guest thread until the host answers (sendSynchronousRequest, contents of a URL).
+HttpResponse fetchNow(Ctx& x, const std::shared_ptr<HttpClient>& client, HttpRequest h) {
+    auto done = std::make_shared<std::promise<HttpResponse>>();
+    auto result = done->get_future();
+    client->fetch(h, [done](HttpResponse r) { done->set_value(std::move(r)); });
+    BlockedScope blocked(x.proc, "a download (NSURLConnection / contents of a URL)");
+    while (result.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
+        if (x.proc.stopping()) { HttpResponse r; r.errorCode = -999; r.error = "cancelled"; return r; }
+    HttpResponse r = result.get();
+    logOnline(x, h, r);
+    return r;
+}
+
 // ---- NSURLConnection
 struct Connection : ObjC::HostObject { id request = 0, delegate = 0; bool started = false; };
 Connection* conn(Ctx& x, id c) { return c ? R(x).hostIf<Connection>(c) : nullptr; }
@@ -204,9 +259,54 @@ bool scheduleStandIn(Ctx& x, id connection) {
     });
     return true;
 }
+// A real download for a game allowed online: the host fetches, then the delegate hears
+// connection:didReceiveResponse:, connection:didReceiveData:, connectionDidFinishLoading: (or
+// connection:didFailWithError:) on the run loop that started it.
+bool scheduleOnline(Ctx& x, id connection) {
+    Connection* c = conn(x, connection);
+    Request* r = c ? req(x, c->request) : nullptr;
+    const auto client = onlineClient(x);
+    if (!c || !c->delegate || !r || !r->url || !client) return false;
+    R(x).retain(x.cpu, connection);
+    Process* p = &x.proc;
+    RunLoop* loop = &runLoopForObject(x, 0);
+    const HttpRequest h = toHttp(x, r);
+    client->fetch(h, [p, loop, connection, h](HttpResponse resp) {
+        auto shared = std::make_shared<HttpResponse>(std::move(resp));
+        loop->post([p, connection, h, shared](CPU::Cpu& cc) {
+            Ctx cx{*p, cc, p->mem()};
+            logOnline(cx, h, *shared);
+            Connection* c = conn(cx, connection);
+            if (c && c->delegate && c->started) {
+                const id del = retainObj(cx, c->delegate);
+                const id url = req(cx, c->request) ? req(cx, c->request)->url : 0;
+                const uint32_t pool = R(cx).poolPush();
+                auto says = [&](const char* sel) { return R(cx).respondsTo(del, R(cx).sel(sel)); };
+                auto live = [&] { return conn(cx, connection) && conn(cx, connection)->started; };
+                if (!shared->status) {
+                    if (says("connection:didFailWithError:"))
+                        R(cx).send(cc, del, "connection:didFailWithError:", {connection, onlineError(cx, url, *shared)});
+                } else {
+                    if (says("connection:didReceiveResponse:"))
+                        R(cx).send(cc, del, "connection:didReceiveResponse:", {connection, httpResponseObject(cx, url, *shared)});
+                    if (live() && !shared->body.empty() && says("connection:didReceiveData:"))
+                        R(cx).send(cc, del, "connection:didReceiveData:", {connection, makeData(cx, shared->body.data(), uint32_t(shared->body.size()))});
+                    if (live() && says("connectionDidFinishLoading:"))
+                        R(cx).send(cc, del, "connectionDidFinishLoading:", {connection});
+                }
+                R(cx).poolPop(cc, pool);
+                if (Connection* c2 = conn(cx, connection)) setField(cx, c2->delegate, 0);
+                R(cx).release(cc, del);
+            }
+            R(cx).release(cc, connection);
+        });
+    });
+    return true;
+}
 // Fire connection:didFailWithError: on the current run loop, soon.
 void scheduleFailure(Ctx& x, id connection) {
     if (scheduleStandIn(x, connection)) return;
+    if (scheduleOnline(x, connection)) return;
     Connection* c = conn(x, connection);
     if (!c || !c->delegate) return;
     R(x).retain(x.cpu, connection);
@@ -262,6 +362,15 @@ id connc_sync(Ctx& x, id, SEL, id request, GuestPtr responseOut, GuestPtr errorO
             return makeData(x, reply->body.data(), uint32_t(reply->body.size()));
         }
     }
+    if (Request* r = req(x, request); r && r->url) {
+        if (const auto client = onlineClient(x)) {
+            const HttpResponse resp = fetchNow(x, client, toHttp(x, r));
+            if (!resp.status) { if (errorOut) x.mem.write<uint32_t>(errorOut, onlineError(x, r->url, resp)); return 0; }
+            if (responseOut) x.mem.write<uint32_t>(responseOut, httpResponseObject(x, r->url, resp));
+            if (errorOut) x.mem.write<uint32_t>(errorOut, 0);
+            return makeData(x, resp.body.data(), uint32_t(resp.body.size()));
+        }
+    }
     if (errorOut) x.mem.write<uint32_t>(errorOut, notConnectedError(x, req(x, request) ? req(x, request)->url : 0));
     return 0;
 }
@@ -281,6 +390,26 @@ void connc_async(Ctx& x, id, SEL, id request, id, uint32_t handler) {
             R(cx).poolPop(cc, pool);
             ObjC::blockRelease(cx, block);
             R(cx).release(cc, url);
+        });
+        return;
+    }
+    if (const auto client = url ? onlineClient(x) : nullptr) {
+        RunLoop* loop = &runLoopForObject(x, 0);
+        const HttpRequest h = toHttp(x, req(x, request));
+        client->fetch(h, [p, loop, block, url, h](HttpResponse resp) {
+            auto shared = std::make_shared<HttpResponse>(std::move(resp));
+            loop->post([p, block, url, h, shared](CPU::Cpu& cc) {
+                Ctx cx{*p, cc, p->mem()};
+                logOnline(cx, h, *shared);
+                const uint32_t pool = R(cx).poolPush();
+                if (shared->status)
+                    ObjC::callBlock(cx, block, {httpResponseObject(cx, url, *shared), makeData(cx, shared->body.data(), uint32_t(shared->body.size())), 0});
+                else
+                    ObjC::callBlock(cx, block, {0, 0, onlineError(cx, url, *shared)});
+                R(cx).poolPop(cc, pool);
+                ObjC::blockRelease(cx, block);
+                R(cx).release(cc, url);
+            });
         });
         return;
     }
@@ -310,6 +439,16 @@ uint32_t cache_zero(Ctx&, id, SEL) { return 0; }
 void cache_setZero(Ctx&, id, SEL, uint32_t) {}
 
 } // namespace
+
+std::optional<std::string> onlineFetchContents(Ctx& x, id url) {
+    const auto client = onlineClient(x);
+    if (!client || !url) return std::nullopt;
+    HttpRequest h;
+    h.url = urlString(x, url);
+    const HttpResponse r = fetchNow(x, client, h);
+    if (r.status < 200 || r.status >= 300) return std::nullopt;   // NSData returns nil for an error page too
+    return r.body;
+}
 
 void registerURLLoading(Process& p, ObjC::Runtime& r) {
     UrlLoadState& s = p.service<UrlLoadState>();

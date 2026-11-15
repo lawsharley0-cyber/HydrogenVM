@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include "runtime/libc/TlsBridge.hpp"
+#include "runtime/libc/HttpClient.hpp"
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -156,6 +157,7 @@ int hvmRunMain(int argc, char** argv) {
         const char* noVerify = std::getenv("HVM_TLS_BRIDGE_NOVERIFY");
         cfg.tlsBridge = Hydrogen::Runtime::makeOpenSslTlsBridge(!(noVerify && *noVerify == '1'), &why);
         if (!cfg.tlsBridge) std::fprintf(stderr, "TLS bridge unavailable: %s\n", why.c_str());
+        cfg.httpClient = Hydrogen::Runtime::makeOpenSslHttpClient();   // Foundation downloads (libc/HttpClient.hpp)
     }
     if (!cfg.loopbackAliases.empty() && !cfg.loopbackNetwork) {
         std::fprintf(stderr, "--loopback-alias requires --loopback-network\n"); return 2;

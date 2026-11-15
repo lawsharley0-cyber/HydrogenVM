@@ -31,6 +31,8 @@
 #include <unistd.h>
 #include <map>
 #include "runtime/libc/TlsBridge.hpp"
+#include "runtime/libc/HttpClient.hpp"
+#include <future>
 #include <zlib.h>
 #if defined(HVM_HAVE_OPENSSL) && !defined(__APPLE__)
 #include <csignal>
@@ -2369,6 +2371,51 @@ int runFullSubsystemTests() {
         }
         check(leaked >= 0 && ::fcntl(leaked,F_GETFD) == -1 && errno == EBADF,
               "process destruction closes retained loopback socket descriptors");
+        if (auto client = makeOpenSslHttpClient()) {
+            // Foundation downloads for a game allowed online go through the host's HTTP client
+            // (libc/HttpClient.hpp). The desktop one follows a redirect, decodes a chunked body and
+            // inflates gzip, as NSURLConnection does. A local server stands in for the internet.
+            const int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in sa{}; sa.sin_family = AF_INET; sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            socklen_t sl = sizeof sa;
+            const bool up = srv >= 0 && ::bind(srv, reinterpret_cast<sockaddr*>(&sa), sizeof sa) == 0 && ::listen(srv, 4) == 0 &&
+                            ::getsockname(srv, reinterpret_cast<sockaddr*>(&sa), &sl) == 0;
+            const std::string port = std::to_string(ntohs(sa.sin_port));
+            std::string gz(256, '\0');
+            {
+                const std::string text = "hello online";
+                z_stream z{}; deflateInit2(&z, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
+                z.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(text.data())); z.avail_in = uInt(text.size());
+                z.next_out = reinterpret_cast<Bytef*>(gz.data()); z.avail_out = uInt(gz.size());
+                deflate(&z, Z_FINISH); gz.resize(gz.size() - z.avail_out); deflateEnd(&z);
+            }
+            std::thread server([&] {
+                for (int i = 0; up && i < 2; ++i) {
+                    const int c = ::accept(srv, nullptr, nullptr);
+                    if (c < 0) return;
+                    char buf[2048]; const ssize_t n = ::recv(c, buf, sizeof buf, 0);
+                    const std::string rq(buf, n > 0 ? size_t(n) : 0);
+                    char hex[16]; std::snprintf(hex, sizeof hex, "%zx", gz.size());
+                    const std::string reply = rq.rfind("GET /start ", 0) == 0
+                        ? "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n"
+                        : "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Encoding: gzip\r\nX-Test: yes\r\n\r\n" +
+                          std::string(hex) + "\r\n" + gz + "\r\n0\r\n\r\n";
+                    ::send(c, reply.data(), reply.size(), MSG_NOSIGNAL);
+                    ::close(c);
+                }
+            });
+            HttpRequest rq; rq.url = "http://127.0.0.1:" + port + "/start"; rq.timeoutSeconds = 5;
+            std::promise<HttpResponse> got; auto fut = got.get_future();
+            client->fetch(rq, [&got](HttpResponse r) { got.set_value(std::move(r)); });
+            const bool answered = up && fut.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+            const HttpResponse r = answered ? fut.get() : HttpResponse{};
+            bool header = false;
+            for (auto& [k, v] : r.headers) if (k == "X-Test" && v == "yes") header = true;
+            server.join();
+            if (srv >= 0) ::close(srv);
+            check(answered && r.status == 200 && r.body == "hello online" && header && r.url.size() > 6 && r.url.compare(r.url.size() - 6, 6, "/final") == 0,
+                  "host HTTP client (online Foundation downloads) follows a redirect, decodes chunked gzip and keeps headers");
+        }
         {
             // The player's per-game "Allow internet" switch: real resolver, any address.
             ProcessConfig onCfg; onCfg.homePath = "/var/tmp/hvm-internet-unit"; onCfg.internetAccess = true;
