@@ -32,8 +32,9 @@ public:
 
     // Extract entries whose name starts with `prefix` into `destDir`,
     // stripping the prefix. Rejects absolute paths and ".." components.
-    // Returns the number of files written.
-    size_t extract(const std::string& prefix, const std::string& destDir) const;
+    // Returns the number of files written. With overwrite false, files that already exist
+    // are left as they are (and not counted).
+    size_t extract(const std::string& prefix, const std::string& destDir, bool overwrite = true) const;
 
 private:
     void readRaw(uint64_t off, void* dst, size_t n) const;
