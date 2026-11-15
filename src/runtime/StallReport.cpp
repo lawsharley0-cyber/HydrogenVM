@@ -65,8 +65,9 @@ void Process::sampleMain(StallWatch& w) {
     if (!m || m->finished.load(std::memory_order_acquire)) return;
     if (m->blockedIn.load(std::memory_order_acquire)) return;   // waiting: the thread table says where
     // Read without stopping the thread: an approximate place, which is all a profile needs.
-    uint32_t pc = m->cpu.r[CPU::kPC];
-    if (engine_->isHleAddress(pc & ~1u)) pc = m->cpu.r[CPU::kLR];   // inside HydrogenVM: count the app's call site
+    // Inside HydrogenVM the pc names the function the app called ("[HydrogenVM] mach_absolute_time"),
+    // which says what a polling loop polls.
+    const uint32_t pc = m->cpu.r[CPU::kPC];
     std::lock_guard<std::mutex> lk(w.mu);
     w.mainSamples.push_back(pc);
     while (w.mainSamples.size() > 500) w.mainSamples.pop_front();
@@ -231,7 +232,22 @@ void Process::checkStall(StallWatch& w, const char* snapshot) {
         std::unordered_map<uint32_t, int> byPc;
         for (uint32_t pc : w.mainSamples) ++byPc[pc];
         std::map<std::string, int> byFunction;
-        for (auto& [pc, n] : byPc) byFunction[functionOf(describeAddress(pc))] += n;
+        for (auto& [pc, n] : byPc) {
+            const std::string place = describeAddress(pc);
+            std::string f = functionOf(place);
+            // A stripped game names no functions (the nearest symbol is the Mach-O header): count
+            // 256-byte stretches of code instead ("Game+0x1a2b00"), which keeps a loop together.
+            const bool unnamed = f.find("__mh_execute_header") != std::string::npos ||
+                                 (f.find(' ') == std::string::npos && f.find('+') != std::string::npos && f[0] != '+' && f[0] != '-');
+            if (place.rfind("0x", 0) == 0 && unnamed) {
+                std::string image = place.substr(place.find(' ') + 1);
+                image = image.substr(0, image.find('+'));
+                char b[96];
+                std::snprintf(b, sizeof b, "%s+0x%x..", image.c_str(), (pc & ~1u & ~0xffu) - (pc & ~1u) + uint32_t(std::strtoul(place.substr(place.find('+') + 1).c_str(), nullptr, 10)));
+                f = b;
+            }
+            byFunction[f] += n;
+        }
         std::vector<std::pair<int, std::string>> top;
         for (auto& [f, n] : byFunction) top.push_back({n, f});
         std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
