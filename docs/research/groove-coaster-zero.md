@@ -1,0 +1,88 @@
+# Groove Coaster Zero (Taito, 2012) offline
+
+Findings for running the iOS 1.0.0 client (`jp.co.taito.groovecoasterzero`, armv7, IPA build
+"ver:20120920-A") without its shut-down server, gczero.com. Everything here was worked out by
+reading the IPA's files and by watching the game in HydrogenVM (requests, files it opens and
+writes, names it compares replies against with `HVM_TRACE_COMPARE=1`). The game's code was not
+disassembled. The IPA is only read, never changed.
+
+Status labels: **verified** (seen happen), **observed** (seen in data, effect not tested),
+**open** (not known yet).
+
+## Server protocol (stand-in: `src/runtime/foundation/ServerStandIn.cpp`)
+
+Request parameters are AES-encrypted by the game (`aesManager encryptCBC:`); the stand-in answers
+by path only. Replies are XML; the root element's name is not checked. `code` 0 is success.
+
+| Request | When | Stand-in reply | Status |
+|---|---|---|---|
+| `start.php` | launch | `code message en ja my_coin event_id taito_id m4a_path is_tutorial` | verified: accepted |
+| `event.php` | launch | unreachable (connection fails) | verified: game logs an error and carries on |
+| `shop_list.php` | launch | unreachable | verified: with any successful reply (even empty lists) the game stops on a "Download" screen; when unreachable it carries on |
+| `sync.php` | after TOUCH TO START | `code my_coin friend_num m4a_path cm_stage buy_id play_id friend_info` | verified: accepted; `my_coin` shows on the menu |
+| `<m4a_path><name>.m4a.zip` | starting a song | a zip holding `<name>.m4a` (see below) | verified |
+| `result.php`, `save.php`, `score.php`, `load.php`, ... (listed in the bundle's `setting.cfg`) | after play, saving, events | none yet | open |
+
+Names the game looks up in `shop_list.php` / `sync.php` items (nesting not yet worked out):
+`item id gp badge description cm_description marquee product_id num title artist icon_no
+play_time difficulty bpm model_pak tuneFile_pak stage_pak coin stage avatar`; localized texts
+are looked up as `en` / `ja`. **open**: structure, and what `buy_id` / `play_id` must contain.
+
+The "通信をキャンセルしました" ("connection cancelled") line after `sync.php` is the game cancelling
+its own earlier connection before starting the next one. **verified**, harmless.
+
+## Song music download
+
+Seen in HydrogenVM with a generated test tone (`plot3_bgm.m4a`, 93 s 440 Hz AAC, 128 kb/s):
+
+1. The game logs `LoadSoundData_BGM:plot3_bgm.m4a, 0`, builds
+   `ConvertURL="<m4a_path>plot3_bgm.m4a.zip"` and downloads it with NSURLConnection.
+   **verified**
+2. Saved as `Library/Caches/plot3_bgm.m4a.zip` (with `m4a_path` "0" the local name was
+   `0plot3_bgm.m4a.zip`: the local name is the address minus the scheme/host part the game
+   strips). **verified**
+3. Extracted with the bundled minizip ("HetimaUnZip") to `Library/Caches/plot3_bgm.m4a`.
+   A zip holding one entry named `plot3_bgm.m4a`, **stored (no compression)**, is accepted.
+   **verified**. Deflate, a folder inside the zip, or a different entry name: **open**.
+4. Next the game downloads `<m4a_path>plot3_shot.m4a.zip` (the song's hit sound, named in the
+   chart) the same way. Without it the song does not start ("失敗", failure). **verified**
+5. Both files cached: the song starts from the debug menu and plays against the chart in the
+   bundled `stage.pak`; the chart advances with the music. **verified** on the bench after
+   OpenAL `AL_SAMPLE_OFFSET` was implemented (the game reads it as a float to time the chart).
+
+Not checked yet: sample rate other than 44.1 kHz (the debug menu offers a "44.1kHz" setting),
+mono vs stereo, the duration the game expects (the song list says "(1:33)"), and whether a
+cached file is ever re-validated (no checksum or size was requested by the game in these runs).
+
+Player-supplied files go in `Stand-in Files/gczero.com/` at the top of HydrogenVM's Documents
+(Files app: On My iPhone > HydrogenVM > Stand-in Files > gczero.com). Not the game's own
+Documents: the game clears that at launch (**verified**: a test file put there was gone after
+one run). A file named `<name>.m4a.zip` is sent unchanged; a bare `<name>.m4a` is wrapped in a
+stored zip by the stand-in. HydrogenVM ships no music.
+
+## Bundled data (1.0.0 IPA)
+
+| File | Contents | Status |
+|---|---|---|
+| `stage.pak` (7,278,147 bytes) | charts: `<song>_easy.dat`, `_normal.dat`, `_hard.dat` per song, e.g. `plot3_easy.dat`. Chart records name their music (`plot3_bgm`) and hit sound (`plot3_shot`). About 44 `_easy` charts, more than the 14 songs in the menu | observed (plot3 charts verified by playing) |
+| `tuneFile.pak` (8,108,149 bytes) | song list and jackets: e.g. "Music Plot Type Three", COSIO, "(1:33)", one number byte 0x29 (41), the three chart names; other songs also name a `<name>_sample` preview | observed |
+| `model.pak`, `skin.pak` | 3D models, UI skin | observed |
+| `Library/Caches/<pak>` | the game looks there first for each pak (downloaded updates) | verified (opens attempted) |
+
+Pak layout (big-endian): u32 file size - 4, then header words, then an index of 13-byte entries
+from offset 0x1c (u32, u32 data offset, u32 size, u8 0), data contiguous. The first field
+matches the name position for the first two entries only, so names are not yet mapped to
+entries reliably. **open**.
+
+## Songs (music names from `stage.pak`; titles from the official 2012 soundtrack)
+
+`plot3_bgm` (Music Plot Type Three), `eclipse_bgm` (Eclipse Landscape), `sleep_bgm` (Sleep),
+`freestyle_bgm` (Freestyle Beats), `planet_bgm` (Planet Connection), `inv2003_bgm`
+(Invader Disco), `shadow_bgm` (Shadow), `kannan_bgm` (Kannanshinku), `star_bgm`, `hosoe_bgm`,
+`kiki_bgm`, `niji_bgm`, `backon_bgm`, `treeclimb_bgm` (title matches for the last six are
+**open**). Each also needs `<name minus _bgm>_shot` if its chart names one.
+
+## How to reach a song quickly
+
+The title screen has a **GAMEDEBUG** button (top left): a debug menu with song, difficulty and
+sample-rate pickers and START. That starts a song directly, without the shop or menu.
