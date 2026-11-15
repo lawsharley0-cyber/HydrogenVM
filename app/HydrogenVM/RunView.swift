@@ -294,6 +294,9 @@ final class RunModel {
         guard let s = session else { return }
         let o = GuestOrientation(rawValue: s.interfaceOrientation) ?? .portrait
         if o != orientation { orientation = o }
+        // GPU-presented games send no software frames, so the guest screen (in points, what
+        // touches are mapped to: 768x1024 for an iPad-only game) is picked up here too.
+        if s.screenSize.width > 0, s.screenSize != screenSize { screenSize = s.screenSize }
     }
 
     /// A GitHub issue for this session, built from the console: only the lines that
