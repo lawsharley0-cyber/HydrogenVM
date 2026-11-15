@@ -455,7 +455,8 @@ int hvmRunMain(int argc, char** argv) {
                 waitUntil(runFor);
                 if (!done) {
                     timedStop = true;
-                    if (graceful) proc.requestGracefulStop(); else proc.requestStop();
+                    if (graceful) proc.requestGracefulStop();
+                    else { proc.logStopSnapshot("--run-for stopped the game"); proc.requestStop(); }
                 }
             }
             while (!inputFile.empty() && !done) { pumpInput(); std::this_thread::sleep_for(milliseconds(5)); }

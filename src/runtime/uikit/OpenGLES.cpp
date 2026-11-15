@@ -1911,6 +1911,12 @@ void gl_texSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xoffset, i
     Texture2D& tx = sg->textures[tid];
     std::vector<uint8_t> sub;
     unpackPixelsToRGBA(x, width, height, format, type, c->unpackAlignment, pixels, sub);
+    if (const char* dir = std::getenv("HVM_DUMP_TEX")) {   // as glTexImage2D: each update as raw RGBA
+        static int n = 0;
+        char name[512];
+        std::snprintf(name, sizeof name, "%s/sub%03d_tex%u_%dx%d_at%d,%d.rgba", dir, n++, tid, width, height, xoffset, yoffset);
+        if (std::FILE* f = std::fopen(name, "wb")) { std::fwrite(sub.data(), 1, sub.size(), f); std::fclose(f); }
+    }
     for (int y = 0; y < height; ++y) {
         const int dy = yoffset + y;
         if (dy < 0 || dy >= tx.height) continue;

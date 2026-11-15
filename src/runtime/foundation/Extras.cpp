@@ -239,7 +239,11 @@ id xml_initWithURL(Ctx& x, id self, SEL, id url) {
     XmlParser& p = XP(x, self);
     const id path = url ? id(R(x).send(x.cpu, url, "path")) : 0;
     std::ifstream f(path ? x.proc.hostPath(utf8(x, path)) : std::string(), std::ios::binary);
-    if (!f) { R(x).release(x.cpu, self); return 0; }   // remote URLs: offline
+    if (!f) {
+        if (auto reply = url ? standInFetch(x, url, "GET") : std::nullopt) { p.data.assign(reply->body.begin(), reply->body.end()); return self; }
+        R(x).release(x.cpu, self);   // remote URLs: offline
+        return 0;
+    }
     p.data.assign(std::istreambuf_iterator<char>(f), {});
     return self;
 }
@@ -888,6 +892,7 @@ id http_init(Ctx& x, id self, SEL, id url, int32_t status, id, id headers) {
     r.status = status;
     r.headers = headers ? id(R(x).send(x.cpu, headers, "copy")) : makeDict(x, {}, true);
     if (const id ct = headers ? dictGet(x, headers, "Content-Type") : 0) setField(x, r.mime, ct);
+    if (const id cl = headers ? dictGet(x, headers, "Content-Length") : 0) r.length = std::strtoll(utf8(x, cl).c_str(), nullptr, 10);
     return self;
 }
 id resp_url(Ctx& x, id self, SEL) { return RS(x, self).url; }

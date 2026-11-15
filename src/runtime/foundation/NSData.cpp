@@ -2,6 +2,8 @@
 // -bytes / -mutableBytes can hand guest code a real pointer.
 #include "Foundation.hpp"
 #include <fstream>
+#include <cstdlib>
+#include <vector>
 #include <sys/stat.h>
 #include <cerrno>
 
@@ -97,11 +99,16 @@ id di_initWithContentsOfFileOpts(Ctx& x, id self, SEL s, id path, uint32_t, Gues
 }
 id di_initWithContentsOfURL(Ctx& x, id self, SEL s, id url) {
     // Only file URLs are read. A web address (http://host/start.php) is a download: it used to
-    // be read as the file "/start.php". Downloads through NSData are not made yet, so the answer
-    // is nil, what an iPhone gives when the download fails.
-    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+    // be read as the file "/start.php". A shut-down server with a stand-in (ServerStandIn.cpp)
+    // answers; other downloads through NSData are not made yet, so the answer is nil, what an
+    // iPhone gives when the download fails.
+    if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
         const id abs = url ? id(rt(x).send(x.cpu, url, "absoluteString")) : 0;
         const std::string where = abs ? utf8(x, abs) : std::string("(nil URL)");
+        if (auto reply = standInFetch(x, where, "GET")) {
+            assign(x, self, reinterpret_cast<const uint8_t*>(reply->body.data()), uint32_t(reply->body.size()));
+            return self;
+        }
         if (x.proc.config().internetAccess)
             x.proc.reportDefaulted("NSData could not download " + where.substr(0, 120) + " (downloads through NSData are not made yet; answered nil)");
         else
