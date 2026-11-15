@@ -1,9 +1,23 @@
 // HydrogenVM — libobjc's C API: message dispatch, ARC entry points,
 // introspection, exceptions, @synchronized, associated objects.
+#include <cstring>
+#include <cctype>
 #include "ObjC.hpp"
 #include <unordered_set>
 
 namespace Hydrogen::Runtime::ObjC {
+// An app that asks for a system class by name (NSURLSession, SKStoreProductViewController) and
+// gets nil usually goes another way, or waits for a callback that never comes: worth one line.
+void noteAbsentClass(Ctx& x, const char* how, const std::string& name) {
+    static const char* const kApple[] = {"NS", "UI", "CA", "CI", "CL", "CM", "CT", "CV", "AV", "AB", "GK", "GLK", "SK", "MP", "MK", "AD", "WK", "PH", "EK", "CN", "LA", "MTL", "AS", "SF", "WC", "NE", "CK", "HK", "UN"};
+    for (const char* p : kApple) {
+        const size_t n = std::strlen(p);
+        if (name.size() > n && name.compare(0, n, p) == 0 && std::isupper(static_cast<unsigned char>(name[n]))) {
+            x.proc.reportDefaulted(std::string(how) + "(\"" + name + "\") found no such class (answered nil)");
+            return;
+        }
+    }
+}
 namespace {
 
 // Tail-jump to an IMP. Host-implemented IMPs are called directly (cheaper
@@ -141,9 +155,12 @@ void a_poolPop(Ctx& x, uint32_t token) { rt(x).poolPop(x.cpu, token); }
 
 Class c_getClass(Ctx& x, GuestPtr name) {
     if (!name) return 0;
-    const Class c = rt(x).getClass(x.proc.readCString(name));
+    const std::string n = x.proc.readCString(name);
+    const Class c = rt(x).getClass(n);
     const ClassInfo* ci = c ? rt(x).info(c) : nullptr;
-    return ci && ci->stub ? 0 : c;   // placeholders for missing classes look absent
+    const Class found = ci && ci->stub ? 0 : c;   // placeholders for missing classes look absent
+    if (!found) noteAbsentClass(x, "objc_getClass", n);
+    return found;
 }
 Class c_getRequiredClass(Ctx& x, GuestPtr name) {
     const Class c = c_getClass(x, name);

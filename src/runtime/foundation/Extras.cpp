@@ -317,6 +317,9 @@ bool xml_parse(Ctx& x, id self, SEL) {
         for (size_t k = 0; k < i && k < s.size(); ++k) { if (s[k] == '\n') { ++line; col = 1; } else ++col; }
         p.line = line; p.column = col;
     };
+    // No data, or only whitespace: libxml2's "Document is empty" (NSXMLParserEmptyDocumentError, 4),
+    // as when the app parses what a failed download gave it.
+    if (s.find_first_not_of(" \t\r\n") == std::string::npos) return fail(4, "Document is empty");
     if (responds("parserDidStartDocument:")) r.send(x.cpu, d, "parserDidStartDocument:", {self});
     std::vector<std::string> stack;
     size_t i = 0;

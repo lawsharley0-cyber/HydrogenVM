@@ -278,6 +278,8 @@ private:
 };
 
 Runtime& rt(Process& p);
+// Logs (once, as Defaulted) a lookup of an Apple class name that found nothing.
+void noteAbsentClass(Ctx& x, const char* how, const std::string& name);
 inline Runtime& rt(Ctx& x) { return rt(x.proc); }
 
 // Per-thread state (autorelease pools).

@@ -231,6 +231,13 @@ int32_t s_ioctl(Ctx& x, int32_t fd, uint32_t req, GuestPtr arg) {
             return 0;
         }
     }
+    if (isNetworkSocket(x.proc, fd) || ((req >> 8) & 0xFF) == 'i') {
+        int result = 0;
+        if (networkInterfaceIoctl(x, req, arg, result)) return result;
+    }
+    char what[96];
+    std::snprintf(what, sizeof what, "ioctl(request 0x%08x) is not known (answered 0, did nothing)", req);
+    x.proc.reportDefaulted(what);
     return 0;
 }
 int32_t s_zero(Ctx&) { return 0; }
