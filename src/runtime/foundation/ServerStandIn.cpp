@@ -16,6 +16,7 @@
 #include "Foundation.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -48,19 +49,78 @@ constexpr const char* kUnreachable = "\x01unreachable";
 
 std::string xmlReply(const std::string& body) { return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<response>" + body + "</response>\n"; }
 
+// A zip holding one file, stored (no compression): what a download that is a zip of one song
+// looks like, made from a file the player supplied.
+uint32_t crc32Of(const std::string& b) {
+    static uint32_t table[256];
+    static bool made = false;
+    if (!made) {
+        for (uint32_t i = 0; i < 256; ++i) { uint32_t c = i; for (int k = 0; k < 8; ++k) c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1; table[i] = c; }
+        made = true;
+    }
+    uint32_t c = 0xFFFFFFFFu;
+    for (unsigned char ch : b) c = table[(c ^ ch) & 0xFF] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+std::string storedZip(const std::string& name, const std::string& data) {
+    std::string z;
+    auto u16 = [&](uint32_t v) { z += char(v & 0xFF); z += char((v >> 8) & 0xFF); };
+    auto u32 = [&](uint32_t v) { u16(v & 0xFFFF); u16(v >> 16); };
+    const uint32_t crc = crc32Of(data), size = uint32_t(data.size());
+    const uint16_t dosTime = 0, dosDate = (32 << 9) | (1 << 5) | 1;   // 2012-01-01
+    u32(0x04034b50); u16(10); u16(0); u16(0); u16(dosTime); u16(dosDate); u32(crc); u32(size); u32(size); u16(uint32_t(name.size())); u16(0);
+    z += name; z += data;
+    const uint32_t central = uint32_t(z.size());
+    u32(0x02014b50); u16(20); u16(10); u16(0); u16(0); u16(dosTime); u16(dosDate); u32(crc); u32(size); u32(size);
+    u16(uint32_t(name.size())); u16(0); u16(0); u16(0); u16(0); u32(0); u32(0);
+    z += name;
+    const uint32_t centralSize = uint32_t(z.size()) - central;
+    u32(0x06054b50); u16(0); u16(0); u16(1); u16(1); u32(centralSize); u32(central); u16(0);
+    return z;
+}
+std::optional<std::string> readFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::nullopt;
+    return std::string(std::istreambuf_iterator<char>(in), {});
+}
+// The player's files for a stand-in live in "Stand-in Files/<host>/" at the top of HydrogenVM's
+// Documents (Files app: On My iPhone > HydrogenVM > Stand-in Files > gczero.com), two levels
+// above a game's home (Documents/Apps/<bundle id>/). Not in the game's own Documents: Groove
+// Coaster Zero clears that at launch. A file named as the game asks ("plot3_bgm.m4a.zip") is
+// sent as it is; a bare "plot3_bgm.m4a" is sent inside a stored zip under that name. Neither:
+// unreachable, and the log says where to put it.
+std::optional<std::string> songFile(Ctx& x, const std::string& zipName) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path base = fs::weakly_canonical(fs::path(x.proc.homePath()) / ".." / "..", ec);
+    if (ec) base = fs::path(x.proc.homePath()) / ".." / "..";
+    const std::string dir = (base / "Stand-in Files" / "gczero.com").string() + "/";
+    if (auto z = readFile(dir + zipName)) return z;
+    const std::string inner = zipName.size() > 4 && zipName.compare(zipName.size() - 4, 4, ".zip") == 0 ? zipName.substr(0, zipName.size() - 4) : zipName;
+    if (auto f = readFile(dir + inner)) {
+        x.proc.logf(LogLevel::Info, "Stand-in server: sent %s as %s (stored zip of %zu bytes)", inner.c_str(), zipName.c_str(), f->size());
+        return storedZip(inner, *f);
+    }
+    x.proc.logf(LogLevel::Info, "Stand-in server: no song file %s (or %s) in %s", zipName.c_str(), inner.c_str(), dir.c_str());
+    return std::string(kUnreachable);
+}
+
 // ---- Groove Coaster Zero (Taito, 2012): gczero.com. Request parameters are encrypted by the
 // game, so replies depend on the path only. code 0 is success.
-std::optional<std::string> grooveZero(const UrlParts& u) {
+std::optional<std::string> grooveZero(Ctx& x, const UrlParts& u) {
     const std::string& p = u.path;
+    // Song music: the game builds <m4a_path><name>.m4a.zip ("plot3_bgm.m4a.zip"). The music was
+    // only ever on Taito's server; the player supplies it (see songFile).
+    if (p.rfind("/bgm/", 0) == 0) return songFile(x, p.substr(5));
     // start.php: the account (coins, current event, tutorial done).
     const char* account = "<code>0</code><message>OK</message><en>0</en><ja>0</ja><my_coin>0</my_coin><event_id>0</event_id>"
-                          "<taito_id>0</taito_id><m4a_path>0</m4a_path><is_tutorial>0</is_tutorial>";
+                          "<taito_id>0</taito_id><m4a_path>http://gczero.com/bgm/</m4a_path><is_tutorial>0</is_tutorial>";
     if (p == "/start.php") return xmlReply(account);
     if (p == "/event.php") return std::string(kUnreachable);   // no event running
     // sync.php (after TOUCH TO START): the player's saved state. No coins, friends or bought
     // songs; the game's own songs are in its bundle.
     if (p == "/sync.php")
-        return xmlReply("<code>0</code><my_coin>0</my_coin><friend_num>0</friend_num><m4a_path>0</m4a_path><cm_stage></cm_stage>"
+        return xmlReply("<code>0</code><my_coin>0</my_coin><friend_num>0</friend_num><m4a_path>http://gczero.com/bgm/</m4a_path><cm_stage></cm_stage>"
                         "<buy_id></buy_id><play_id></play_id><friend_info></friend_info>");
     // The shop (coin packs, songs and avatars for sale, each a list of <item>s) is "unreachable":
     // after a shop list arrives the game waits on a download step not worked out yet, but when
@@ -69,7 +129,7 @@ std::optional<std::string> grooveZero(const UrlParts& u) {
     return std::nullopt;
 }
 
-struct StandIn { const char* host; const char* game; std::optional<std::string> (*reply)(const UrlParts&); };
+struct StandIn { const char* host; const char* game; std::optional<std::string> (*reply)(Ctx&, const UrlParts&); };
 const StandIn kStandIns[] = {
     {"gczero.com", "Groove Coaster Zero", &grooveZero},
     {"staging.gczero.com", "Groove Coaster Zero", &grooveZero},
@@ -100,7 +160,7 @@ std::optional<StandInReply> standInFetch(Ctx& x, const std::string& url, const s
     for (const StandIn& s : kStandIns) {
         if (u.host != s.host) continue;
         StandInReply r;
-        if (auto body = s.reply(u)) {
+        if (auto body = s.reply(x, u)) {
             if (*body == kUnreachable) {
                 once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " is answered as unreachable (" + s.game +
                                           " carries on without it)");
