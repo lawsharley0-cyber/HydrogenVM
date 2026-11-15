@@ -136,6 +136,19 @@ With the update done, the normal flow works on the bench:
 5. EASY starts the song: music and hit sound are downloaded as in "Song music download", and the
    track plays. **verified**
 
+After the song (bench, normal flow, played to the end with taps):
+1. The RESULT screen.
+2. A tutorial notice ("Points are awarded for successful AD-LIB BING...").
+3. A **RECOMMEND** screen offering "THE BEGINNING" (jacket shown, title and artist drawn as
+   `<null> <null>`, PLAY / CANCEL).
+
+During this the game downloads `<m4a_path>Begin_FULL_BGM_1.m4a.zip`, which no player file
+supplies yet, so it is answered as unreachable. It sends **no** `result.php`, `save.php`,
+`score.php` or `recommend.php` request, as with GAMEDEBUG play. Then `sync.php` and `shop_list.php`
+again. **verified**
+
+**open**: where the recommended song's title comes from (no request was made for it).
+
 Earlier notes, still true:
 - Listing songs in `sync.php`'s `buy_id` / `play_id` does not change the menu.
 - The "connection cancelled" line is harmless.
