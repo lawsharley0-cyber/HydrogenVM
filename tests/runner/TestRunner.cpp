@@ -2901,6 +2901,21 @@ int runFullSubsystemTests() {
         const std::string text(bytes.begin(),bytes.end());
         check(text.find("<code>0</code>")!=std::string::npos && text.find("<my_coin>")!=std::string::npos && fetch("http://hvm-test.invalid/x.php")==0,
               "a stand-in server answers Groove Coaster Zero's start.php; other web addresses through NSData stay nil");
+        // The first-launch data update: start.php names the three paks, and the stand-in sends
+        // the game's own bundled copy (nothing when the bundle has none).
+        namespace fs = std::filesystem;
+        std::error_code fec;
+        fs::create_directories(proc.bundlePath(), fec);
+        const std::string pakPath = proc.bundlePath() + "/model.pak";
+        const bool hadPak = fs::exists(pakPath);
+        if (!hadPak) { std::ofstream(pakPath, std::ios::binary) << std::string("PAK\0data", 8); }
+        const uint32_t pak = fetch("http://gczero.com/pak/model.pak");
+        const auto pakBytes = pak ? dataBytes(cx, pak) : std::vector<uint8_t>();
+        const bool pakOk = hadPak ? !pakBytes.empty() : std::string(pakBytes.begin(), pakBytes.end()) == std::string("PAK\0data", 8);
+        if (!hadPak) fs::remove(pakPath, fec);
+        check(text.find("<stage_pak><date>20120920</date><url>http://gczero.com/pak/stage.pak</url></stage_pak>") != std::string::npos &&
+                  text.find("<tuneFile_pak>") != std::string::npos && pakOk && fetch("http://gczero.com/pak/stage.pak") == 0,
+              "Groove Coaster Zero's data update names its paks and is served from the game's own bundle");
 
         // NSURLSession (iOS 7): a data task runs on resume and finishes on the main run loop.
         // Answered by the stand-in here; an offline address completes with an error instead.

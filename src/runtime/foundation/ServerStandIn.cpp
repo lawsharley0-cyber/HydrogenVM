@@ -112,19 +112,38 @@ std::optional<std::string> grooveZero(Ctx& x, const UrlParts& u) {
     // Song music: the game builds <m4a_path><name>.m4a.zip ("plot3_bgm.m4a.zip"). The music was
     // only ever on Taito's server; the player supplies it (see songFile).
     if (p.rfind("/bgm/", 0) == 0) return songFile(x, p.substr(5));
-    // start.php: the account (coins, current event, tutorial done).
+    // start.php: the account (coins, current event, tutorial done), then the data update: for
+    // each of stage_pak / model_pak / tuneFile_pak a <date> and a <url>. When a date differs from
+    // the one in Library/Caches/version.cfg the game downloads <url> to Library/Caches/<name>
+    // (it looks there before its bundle) and then writes version.cfg. The song menu stays dim
+    // and ignores taps until version.cfg exists, so the first launch has to go through one update.
+    // The original update files are gone; the stand-in sends the game's own bundled paks
+    // (unchanged copies), dated with the build ("ver:20120920-A"), so the update is a no-op.
     const char* account = "<code>0</code><message>OK</message><en>0</en><ja>0</ja><my_coin>0</my_coin><event_id>0</event_id>"
                           "<taito_id>0</taito_id><m4a_path>http://gczero.com/bgm/</m4a_path><is_tutorial>0</is_tutorial>";
-    if (p == "/start.php") return xmlReply(account);
-    if (p == "/event.php") return std::string(kUnreachable);   // no event running
+    if (p == "/start.php") {
+        std::string body = account;
+        for (const char* pak : {"stage", "model", "tuneFile"})
+            body += std::string("<") + pak + "_pak><date>20120920</date><url>http://gczero.com/pak/" + pak + ".pak</url></" + pak + "_pak>";
+        return xmlReply(body);
+    }
+    if (p == "/pak/stage.pak" || p == "/pak/model.pak" || p == "/pak/tuneFile.pak") {
+        if (auto f = readFile(x.proc.bundlePath() + "/" + p.substr(5))) return f;
+        return std::string(kUnreachable);
+    }
+    // event.php: no event is running. The data update above is only checked after event.php
+    // succeeds (when it is unreachable the game skips the update, and the menu stays dim), so it
+    // is answered with a plain success; the game reads no event fields from it.
+    if (p == "/event.php") return xmlReply("<code>0</code><message>OK</message>");
     // sync.php (after TOUCH TO START): the player's saved state. No coins, friends or bought
     // songs; the game's own songs are in its bundle.
     if (p == "/sync.php")
         return xmlReply("<code>0</code><my_coin>0</my_coin><friend_num>0</friend_num><m4a_path>http://gczero.com/bgm/</m4a_path><cm_stage></cm_stage>"
                         "<buy_id></buy_id><play_id></play_id><friend_info></friend_info>");
     // The shop (coin packs, songs and avatars for sale, each a list of <item>s) is "unreachable":
-    // after a shop list arrives the game waits on a download step not worked out yet, but when
-    // the shop cannot be reached it says so and carries on to the game.
+    // nothing can be bought. An empty success also works now that the data update above runs
+    // (before it, any shop reply ended on a "Download" screen), but unreachable is what the game
+    // was seen to handle on the phone.
     if (p == "/shop_list.php") return std::string(kUnreachable);
     return std::nullopt;
 }
@@ -167,6 +186,8 @@ std::optional<StandInReply> standInFetch(Ctx& x, const std::string& url, const s
                 return std::nullopt;
             }
             r.body = std::move(*body);
+            const bool php = u.path.size() >= 4 && u.path.compare(u.path.size() - 4, 4, ".php") == 0;
+            if (!php) r.mime = "application/octet-stream";   // pak, zip
             once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " answered by HydrogenVM (" + s.game +
                                       "'s server was shut down)");
         } else {
