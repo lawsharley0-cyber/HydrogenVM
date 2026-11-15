@@ -9,6 +9,7 @@
 // synchronous loader returns nil with that error. This lets apps that check for
 // an error carry on, instead of hanging or crashing on a nil request.
 #include "Foundation.hpp"
+#include "runtime/Support.hpp"
 #include <cstring>
 #include <memory>
 #include <future>
@@ -740,7 +741,8 @@ void registerURLLoading(Process& p, ObjC::Runtime& r) {
        .m<&mreq_setValue>("setValue:forHTTPHeaderField:", "v@:@@").m<&mreq_addValue>("addValue:forHTTPHeaderField:", "v@:@@")
        .m<&mreq_setHeaders>("setAllHTTPHeaderFields:", "v@:@");
 
-    p.def<&noopInvoke>("__hvm_url_session_noop_block");
+    supportDef<&noopInvoke>(p, "__hvm_url_session_noop_block", SupportStatus::Real,
+                            "the invoke of a block that does nothing, handed to a delegate's completionHandler: argument");
     SessionState& ss = p.service<SessionState>();
     ObjC::ClassBuilder sc = r.defineClass("NSURLSessionConfiguration", "NSObject");
     ss.config = sc.cls();
@@ -748,15 +750,27 @@ void registerURLLoading(Process& p, ObjC::Runtime& r) {
       .cm<&cfgc_background>("backgroundSessionConfiguration:").cm<&cfgc_background>("backgroundSessionConfigurationWithIdentifier:")
       .m<&cfg_copy>("copyWithZone:").m<&cfg_setHeaders>("setHTTPAdditionalHeaders:", "v@:@").m<&cfg_headers>("HTTPAdditionalHeaders")
       .m<&cfg_setTimeout>("setTimeoutIntervalForRequest:", "v@:d").m<&cfg_timeout>("timeoutIntervalForRequest", "d@:")
-      .m<&cfg_ignoreDouble>("setTimeoutIntervalForResource:", "v@:d").m<&cfg_ignoreInt>("setRequestCachePolicy:", "v@:I")
-      .m<&cfg_ignoreId>("setURLCache:", "v@:@").m<&cfg_ignoreId>("setHTTPCookieStorage:", "v@:@").m<&cfg_ignoreId>("setURLCredentialStorage:", "v@:@")
-      .m<&cfg_ignoreInt>("setHTTPShouldSetCookies:", "v@:c").m<&cfg_ignoreInt>("setAllowsCellularAccess:", "v@:c")
-      .m<&cfg_ignoreInt>("setHTTPMaximumConnectionsPerHost:", "v@:i").m<&cfg_ignoreInt>("setTLSMinimumSupportedProtocol:", "v@:i")
-      .m<&cfg_ignoreInt>("setDiscretionary:", "v@:c").m<&cfg_ignoreInt>("setSessionSendsLaunchEvents:", "v@:c")
-      .m<&cfg_ignoreInt>("setNetworkServiceType:", "v@:I").m<&cfg_ignoreInt>("setHTTPShouldUsePipelining:", "v@:c")
-      .m<&cfg_ignoreInt>("setHTTPCookieAcceptPolicy:", "v@:I").m<&cfg_ignoreId>("setProtocolClasses:", "v@:@")
-      .m<&cfg_ignoreId>("setConnectionProxyDictionary:", "v@:@").m<&cfg_ignoreId>("setSharedContainerIdentifier:", "v@:@")
       .m<&cfg_dealloc>("dealloc", "v@:");
+    {
+        // Settings that change caching, cookies, cellular use, pipelining and the like: accepted
+        // and ignored, because the host's client fetches every request fresh, without cookies.
+        struct Ignored { const char* sel; const char* types; };
+        const Ignored ignoredInts[] = {
+            {"setRequestCachePolicy:", "v@:I"}, {"setHTTPShouldSetCookies:", "v@:c"}, {"setAllowsCellularAccess:", "v@:c"},
+            {"setHTTPMaximumConnectionsPerHost:", "v@:i"}, {"setTLSMinimumSupportedProtocol:", "v@:i"}, {"setDiscretionary:", "v@:c"},
+            {"setSessionSendsLaunchEvents:", "v@:c"}, {"setNetworkServiceType:", "v@:I"}, {"setHTTPShouldUsePipelining:", "v@:c"},
+            {"setHTTPCookieAcceptPolicy:", "v@:I"}};
+        for (const Ignored& i : ignoredInts)
+            supportMethod(p, sc, "NSURLSessionConfiguration", i.sel, [](Ctx& x) { callWrapped<&cfg_ignoreInt>(x); }, SupportStatus::Approx,
+                          "accepted and ignored: the host's HTTP client fetches each request fresh, without cookies or caching", i.types);
+        const char* ignoredObjects[] = {"setURLCache:", "setHTTPCookieStorage:", "setURLCredentialStorage:", "setProtocolClasses:",
+                                        "setConnectionProxyDictionary:", "setSharedContainerIdentifier:"};
+        for (const char* sel : ignoredObjects)
+            supportMethod(p, sc, "NSURLSessionConfiguration", sel, [](Ctx& x) { callWrapped<&cfg_ignoreId>(x); }, SupportStatus::Approx,
+                          "accepted and ignored: no caches, cookie stores, custom protocols or proxies are modelled", "v@:@");
+        supportMethod(p, sc, "NSURLSessionConfiguration", "setTimeoutIntervalForResource:", [](Ctx& x) { callWrapped<&cfg_ignoreDouble>(x); },
+                      SupportStatus::Approx, "accepted and ignored: only the per-request timeout is applied", "v@:d");
+    }
     ObjC::ClassBuilder se = r.defineClass("NSURLSession", "NSObject");
     ss.session = se.cls();
     se.cm<&sesc_shared>("sharedSession").cm<&sesc_withConfig>("sessionWithConfiguration:")
