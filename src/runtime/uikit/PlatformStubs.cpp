@@ -2649,13 +2649,35 @@ void al_sourcei(Ctx& x, uint32_t sid, uint32_t param, int32_t val) {
     audioTrace("alSourcei", sid, (uint64_t(param) << 32) | uint32_t(val));
     alUpdate(x, s);
 }
+// Playback position of a source in seconds, samples (frames) or bytes of its buffer's format:
+// AL_SEC_OFFSET / AL_SAMPLE_OFFSET / AL_BYTE_OFFSET. Rhythm games time their charts to it
+// (Groove Coaster Zero reads AL_SAMPLE_OFFSET as a float; at a constant 0 nothing moved).
+bool alOffset(Ctx& x, const ALSource& s, uint32_t param, double& out) {
+    if (param != 0x1024 && param != 0x1025 && param != 0x1026) return false;
+    out = 0;
+    if (!s.voice) return true;
+    const double secs = MX(x.proc).positionSeconds(s.voice);
+    if (param == 0x1024) { out = secs; return true; }
+    auto& bufs = OAL(x).buffers;
+    const uint32_t bid = s.buffer ? s.buffer : (s.queuedBuffers.empty() ? 0 : s.queuedBuffers.front());
+    const auto it = bufs.find(bid);
+    const int freq = it != bufs.end() ? it->second.freq : 44100;
+    const double frames = std::floor(secs * freq);
+    if (param == 0x1025) { out = frames; return true; }
+    const uint32_t f = it != bufs.end() ? it->second.format : AL_FORMAT_STEREO16;
+    const int bytesPerFrame = f == 0x1100 ? 1 : f == 0x1101 || f == 0x1102 ? 2 : 4;   // mono8, mono16 / stereo8, stereo16
+    out = frames * bytesPerFrame;
+    return true;
+}
 void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     if (!val || !OAL(x).sources.count(sid)) return;
-    const ALSource& s = OAL(x).sources[sid];
+    ALSource& s = OAL(x).sources[sid];
+    alRefresh(x, s);
     float v = param == AL_PITCH ? s.pitch : param == AL_GAIN ? s.gain :
               param == AL_MIN_GAIN ? s.minGain : param == AL_MAX_GAIN ? s.maxGain : 0.0f;
-    if (param == 0x1024 /* AL_SEC_OFFSET */ && s.voice) v = float(MX(x.proc).positionSeconds(s.voice));
-    else if (param != AL_PITCH && param != AL_GAIN && param != AL_MIN_GAIN && param != AL_MAX_GAIN && param != 0x1024)
+    double offset = 0;
+    if (alOffset(x, s, param, offset)) v = float(offset);
+    else if (param != AL_PITCH && param != AL_GAIN && param != AL_MIN_GAIN && param != AL_MAX_GAIN)
         defaulted(x, "alGetSourcef(" + code4(param) + ") answered 0");
     x.mem.write<float>(val, v);
 }
@@ -2681,9 +2703,8 @@ void al_getSourcei(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     else if (param == AL_SOURCE_RELATIVE) v = s.relative ? 1 : 0;
     else if (param == AL_BUFFERS_QUEUED) v = int32_t(s.queuedBuffers.size());
     else if (param == AL_BUFFERS_PROCESSED) v = int32_t(alProcessed(x, s));
-    else if (param == 0x1025 /* AL_SAMPLE_OFFSET */ && s.voice && OAL(x).buffers.count(s.buffer))
-        v = int32_t(MX(x.proc).positionSeconds(s.voice) * OAL(x).buffers[s.buffer].freq);
-    else if (param != 0x1025) defaulted(x, "alGetSourcei(" + code4(param) + ") answered 0");
+    else if (double offset = 0; alOffset(x, s, param, offset)) v = int32_t(offset);
+    else defaulted(x, "alGetSourcei(" + code4(param) + ") answered 0");
     x.mem.write<int32_t>(val, v);
 }
 void al_sourcePlay(Ctx& x, uint32_t sid) {
