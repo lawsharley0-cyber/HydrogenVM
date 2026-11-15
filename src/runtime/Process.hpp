@@ -46,6 +46,11 @@ struct ProcessConfig {
     bool traceCalls = false;           // log every HLE call (very slow, for debugging)
     bool threadLiveness = false;       // opt-in one-second per-thread progress evidence
     bool loopbackNetwork = false;     // opt-in TCP/IPv4 diagnostics; only 127/8 and localhost
+    // Per-game, experimental ("Unlock frame rate"): CADisplayLink callbacks every screen frame
+    // whatever frameInterval / preferredFramesPerSecond the game asked for, and repeating
+    // NSTimers of 1/50 s to 1/20 s (a timer-driven 30 fps game loop) every 1/60 s. A game that
+    // ties its game speed to the frame count, rather than to elapsed time, runs faster with it.
+    bool unlockFrameRate = false;
     bool internetAccess = false;      // per-game opt-in (player's "Allow internet" switch): real TCP/UDP and DNS
     // With internetAccess: guest TCP to port 443 goes through this (old game TLS in, modern TLS out).
     std::shared_ptr<TlsBridge> tlsBridge;

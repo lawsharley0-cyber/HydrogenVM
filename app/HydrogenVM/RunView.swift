@@ -141,6 +141,7 @@ final class RunModel {
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
         s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
+        s.unlockFrameRate = Self.unlocksFrameRate(for: app.info.bundleIdentifier)
         // Taller guest screen and safe-area insets, per game; both are cleared when off.
         let display = UIScreen.main.bounds.size
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -286,6 +287,10 @@ final class RunModel {
     /// Games stay offline by default; this lets one chosen game reach its servers, e.g. to download
     /// content it needs before those servers close (Minion Rush's DLC).
     nonisolated static func internetKey(_ bundleID: String) -> String { "internet.\(bundleID)" }
+    nonisolated static func unlockFPSKey(_ bundleID: String) -> String { "unlockFPS.\(bundleID)" }
+    nonisolated static func unlocksFrameRate(for bundleID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: unlockFPSKey(bundleID))
+    }
     nonisolated static func allowsInternet(for bundleID: String) -> Bool {
         UserDefaults.standard.bool(forKey: internetKey(bundleID))
     }
@@ -492,6 +497,7 @@ struct RunView: View {
     /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
     @AppStorage private var softwareRenderer: Bool
     @AppStorage private var allowInternet: Bool
+    @AppStorage private var unlockFrameRate: Bool
     @Environment(\.dismiss) private var dismiss
 
     init(app: InstalledApp, keepGoing: Bool) {
@@ -501,6 +507,7 @@ struct RunView: View {
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: app.info.bundleIdentifier),
                                        RunModel.softwareRenderingKey(app.info.bundleIdentifier))
         _allowInternet = AppStorage(wrappedValue: false, RunModel.internetKey(app.info.bundleIdentifier))
+        _unlockFrameRate = AppStorage(wrappedValue: false, RunModel.unlockFPSKey(app.info.bundleIdentifier))
         _scaleSetting = AppStorage(PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
         _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
                                        PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
@@ -855,6 +862,16 @@ struct RunView: View {
                             }
                         }
                         .accessibilityIdentifier("player-allow-internet")
+
+                        Toggle(isOn: $unlockFrameRate) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Unlock frame rate (experimental, next launch)")
+                                    .font(.caption)
+                                Text("Runs games capped at 30 fps at 60. A game that counts frames instead of time may run too fast.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityIdentifier("player-unlock-frame-rate")
 
                         // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
                         virtualScreenControls
