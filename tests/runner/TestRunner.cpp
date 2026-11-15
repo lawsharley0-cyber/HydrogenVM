@@ -7308,6 +7308,21 @@ int runFullSubsystemTests() {
         const bool ok = shared && str(a) == "ab" && str(c) == "hello" && str(b) == ">> hello world" && pos == 9 && str(sub) == "world" && cmp < 0 && emptyRc == 0xFFFFFFFFu;
         for (uint32_t s : {a, b, c, sub}) call("__ZNSsD1Ev", {s});
         check(ok, "std::string (COW): sharing on copy, append, insert, find, substr, compare, swap, resize, emptyRep");
+        {
+            // compare reads min(size, other size) bytes, as libstdc++ does: a string whose size
+            // field is garbage compares against a short one without its whole claimed length read.
+            const uint32_t rep = proc.heap().allocZeroed(16), bogus = proc.heap().allocZeroed(4), shortStr = proc.heap().allocZeroed(4);
+            m.write<uint32_t>(rep, 0x3FFFFFF0u);   // claimed length, far past the end of guest memory
+            m.write<uint32_t>(rep + 8, 0xFFFFFFFFu);
+            m.write<uint8_t>(rep + 12, 'z');
+            m.write<uint32_t>(bogus, rep + 12);
+            call("__ZNSsC1EPKcRKSaIcE", {shortStr, cstr("a"), 0});
+            const int32_t big = int32_t(call("__ZNKSs7compareERKSs", {bogus, shortStr}));
+            const int32_t small = int32_t(call("__ZNKSs7compareERKSs", {shortStr, bogus}));
+            const int32_t prefix = int32_t(call("__ZNKSs7compareEPKc", {shortStr, cstr("ab")}));
+            call("__ZNSsD1Ev", {shortStr});
+            check(big == 1 && small == -1 && prefix == -1, "std::string::compare reads only min(size) bytes, then compares sizes (libstdc++)");
+        }
 
         // insert(pos, const char*) and iterator erase (Hungry Shark), the wchar_t _M_replace_aux and
         // iterator erase, and wcstombs (PvZ's XML parser).
