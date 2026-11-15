@@ -38,12 +38,31 @@ private:
     static constexpr uint32_t kAlign = 16;
     static constexpr uint32_t kSmallMax = 2048;
     static constexpr uint32_t kClasses = kSmallMax / kAlign;
-    static constexpr uint32_t kRun = 64 * 1024;
+    static constexpr uint32_t kRunShift = 16;
+    static constexpr uint32_t kRun = 1u << kRunShift;   // small runs are kRun-aligned from base_
 
     uint32_t bigAlloc(uint32_t size);              // size already rounded
     void     bigFree(uint32_t addr, uint32_t size);
     void     release(uint32_t addr, uint32_t size); // back to the free lists (caller holds mu_)
     void     ensureCommitted(uint32_t end);
+    uint32_t carveRun(uint32_t rounded);           // a fresh 64 KB run for one class; 0 if full
+    // Small blocks: the class of the run holding addr and whether addr starts a live block.
+    uint32_t smallClassAt(uint32_t addr) const {
+        if (addr < base_ || addr >= top_) return 0;
+        const uint32_t idx = (addr - base_) >> kRunShift;
+        return idx < runClass_.size() ? runClass_[idx] * kAlign : 0;
+    }
+    bool smallLive(uint32_t addr) const {
+        const uint32_t g = (addr - base_) >> 4;
+        return (g >> 6) < smallLive_.size() && (smallLive_[g >> 6] >> (g & 63) & 1);
+    }
+    void setSmallLive(uint32_t addr, bool on) {
+        const uint32_t g = (addr - base_) >> 4;
+        if (on) smallLive_[g >> 6] |= uint64_t(1) << (g & 63);
+        else smallLive_[g >> 6] &= ~(uint64_t(1) << (g & 63));
+    }
+    // The live block containing addr (interior pointers too); false if none.
+    bool liveSpan(uint32_t addr, uint32_t& start, uint32_t& size) const;
 
     Memory::GuestArena& mem_;
     const uint32_t base_, limit_;
@@ -52,8 +71,13 @@ private:
     std::vector<std::vector<uint32_t>> small_;     // free lists per class
     std::map<uint32_t, uint32_t> freeByAddr_;      // big free blocks: addr -> size
     std::multimap<uint32_t, uint32_t> freeBySize_; // size -> addr
-    std::unordered_map<uint32_t, uint32_t> live_;  // addr -> usable size (rounded)
-    std::map<uint32_t, uint32_t> liveIntervals_;    // ordered index for interior-pointer bounds
+    // Small blocks are tracked without per-block maps, which made every malloc/free cost a few
+    // hundred ns of host allocation: each 64 KB run records its class, and a bitmap (one bit per
+    // 16-byte granule) marks which blocks are live.
+    std::vector<uint16_t> runClass_;               // per run: class (size / kAlign), 0 = not small
+    std::vector<uint64_t> smallLive_;              // grown as runs are carved
+    std::unordered_map<uint32_t, uint32_t> live_;  // big blocks: addr -> usable size (rounded)
+    std::map<uint32_t, uint32_t> liveIntervals_;    // big blocks: ordered, for interior-pointer bounds
     // HVM_HEAP_QUARANTINE=N (a diagnostic): the last N freed blocks wait before they can be
     // handed out again. A game that reads memory after freeing it works on iOS, whose allocator
     // rarely reuses a block at once; if a crash goes away with this set, that is the cause.
