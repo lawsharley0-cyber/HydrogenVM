@@ -42,7 +42,7 @@ namespace Hydrogen::Runtime {
 namespace {
 
 void setErrno(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, uint32_t(e)); }
-constexpr int kEBADF = 9, kEINVAL = 22, kENETDOWN = 50, kEAFNOSUPPORT = 47, kENOSPC = 28, kEMFILE = 24;
+constexpr int kEBADF = 9, kEINVAL = 22, kENETDOWN = 50, kEAFNOSUPPORT = 47, kENOSPC = 28, kEMFILE = 24, kENXIO = 6, kEADDRNOTAVAIL = 49;
 constexpr int kAF_UNIX = 1, kAF_INET = 2, kAF_INET6 = 30, kAF_LINK = 18;
 
 int32_t failWith(Ctx& x, int e) { setErrno(x, e); return -1; }
@@ -629,6 +629,17 @@ uint32_t n_inetNtoa(Ctx& x, uint32_t addr) {
     x.mem.copyIn(buf, s, std::strlen(s) + 1);
     return buf;
 }
+// ether_ntoa: Darwin prints each byte in hex without zero padding ("2:0:0:0:0:0").
+uint32_t n_etherNtoa(Ctx& x, GuestPtr mac) {
+    static const char bufKey = 0; uint32_t& buf = x.proc.threadSlot(&bufKey);
+    if (!buf) buf = x.proc.heap().alloc(20);
+    uint8_t b[6] = {};
+    if (mac) x.mem.copyOut(b, mac, 6);
+    char s[20];
+    std::snprintf(s, sizeof s, "%x:%x:%x:%x:%x:%x", b[0], b[1], b[2], b[3], b[4], b[5]);
+    x.mem.copyIn(buf, s, std::strlen(s) + 1);
+    return buf;
+}
 int32_t n_inetPton(Ctx& x, int32_t af, GuestPtr src, GuestPtr dst) {
     const std::string s = x.proc.readCString(src);
     if (af == kAF_INET) { in_addr a{}; if (inet_pton(AF_INET, s.c_str(), &a) != 1) return 0; x.mem.copyIn(dst, &a, 4); return 1; }
@@ -646,12 +657,15 @@ uint32_t n_inetNtop(Ctx& x, int32_t af, GuestPtr src, GuestPtr dst, uint32_t siz
     return dst;
 }
 
-// ---- getifaddrs: lo0 only (AF_LINK + AF_INET 127.0.0.1).
-// struct ifaddrs { next, name, flags, addr, netmask, dstaddr, data } (28 bytes).
+// ---- getifaddrs: the interfaces a phone lists. lo0 (AF_LINK + 127.0.0.1) and en0, the Wi-Fi
+// interface: its AF_LINK entry carries the MAC address iOS 7+ gives apps (02:00:00:00:00:00),
+// the same one sysctl(NET_RT_IFLIST) reports. Games read it as a device id and crash on nil
+// when en0 is missing (Groove Coaster Zero). en0 gets an IPv4 address (a home Wi-Fi one) only
+// when the player allowed the game online; offline, it is a Wi-Fi interface that is not joined.
+// struct ifaddrs { next, name, flags, addr, netmask, dstaddr, data } (28 bytes); every node
+// owns its name and addresses.
 int32_t n_getifaddrs(Ctx& x, GuestPtr out) {
     auto& h = x.proc.heap();
-    const uint32_t name = h.alloc(4);
-    x.mem.copyIn(name, "lo0", 4);
     auto sockIn = [&](uint32_t ip) {
         const uint32_t a = h.alloc(16);
         for (uint32_t i = 0; i < 16; i += 4) x.mem.write<uint32_t>(a + i, 0);
@@ -661,33 +675,42 @@ int32_t n_getifaddrs(Ctx& x, GuestPtr out) {
         return a;
     };
     // sockaddr_dl { len, family, index(2), type, nlen, alen, slen, data[12] }
-    const uint32_t dl = h.alloc(20);
-    for (uint32_t i = 0; i < 20; i += 4) x.mem.write<uint32_t>(dl + i, 0);
-    x.mem.write<uint8_t>(dl, 20);
-    x.mem.write<uint8_t>(dl + 1, kAF_LINK);
-    x.mem.write<uint16_t>(dl + 2, 1);
-    x.mem.write<uint8_t>(dl + 4, 24);   // IFT_LOOP
-    x.mem.write<uint8_t>(dl + 5, 3);
-    x.mem.copyIn(dl + 8, "lo0", 3);
-    const uint32_t flags = 0x1 | 0x8 | 0x40 | 0x8000;   // UP | LOOPBACK | RUNNING | MULTICAST
-    auto node = [&](uint32_t next, uint32_t addr, uint32_t mask) {
+    auto link = [&](uint16_t index, const char* name, bool ether) {
+        const uint32_t dl = h.alloc(20);
+        for (uint32_t i = 0; i < 20; i += 4) x.mem.write<uint32_t>(dl + i, 0);
+        x.mem.write<uint8_t>(dl, 20);
+        x.mem.write<uint8_t>(dl + 1, kAF_LINK);
+        x.mem.write<uint16_t>(dl + 2, index);
+        x.mem.write<uint8_t>(dl + 4, ether ? 6 : 24);   // IFT_ETHER / IFT_LOOP
+        x.mem.write<uint8_t>(dl + 5, 3);
+        x.mem.write<uint8_t>(dl + 6, ether ? 6 : 0);    // sdl_alen
+        x.mem.copyIn(dl + 8, name, 3);
+        if (ether) x.mem.write<uint8_t>(dl + 11, 0x02); // 02:00:00:00:00:00
+        return dl;
+    };
+    auto node = [&](uint32_t next, const char* name, uint32_t flags, uint32_t addr, uint32_t mask, uint32_t dst) {
+        const uint32_t nm = h.alloc(4);
+        x.mem.copyIn(nm, name, 4);
         const uint32_t n = h.alloc(28);
-        const uint32_t v[7] = {next, name, flags, addr, mask, 0, 0};
+        const uint32_t v[7] = {next, nm, flags, addr, mask, dst, 0};
         for (uint32_t i = 0; i < 7; ++i) x.mem.write<uint32_t>(n + i * 4, v[i]);
         return n;
     };
-    const uint32_t inet = node(0, sockIn(0x7F000001), sockIn(0xFF000000));
-    x.mem.write<uint32_t>(out, node(inet, dl, 0));
+    const uint32_t loFlags = 0x1 | 0x8 | 0x40 | 0x8000;            // UP | LOOPBACK | RUNNING | MULTICAST
+    const uint32_t enFlags = 0x1 | 0x2 | 0x40 | 0x800 | 0x8000;    // UP | BROADCAST | RUNNING | SIMPLEX | MULTICAST
+    uint32_t list = 0;
+    if (internet(x)) list = node(list, "en0", enFlags, sockIn(0xC0A80102), sockIn(0xFFFFFF00), sockIn(0xC0A801FF));
+    list = node(list, "en0", enFlags, link(2, "en0", true), 0, 0);
+    list = node(list, "lo0", loFlags, sockIn(0x7F000001), sockIn(0xFF000000), 0);
+    list = node(list, "lo0", loFlags, link(1, "lo0", false), 0, 0);
+    x.mem.write<uint32_t>(out, list);
     return 0;
 }
 void n_freeifaddrs(Ctx& x, GuestPtr p) {
     auto& h = x.proc.heap();
-    bool first = true;
     while (p) {
         const uint32_t next = x.mem.read<uint32_t>(p);
-        if (first) h.free(x.mem.read<uint32_t>(p + 4));   // the shared name
-        first = false;
-        for (uint32_t off : {12u, 16u}) if (uint32_t a = x.mem.read<uint32_t>(p + off)) h.free(a);
+        for (uint32_t off : {4u, 12u, 16u, 20u}) if (uint32_t a = x.mem.read<uint32_t>(p + off)) h.free(a);
         h.free(p);
         p = next;
     }
@@ -915,6 +938,70 @@ uint32_t n_backtraceSymbols(Ctx& x, GuestPtr, int32_t) { return x.proc.heap().al
 bool isNetworkSocket(Process& p, int fd) {
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu); return s.fds.count(fd) != 0;
 }
+bool networkInterfaceIoctl(Ctx& x, unsigned int req, unsigned int arg, int& result) {
+    // The interfaces as (name, family, ip, mask) rows; AF_LINK rows carry en0's MAC.
+    struct If { const char* name; uint8_t family; uint32_t ip, mask; uint16_t index; };
+    std::vector<If> ifs = {{"lo0", kAF_LINK, 0, 0, 1}, {"lo0", kAF_INET, 0x7F000001, 0xFF000000, 1}, {"en0", kAF_LINK, 0, 0, 2}};
+    if (internet(x)) ifs.push_back({"en0", kAF_INET, 0xC0A80102, 0xFFFFFF00, 2});
+    auto writeSockaddr = [&](uint32_t at, const If& f, uint32_t ip) -> uint32_t {   // returns its length
+        if (f.family == kAF_LINK) {
+            uint8_t dl[20] = {};
+            dl[0] = 20; dl[1] = kAF_LINK; std::memcpy(dl + 2, &f.index, 2);
+            const bool ether = f.index == 2;
+            dl[4] = ether ? 6 : 24; dl[5] = 3; dl[6] = ether ? 6 : 0;
+            std::memcpy(dl + 8, f.name, 3);
+            if (ether) dl[11] = 0x02;   // 02:00:00:00:00:00
+            x.mem.copyIn(at, dl, sizeof dl);
+            return 20;
+        }
+        uint8_t in[16] = {};
+        in[0] = 16; in[1] = kAF_INET;
+        const uint32_t be = htonl(ip);
+        std::memcpy(in + 4, &be, 4);
+        x.mem.copyIn(at, in, sizeof in);
+        return 16;
+    };
+    auto findInet = [&](const std::string& name) -> const If* {
+        for (const If& f : ifs) if (name == f.name && f.family == kAF_INET) return &f;
+        return nullptr;
+    };
+    if (!arg) return false;
+    switch (req) {
+        case 0xC0086924: {   // SIOCGIFCONF: struct ifconf { int len; char* buf; } of ifreq (name[16] + sockaddr)
+            const uint32_t room = x.mem.read<uint32_t>(arg), buf = x.mem.read<uint32_t>(arg + 4);
+            uint32_t used = 0;
+            for (const If& f : ifs) {
+                const uint32_t size = 16 + (f.family == kAF_LINK ? 20u : 16u);
+                if (!buf || used + size > room) break;
+                char name[16] = {};
+                std::memcpy(name, f.name, 3);
+                x.mem.copyIn(buf + used, name, 16);
+                writeSockaddr(buf + used + 16, f, f.ip);
+                used += size;
+            }
+            x.mem.write<uint32_t>(arg, used);
+            result = 0;
+            return true;
+        }
+        case 0xC0206911: {   // SIOCGIFFLAGS: struct ifreq { name[16]; short flags; }
+            const std::string name = x.proc.readCString(arg);
+            if (name != "lo0" && name != "en0") { result = failWith(x, kENXIO); return true; }
+            x.mem.write<uint16_t>(arg + 16, uint16_t(name == "lo0" ? 0x8049 : 0x8863));
+            result = 0;
+            return true;
+        }
+        case 0xC0206921:     // SIOCGIFADDR
+        case 0xC0206925: {   // SIOCGIFNETMASK
+            const std::string name = x.proc.readCString(arg);
+            const If* f = findInet(name);
+            if (!f) { result = failWith(x, name == "en0" ? kEADDRNOTAVAIL : kENXIO); return true; }
+            writeSockaddr(arg + 16, *f, req == 0xC0206921 ? f->ip : f->mask);
+            result = 0;
+            return true;
+        }
+    }
+    return false;
+}
 int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
@@ -958,6 +1045,7 @@ void registerLibcNet(Process& p) {
     p.def<&n_inetPton>("_inet_pton");
     p.def<&n_inetNtop>("_inet_ntop");
     p.def<&n_getifaddrs>("_getifaddrs");
+    p.def<&n_etherNtoa>("_ether_ntoa");
     p.def<&n_freeifaddrs>("_freeifaddrs");
     p.def<&n_poll>("_poll");
     supportDef<&n_kqueue>(p, "_kqueue", SupportStatus::Approx, "kqueue over poll: read, write and user filters; EV_CLEAR reports again after I/O on the descriptor");

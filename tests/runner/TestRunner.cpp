@@ -2807,6 +2807,41 @@ int runFullSubsystemTests() {
         for (const auto& r : proc.defaultedApis().records())
             if (r.name == "AudioSessionGetProperty('zzzz') answered 0" && r.count == 3) found = true;
         check(found && proc.mem().read<uint32_t>(out) == 0, "a made-up default answer is recorded as Defaulted, once per text with a count");
+        const uint32_t absent = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_objc_getClass"), {proc.allocCString("NSHVMNoSuchClass")}));
+        bool absentNoted = false;
+        for (const auto& r : proc.defaultedApis().records())
+            if (r.name == "objc_getClass(\"NSHVMNoSuchClass\") found no such class (answered nil)") absentNoted = true;
+        check(absent == 0 && absentNoted, "a lookup of a missing Apple class answers nil and records it as Defaulted");
+    }
+    {
+        // A phone lists en0 (Wi-Fi) with the MAC address iOS gives apps; Groove Coaster Zero crashed
+        // on nil without it. SIOCGIFCONF lists the same, ether_ntoa prints it the Darwin way.
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        auto& m = proc.mem();
+        const uint32_t head = proc.heap().allocZeroed(4);
+        bool en0Mac = false;
+        uint32_t macAt = 0;
+        if (call("_getifaddrs", {head}) == 0)
+            for (uint32_t n = m.read<uint32_t>(head); n; n = m.read<uint32_t>(n)) {
+                const uint32_t addr = m.read<uint32_t>(n + 12);
+                if (proc.readCString(m.read<uint32_t>(n + 4)) == "en0" && addr && m.read<uint8_t>(addr + 1) == 18 &&
+                    m.read<uint8_t>(addr + 6) == 6 && m.read<uint8_t>(addr + 11) == 0x02) { en0Mac = true; macAt = addr + 11; }
+            }
+        const std::string text = en0Mac ? proc.readCString(call("_ether_ntoa", {macAt})) : "";
+        call("_freeifaddrs", {m.read<uint32_t>(head)});
+        const int32_t sock = int32_t(call("_socket", {2, 2, 0}));
+        const uint32_t buf = proc.heap().allocZeroed(256), conf = proc.heap().allocZeroed(8);
+        m.write<uint32_t>(conf, 256); m.write<uint32_t>(conf + 4, buf);
+        const int32_t r = sock >= 0 ? int32_t(call("_ioctl", {uint32_t(sock), 0xC0086924, conf})) : -1;
+        bool listed = false;
+        for (uint32_t off = 0; r == 0 && off + 32 <= m.read<uint32_t>(conf);) {
+            const uint8_t len = m.read<uint8_t>(buf + off + 16), fam = m.read<uint8_t>(buf + off + 17);
+            if (proc.readCString(buf + off) == "en0" && fam == 18 && m.read<uint8_t>(buf + off + 16 + 11) == 0x02) listed = true;
+            off += 16 + std::max<uint32_t>(16, len);
+        }
+        if (sock >= 0) call("_close", {uint32_t(sock)});
+        check(en0Mac && text == "2:0:0:0:0:0" && listed,
+              "getifaddrs and SIOCGIFCONF list en0 with MAC 02:00:00:00:00:00; ether_ntoa prints it as 2:0:0:0:0:0");
     }
     {
         // An app that releases an autoreleased object frees it before its pool drains (Bad
@@ -2841,10 +2876,12 @@ int runFullSubsystemTests() {
         const size_t len = logged.size();
         sp.checkStall(*w);   // the same stall is not reported again within a minute
         const bool once = logged.size() == len;
+        sp.checkStall(*w, "the player stopped the game");   // a stop snapshot is written whatever the state
+        const bool snapshot = logged.find("Snapshot: the player stopped the game; the main thread is waiting") != std::string::npos;
         m.blockedIn = nullptr;
         Process::deleteStallWatch(w);
         if (!reported) std::printf("%s", logged.c_str());
-        check(reported && once, "a main thread waiting 5 s logs one Stall report with the lock, its holder and the wait chain");
+        check(reported && once && snapshot, "a main thread waiting 5 s logs one Stall report with the lock, its holder and the wait chain; a stop logs a Snapshot");
     }
 
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.

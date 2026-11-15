@@ -1092,9 +1092,12 @@ id f_stringFromClass(Ctx& x, Class c) { return c ? makeString(x, rt(x).className
 // far as the app can tell: apps probe for optional frameworks this way.
 Class f_classFromString(Ctx& x, id s) {
     if (!s) return 0;
-    const Class c = rt(x).getClass(utf8(x, s));
+    const std::string name = utf8(x, s);
+    const Class c = rt(x).getClass(name);
     const ObjC::ClassInfo* ci = c ? rt(x).info(c) : nullptr;
-    return ci && ci->stub ? 0 : c;
+    const Class found = ci && ci->stub ? 0 : c;
+    if (!found) ObjC::noteAbsentClass(x, "NSClassFromString", name);
+    return found;
 }
 id f_stringFromSelector(Ctx& x, SEL s) { return s ? makeString(x, rt(x).selName(s)) : 0; }
 

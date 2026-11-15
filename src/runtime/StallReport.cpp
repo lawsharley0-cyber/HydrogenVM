@@ -47,6 +47,7 @@ BlockedScope::~BlockedScope() {
 }
 
 struct Process::StallWatch {
+    std::mutex mu;
     struct Seen { uint64_t instructions = 0; int64_t atMs = 0; };
     std::unordered_map<uint32_t, std::deque<Seen>> history;   // per thread, the last ~6 s
     uint64_t lastFrames = 0;
@@ -58,9 +59,10 @@ struct Process::StallWatch {
 Process::StallWatch* Process::newStallWatch() { return new StallWatch(); }
 void Process::deleteStallWatch(StallWatch* w) { delete w; }
 
-void Process::checkStall(StallWatch& w) {
+void Process::checkStall(StallWatch& w, const char* snapshot) {
+    std::lock_guard<std::mutex> watchLock(w.mu);   // the watcher and a stop snapshot can race
     const int64_t now = nowMs();
-    if (stopping() || terminating() || gracefulStopRequested() || backgrounded() || backgroundRequested()) {
+    if (!snapshot && (stopping() || terminating() || gracefulStopRequested() || backgrounded() || backgroundRequested())) {
         w.lastFrameChangeMs = now;   // a paused game draws nothing; start counting again after it resumes
         return;
     }
@@ -93,10 +95,14 @@ void Process::checkStall(StallWatch& w) {
     const uint64_t frames = perf_.framesPresented.load();
     if (frames != w.lastFrames || !w.lastFrameChangeMs) { w.lastFrames = frames; w.lastFrameChangeMs = now; }
 
+    if (rows.empty()) return;
     const Row& main = rows.front();
     int64_t episode = -1;
     std::string headline;
-    if (main.in && now - main.sinceMs >= 5000) {
+    if (snapshot) {
+        headline = std::string(snapshot) + "; the main thread is " +
+                   (main.in ? "waiting " + secs(now - main.sinceMs) + " in " + main.in : std::string("running guest code"));
+    } else if (main.in && now - main.sinceMs >= 5000) {
         episode = main.sinceMs;
         headline = "the main thread has waited " + secs(now - main.sinceMs) + " in " + main.in;
         if (main.object || main.owner) {
@@ -110,12 +116,14 @@ void Process::checkStall(StallWatch& w) {
         headline = "no frame presented for " + secs(now - w.lastFrameChangeMs) + " (frame " + std::to_string(frames) +
                    " was the last); the main thread is " + (main.in ? std::string("waiting in ") + main.in : "running guest code");
     }
-    if (episode < 0) return;
-    if (episode == w.reportedSinceMs && now - w.lastReportMs < 60000) return;
-    if (w.reports >= 5) return;
-    w.reportedSinceMs = episode;
-    w.lastReportMs = now;
-    ++w.reports;
+    if (!snapshot) {
+        if (episode < 0) return;
+        if (episode == w.reportedSinceMs && now - w.lastReportMs < 60000) return;
+        if (w.reports >= 5) return;
+        w.reportedSinceMs = episode;
+        w.lastReportMs = now;
+        ++w.reports;
+    }
 
     std::unordered_map<uint32_t, const Row*> byId;
     for (const Row& r : rows) byId[r.t->id] = &r;
@@ -134,7 +142,7 @@ void Process::checkStall(StallWatch& w) {
         return n;
     };
     std::ostringstream out;
-    out << "Stall: " << headline << "\n";
+    out << (snapshot ? "Snapshot: " : "Stall: ") << headline << "\n";
     // Who the main thread is waiting for, and who that thread is waiting for, until a thread
     // that runs (holding what the rest need) or a cycle (a deadlock).
     if (main.owner) {
@@ -194,6 +202,7 @@ void Process::checkStall(StallWatch& w) {
     }
     for (const Row& r : rows) {
         if (!r.in || !(r.main || r.owner || now - r.sinceMs >= 5000)) continue;
+        if (snapshot && !r.main && !r.owner) continue;   // a stop snapshot: main and the lock waiters only
         out << "  " << name(r) << " backtrace:\n" << backtrace(r.t->cpu, 8);
     }
     std::string text = out.str();

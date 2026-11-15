@@ -289,7 +289,10 @@ public:
     // waited 5 s (or no frame has been presented for 20 s), logs "Stall: ..." with every
     // thread's state, who holds what each waiter needs, and the waiters' backtraces.
     struct StallWatch;
-    void checkStall(StallWatch& w);
+    // With `snapshot` (a reason such as "the player stopped the game"), logs "Snapshot: ..." with
+    // the same thread table right away, whatever the threads are doing.
+    void checkStall(StallWatch& w, const char* snapshot = nullptr);
+    std::atomic<StallWatch*> stallWatch_{nullptr};   // the running watcher's state, for stop snapshots
     static StallWatch* newStallWatch();
     static void deleteStallWatch(StallWatch* w);
     GuestThread* currentThreadIfGuest();

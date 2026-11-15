@@ -267,6 +267,9 @@ void Process::requestStop() {
 
 void Process::requestGracefulStop(double timeout) {
     if (stopping() || gracefulStop_.exchange(true)) return;
+    // What every thread was doing when the player gave up: the log of a game that sat on a
+    // loading screen then says what it was waiting for.
+    if (StallWatch* w = stallWatch_) { try { checkStall(*w, "the player stopped the game"); } catch (...) {} }
     if (!lifecycleHandler_) { requestStop(); return; }
     lifecycleHandler_(Lifecycle::Terminate);
     // Watchdog: an app that doesn't get through its shutdown (or never runs its main loop) is stopped anyway.
@@ -1440,6 +1443,8 @@ struct StallWatcher {
 int Process::run() {
     std::unique_ptr<Process::StallWatch, void (*)(Process::StallWatch*)> stallState(newStallWatch(), &deleteStallWatch);
     StallWatcher stallWatcher(*this, stallState.get());
+    stallWatch_ = stallState.get();
+    struct ClearWatch { Process& p; ~ClearWatch() { p.stallWatch_ = nullptr; } } clearWatch{*this};
     std::unique_ptr<ThreadLivenessSampler> threadSampler;
     if (cfg_.threadLiveness) {
         try { threadSampler = std::make_unique<ThreadLivenessSampler>(*this); }
