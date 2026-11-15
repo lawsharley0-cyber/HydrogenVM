@@ -292,6 +292,10 @@ public:
     // With `snapshot` (a reason such as "the player stopped the game"), logs "Snapshot: ..." with
     // the same thread table right away, whatever the threads are doing.
     void checkStall(StallWatch& w, const char* snapshot = nullptr);
+    // Called 50 times a second by the watcher: notes where the main thread is (its pc, or the
+    // app's call site while it is inside HydrogenVM), so a stall or snapshot can say where a
+    // busy main thread spends its time ("main's time in the last 10 s: 41% Game::Load ...").
+    void sampleMain(StallWatch& w);
     std::atomic<StallWatch*> stallWatch_{nullptr};   // the running watcher's state, for stop snapshots
     static StallWatch* newStallWatch();
     static void deleteStallWatch(StallWatch* w);

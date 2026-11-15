@@ -55,9 +55,35 @@ struct Process::StallWatch {
     int64_t reportedSinceMs = -1;     // the stall episode already reported (its start)
     int64_t lastReportMs = 0;
     int reports = 0;
+    std::deque<uint32_t> mainSamples;   // the last 10 s of main's place, 50 a second
 };
 Process::StallWatch* Process::newStallWatch() { return new StallWatch(); }
 void Process::deleteStallWatch(StallWatch* w) { delete w; }
+
+void Process::sampleMain(StallWatch& w) {
+    GuestThread* m = mainThread_;
+    if (!m || m->finished.load(std::memory_order_acquire)) return;
+    if (m->blockedIn.load(std::memory_order_acquire)) return;   // waiting: the thread table says where
+    // Read without stopping the thread: an approximate place, which is all a profile needs.
+    uint32_t pc = m->cpu.r[CPU::kPC];
+    if (engine_->isHleAddress(pc & ~1u)) pc = m->cpu.r[CPU::kLR];   // inside HydrogenVM: count the app's call site
+    std::lock_guard<std::mutex> lk(w.mu);
+    w.mainSamples.push_back(pc);
+    while (w.mainSamples.size() > 500) w.mainSamples.pop_front();
+}
+
+namespace {
+// "0x0001d4cd Game+103628 -[AppController run] + 0x9c" -> "-[AppController run]" (or "Game+103628"
+// with no symbol), so samples inside one function count together.
+std::string functionOf(const std::string& place) {
+    std::string s = place;
+    if (s.rfind("0x", 0) == 0) { const size_t sp = s.find(' '); if (sp != std::string::npos) s = s.substr(sp + 1); }
+    if (const size_t plus = s.rfind(" + 0x"); plus != std::string::npos) s = s.substr(0, plus);
+    const size_t sp = s.find(' ');
+    if (sp != std::string::npos && s.compare(0, 1, "[") != 0) s = s.substr(sp + 1);   // drop "Game+offset" when a name follows
+    return s;
+}
+}  // namespace
 
 void Process::checkStall(StallWatch& w, const char* snapshot) {
     std::lock_guard<std::mutex> watchLock(w.mu);   // the watcher and a stop snapshot can race
@@ -198,6 +224,24 @@ void Process::checkStall(StallWatch& w, const char* snapshot) {
         out << "  " << n << " other thread" << (n == 1 ? "" : "s") << ":";
         bool first = true;
         for (auto& [what, count] : quiet) { out << (first ? " " : ", ") << count << " " << what; first = false; }
+        out << "\n";
+    }
+    if (!main.in && w.mainSamples.size() >= 25) {
+        // A busy main thread: where its time went (functions, by share of samples).
+        std::unordered_map<uint32_t, int> byPc;
+        for (uint32_t pc : w.mainSamples) ++byPc[pc];
+        std::map<std::string, int> byFunction;
+        for (auto& [pc, n] : byPc) byFunction[functionOf(describeAddress(pc))] += n;
+        std::vector<std::pair<int, std::string>> top;
+        for (auto& [f, n] : byFunction) top.push_back({n, f});
+        std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        const double total = double(w.mainSamples.size());
+        out << "  main's time in the last " << secs(int64_t(total * 20)) << ":";
+        for (size_t i = 0; i < top.size() && i < 6; ++i) {
+            char pct[16];
+            std::snprintf(pct, sizeof pct, "%.0f%%", 100.0 * top[i].first / total);
+            out << (i ? ", " : " ") << pct << " " << top[i].second;
+        }
         out << "\n";
     }
     for (const Row& r : rows) {
