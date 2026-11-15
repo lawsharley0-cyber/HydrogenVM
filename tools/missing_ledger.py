@@ -95,12 +95,14 @@ RE_MISSING = re.compile(r"^(?:\[[^\]]*\]\s*)?Missing: (.+?)\s*$", re.M)
 RE_IMPORTS = re.compile(r"^(?:\[[^\]]*\]\s*)?(\d+) imported functions aren't implemented yet \([^)]*\): (.*)$", re.M)
 RE_CLASS = re.compile(r"^(?:\[[^\]]*\]\s*)?Missing class (\S+) \(", re.M)
 RE_DATA = re.compile(r"^(?:\[[^\]]*\]\s*)?Missing data symbol (.+?) \((?:using zeros|virtual calls)", re.M)
+RE_DEFAULTED = re.compile(r"^(?:\[[^\]]*\]\s*)?Defaulted: (.+?)(?: \(from [^)]*\))?\s*$", re.M)
+RE_STALL = re.compile(r"^(?:\[[^\]]*\]\s*)?Stall: (.+?)\s*$", re.M)
 RE_SELECTOR = re.compile(r"([-+]\[\S+ [^\]]+\]): unrecognized selector sent to")
 RE_CRASH = re.compile(r"^(?:Crash|Guest fault|Stopped|ObjC exception|Uncaught exception)[^\n]*", re.M)
 
 
 def new_app(app_id: str, source: str, exe: str = "") -> dict:
-    return {"id": app_id, "exe": exe, "sources": [source], "called": {}, "imported": set(), "crashed": False, "crash": ""}
+    return {"id": app_id, "exe": exe, "sources": [source], "called": {}, "imported": set(), "crashed": False, "crash": "", "stall": ""}
 
 
 def bundle_like(stem: str) -> str:
@@ -152,6 +154,10 @@ def parse_log_text(text: str, source: str, app_hint: str = "") -> dict:
         add_called(app, name, kind)
     for m in RE_SELECTOR.finditer(text):
         add_called(app, m.group(1), "selector")
+    for m in RE_DEFAULTED.finditer(text):
+        add_called(app, m.group(1), "defaulted")
+    if m := RE_STALL.search(text):
+        app["stall"] = m.group(1)[:200]
     for m in RE_IMPORTS.finditer(text):
         declared, items = int(m.group(1)), split_top_level(m.group(2))
         if len(items) < declared and items:
@@ -183,6 +189,10 @@ def parse_hvm_report(data: dict, source: str) -> dict:
     for name in data.get("missingFunctions") or []:
         app["called"].setdefault(classify_missing(name), 1)
     app["imported"].update(("function", n) for n in data.get("unimplementedImports") or [])
+    for api in data.get("defaultedApis") or []:
+        if api.get("name"):
+            key = ("defaulted", api["name"])
+            app["called"][key] = app["called"].get(key, 0) + int(api.get("count", 1))
     if data.get("crashed"):
         app["crashed"] = True
         app["crash"] = (data.get("signature") or data.get("crashReport") or "crashed").split("\n")[0][:200]
@@ -259,6 +269,8 @@ def merge_apps(apps: list[dict]) -> dict:
         m["imported"] |= a["imported"]
         if a["crashed"] and not m["crashed"]:
             m["crashed"], m["crash"] = True, a["crash"]
+        if a.get("stall") and not m.get("stall"):
+            m["stall"] = a["stall"]
     for m in merged.values():
         m["sources"] = sorted(set(m["sources"]))
     return merged
@@ -332,8 +344,9 @@ def build_ledger(apps: dict, support: dict) -> dict:
     out.sort(key=lambda r: (-r["score"], -len(r["calledBy"]), r["kind"], r["name"]))
     app_rows = []
     for a in sorted(apps.values(), key=lambda a: a["id"]):
-        open_called = sorted(n for (k, n) in a["called"] if k != "limitation" and now_status(support, k, n) not in ("Real", "Approx"))
-        app_rows.append({"id": a["id"], "crashed": a["crashed"], "crash": a["crash"],
+        open_called = sorted(n for (k, n) in a["called"] if k not in ("limitation", "defaulted") and now_status(support, k, n) not in ("Real", "Approx"))
+        app_rows.append({"id": a["id"], "crashed": a["crashed"], "crash": a["crash"], "stall": a.get("stall", ""),
+                         "defaulted": sorted(n for (k, n) in a["called"] if k == "defaulted"),
                          "called": sorted(n for (_, n) in a["called"]), "openCalled": open_called,
                          "imported": len(a["imported"]), "sources": a["sources"]})
     return {"version": LEDGER_VERSION, "apps": app_rows, "apis": out, "haveSupport": bool(support)}
@@ -351,13 +364,21 @@ def markdown(ledger: dict, limit: int) -> str:
         lines += [f"{len(fixed)} called APIs in these logs are implemented in the current build (marked *now*).", ""]
     lines += ["## Called at run time and still missing (these stop games)", "",
               "| # | API | Kind | Area | Apps that called it | Imported by | Now |", "|---|---|---|---|---|---|---|"]
-    called = [r for r in apis if r["calledBy"] and r["kind"] != "limitation"]
+    called = [r for r in apis if r["calledBy"] and r["kind"] not in ("limitation", "defaulted")]
     fixed_rows = [r for r in called if not is_open(r)]
     for i, r in enumerate([r for r in called if is_open(r)][:limit], 1):
         who = ", ".join(r["calledBy"][:6]) + (f" +{len(r['calledBy']) - 6}" if len(r["calledBy"]) > 6 else "")
         lines.append(f"| {i} | `{r['name'][:90]}` | {r['kind']} | {r['area']} | {len(r['calledBy'])}: {who} | {len(r['importedBy'])} | {r['nowStatus'] or '-'} |")
     if fixed_rows:
         lines += ["", f"Implemented since these logs ({len(fixed_rows)}): " + ", ".join(f"`{r['name'][:60]}`" for r in fixed_rows[:limit])]
+    defaults = [r for r in apis if r["kind"] == "defaulted"]
+    if defaults:
+        lines += ["", "## Made-up answers (\"Defaulted:\": the emulator answered for something it does not handle)", "",
+                  "| Answer | Apps |", "|---|---|"]
+        lines += [f"| `{r['name'][:100]}` | {len(r['calledBy'])}: {', '.join(r['calledBy'][:6])} |" for r in defaults[:limit]]
+    stalls = [a for a in apps if a.get("stall")]
+    if stalls:
+        lines += ["", "## Stalls", ""] + [f"- {a['id']}: {a['stall']}" for a in stalls]
     limits = [r for r in apis if r["kind"] == "limitation"]
     if limits:
         lines += ["", "## Known limitations the apps ran into (approximations, not crashes)", "", "| Limitation | Apps |", "|---|---|"]

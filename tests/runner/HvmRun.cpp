@@ -224,6 +224,7 @@ int hvmRunMain(int argc, char** argv) {
     // Missing-API hits of the launches finished so far: each launch has its own Process, but the report file is
     // rewritten by every launch, so a hit in launch 1 must still taint the final report.
     Runtime::MissingApiLog earlierLaunches;
+    Runtime::MissingApiLog earlierDefaulted;
     // One launch = one Process (as the iOS app does each time a game is opened).
     auto runOnce = [&](int launch) -> int {
         if (launches > 1 && !quiet) std::fprintf(stderr, "[hvm] ---- launch %d of %d ----\n", launch, launches);
@@ -319,6 +320,10 @@ int hvmRunMain(int argc, char** argv) {
             allLaunches.absorb(earlierLaunches);
             allLaunches.absorb(proc.missingApis());
             f << allLaunches.reportFields("  ") << ",\n";
+            Runtime::MissingApiLog allDefaulted;   // host functions that answered with a made-up default
+            allDefaulted.absorb(earlierDefaulted);
+            allDefaulted.absorb(proc.defaultedApis());
+            f << "  " << allDefaulted.listField("defaultedApis", "  ") << ",\n";
             f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";
             f << "  \"warnings\": " << pairs(warnings) << ",\n";
             f << "  \"errors\": " << pairs(errors) << ",\n";
@@ -523,6 +528,7 @@ int hvmRunMain(int argc, char** argv) {
                          proc.missingApis().distinct());
         writeReport(status);
         earlierLaunches.absorb(proc.missingApis());
+        earlierDefaulted.absorb(proc.defaultedApis());
         return status;
     };
     int status = 0;

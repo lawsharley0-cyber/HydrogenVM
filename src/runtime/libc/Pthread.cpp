@@ -31,6 +31,7 @@ struct GuestMutex {
     uint32_t owner = 0;
     int count = 0;
     int type = kNormal;
+    uint32_t addr = 0;   // the guest pthread_mutex_t, for stall reports
 };
 
 struct GuestCond {
@@ -80,6 +81,7 @@ GuestMutex& mutexFor(Ctx& x, uint32_t addr) {
     auto& p = t.mutexes[addr];
     if (!p) {
         p = std::make_unique<GuestMutex>();
+        p->addr = addr;
         const uint32_t sig = x.mem.read<uint32_t>(addr);
         if (sig == kSigMutexRecursive) p->type = kRecursive;
         else if (sig == kSigMutexErrorCheck) p->type = kErrorCheck;
@@ -95,7 +97,13 @@ int lockMutex(Ctx& x, GuestMutex& m, bool tryOnly) {
         if (m.type == kErrorCheck || tryOnly) return tryOnly ? D_EBUSY : D_EDEADLK;
     }
     if (m.owner && tryOnly) return D_EBUSY;
-    while (m.owner) { m.cv.wait_for(lk, 50ms); if (m.owner) checkStop(x); }
+    if (m.owner) {
+        BlockedScope blocked(x.proc, "pthread_mutex_lock", m.addr, m.owner);
+        while (m.owner) {
+            m.cv.wait_for(lk, 50ms);
+            if (m.owner) { checkStop(x); blocked.setOwner(m.owner); }
+        }
+    }
     m.owner = me;
     m.count = 1;
     return 0;
@@ -116,6 +124,7 @@ int unlockMutex(Ctx& x, GuestMutex& m) {
 int32_t pm_init(Ctx& x, GuestPtr mu, GuestPtr attr) {
     auto& t = T(x);
     auto m = std::make_unique<GuestMutex>();
+    m->addr = mu;
     if (attr) {
         const uint32_t type = x.mem.read<uint32_t>(attr + 4);
         m->type = type == 2 ? kRecursive : type == 1 ? kErrorCheck : kNormal;
@@ -186,6 +195,7 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
             m.owner = 0; m.count = 0;
             m.cv.notify_one();
         }
+        BlockedScope blocked(x.proc, deadlineNs ? "pthread_cond_timedwait" : "pthread_cond_wait", cv);
         while (!waiter->signaled) {
             if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
             waiter->cv.wait_for(lk, 50ms);
@@ -252,7 +262,10 @@ int32_t rw_init(Ctx& x, GuestPtr rw, GuestPtr) { rwFor(x, rw); return 0; }
 int32_t rw_rdlock(Ctx& x, GuestPtr rw) {
     GuestRwlock& l = rwFor(x, rw);
     std::unique_lock<std::mutex> lk(l.m);
-    while (l.writer) { l.cv.wait_for(lk, 50ms); if (l.writer) checkStop(x); }
+    if (l.writer) {
+        BlockedScope blocked(x.proc, "pthread_rwlock_rdlock", rw, l.writer);
+        while (l.writer) { l.cv.wait_for(lk, 50ms); if (l.writer) checkStop(x); }
+    }
     ++l.readers;
     return 0;
 }
@@ -260,7 +273,10 @@ int32_t rw_tryrdlock(Ctx& x, GuestPtr rw) { GuestRwlock& l = rwFor(x, rw); std::
 int32_t rw_wrlock(Ctx& x, GuestPtr rw) {
     GuestRwlock& l = rwFor(x, rw);
     std::unique_lock<std::mutex> lk(l.m);
-    while (l.writer || l.readers) { l.cv.wait_for(lk, 50ms); if (l.writer || l.readers) checkStop(x); }
+    if (l.writer || l.readers) {
+        BlockedScope blocked(x.proc, "pthread_rwlock_wrlock", rw, l.writer);
+        while (l.writer || l.readers) { l.cv.wait_for(lk, 50ms); if (l.writer || l.readers) checkStop(x); }
+    }
     l.writer = tid(x);
     return 0;
 }
@@ -284,7 +300,10 @@ int32_t p_once(Ctx& x, GuestPtr once, GuestPtr fn) {
         // The guest word after the signature is our "done" flag, so a
         // pthread_once_t that's reused after being reset behaves correctly.
         if (x.mem.read<uint32_t>(once + 4) == 2) return 0;
-        while (t.once[once] == 1) { t.onceCv.wait_for(lk, 50ms); checkStop(x); }
+        if (t.once[once] == 1) {
+            BlockedScope blocked(x.proc, "pthread_once (another thread is running it)", once);
+            while (t.once[once] == 1) { t.onceCv.wait_for(lk, 50ms); checkStop(x); }
+        }
         if (x.mem.read<uint32_t>(once + 4) == 2) return 0;
         t.once[once] = 1;
     }
@@ -409,6 +428,7 @@ int32_t t_create(Ctx& x, GuestPtr out, GuestPtr attr, GuestPtr fn, GuestPtr arg)
 }
 int32_t t_join(Ctx& x, uint32_t th, GuestPtr ret) {
     uint32_t r = 0;
+    BlockedScope blocked(x.proc, "pthread_join", th);
     if (!x.proc.joinThread(th, &r)) return D_ESRCH;
     if (ret) x.mem.write<uint32_t>(ret, r);
     return 0;
@@ -619,7 +639,7 @@ void registerLibcPthread(Process& p) {
     p.def<&t_testcancel>("_pthread_testcancel");
     p.def<&t_cancelstate>("_pthread_setcancelstate");
     p.def<&t_canceltype>("_pthread_setcanceltype");
-    p.def<&pm_init>("_pthread_mutex_init");
+    supportDef<&pm_init>(p, "_pthread_mutex_init", SupportStatus::Real, "host-backed guest mutex: normal, recursive or error-check from the attribute");
     p.def<&pm_lock>("_pthread_mutex_lock");
     p.def<&pm_trylock>("_pthread_mutex_trylock");
     p.def<&pm_unlock>("_pthread_mutex_unlock");
@@ -642,13 +662,13 @@ void registerLibcPthread(Process& p) {
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");
     p.def<&rw_init>("_pthread_rwlock_init");
-    p.def<&rw_rdlock>("_pthread_rwlock_rdlock");
+    supportDef<&rw_rdlock>(p, "_pthread_rwlock_rdlock", SupportStatus::Real, "blocks while a writer holds the lock");
     p.def<&rw_tryrdlock>("_pthread_rwlock_tryrdlock");
-    p.def<&rw_wrlock>("_pthread_rwlock_wrlock");
+    supportDef<&rw_wrlock>(p, "_pthread_rwlock_wrlock", SupportStatus::Real, "blocks while a writer or readers hold the lock");
     p.def<&rw_trywrlock>("_pthread_rwlock_trywrlock");
     p.def<&rw_unlock>("_pthread_rwlock_unlock");
     p.def<&rw_destroy>("_pthread_rwlock_destroy");
-    p.def<&p_once>("_pthread_once");
+    supportDef<&p_once>(p, "_pthread_once", SupportStatus::Real, "runs the routine once; other callers wait for it");
     p.def<&k_create>("_pthread_key_create");
     p.def<&k_delete>("_pthread_key_delete");
     p.def<&k_get>("_pthread_getspecific");

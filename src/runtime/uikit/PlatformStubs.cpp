@@ -190,6 +190,14 @@ uint32_t auRenderFrames(double sampleRate, double rate = 1.0);
 float ioBufferSeconds() { return float(auRenderFrames(44100.0)) / 44100.0f; }
 int32_t as_init(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t as_setProperty(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
+// "'chbd'" for a four-character code, "0x12" for a number that is not one.
+std::string code4(uint32_t v) {
+    char c[4] = {char(v >> 24), char(v >> 16), char(v >> 8), char(v)};
+    for (char ch : c) if (ch < 0x20 || ch > 0x7e) { char b[16]; std::snprintf(b, sizeof b, "0x%x", v); return b; }
+    return "'" + std::string(c, 4) + "'";
+}
+void defaulted(Ctx& x, const std::string& what) { x.proc.reportDefaulted(what); }
+
 int32_t as_getProperty(Ctx& x, uint32_t prop, GuestPtr size, GuestPtr out) {
     if (out && size) {
         const uint32_t n = x.mem.read<uint32_t>(size);
@@ -200,7 +208,7 @@ int32_t as_getProperty(Ctx& x, uint32_t prop, GuestPtr size, GuestPtr out) {
         else if (prop == 0x61696176 /* 'aiav' audio input available */ && n >= 4) x.mem.write<uint32_t>(out, 1);
         else if (prop == 0x63686963 /* 'chic' input channels */ && n >= 4) x.mem.write<uint32_t>(out, 1);
         else if (prop == 0x63686f63 /* 'choc' output channels */ && n >= 4) x.mem.write<uint32_t>(out, 2);
-        else if (n >= 4) x.mem.write<uint32_t>(out, 0);
+        else if (n >= 4) { x.mem.write<uint32_t>(out, 0); defaulted(x, "AudioSessionGetProperty(" + code4(prop) + ") answered 0"); }
     }
     return 0;
 }
@@ -433,6 +441,7 @@ int32_t aq_getProperty(Ctx& x, uint32_t qid, uint32_t prop, GuestPtr outData, Gu
             x.mem.write<uint32_t>(outData, running ? 1 : 0);
         } else if (sz >= 4) {
             x.mem.write<uint32_t>(outData, 0);
+            defaulted(x, "AudioQueueGetProperty(" + code4(prop) + ") answered 0");
         }
     }
     return 0;
@@ -925,7 +934,7 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
             x.mem.write<uint32_t>(outData + 16, 0);
             break;
         }
-        default: break;
+        default: defaulted(x, "AudioFileGetProperty(" + code4(prop) + ") of an MP3 left the output unwritten"); break;
         }
         if (std::getenv("HVM_AUDIO_TRACE")) {
             const char a = char(prop >> 24), b = char(prop >> 16), c = char(prop >> 8), d = char(prop);
@@ -1784,6 +1793,7 @@ void auNotify(Ctx& x, AudioToolboxState& st, uint32_t uid, uint32_t action) {
     }
 }
 void au_thread(Ctx& x, uint32_t uid) {
+    if (GuestThread* t = x.proc.currentThreadIfGuest()) t->role.store("audio render thread: runs the app's AudioUnit callback");
     // RemoteIO has real-time deadlines independent of the app's main run loop.
     // A guest thread gives its callback a real CPU context without letting a
     // slow Unity/CADisplayLink frame starve music and sound effects.
@@ -1915,6 +1925,8 @@ int32_t au_getProp(Ctx& x, uint32_t unit, uint32_t prop, uint32_t scope, uint32_
             x.mem.write<uint32_t>(outData, 4096);
             x.mem.write<uint32_t>(ioDataSize, 4);
         }
+    } else {
+        defaulted(x, "AudioUnitGetProperty(" + std::to_string(prop) + ", scope " + std::to_string(scope) + ") succeeded without writing");
     }
     return 0;
 }
@@ -1949,7 +1961,11 @@ int32_t au_setParam(Ctx& x, uint32_t uid, uint32_t param, uint32_t scope, uint32
     if (b.voice) MX(x.proc).setParams(b.voice, auVoiceParams(b));
     return 0;
 }
-int32_t au_getParam(Ctx& x, uint32_t, uint32_t, uint32_t, uint32_t, GuestPtr out) { if (out) x.mem.write<float>(out, 1.0f); return 0; }
+int32_t au_getParam(Ctx& x, uint32_t, uint32_t param, uint32_t scope, uint32_t, GuestPtr out) {
+    if (out) x.mem.write<float>(out, 1.0f);
+    defaulted(x, "AudioUnitGetParameter(" + std::to_string(param) + ", scope " + std::to_string(scope) + ") answered 1.0");
+    return 0;
+}
 int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFrames, GuestPtr ioData) {
     if (ioData) {
         const uint32_t nbuf = x.mem.read<uint32_t>(ioData);
@@ -2561,6 +2577,7 @@ void al_getBufferi(Ctx& x, uint32_t bid, uint32_t param, GuestPtr val) {
     else if (param == AL_SIZE) v = b.byteSize;
     else if (param == AL_BITS) v = (b.format == AL_FORMAT_MONO8 || b.format == AL_FORMAT_STEREO8) ? 8 : 16;
     else if (param == AL_CHANNELS) v = (b.format == AL_FORMAT_STEREO8 || b.format == AL_FORMAT_STEREO16) ? 2 : 1;
+    else defaulted(x, "alGetBufferi(" + code4(param) + ") answered 0");
     x.mem.write<int32_t>(val, v);
 }
 
@@ -2638,6 +2655,8 @@ void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     float v = param == AL_PITCH ? s.pitch : param == AL_GAIN ? s.gain :
               param == AL_MIN_GAIN ? s.minGain : param == AL_MAX_GAIN ? s.maxGain : 0.0f;
     if (param == 0x1024 /* AL_SEC_OFFSET */ && s.voice) v = float(MX(x.proc).positionSeconds(s.voice));
+    else if (param != AL_PITCH && param != AL_GAIN && param != AL_MIN_GAIN && param != AL_MAX_GAIN && param != 0x1024)
+        defaulted(x, "alGetSourcef(" + code4(param) + ") answered 0");
     x.mem.write<float>(val, v);
 }
 void al_getSource3f(Ctx& x, uint32_t sid, uint32_t param, GuestPtr v1, GuestPtr v2, GuestPtr v3) {
@@ -2664,6 +2683,7 @@ void al_getSourcei(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     else if (param == AL_BUFFERS_PROCESSED) v = int32_t(alProcessed(x, s));
     else if (param == 0x1025 /* AL_SAMPLE_OFFSET */ && s.voice && OAL(x).buffers.count(s.buffer))
         v = int32_t(MX(x.proc).positionSeconds(s.voice) * OAL(x).buffers[s.buffer].freq);
+    else if (param != 0x1025) defaulted(x, "alGetSourcei(" + code4(param) + ") answered 0");
     x.mem.write<int32_t>(val, v);
 }
 void al_sourcePlay(Ctx& x, uint32_t sid) {
@@ -2761,7 +2781,10 @@ void al_sourceUnqueueBuffers(Ctx& x, uint32_t sid, int32_t n, GuestPtr bids) {
 void al_listenerf(Ctx& x, uint32_t param, float val) { if (param == AL_GAIN) { OAL(x).listenerGain = val; MX(x.proc).setMasterGain(val); audioTrace("alListenerGain", param, uint64_t(std::lround(val * 1000000.0f))); } }
 void al_listener3f(Ctx&, uint32_t, float, float, float) {}
 void al_listenerfv(Ctx&, uint32_t, GuestPtr) {}
-void al_getListenerf(Ctx& x, uint32_t param, GuestPtr val) { if (val) x.mem.write<float>(val, param == AL_GAIN ? OAL(x).listenerGain : 0.0f); }
+void al_getListenerf(Ctx& x, uint32_t param, GuestPtr val) {
+    if (val) x.mem.write<float>(val, param == AL_GAIN ? OAL(x).listenerGain : 0.0f);
+    if (param != AL_GAIN) defaulted(x, "alGetListenerf(" + code4(param) + ") answered 0");
+}
 void al_getListenerfv(Ctx& x, uint32_t param, GuestPtr val) {
     if (!val) return;
     const uint32_t n = param == 0x100F /* AL_ORIENTATION */ ? 6 : 3;
@@ -2778,6 +2801,7 @@ void al_getSourcefv(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
 uint32_t al_getProcAddress(Ctx& x, GuestPtr name) {
     const std::string n = x.proc.readCString(name);
     if (auto a = x.proc.lookupSymbol("_" + n)) return *a;
+    defaulted(x, "alGetProcAddress(\"" + n + "\") found no such extension (answered NULL)");
     return 0;
 }
 uint32_t alc_getProcAddress(Ctx& x, uint32_t, GuestPtr name) { return al_getProcAddress(x, name); }
@@ -2964,7 +2988,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_setProp>("_AudioUnitSetProperty");
     supportDef<&au_getProp>(p, "_AudioUnitGetProperty", SupportStatus::Approx, "Stream format (per mixer input) and maximum frames per slice; other properties are left untouched");
     p.def<&au_setParam>("_AudioUnitSetParameter");
-    p.def<&au_getParam>("_AudioUnitGetParameter");
+    supportDef<&au_getParam>(p, "_AudioUnitGetParameter", SupportStatus::Approx, "every parameter reads 1.0 (logged as Defaulted)");
     p.def<&au_render>("_AudioUnitRender");
     p.def<&aug_new>("_NewAUGraph");
     // Tuning of the converter inside an ExtAudioFile (bit rate, quality): accepted, the

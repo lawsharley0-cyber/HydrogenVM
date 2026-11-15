@@ -31,6 +31,7 @@
 #include <map>
 #include <mutex>
 #include <poll.h>
+#include <optional>
 #include <sys/ioctl.h>
 #include <tuple>
 #include <thread>
@@ -699,6 +700,9 @@ void sleepFor(Ctx& x, int64_t us) {
         std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(end - std::chrono::steady_clock::now(), std::chrono::milliseconds(50)));
 }
 int32_t pollHost(Ctx& x, std::vector<pollfd>& fds, int32_t timeoutMs) {
+    std::optional<BlockedScope> blocked;
+    if (timeoutMs != 0) blocked.emplace(x.proc, fds.size() == 1 ? "a socket wait (poll/recv/send/accept/connect)" : "poll/select/kevent on sockets",
+                                        fds.empty() ? 0u : uint32_t(fds[0].fd));
     if (fds.empty()) {
         if (timeoutMs < 0) { while (!x.proc.stopping()) std::this_thread::sleep_for(std::chrono::milliseconds(50)); return 0; }
         sleepFor(x, int64_t(timeoutMs) * 1000);
@@ -765,6 +769,8 @@ int32_t n_kevent(Ctx& x, int32_t kq, GuestPtr changes, int32_t nchanges, GuestPt
         }
     }
     if (nevents <= 0) return 0;
+    std::optional<BlockedScope> blocked;
+    if (timeoutMs != 0) blocked.emplace(x.proc, "kevent (waiting for socket or user events)", uint32_t(kq));
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs < 0 ? 0 : timeoutMs);
     for (;;) {
         std::vector<pollfd> fds;

@@ -1051,6 +1051,10 @@ void Process::setupMainThread() {
     initThreadState(*mainThread_, stack);
 }
 
+GuestThread* Process::currentThreadIfGuest() {
+    return t_thread && t_processIdentity == identity_ ? t_thread : nullptr;
+}
+
 GuestThread& Process::currentThread() {
     // Another host thread can destroy the old Process. Compare a generation,
     // never dereference that old GuestThread just to decide which owner it had.
@@ -1409,7 +1413,33 @@ struct ThreadLivenessSampler {
 };
 } // namespace
 
+struct StallWatcher {
+    Process& p;
+    Process::StallWatch* watch;
+    std::mutex mu;
+    std::condition_variable cv;
+    bool stopped = false;
+    std::thread thread;
+    StallWatcher(Process& process, Process::StallWatch* w) : p(process), watch(w) {
+        thread = std::thread([this] {
+            std::unique_lock<std::mutex> lock(mu);
+            while (!cv.wait_for(lock, std::chrono::seconds(1), [this] { return stopped; })) {
+                lock.unlock();
+                try { p.checkStall(*watch); } catch (...) {}
+                lock.lock();
+            }
+        });
+    }
+    ~StallWatcher() {
+        { std::lock_guard<std::mutex> lock(mu); stopped = true; }
+        cv.notify_one();
+        if (thread.joinable()) thread.join();
+    }
+};
+
 int Process::run() {
+    std::unique_ptr<Process::StallWatch, void (*)(Process::StallWatch*)> stallState(newStallWatch(), &deleteStallWatch);
+    StallWatcher stallWatcher(*this, stallState.get());
     std::unique_ptr<ThreadLivenessSampler> threadSampler;
     if (cfg_.threadLiveness) {
         try { threadSampler = std::make_unique<ThreadLivenessSampler>(*this); }
@@ -1490,6 +1520,19 @@ uint32_t Process::insn32At(uint32_t pc, bool thumb) const {
     } catch (...) {
         return 0;
     }
+}
+
+// The host functions this thread is inside right now, innermost first ("-[NSString copy] <-
+// +[NSString stringWithFormat:]"): for a zombie's "allocated by", the API that made the object.
+std::string Process::activeHostCalls() const {
+    const HostCallRing& ring = tHostCalls;
+    std::string out;
+    for (uint32_t i = 0; i < HostCallRing::kSize; ++i) {
+        const HostCallCrumb& cr = ring.crumb[(ring.next - i + HostCallRing::kSize) % HostCallRing::kSize];
+        if (!cr.serial || cr.process != identity_ || cr.returned) continue;
+        out += (out.empty() ? "" : " <- ") + engine_->hleName(cr.hle);
+    }
+    return out;
 }
 
 // "Last host calls" and "likely cause" lines for a crash report. Read on the crashing
@@ -1886,6 +1929,23 @@ void Process::reportMissing(const std::string& what) {
         if (!missing_.insert(what).second) return;
     }
     log(LogLevel::Warning, "Missing: " + what);
+}
+
+void Process::reportDefaulted(const std::string& what) {
+    std::string caller;
+    defaultedApis_.hit(what, std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count(),
+                       [this, &caller](MissingApiLog::Site& s) {
+                           const CPU::Cpu& cpu = currentThread().cpu;
+                           s.callerPc = cpu.r[CPU::kLR];
+                           s.caller = describeAddress(s.callerPc);
+                           if (s.callerPc) caller = s.caller;   // a host-side caller (a pool drain) has no guest address
+                           s.backtrace = MissingApiLog::splitLines(backtrace(cpu, int(MissingApiLog::kMaxFrames) - 2));
+                       });
+    {
+        std::lock_guard<std::mutex> lk(missingMu_);
+        if (!defaulted_.insert(what).second) return;
+    }
+    log(LogLevel::Warning, "Defaulted: " + what + (caller.empty() ? "" : " (from " + caller + ")"));
 }
 
 uint64_t Process::guestInstructions() {

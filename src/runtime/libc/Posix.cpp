@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
@@ -96,6 +97,8 @@ int32_t semWait(Ctx& x, uint32_t id, double timeout) {
     using clock = std::chrono::steady_clock;
     const auto deadline = timeout < 0 ? clock::time_point::max() : clock::now() + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(timeout));
     std::unique_lock<std::mutex> lk(sem->mu);
+    std::optional<BlockedScope> blocked;
+    if (sem->count <= 0 && timeout != 0) blocked.emplace(x.proc, "semaphore_wait / sem_wait", id);
     while (sem->count <= 0) {
         // Stopping: end the thread like the pthread waits do. Returning KERN_ABORTED
         // made Unity log "Failed to wait on a semaphore (errno:14)" in a loop, which

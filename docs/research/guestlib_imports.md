@@ -67,40 +67,40 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 
 | Symbol | Imported By | Status | HydrogenVM Source | Notes |
 |---|---|---|---|---|
-| `___cxa_atexit` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:416` | Handler `p_cxa_atexit` |
-| `___error` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1086` | Handler `s_error` |
-| `___mb_cur_max` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:492` | Guest data symbol |
-| `___stderrp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:539` | Guest global data cell |
-| `___stdinp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:539` | Guest global data cell |
-| `___stdoutp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:539` | Guest global data cell |
-| `_abort` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:414` | Handler `p_abort` |
+| `___cxa_atexit` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:518` | Handler `p_cxa_atexit` |
+| `___error` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1202` | Handler `s_error` |
+| `___mb_cur_max` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:559` | Guest data symbol |
+| `___stderrp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:547` | Guest global data cell |
+| `___stdinp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:547` | Guest global data cell |
+| `___stdoutp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:547` | Guest global data cell |
+| `_abort` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:516` | Handler `p_abort` |
 | `_aligned_alloc` | `libc++abi.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_asprintf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:556` | Handler `f_asprintf` |
-| `_btowc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:582` | Handler `w_btowc` |
-| `_calloc` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:337` | Handler `m_calloc` |
+| `_asprintf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:564` | Handler `f_asprintf` |
+| `_btowc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:649` | Handler `w_btowc` |
+| `_calloc` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:434` | Handler `m_calloc` |
 | `_catclose` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_catgets` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_catopen` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_clock_gettime` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:144` | Handler `t_clock_gettime` |
-| `_close` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1146` | Handler `f_close` |
-| `_dladdr` | `libgcc_s.1.dylib`, `libc++abi.dylib` | `present` | `src/runtime/libc/System.cpp:1142` | Handler `d_dladdr` |
+| `_clock_gettime` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:145` | Handler `t_clock_gettime` |
+| `_close` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1263` | Handler `f_close` |
+| `_dladdr` | `libgcc_s.1.dylib`, `libc++abi.dylib` | `present` | `src/runtime/libc/System.cpp:1257` | Handler `d_dladdr` |
 | `_duplocale` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_dyld_register_func_for_add_image` | `libc++abi.dylib` | `missing` | `src/runtime/libc/System.cpp:1133` | Registered only under `__dyld_register_func_for_add_image` (2 leading underscores); single-underscore alias `_dyld_register_func_for_add_image` is missing (S5 scope) |
-| `_fflush` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:587` | Handler `f_fflush` |
-| `_fgetc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:573` | Handler `f_fgetc` |
-| `_fprintf` | `libc++abi.dylib` | `present` | `src/runtime/libc/Stdio.cpp:546` | Handler `f_fprintf` |
-| `_fputc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:561` | Handler `f_fputc` |
-| `_fputs` | `libc++abi.dylib` | `present` | `src/runtime/libc/Stdio.cpp:560` | Handler `f_fputs` |
-| `_fread` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:572` | Handler `f_fread` |
-| `_free` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:340` | Handler `m_free` |
+| `_dyld_register_func_for_add_image` | `libc++abi.dylib` | `missing` | `src/runtime/libc/System.cpp:1248` | Registered only under `__dyld_register_func_for_add_image` (2 leading underscores); single-underscore alias `_dyld_register_func_for_add_image` is missing (S5 scope) |
+| `_fflush` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:595` | Handler `f_fflush` |
+| `_fgetc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:581` | Handler `f_fgetc` |
+| `_fprintf` | `libc++abi.dylib` | `present` | `src/runtime/libc/Stdio.cpp:554` | Handler `f_fprintf` |
+| `_fputc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:569` | Handler `f_fputc` |
+| `_fputs` | `libc++abi.dylib` | `present` | `src/runtime/libc/Stdio.cpp:568` | Handler `f_fputs` |
+| `_fread` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:580` | Handler `f_fread` |
+| `_free` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:437` | Handler `m_free` |
 | `_freelocale` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_fseek` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:579` | Handler `f_fseek` |
-| `_fseeko` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:580` | Handler `f_fseeko` |
-| `_ftell` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:581` | Handler `f_ftell` |
-| `_ftello` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:582` | Handler `f_ftello` |
-| `_fwrite` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:564` | Handler `f_fwrite` |
-| `_getc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:574` | Handler `f_fgetc` |
-| `_gettimeofday` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:137` | Handler `t_gettimeofday` |
+| `_fseek` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:587` | Handler `f_fseek` |
+| `_fseeko` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:588` | Handler `f_fseeko` |
+| `_ftell` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:589` | Handler `f_ftell` |
+| `_ftello` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:590` | Handler `f_ftello` |
+| `_fwrite` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:572` | Handler `f_fwrite` |
+| `_getc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:582` | Handler `f_fgetc` |
+| `_gettimeofday` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:138` | Handler `t_gettimeofday` |
 | `_isalnum_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_isalpha_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_isblank_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
@@ -124,115 +124,115 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_iswupper_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_iswxdigit_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_isxdigit_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_localeconv` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Posix.cpp:227` | Handler `p_localeconv` |
+| `_localeconv` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Posix.cpp:320` | Handler `p_localeconv` |
 | `_localeconv_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_lseek` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1151` | Handler `f_lseek` |
-| `_mach_absolute_time` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:139` | Handler `t_mach_absolute_time` |
-| `_mach_timebase_info` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:140` | Handler `t_mach_timebase_info` |
-| `_malloc` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:336` | Handler `m_malloc` |
-| `_mbrlen` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:585` | Handler `w_mbrlen` |
-| `_mbrtowc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:584` | Handler `w_mbrtowc` |
+| `_lseek` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1268` | Handler `f_lseek` |
+| `_mach_absolute_time` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:140` | Handler `t_mach_absolute_time` |
+| `_mach_timebase_info` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:141` | Handler `t_mach_timebase_info` |
+| `_malloc` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:433` | Handler `m_malloc` |
+| `_mbrlen` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:652` | Handler `w_mbrlen` |
+| `_mbrtowc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:651` | Handler `w_mbrtowc` |
 | `_mbsnrtowcs` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_mbsrtowcs` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_mbtowc` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:586` | Handler `w_mbtowc` |
-| `_memchr` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:505` | Handler `s_memchr` |
-| `_memcmp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:503` | Handler `s_memcmp` |
-| `_memcpy` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:497` | Handler `s_memcpy` |
-| `_memmove` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:498` | Handler `s_memcpy` |
-| `_memset` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:501` | Handler `s_memset` |
-| `_nanosleep` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:143` | Handler `t_nanosleep` |
+| `_mbtowc` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:653` | Handler `w_mbtowc` |
+| `_memchr` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:572` | Handler `s_memchr` |
+| `_memcmp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:570` | Handler `s_memcmp` |
+| `_memcpy` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:564` | Handler `s_memcpy` |
+| `_memmove` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:565` | Handler `s_memcpy` |
+| `_memset` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:568` | Handler `s_memset` |
+| `_nanosleep` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:144` | Handler `t_nanosleep` |
 | `_newlocale` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_open` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1145` | Handler `f_open` |
-| `_poll` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Net.cpp:591` | Handler `n_poll` |
-| `_posix_memalign` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:342` | Handler `m_posix_memalign` |
-| `_pthread_cond_broadcast` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:625` | `SupportStatus::Approx` — Wakes all current waiters and always reports success; waits poll for cancellation and stop |
-| `_pthread_cond_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:627` | Handler `pc_destroy` |
-| `_pthread_cond_init` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:619` | Handler `pc_init` |
-| `_pthread_cond_signal` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:623` | `SupportStatus::Approx` — Wakes one current waiter and always reports success; waits poll for cancellation and stop |
-| `_pthread_cond_timedwait` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:621` | Handler `pc_timedwait` |
-| `_pthread_cond_wait` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:620` | Handler `pc_wait` |
-| `_pthread_detach` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:659` | Handler `t_detach` |
-| `_pthread_equal` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:661` | Handler `t_equal` |
-| `_pthread_getspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:640` | Handler `k_get` |
-| `_pthread_join` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:658` | Handler `t_join` |
-| `_pthread_key_create` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:638` | Handler `k_create` |
-| `_pthread_key_delete` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:639` | Handler `k_delete` |
-| `_pthread_mutex_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:612` | Handler `pm_destroy` |
-| `_pthread_mutex_init` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:608` | Handler `pm_init` |
-| `_pthread_mutex_lock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:609` | Handler `pm_lock` |
-| `_pthread_mutex_trylock` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:610` | Handler `pm_trylock` |
-| `_pthread_mutex_unlock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:611` | Handler `pm_unlock` |
-| `_pthread_mutexattr_destroy` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:616` | POSIX mutex attributes are guest-memory POD; destruction requires no resource release (matched initializer/destructor bodies) |
-| `_pthread_mutexattr_init` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:613` | Handler `pma_init` |
-| `_pthread_mutexattr_settype` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:614` | Handler `pma_settype` |
-| `_pthread_once` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:637` | Handler `p_once` |
-| `_pthread_self` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:660` | Handler `t_self` |
-| `_pthread_setspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:641` | Handler `k_set` |
-| `_putc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:562` | Handler `f_fputc` |
-| `_read` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1147` | Handler `f_read` |
-| `_realloc` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:338` | Handler `m_realloc` |
-| `_sched_yield` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:670` | Handler `sched_yield_` |
-| `_setlocale` | `libstdc++.6.dylib`, `libc++.1.dylib` | `stubbed-dishonestly` | `src/runtime/libc/Posix.cpp:226` | Handler `p_setlocale` returns fixed `"C"` string regardless of requested category/locale |
-| `_snprintf` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:550` | Handler `f_snprintf` |
+| `_open` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1260` | Handler `f_open` |
+| `_poll` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Net.cpp:962` | Handler `n_poll` |
+| `_posix_memalign` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:439` | Handler `m_posix_memalign` |
+| `_pthread_cond_broadcast` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:659` | `SupportStatus::Approx` — Wakes all current waiters and always reports success; waits poll for cancellation and stop |
+| `_pthread_cond_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:661` | Handler `pc_destroy` |
+| `_pthread_cond_init` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:653` | Handler `pc_init` |
+| `_pthread_cond_signal` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:657` | `SupportStatus::Approx` — Wakes one current waiter and always reports success; waits poll for cancellation and stop |
+| `_pthread_cond_timedwait` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:655` | Handler `pc_timedwait` |
+| `_pthread_cond_wait` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:654` | Handler `pc_wait` |
+| `_pthread_detach` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:693` | Handler `t_detach` |
+| `_pthread_equal` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:695` | Handler `t_equal` |
+| `_pthread_getspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:674` | Handler `k_get` |
+| `_pthread_join` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:692` | Handler `t_join` |
+| `_pthread_key_create` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:672` | Handler `k_create` |
+| `_pthread_key_delete` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:673` | Handler `k_delete` |
+| `_pthread_mutex_destroy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:646` | Handler `pm_destroy` |
+| `_pthread_mutex_init` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:642` | `SupportStatus::Real` — host-backed guest mutex: normal, recursive or error-check from the attribute |
+| `_pthread_mutex_lock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:643` | Handler `pm_lock` |
+| `_pthread_mutex_trylock` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:644` | Handler `pm_trylock` |
+| `_pthread_mutex_unlock` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:645` | Handler `pm_unlock` |
+| `_pthread_mutexattr_destroy` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:650` | POSIX mutex attributes are guest-memory POD; destruction requires no resource release (matched initializer/destructor bodies) |
+| `_pthread_mutexattr_init` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:647` | Handler `pma_init` |
+| `_pthread_mutexattr_settype` | `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:648` | Handler `pma_settype` |
+| `_pthread_once` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:671` | `SupportStatus::Real` — runs the routine once; other callers wait for it |
+| `_pthread_self` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:694` | Handler `t_self` |
+| `_pthread_setspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:675` | Handler `k_set` |
+| `_putc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:570` | Handler `f_fputc` |
+| `_read` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1264` | Handler `f_read` |
+| `_realloc` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:435` | Handler `m_realloc` |
+| `_sched_yield` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:704` | Handler `sched_yield_` |
+| `_setlocale` | `libstdc++.6.dylib`, `libc++.1.dylib` | `stubbed-dishonestly` | `src/runtime/libc/Posix.cpp:319` | Handler `p_setlocale` returns fixed `"C"` string regardless of requested category/locale |
+| `_snprintf` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:558` | Handler `f_snprintf` |
 | `_snprintf_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_sprintf` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdio.cpp:548` | Handler `f_sprintf` |
-| `_sscanf` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:594` | Handler `f_sscanf` |
+| `_sprintf` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdio.cpp:556` | Handler `f_sprintf` |
+| `_sscanf` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:602` | Handler `f_sscanf` |
 | `_sscanf_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_stat` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1159` | Handler `f_stat` |
-| `_strchr` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:531` | Handler `s_strchr` |
-| `_strcmp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:513` | Handler `s_strcmp` |
-| `_strcoll` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:517` | Handler `s_strcoll` |
+| `_stat` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1278` | Handler `f_stat` |
+| `_strchr` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:598` | Handler `s_strchr` |
+| `_strcmp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:580` | Handler `s_strcmp` |
+| `_strcoll` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:584` | Handler `s_strcoll` |
 | `_strcoll_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_strcpy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:518` | Handler `s_strcpy` |
-| `_strerror` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:546` | Handler `s_strerror` |
-| `_strerror_r` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:547` | Handler `s_strerror_r` |
-| `_strftime` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:152` | Handler `t_strftime` |
+| `_strcpy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:585` | Handler `s_strcpy` |
+| `_strerror` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:613` | Handler `s_strerror` |
+| `_strerror_r` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:614` | Handler `s_strerror_r` |
+| `_strftime` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:153` | Handler `t_strftime` |
 | `_strftime_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_strlen` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:511` | Handler `s_strlen` |
-| `_strncmp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:514` | Handler `s_strncmp` |
-| `_strtod` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:375` | Handler `c_strtod` |
+| `_strlen` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:578` | Handler `s_strlen` |
+| `_strncmp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:581` | Handler `s_strncmp` |
+| `_strtod` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:474` | Handler `c_strtod` |
 | `_strtod_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_strtof` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:376` | Handler `c_strtof` |
+| `_strtof` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:475` | Handler `c_strtof` |
 | `_strtof_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_strtol` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:369` | Handler `c_strtol` |
+| `_strtol` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:468` | Handler `c_strtol` |
 | `_strtold` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_strtold_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_strtoll` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:371` | Handler `c_strtoll` |
+| `_strtoll` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:470` | Handler `c_strtoll` |
 | `_strtoll_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_strtoul` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:370` | Handler `c_strtoul` |
-| `_strtoull` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:373` | Handler `c_strtoull` |
+| `_strtoul` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:469` | Handler `c_strtoul` |
+| `_strtoull` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:472` | Handler `c_strtoull` |
 | `_strtoull_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_strxfrm` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:588` | Handler `s_strxfrm` |
+| `_strxfrm` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:657` | Handler `s_strxfrm` |
 | `_strxfrm_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_sysconf` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1121` | Handler `s_sysconf` |
-| `_tolower_l` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:565` | Handler `c_tolower_l` |
-| `_toupper_l` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:564` | Handler `c_toupper_l` |
+| `_sysconf` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1237` | Handler `s_sysconf` |
+| `_tolower_l` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:632` | Handler `c_tolower_l` |
+| `_toupper_l` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:631` | Handler `c_toupper_l` |
 | `_towlower_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_towupper_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_ungetc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:577` | Handler `f_ungetc` |
+| `_ungetc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:585` | Handler `f_ungetc` |
 | `_uselocale` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_vasprintf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:557` | Handler `f_vasprintf` |
-| `_vfprintf` | `libc++abi.dylib` | `present` | `src/runtime/libc/Stdio.cpp:547` | Handler `f_vfprintf` |
-| `_vsnprintf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:554` | Handler `f_vsnprintf` |
-| `_vsscanf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:595` | Handler `f_vsscanf` |
-| `_wcrtomb` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:587` | Handler `w_wcrtomb` |
-| `_wcscmp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:572` | Handler `w_wcscmp` |
-| `_wcscoll` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:589` | Handler `w_wcscoll` |
+| `_vasprintf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:565` | Handler `f_vasprintf` |
+| `_vfprintf` | `libc++abi.dylib` | `present` | `src/runtime/libc/Stdio.cpp:555` | Handler `f_vfprintf` |
+| `_vsnprintf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:562` | Handler `f_vsnprintf` |
+| `_vsscanf` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:603` | Handler `f_vsscanf` |
+| `_wcrtomb` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:654` | Handler `w_wcrtomb` |
+| `_wcscmp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:639` | Handler `w_wcscmp` |
+| `_wcscoll` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:658` | Handler `w_wcscoll` |
 | `_wcscoll_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_wcslen` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:567` | Handler `w_wcslen` |
+| `_wcslen` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:634` | Handler `w_wcslen` |
 | `_wcsnrtombs` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_wcsrtombs` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_wcstod` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:381` | Handler `c_wcstod` |
-| `_wcstof` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:382` | Handler `c_wcstof` |
+| `_wcstod` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:480` | Handler `c_wcstod` |
+| `_wcstof` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:481` | Handler `c_wcstof` |
 | `_wcstold` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_wcstoll` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:379` | Handler `c_wcstoll` |
-| `_wcstoull` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:380` | Handler `c_wcstoull` |
-| `_wcsxfrm` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:590` | Handler `w_wcsxfrm` |
+| `_wcstoll` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:478` | Handler `c_wcstoll` |
+| `_wcstoull` | `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:479` | Handler `c_wcstoull` |
+| `_wcsxfrm` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:659` | Handler `w_wcsxfrm` |
 | `_wcsxfrm_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_wctob` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:583` | Handler `w_wctob` |
-| `_wmemchr` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:581` | Handler `w_wmemchr` |
-| `_wmemcmp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:580` | Handler `w_wmemcmp` |
-| `_wmemcpy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:577` | Handler `w_wmemcpy` |
-| `_wmemmove` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:578` | Handler `w_wmemcpy` |
-| `_wmemset` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:579` | Handler `w_wmemset` |
-| `_write` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1148` | Handler `f_write` |
+| `_wctob` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:650` | Handler `w_wctob` |
+| `_wmemchr` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:648` | Handler `w_wmemchr` |
+| `_wmemcmp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:647` | Handler `w_wmemcmp` |
+| `_wmemcpy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:644` | Handler `w_wmemcpy` |
+| `_wmemmove` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:645` | Handler `w_wmemcpy` |
+| `_wmemset` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:646` | Handler `w_wmemset` |
+| `_write` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1265` | Handler `f_write` |
