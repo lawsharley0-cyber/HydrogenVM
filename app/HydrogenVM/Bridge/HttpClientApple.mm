@@ -50,13 +50,15 @@ struct AppleHttpClient final : Hydrogen::Runtime::HttpClient {
             } else if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
                 NSHTTPURLResponse* http = (NSHTTPURLResponse*)response;
                 r.status = int(http.statusCode);
+                // A block captures C++ objects as const copies: append through a pointer.
+                auto* headers = &r.headers;
                 [http.allHeaderFields enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL*) {
                     NSString* k = [key description], *v = [value description];
                     // NSURLSession already decoded the body: its size, not the wire's.
                     if ([k caseInsensitiveCompare:@"Content-Encoding"] == NSOrderedSame) return;
                     if ([k caseInsensitiveCompare:@"Content-Length"] == NSOrderedSame) return;
                     if ([k caseInsensitiveCompare:@"Transfer-Encoding"] == NSOrderedSame) return;
-                    r.headers.push_back({k.UTF8String ?: "", v.UTF8String ?: ""});
+                    headers->push_back({k.UTF8String ?: "", v.UTF8String ?: ""});
                 }];
             } else {
                 r.status = 200;   // a non-HTTP URL the session could load
