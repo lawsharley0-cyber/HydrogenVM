@@ -6,6 +6,7 @@
 // coalescing. All blocks are 16-byte aligned. Thread-safe.
 #pragma once
 #include "core/memory/GuestArena.hpp"
+#include <deque>
 #include <map>
 #include <mutex>
 #include <unordered_map>
@@ -41,6 +42,7 @@ private:
 
     uint32_t bigAlloc(uint32_t size);              // size already rounded
     void     bigFree(uint32_t addr, uint32_t size);
+    void     release(uint32_t addr, uint32_t size); // back to the free lists (caller holds mu_)
     void     ensureCommitted(uint32_t end);
 
     Memory::GuestArena& mem_;
@@ -52,6 +54,11 @@ private:
     std::multimap<uint32_t, uint32_t> freeBySize_; // size -> addr
     std::unordered_map<uint32_t, uint32_t> live_;  // addr -> usable size (rounded)
     std::map<uint32_t, uint32_t> liveIntervals_;    // ordered index for interior-pointer bounds
+    // HVM_HEAP_QUARANTINE=N (a diagnostic): the last N freed blocks wait before they can be
+    // handed out again. A game that reads memory after freeing it works on iOS, whose allocator
+    // rarely reuses a block at once; if a crash goes away with this set, that is the cause.
+    std::deque<std::pair<uint32_t, uint32_t>> quarantine_;
+    size_t quarantineMax_ = 0;
     mutable std::mutex mu_;
     Stats stats_;
 };

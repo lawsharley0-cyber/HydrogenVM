@@ -1,11 +1,14 @@
 #include "Heap.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 namespace Hydrogen::Runtime {
 
 Heap::Heap(Memory::GuestArena& mem, uint32_t base, uint32_t limit)
-    : mem_(mem), base_(base), limit_(limit), top_(base), committed_(base), small_(kClasses + 1) {}
+    : mem_(mem), base_(base), limit_(limit), top_(base), committed_(base), small_(kClasses + 1) {
+    if (const char* q = std::getenv("HVM_HEAP_QUARANTINE")) quarantineMax_ = std::strtoul(q, nullptr, 10);
+}
 
 void Heap::ensureCommitted(uint32_t end) {
     if (end <= committed_) return;
@@ -144,6 +147,18 @@ void Heap::free(uint32_t addr) {
     liveIntervals_.erase(addr);
     stats_.liveBytes -= size;
     --stats_.liveBlocks;
+    if (quarantineMax_) {
+        quarantine_.push_back({addr, size});
+        if (quarantine_.size() <= quarantineMax_) return;
+        addr = quarantine_.front().first;
+        const uint32_t oldest = quarantine_.front().second;
+        quarantine_.pop_front();
+        release(addr, oldest);
+        return;
+    }
+    release(addr, size);
+}
+void Heap::release(uint32_t addr, uint32_t size) {
     if (size <= kSmallMax) small_[size / kAlign].push_back(addr);
     else bigFree(addr, size);
 }
