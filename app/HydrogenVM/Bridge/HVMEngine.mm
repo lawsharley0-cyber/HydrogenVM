@@ -1,6 +1,7 @@
 #import "HVMEngine.h"
 #import "HostGLEAGL.h"
 #import "TlsBridgeApple.h"
+#import "HttpClientApple.h"
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
@@ -542,6 +543,8 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.internetAccess = allowInternet;
         // Secure connections: the game's old TLS in, the system's modern TLS out (TlsBridgeApple.mm).
         if (allowInternet) cfg.tlsBridge = Hydrogen::App::makeAppleTlsBridge();
+        // Foundation downloads (NSURLConnection / NSURLSession) on the system's own HTTP stack.
+        if (allowInternet) cfg.httpClient = Hydrogen::App::makeAppleHttpClient();
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is
             // handed to the player view, which puts it under the UIKit overlay.

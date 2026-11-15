@@ -100,8 +100,8 @@ id di_initWithContentsOfFileOpts(Ctx& x, id self, SEL s, id path, uint32_t, Gues
 id di_initWithContentsOfURL(Ctx& x, id self, SEL s, id url) {
     // Only file URLs are read. A web address (http://host/start.php) is a download: it used to
     // be read as the file "/start.php". A shut-down server with a stand-in (ServerStandIn.cpp)
-    // answers; other downloads through NSData are not made yet, so the answer is nil, what an
-    // iPhone gives when the download fails.
+    // answers; otherwise a game allowed online downloads it with the host's HTTP client, and
+    // any other case answers nil, what an iPhone gives when the download fails.
     if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
         const id abs = url ? id(rt(x).send(x.cpu, url, "absoluteString")) : 0;
         const std::string where = abs ? utf8(x, abs) : std::string("(nil URL)");
@@ -109,10 +109,13 @@ id di_initWithContentsOfURL(Ctx& x, id self, SEL s, id url) {
             assign(x, self, reinterpret_cast<const uint8_t*>(reply->body.data()), uint32_t(reply->body.size()));
             return self;
         }
-        if (x.proc.config().internetAccess)
-            x.proc.reportDefaulted("NSData could not download " + where.substr(0, 120) + " (downloads through NSData are not made yet; answered nil)");
-        else
-            x.proc.logf(LogLevel::Info, "Internet: off for this game; NSData could not download %s (answered nil)", where.substr(0, 160).c_str());
+        if (x.proc.config().internetAccess) {
+            if (auto body = url ? onlineFetchContents(x, url) : std::nullopt) {
+                assign(x, self, reinterpret_cast<const uint8_t*>(body->data()), uint32_t(body->size()));
+                return self;
+            }
+        } else
+            x.proc.logf(LogLevel::Info, "Internet: off for this game; NSData could not download %s (answered nil)", where.substr(0, where.find('?')).substr(0, 160).c_str());
         rt(x).release(x.cpu, self);
         return 0;
     }

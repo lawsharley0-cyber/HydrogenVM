@@ -270,6 +270,7 @@ id i_initWithContentsOfFile1(Ctx& x, id self, SEL s, id path) { return i_initWit
 id i_initWithContentsOfURL(Ctx& x, id self, SEL s, id url, uint32_t enc, GuestPtr err) {
     if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
         if (auto reply = standInFetch(x, url, "GET")) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(*body)); return self; }
         if (err) x.mem.write<uint32_t>(err, 0);
         rt(x).release(x.cpu, self);
         return 0;
@@ -280,6 +281,7 @@ id i_initWithContentsOfURL(Ctx& x, id self, SEL s, id url, uint32_t enc, GuestPt
 id i_initWithContentsOfURLUsed(Ctx& x, id self, SEL s, id url, GuestPtr usedEnc, GuestPtr err) {
     if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
         if (auto reply = standInFetch(x, url, "GET")) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(*body)); return self; }
         if (err) x.mem.write<uint32_t>(err, 0);
         rt(x).release(x.cpu, self);
         return 0;
@@ -290,6 +292,7 @@ id i_initWithContentsOfURLUsed(Ctx& x, id self, SEL s, id url, GuestPtr usedEnc,
 id i_initWithContentsOfURL1(Ctx& x, id self, SEL s, id url) {
     if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
         if (auto reply = standInFetch(x, url, "GET")) { setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { setValue(x, self, fromUtf8(*body)); return self; }
         rt(x).release(x.cpu, self);
         return 0;
     }

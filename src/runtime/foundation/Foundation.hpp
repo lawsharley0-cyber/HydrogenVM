@@ -179,6 +179,8 @@ struct StandInReply { int status = 200; std::string mime = "text/xml"; std::stri
 std::optional<StandInReply> standInFetch(Ctx& x, const std::string& url, const std::string& method);
 std::optional<StandInReply> standInFetch(Ctx& x, id url, const std::string& method);
 id standInResponse(Ctx& x, id url, const StandInReply& r);   // an autoreleased NSHTTPURLResponse
+// A game allowed online: the body at `url` (2xx only), fetched by the host; nullopt otherwise.
+std::optional<std::string> onlineFetchContents(Ctx& x, id url);
 bool isURL(Ctx& x, id obj);
 id localizedString(Ctx& x, id key, id value, id table);
 
