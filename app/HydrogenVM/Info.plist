@@ -94,5 +94,13 @@
 			</dict>
 		</dict>
 	</array>
+	<!-- Games from the iOS 5/6 era talk plain http. These requests only happen for a game whose
+	     "Allow internet" switch is on (HttpClientApple is created only then); App Transport
+	     Security would otherwise refuse every one of them. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
