@@ -48,7 +48,12 @@ Seen in HydrogenVM with a generated test tone (`plot3_bgm.m4a`, 93 s 440 Hz AAC,
    chart) the same way. Without it the song does not start ("失敗", failure). **verified**
 5. Both files cached: the song starts from the debug menu and plays against the chart in the
    bundled `stage.pak`; the chart advances with the music. **verified** on the bench after
-   OpenAL `AL_SAMPLE_OFFSET` was implemented (the game reads it as a float to time the chart).
+   OpenAL `AL_SAMPLE_OFFSET` was implemented (the game reads it as a float to time the chart),
+   and **verified on an iPhone** (iOS 27.3, 2026-11-15): download, unzip, the tone heard, the
+   track moving, smooth.
+6. Played to the end (bench), the song shows its RESULT screen (GREAT / COOL / GOOD / MISS,
+   MAX CHAIN, SCORE, RATING, LEVEL). Started from GAMEDEBUG, the game sends no result or save
+   request. **verified**
 
 Not checked yet: sample rate other than 44.1 kHz (the debug menu offers a "44.1kHz" setting),
 mono vs stereo, the duration the game expects (the song list says "(1:33)"), and whether a
@@ -82,7 +87,22 @@ entries reliably. **open**.
 `kiki_bgm`, `niji_bgm`, `backon_bgm`, `treeclimb_bgm` (title matches for the last six are
 **open**). Each also needs `<name minus _bgm>_shot` if its chart names one.
 
+## Song menu (after TOUCH TO START)
+
+The menu shows the first song ("Music Plot Type Three", COSIO, (1:33)) dimmed and does not
+answer taps, on the bench and on an iPhone, with the stand-in replies above. **open**. Not
+changed by: listing songs in `sync.php`'s `buy_id` / `play_id` (`my_coin` does show), the song's
+music being cached, the "connection cancelled" line (harmless). After `sync.php` the game looks
+up `my_coin friend_num m4a_path cm_stage buy_id play_id coin gp badge cm_description description
+friend_info en product_id num title artist icon_no play_time difficulty bpm stage_pak model_pak
+tuneFile_pak`, then names that are not part of any reply (pieces of the game's own symbol
+strings), so the lookup list runs past its end. No UIKit dialog is involved (the menu draws in
+GL only).
+
 ## How to reach a song quickly
 
 The title screen has a **GAMEDEBUG** button (top left): a debug menu with song, difficulty and
-sample-rate pickers and START. That starts a song directly, without the shop or menu.
+sample-rate pickers and START. That starts a song directly, without the shop or menu. Its song
+picker lists every song in `tuneFile.pak`, including original Groove Coaster songs that are
+not in Zero's menu; their files are named differently (e.g. `PlanetRock_BGM.m4a` and
+`PlanetRock_SHOT_FIX.m4a`), and the stand-in log line names each file a song asks for.
