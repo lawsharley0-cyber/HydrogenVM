@@ -83,10 +83,24 @@ uint32_t Heap::carveRun(uint32_t rounded) {
     return start;
 }
 
+// Block sizes as iOS's allocator (libmalloc, 32-bit) hands them out: "tiny" blocks up to 496
+// bytes in 16-byte steps, "small" ones up to 15 KB in 512-byte steps, larger ones in whole
+// pages. Games write past the end of their allocations without noticing on iOS when the
+// overrun stays inside that rounding: Minion Rush 1.0.0 allocates a 1852-byte object and
+// uses 12 bytes past it (a ring buffer at +0x734..0x748). Rounded to 16 bytes the next block
+// started at +0x740 and its owner overwrote the ring's write pointer, so the game crashed
+// writing through it (at +0x2822ce, when a level loads); rounded to 512 (2048), as on iOS,
+// the overrun lands in the block's own slack. malloc_size() reports these sizes too.
+uint32_t Heap::iosRoundedSize(uint32_t size) {
+    if (size <= 496) return (size + kAlign - 1) & ~(kAlign - 1);
+    if (size <= 15 * 1024) return (size + 511) & ~511u;
+    return (size + 4095) & ~4095u;
+}
+
 uint32_t Heap::alloc(uint32_t size) {
     if (size == 0) size = 1;
     if (size > 0x7FFFFFF0u) return 0;
-    const uint32_t rounded = (size + kAlign - 1) & ~(kAlign - 1);
+    const uint32_t rounded = iosRoundedSize(size);
     std::lock_guard<std::mutex> lk(mu_);
     uint32_t addr;
     if (rounded <= kSmallMax) {
