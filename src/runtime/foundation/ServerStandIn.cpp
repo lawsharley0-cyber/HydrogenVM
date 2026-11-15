@@ -43,19 +43,29 @@ UrlParts split(const std::string& url) {
     return u;
 }
 
+// A reply that makes the request fail the way an unreachable server does (no connection).
+constexpr const char* kUnreachable = "\x01unreachable";
+
 std::string xmlReply(const std::string& body) { return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<response>" + body + "</response>\n"; }
 
 // ---- Groove Coaster Zero (Taito, 2012): gczero.com. Request parameters are encrypted by the
 // game, so replies depend on the path only. code 0 is success.
 std::optional<std::string> grooveZero(const UrlParts& u) {
     const std::string& p = u.path;
-    // start.php and event.php: the game looks these up in both.
+    // start.php: the account (coins, current event, tutorial done).
     const char* account = "<code>0</code><message>OK</message><en>0</en><ja>0</ja><my_coin>0</my_coin><event_id>0</event_id>"
                           "<taito_id>0</taito_id><m4a_path>0</m4a_path><is_tutorial>0</is_tutorial>";
-    if (p == "/start.php" || p == "/event.php") return xmlReply(account);
-    // The shop: coin packs, songs (stage) and avatars for sale, each a list of <item>s. Nothing
-    // is for sale; the game's own songs are in its bundle.
-    if (p == "/shop_list.php") return xmlReply("<code>0</code><coin></coin><stage></stage><avatar></avatar>");
+    if (p == "/start.php") return xmlReply(account);
+    if (p == "/event.php") return std::string(kUnreachable);   // no event running
+    // sync.php (after TOUCH TO START): the player's saved state. No coins, friends or bought
+    // songs; the game's own songs are in its bundle.
+    if (p == "/sync.php")
+        return xmlReply("<code>0</code><my_coin>0</my_coin><friend_num>0</friend_num><m4a_path>0</m4a_path><cm_stage></cm_stage>"
+                        "<buy_id></buy_id><play_id></play_id><friend_info></friend_info>");
+    // The shop (coin packs, songs and avatars for sale, each a list of <item>s) is "unreachable":
+    // after a shop list arrives the game waits on a download step not worked out yet, but when
+    // the shop cannot be reached it says so and carries on to the game.
+    if (p == "/shop_list.php") return std::string(kUnreachable);
     return std::nullopt;
 }
 
@@ -91,6 +101,11 @@ std::optional<StandInReply> standInFetch(Ctx& x, const std::string& url, const s
         if (u.host != s.host) continue;
         StandInReply r;
         if (auto body = s.reply(u)) {
+            if (*body == kUnreachable) {
+                once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " is answered as unreachable (" + s.game +
+                                          " carries on without it)");
+                return std::nullopt;
+            }
             r.body = std::move(*body);
             once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " answered by HydrogenVM (" + s.game +
                                       "'s server was shut down)");
