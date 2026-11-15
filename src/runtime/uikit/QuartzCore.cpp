@@ -801,7 +801,15 @@ void runFrame(Ctx& x, double now) {
         for (size_t i = 0; i < n && i < u.links.size(); ++i) {
             UIState::Link l = u.links[i];
             if (!l.obj || l.paused) continue;
-            if (++u.links[i].counter < l.interval) continue;
+            // "Unlock frame rate" (experimental, per game): every screen frame, whatever the game
+            // asked for; -frameInterval still reports the game's own value.
+            const int interval = x.proc.config().unlockFrameRate ? 1 : l.interval;
+            if (l.interval > 1 && interval == 1 && !u.unlockLogged) {
+                u.unlockLogged = true;
+                x.proc.logf(LogLevel::Info, "Unlock frame rate: a display link asking for every %d frames (%d fps) runs every frame",
+                            l.interval, 60 / l.interval);
+            }
+            if (++u.links[i].counter < interval) continue;
             u.links[i].counter = 0;
             if (LinkData* ld = rt(x).hostIf<LinkData>(l.obj)) {
                 ld->timestamp = ca_mediaTime(x);

@@ -506,6 +506,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool useGPU = _useGPU;
     const bool playSession = _playSession;
     const bool allowInternet = _allowInternet;
+    const bool unlockFrameRate = _unlockFrameRate;
     const bool glTrace = _glTrace;
 
     auto flushLogs = [core, weakSelf]() {
@@ -541,6 +542,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         }
         cfg.glTrace = glTrace;
         cfg.internetAccess = allowInternet;
+        cfg.unlockFrameRate = unlockFrameRate;
         // Secure connections: the game's old TLS in, the system's modern TLS out (TlsBridgeApple.mm).
         if (allowInternet) cfg.tlsBridge = Hydrogen::App::makeAppleTlsBridge();
         // Foundation downloads (NSURLConnection / NSURLSession) on the system's own HTTP stack.

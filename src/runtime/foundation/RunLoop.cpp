@@ -402,7 +402,16 @@ void scheduleTimer(Ctx& x, id timer, RunLoop& rl, const std::string& mode) {
     }
     rt(x).retain(x.cpu, timer);   // the run loop retains scheduled timers
     Process* p = &x.proc;
-    d->t = rl.addTimer(d->fireAt - now(), d->interval, d->repeats, [p, timer](CPU::Cpu& c) {
+    double interval = d->interval;   // what -timeInterval reports stays the game's own value
+    if (d->repeats && x.proc.config().unlockFrameRate && interval > 1.0 / 50 && interval <= 1.0 / 20) {
+        static std::once_flag logged;
+        std::call_once(logged, [&] {
+            x.proc.logf(LogLevel::Info, "Unlock frame rate: a repeating %.4f s timer (%.0f per second) fires every 1/60 s instead",
+                        interval, 1.0 / interval);
+        });
+        interval = 1.0 / 60;
+    }
+    d->t = rl.addTimer(d->fireAt - now(), interval, d->repeats, [p, timer](CPU::Cpu& c) {
         Ctx cx{*p, c, p->mem()};
         fireTimer(cx, timer);
     }, timer, mode);

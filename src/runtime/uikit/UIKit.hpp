@@ -145,6 +145,7 @@ struct UIState {
     // display links
     struct Link { id obj; id target; SEL sel; int interval; bool paused; int counter; };
     std::vector<Link> links;
+    bool unlockLogged = false;   // "Unlock frame rate" said once that it overrode an interval
     // touches
     struct TouchRec { id touch; id view; uint32_t hostId; };
     std::vector<TouchRec> activeTouches;
