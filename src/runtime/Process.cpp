@@ -1937,7 +1937,8 @@ void Process::reportDefaulted(const std::string& what) {
                        [this, &caller](MissingApiLog::Site& s) {
                            const CPU::Cpu& cpu = currentThread().cpu;
                            s.callerPc = cpu.r[CPU::kLR];
-                           s.caller = caller = describeAddress(s.callerPc);
+                           s.caller = describeAddress(s.callerPc);
+                           if (s.callerPc) caller = s.caller;   // a host-side caller (a pool drain) has no guest address
                            s.backtrace = MissingApiLog::splitLines(backtrace(cpu, int(MissingApiLog::kMaxFrames) - 2));
                        });
     {
