@@ -163,6 +163,8 @@ public:
     //  * enterForeground: resume, then will-enter-foreground -> did-become-active.
     enum class Lifecycle { Background, Foreground, Terminate };
     void setLifecycleHandler(std::function<void(Lifecycle)> h) { lifecycleHandler_ = std::move(h); }
+    // Logs a "Snapshot:" of what every thread is waiting on (see StallReport.cpp); requestGracefulStop does this first.
+    void logStopSnapshot(const char* why);
     void requestGracefulStop(double timeout = 5.0);
     void enterBackground();
     void enterForeground();

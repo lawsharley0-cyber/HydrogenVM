@@ -2,6 +2,8 @@
 // Operates directly on guest memory through the arena's host mapping.
 #include "runtime/Process.hpp"
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <strings.h>
 #include <string>
@@ -32,9 +34,22 @@ uint32_t s_memset_pattern16(Ctx& x, GuestPtr d, GuestPtr pat, uint32_t n) {
 
 uint32_t s_strlen(Ctx& x, GuestPtr s) { return uint32_t(std::strlen(H(x, s))); }
 uint32_t s_strnlen(Ctx& x, GuestPtr s, uint32_t n) { return uint32_t(strnlen(H(x, s), n)); }
-int32_t  s_strcmp(Ctx& x, GuestPtr a, GuestPtr b) { return std::strcmp(H(x, a), H(x, b)); }
+// HVM_TRACE_COMPARE=1 prints every strcmp/strcasecmp of two short words ("Compare: strcmp
+// \"code\" \"message\"") to stderr: how a game looks things up in data it was given, for
+// working out a stand-in server's replies (ServerStandIn.cpp) without reading the game's code.
+void traceCompare(const char* f, const char* a, const char* b) {
+    static const bool on = std::getenv("HVM_TRACE_COMPARE") != nullptr;
+    if (!on) return;
+    auto word = [](const char* s) {
+        size_t n = 0;
+        for (; s[n] && n < 64; ++n) if (!std::isalnum(uint8_t(s[n])) && s[n] != '_' && s[n] != '-' && s[n] != '.') return false;
+        return n > 0 && n < 64;
+    };
+    if (word(a) && word(b)) std::fprintf(stderr, "Compare: %s \"%s\" \"%s\"\n", f, a, b);
+}
+int32_t  s_strcmp(Ctx& x, GuestPtr a, GuestPtr b) { traceCompare("strcmp", H(x, a), H(x, b)); return std::strcmp(H(x, a), H(x, b)); }
 int32_t  s_strncmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return std::strncmp(H(x, a), H(x, b), n); }
-int32_t  s_strcasecmp(Ctx& x, GuestPtr a, GuestPtr b) { return ::strcasecmp(H(x, a), H(x, b)); }
+int32_t  s_strcasecmp(Ctx& x, GuestPtr a, GuestPtr b) { traceCompare("strcasecmp", H(x, a), H(x, b)); return ::strcasecmp(H(x, a), H(x, b)); }
 int32_t  s_strncasecmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return ::strncasecmp(H(x, a), H(x, b), n); }
 int32_t  s_strcoll(Ctx& x, GuestPtr a, GuestPtr b) { return std::strcmp(H(x, a), H(x, b)); }
 uint32_t s_strcpy(Ctx& x, GuestPtr d, GuestPtr s) { const size_t n = std::strlen(H(x, s)); std::memmove(H(x, d), H(x, s), n + 1); return d; }

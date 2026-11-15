@@ -2844,6 +2844,34 @@ int runFullSubsystemTests() {
               "getifaddrs and SIOCGIFCONF list en0 with MAC 02:00:00:00:00:00; ether_ntoa prints it as 2:0:0:0:0:0");
     }
     {
+        // A shut-down game server with a stand-in answers downloads (Groove Coaster Zero's
+        // gczero.com); any other web address through NSData is still nil.
+        using namespace Foundation;
+        auto call=[&](uint32_t object,const char* sel,std::initializer_list<uint32_t> args={}) {return uint32_t(r.send(cpu,object,sel,args));};
+        auto fetch=[&](const char* u){const uint32_t url=call(r.getClass("NSURL"),"URLWithString:",{makeString(cx,u)});return call(r.getClass("NSData"),"dataWithContentsOfURL:",{url});};
+        const uint32_t start=fetch("http://gczero.com/start.php?0123abcd");
+        const auto bytes=start?dataBytes(cx,start):std::vector<uint8_t>();
+        const std::string text(bytes.begin(),bytes.end());
+        check(text.find("<code>0</code>")!=std::string::npos && text.find("<my_coin>")!=std::string::npos && fetch("http://hvm-test.invalid/x.php")==0,
+              "a stand-in server answers Groove Coaster Zero's start.php; other web addresses through NSData stay nil");
+
+        // -[CALayer renderInContext:] draws a label that was never on screen (glyph atlases are
+        // built that way); its text used to come out empty.
+        const uint32_t label=call(call(r.getClass("UILabel"),"alloc"),"initWithFrame:",{0,0,std::bit_cast<uint32_t>(32.0f),std::bit_cast<uint32_t>(32.0f)});
+        call(label,"setText:",{makeString(cx,"W")});
+        call(label,"setFont:",{call(r.getClass("UIFont"),"boldSystemFontOfSize:",{std::bit_cast<uint32_t>(24.0f)})});
+        const uint32_t space=uint32_t(proc.callGuest(cpu,*proc.lookupSymbol("_CGColorSpaceCreateDeviceRGB"),{}));
+        const uint32_t bitmap=uint32_t(proc.callGuest(cpu,*proc.lookupSymbol("_CGBitmapContextCreate"),{0,32,32,8,128,space,1}));
+        call(call(label,"layer"),"renderInContext:",{bitmap});
+        const uint32_t px=uint32_t(proc.callGuest(cpu,*proc.lookupSymbol("_CGBitmapContextGetData"),{bitmap}));
+        int inked=0;
+        for(uint32_t i=0;i<32*32;++i) inked+=proc.mem().read<uint8_t>(px+i*4+3)!=0;
+        proc.callGuest(cpu,*proc.lookupSymbol("_CGContextRelease"),{bitmap});
+        proc.callGuest(cpu,*proc.lookupSymbol("_CGColorSpaceRelease"),{space});
+        call(label,"release");
+        check(inked>20, "-[CALayer renderInContext:] draws a label that was never on screen (its text is drawn first)");
+    }
+    {
         // An app that releases an autoreleased object frees it before its pool drains (Bad
         // Piggies). The pool skips the freed entry and says so, instead of messaging freed memory.
         auto& rr = ObjC::rt(proc);

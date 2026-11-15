@@ -2,6 +2,7 @@
 // property-list conversion, run loop) used across the Foundation and UIKit
 // modules.
 #pragma once
+#include <optional>
 #include "runtime/objc/ObjC.hpp"
 #include "loader/Plist.hpp"
 #include <atomic>
@@ -173,6 +174,11 @@ std::string bundleResource(Ctx& x, const std::string& name, const std::string& t
 id makeFileURL(Ctx& x, const std::string& path, bool isDir = false);
 std::string urlFilePath(Ctx& x, id url);
 std::string urlString(Ctx& x, id url);
+// Stand-in servers (ServerStandIn.cpp): answers for games whose servers were shut down.
+struct StandInReply { int status = 200; std::string mime = "text/xml"; std::string body; };
+std::optional<StandInReply> standInFetch(Ctx& x, const std::string& url, const std::string& method);
+std::optional<StandInReply> standInFetch(Ctx& x, id url, const std::string& method);
+id standInResponse(Ctx& x, id url, const StandInReply& r);   // an autoreleased NSHTTPURLResponse
 bool isURL(Ctx& x, id obj);
 id localizedString(Ctx& x, id key, id value, id table);
 

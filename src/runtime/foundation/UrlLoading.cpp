@@ -1,4 +1,5 @@
-// HydrogenVM — NSURLRequest / NSMutableURLRequest / NSURLConnection, offline.
+// HydrogenVM — NSURLRequest / NSMutableURLRequest / NSURLConnection, offline (except for
+// shut-down servers with a stand-in: ServerStandIn.cpp).
 //
 // Requests are real value objects (URL, method, headers, body, cache/timeout
 // policy), so apps build and inspect them. Connections behave like a device
@@ -8,6 +9,7 @@
 // an error carry on, instead of hanging or crashing on a nil request.
 #include "Foundation.hpp"
 #include <cstring>
+#include <memory>
 
 namespace Hydrogen::Runtime::Foundation {
 namespace {
@@ -168,8 +170,43 @@ id notConnectedError(Ctx& x, id url) {
 struct Connection : ObjC::HostObject { id request = 0, delegate = 0; bool started = false; };
 Connection* conn(Ctx& x, id c) { return c ? R(x).hostIf<Connection>(c) : nullptr; }
 
+// A stand-in server's reply (ServerStandIn.cpp), delivered the way a real connection does on
+// the run loop: connection:didReceiveResponse:, connection:didReceiveData: (one piece),
+// connectionDidFinishLoading:.
+bool scheduleStandIn(Ctx& x, id connection) {
+    Connection* c = conn(x, connection);
+    Request* r = c ? req(x, c->request) : nullptr;
+    if (!c || !c->delegate || !r || !r->url) return false;
+    auto reply = standInFetch(x, r->url, r->method ? utf8(x, r->method) : "GET");
+    if (!reply) return false;
+    R(x).retain(x.cpu, connection);
+    Process* p = &x.proc;
+    auto body = std::make_shared<StandInReply>(std::move(*reply));
+    runLoopForObject(x, 0).post([p, connection, body](CPU::Cpu& cc) {
+        Ctx cx{*p, cc, p->mem()};
+        Connection* c = conn(cx, connection);
+        if (c && c->delegate && c->started) {
+            const id del = retainObj(cx, c->delegate);
+            const id url = req(cx, c->request) ? req(cx, c->request)->url : 0;
+            const uint32_t pool = R(cx).poolPush();
+            auto says = [&](const char* sel) { return R(cx).respondsTo(del, R(cx).sel(sel)); };
+            if (says("connection:didReceiveResponse:"))
+                R(cx).send(cc, del, "connection:didReceiveResponse:", {connection, standInResponse(cx, url, *body)});
+            if (conn(cx, connection) && conn(cx, connection)->started && says("connection:didReceiveData:"))
+                R(cx).send(cc, del, "connection:didReceiveData:", {connection, makeData(cx, body->body.data(), uint32_t(body->body.size()))});
+            if (conn(cx, connection) && conn(cx, connection)->started && says("connectionDidFinishLoading:"))
+                R(cx).send(cc, del, "connectionDidFinishLoading:", {connection});
+            R(cx).poolPop(cc, pool);
+            if (Connection* c2 = conn(cx, connection)) setField(cx, c2->delegate, 0);
+            R(cx).release(cc, del);
+        }
+        R(cx).release(cc, connection);
+    });
+    return true;
+}
 // Fire connection:didFailWithError: on the current run loop, soon.
 void scheduleFailure(Ctx& x, id connection) {
+    if (scheduleStandIn(x, connection)) return;
     Connection* c = conn(x, connection);
     if (!c || !c->delegate) return;
     R(x).retain(x.cpu, connection);
@@ -218,6 +255,13 @@ void conn_dealloc(Ctx& x, id self, SEL) {
 // + sendSynchronousRequest:returningResponse:error: → nil, offline error.
 id connc_sync(Ctx& x, id, SEL, id request, GuestPtr responseOut, GuestPtr errorOut) {
     if (responseOut) x.mem.write<uint32_t>(responseOut, 0);
+    if (Request* r = req(x, request); r && r->url) {
+        if (auto reply = standInFetch(x, r->url, r->method ? utf8(x, r->method) : "GET")) {
+            if (responseOut) x.mem.write<uint32_t>(responseOut, standInResponse(x, r->url, *reply));
+            if (errorOut) x.mem.write<uint32_t>(errorOut, 0);
+            return makeData(x, reply->body.data(), uint32_t(reply->body.size()));
+        }
+    }
     if (errorOut) x.mem.write<uint32_t>(errorOut, notConnectedError(x, req(x, request) ? req(x, request)->url : 0));
     return 0;
 }
@@ -228,6 +272,18 @@ void connc_async(Ctx& x, id, SEL, id request, id, uint32_t handler) {
     const id url = req(x, request) ? req(x, request)->url : 0;
     if (url) R(x).retain(x.cpu, url);
     Process* p = &x.proc;
+    if (auto reply = url ? standInFetch(x, url, req(x, request)->method ? utf8(x, req(x, request)->method) : "GET") : std::nullopt) {
+        auto body = std::make_shared<StandInReply>(std::move(*reply));
+        runLoopForObject(x, 0).post([p, block, url, body](CPU::Cpu& cc) {
+            Ctx cx{*p, cc, p->mem()};
+            const uint32_t pool = R(cx).poolPush();
+            ObjC::callBlock(cx, block, {standInResponse(cx, url, *body), makeData(cx, body->body.data(), uint32_t(body->body.size())), 0});
+            R(cx).poolPop(cc, pool);
+            ObjC::blockRelease(cx, block);
+            R(cx).release(cc, url);
+        });
+        return;
+    }
     runLoopForObject(x, 0).post([p, block, url](CPU::Cpu& cc) {
         Ctx cx{*p, cc, p->mem()};
         const id err = notConnectedError(cx, url);

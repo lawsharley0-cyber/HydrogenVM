@@ -265,11 +265,14 @@ void Process::requestStop() {
     lifeCv_.notify_all();   // a backgrounded main thread is parked in waitWhileBackgrounded()
 }
 
+void Process::logStopSnapshot(const char* why) {
+    if (StallWatch* w = stallWatch_) { try { checkStall(*w, why); } catch (...) {} }
+}
 void Process::requestGracefulStop(double timeout) {
     if (stopping() || gracefulStop_.exchange(true)) return;
     // What every thread was doing when the player gave up: the log of a game that sat on a
     // loading screen then says what it was waiting for.
-    if (StallWatch* w = stallWatch_) { try { checkStall(*w, "the player stopped the game"); } catch (...) {} }
+    logStopSnapshot("the player stopped the game");
     if (!lifecycleHandler_) { requestStop(); return; }
     lifecycleHandler_(Lifecycle::Terminate);
     // Watchdog: an app that doesn't get through its shutdown (or never runs its main loop) is stopped anyway.

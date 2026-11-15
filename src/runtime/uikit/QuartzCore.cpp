@@ -827,9 +827,14 @@ void runFrame(Ctx& x, double now) {
 }
 
 namespace {
+void displayPass(Ctx& x, id layer, IMP baseDrawRect);
 void l_renderInContextImpl(Ctx& x, id self, id ctx) {
     CG::ContextData* cd = CG::context(x, ctx);
     if (!cd) return;
+    // Like Core Animation, draw what has not been drawn yet first: a label made only to be
+    // rendered into a bitmap (Groove Coaster Zero builds its glyph atlas that way) was never
+    // on screen, so its text was never drawn and the bitmap came out empty.
+    displayPass(x, self, rt(x).lookup(ui(x).view, rt(x).sel("drawRect:")));
     Compositor c{x, cd->surface};
     // Render with the layer's own bounds at the context's current CTM (layer space = user space).
     LayerData& d = L(x, self);
