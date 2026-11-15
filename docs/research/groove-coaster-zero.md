@@ -99,6 +99,44 @@ tuneFile_pak`, then names that are not part of any reply (pieces of the game's o
 strings), so the lookup list runs past its end. No UIKit dialog is involved (the menu draws in
 GL only).
 
+## Song files (bench sweep, 2026-11-15)
+
+Every song in the GAMEDEBUG picker was started with generated test tones; each one asked the
+stand-in for exactly these files (`<name>.m4a.zip`, served from `Stand-in Files/gczero.com/`)
+and started without a crash. **verified** unless marked.
+
+Zero's own 14 songs (lower case):
+
+| Music | Hit sound | Notes |
+|---|---|---|
+| `plot3_bgm.m4a` | `plot3_shot.m4a` | Music Plot Type Three; played to the RESULT screen; also verified on an iPhone |
+| `eclipse_bgm.m4a` | `eclipse_shot.m4a` | Eclipse Landscape |
+| `sleep_bgm.m4a` | `sleep_shot.m4a` | Sleep |
+| `shadow_bgm.m4a` | `shadow_shot.m4a` | Shadow |
+| `kannan_bgm.m4a` | `kannan_shot.m4a` | Kannanshinku |
+| `inv2003_bgm.m4a` | `inv2003_shot.m4a` | Invader Disco |
+| `hosoe_bgm.m4a` | `hosoe_shot.m4a` | |
+| `niji_bgm.m4a` | `niji_shot.m4a` | |
+| `treeclimb_bgm.m4a` | `treeclimb_shot.m4a` | |
+| `backon_bgm.m4a` | `backon_shot.m4a` | |
+| `freestyle_bgm.m4a` | `freestyle_shot.m4a` (observed in `tuneFile.pak`, not yet requested in the sweep) | Freestyle Beats |
+| `kiki_bgm.m4a` | `kiki_shot.m4a` (observed, not yet requested) | |
+| `star_bgm.m4a` (observed) | `star_shot.m4a` (observed) | not reached by the sweep |
+| `planet_bgm.m4a` (observed) | not known | Planet Connection; not reached by the sweep |
+
+The picker also lists the original Groove Coaster's songs, whose files use other names and
+upper case: `8bit_BGM / 8bit_SHOT`, `Acid2_BGM / Acid2_SHOT`, `Aprils_BGM / Aprils_SHOT`,
+`Arkanoid_BGM_1 / Arkanoid_SHOT_1`, `Cardiac_BGM_1 / Cardiac_SHOT_2`,
+`Contemporary_BGM_1 / Contemporary_SHOT_2`, `Dreamer_BGM / Dreamer_SHOT`,
+`DrumnBass_BGM / DrumnBass_SHOT`, `GBME_BGM_1 / GBME_SHOT_2`, `GEKI_BGM_1 / GEKI_SHOT_2`,
+`HELLO31337_BGM / HELLO31337_SHOT`, `Happy_BGM_1 / Happy_SHOT_2`, `Hiphop_BGM_1 / Hiphop_SHOT_2`,
+`House_BGM_1 / House_SHOT_2`, `ICNA_BGM / ICNA_SHOT`, `INVGENEMIX_BGM / INVGENEMIX_SHOT`,
+`InvadeYou_BGM_1 / InvadeYou_SHOT_2`, `JET_BGM_1 / JET_SHOT_2`, `JNGBELL_BGM / JNGBELL_SHOT`,
+`MUSICREV_BGM / MUSICREV_SHOT`, `Neptune_BGM_1 / Neptune_SHOT_2`, `PlanetRock_BGM / PlanetRock_SHOT_FIX`,
+`Poly_BGM / Poly_SHOT`, `SROCK_BGM / SROCK_SHOT`, `ShtStr_BGM / ShtStr_SHOT`, `Ska_BGM / Ska_SHOT`,
+`Spacefunk_BGM_1 / Spacefunk_SHOT_2`, `TRIP1_BGM_1 / TRIP1_SHOT_2`, `Visio_BGM / Visio_SHOT`
+(all `.m4a`). The stand-in log line ("no song file X") names any file still missing.
+
 ## How to reach a song quickly
 
 The title screen has a **GAMEDEBUG** button (top left): a debug menu with song, difficulty and
