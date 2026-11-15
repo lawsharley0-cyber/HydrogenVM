@@ -5,6 +5,12 @@
 #include <cstring>
 #include <new>
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <unistd.h>
+#endif
 #if defined(__APPLE__)
 #include <AudioToolbox/AudioToolbox.h>
 #elif defined(HVM_HAVE_FFMPEG)
@@ -218,6 +224,31 @@ bool decodeHostContainer(DecodedAudio& out, const uint8_t* data, size_t size) {
         if (!accepted) return false;
     }
     if (result != AVERROR_EOF || avcodec_send_packet(decoder.codec, nullptr) < 0 || !drain()) return false;
+#elif defined(__linux__) && !defined(__ANDROID__)
+    // Desktop bench without FFmpeg headers: the ffmpeg program, when installed, decodes to
+    // 44.1 kHz stereo 16-bit. Lets the bench play AAC like a phone does (a rhythm game that
+    // times itself to its music otherwise waits on silence).
+    static const bool haveCli = std::system("command -v ffmpeg >/dev/null 2>&1") == 0;
+    if (!haveCli) return false;
+    char path[] = "/tmp/hvm-audio-XXXXXX";
+    const int fd = ::mkstemp(path);
+    if (fd < 0) return false;
+    const bool wrote = ::write(fd, data, size) == ssize_t(size);
+    ::close(fd);
+    if (wrote) {
+        const std::string cmd = std::string("ffmpeg -v quiet -i '") + path + "' -f s16le -ac 2 -ar 44100 - 2>/dev/null";
+        if (std::FILE* pipe = ::popen(cmd.c_str(), "r")) {
+            int16_t buf[8192];
+            size_t n;
+            while ((n = std::fread(buf, sizeof(int16_t), 8192, pipe)) > 0 && decoded.stereoPcm.size() < kMaxSamples)
+                decoded.stereoPcm.insert(decoded.stereoPcm.end(), buf, buf + n);
+            ::pclose(pipe);
+        }
+    }
+    ::unlink(path);
+    decoded.sampleRate = 44100;
+    decoded.channels = 2;
+    if (decoded.stereoPcm.size() % 2) decoded.stereoPcm.pop_back();
 #else
     return false;
 #endif
