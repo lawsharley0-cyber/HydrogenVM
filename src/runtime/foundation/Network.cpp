@@ -6,6 +6,8 @@
 // connection does: the client callback (or NSStreamDelegate) gets an error
 // event on the run loop the stream was scheduled on. CFHTTPMessage objects are
 // real enough to build requests and read them back.
+#include <filesystem>
+#include <mutex>
 #include "Foundation.hpp"
 #include "runtime/Support.hpp"
 #include <fstream>
@@ -48,7 +50,27 @@ bool scr_getFlags(Ctx& x, uint32_t ref, GuestPtr flags) {
         // of showing its "no Internet connection" message). Geometry Dash, the game the
         // "reachable" answer was added for, starts the same either way.
         // With the game's "Allow internet" switch on, the network is real: reachable (2).
-        x.mem.write<uint32_t>(flags, x.proc.config().internetAccess ? 2u : 0u);
+        //
+        // One exception offline: a Gameloft game whose downloaded content was restored (its
+        // content index Library/Caches/dlcs/mnhtn_index_ios exists, as the with-data IPAs
+        // carry it). Told "not reachable", Minion Rush 1.0.0 re-reads its whole content index
+        // every ~1.3 s to retry its update check: mnhtn_toc (837 KB of JSON) and the hash file
+        // (1.2 MB), a 450 ms stall each time on an iPhone, so play stutters every second.
+        // Told "reachable", it checks twice and stops (bench: 2 reads in 150 s instead of 59);
+        // its requests still fail at once, and it plays from the restored packs. Without the
+        // index, the honest answer stays, so it shows its "no Internet connection" message.
+        bool reachable = x.proc.config().internetAccess;
+        if (!reachable) {
+            static std::once_flag logged;
+            std::error_code ec;
+            reachable = std::filesystem::exists(x.proc.homePath() + "/Library/Caches/dlcs/mnhtn_index_ios", ec);
+            if (reachable)
+                std::call_once(logged, [&] {
+                    x.proc.logf(LogLevel::Info, "%s", "Network: reported as reachable (but offline) because this Gameloft game's "
+                                                      "downloaded content is restored; otherwise it re-reads its content index every second");
+                });
+        }
+        x.mem.write<uint32_t>(flags, reachable ? 2u : 0u);
     }
     return true;
 }
@@ -462,7 +484,7 @@ void registerNetwork(Process& p, ObjC::Runtime& r) {
     p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
     p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
     supportDef<&scr_getFlags>(p, "_SCNetworkReachabilityGetFlags", SupportStatus::Real,
-        "Reports not reachable for any non-null reference: the emulator has no outbound network");
+        "Not reachable offline (reachable with the game's internet switch on, or when a Gameloft game's restored content index exists, to stop it re-reading that index every second)");
     p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
     p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
     p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");
