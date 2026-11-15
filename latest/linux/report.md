@@ -1,29 +1,29 @@
-# HydrogenVM report — 04e8b9a
+# HydrogenVM report — 0481694
 
-2026-11-15T12:31:40+00:00 · INTEL(R) XEON(R) PLATINUM 8573C (x86_64, Linux 7.0.0-1017-azure)
+2026-11-15T12:58:47+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 301.8s |
-| tools | 1 | 0 | 0 | 6.3s |
-| cpu | 15 | 0 | 0 | 0.6s |
-| ios | 6 | 0 | 0 | 2.1s |
-| bench | 5 | 0 | 0 | 19.3s |
+| build | 1 | 0 | 0 | 378.7s |
+| tools | 1 | 0 | 0 | 6.8s |
+| cpu | 15 | 0 | 0 | 0.7s |
+| ios | 6 | 0 | 0 | 2.2s |
+| bench | 5 | 0 | 0 | 24.3s |
 
 ## Speed
 
-CoreMark **2189.6** iterations/s (732.6 guest MIPS)
+CoreMark **1743.2** iterations/s (581.8 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **152.1%** | 912 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **114.0%** | 912 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **91.2%** | 730 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **48.1%** | 626 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **121.1%** | 726 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **90.8%** | 726 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **72.6%** | 581 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.3%** | 498 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 482 MIPS, ctests_arm 510 MIPS, ftests_vfp_thumb_softfp 549 MIPS, ftests_neon_thumb 455 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 445 MIPS, ctests_arm 508 MIPS, ftests_vfp_thumb_softfp 436 MIPS, ftests_neon_thumb 398 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -32,13 +32,13 @@ Raw interpreter speed (CPU test programs): ctests_thumb 482 MIPS, ctests_arm 510
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.04s | 61 | 0.35 ms | 6.28 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.40 ms | 6.92 ms | 0 |
 
 ## Problems (49)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 48.1% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 38.3% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (48)
 
@@ -89,5 +89,5 @@ Raw interpreter speed (CPU test programs): ctests_thumb 482 MIPS, ctests_arm 510
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIView.cpp:14:17: warning: unused variable 'kPi' [-Wunused-const-variable]
-- **build / compiler**: tests/runner/TestRunner.cpp:12467:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
+- **build / compiler**: tests/runner/TestRunner.cpp:12490:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 
