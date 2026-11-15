@@ -16,6 +16,7 @@
 #include "Foundation.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -82,11 +83,18 @@ std::optional<std::string> readFile(const std::string& path) {
     if (!in) return std::nullopt;
     return std::string(std::istreambuf_iterator<char>(in), {});
 }
-// The song folder is "Stand-in Files/gczero.com" in the game's Documents. A file named as the
-// game asks ("plot3_bgm.m4a.zip") is sent as it is; a bare "plot3_bgm.m4a" is sent inside a
-// stored zip under that name. Neither: unreachable, and the log says where to put it.
+// The player's files for a stand-in live in "Stand-in Files/<host>/" at the top of HydrogenVM's
+// Documents (Files app: On My iPhone > HydrogenVM > Stand-in Files > gczero.com), two levels
+// above a game's home (Documents/Apps/<bundle id>/). Not in the game's own Documents: Groove
+// Coaster Zero clears that at launch. A file named as the game asks ("plot3_bgm.m4a.zip") is
+// sent as it is; a bare "plot3_bgm.m4a" is sent inside a stored zip under that name. Neither:
+// unreachable, and the log says where to put it.
 std::optional<std::string> songFile(Ctx& x, const std::string& zipName) {
-    const std::string dir = x.proc.homePath() + "/Documents/Stand-in Files/gczero.com/";
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path base = fs::weakly_canonical(fs::path(x.proc.homePath()) / ".." / "..", ec);
+    if (ec) base = fs::path(x.proc.homePath()) / ".." / "..";
+    const std::string dir = (base / "Stand-in Files" / "gczero.com").string() + "/";
     if (auto z = readFile(dir + zipName)) return z;
     const std::string inner = zipName.size() > 4 && zipName.compare(zipName.size() - 4, 4, ".zip") == 0 ? zipName.substr(0, zipName.size() - 4) : zipName;
     if (auto f = readFile(dir + inner)) {
