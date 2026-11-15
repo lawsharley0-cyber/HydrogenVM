@@ -20,6 +20,7 @@ struct AppInfo {
     bool encrypted = false;
     bool runnable = false;         // 32-bit ARM, not encrypted
     std::string problem;           // why it can't run, for the UI
+    size_t restoredDataFiles = 0;  // importIpa: files put in the app's home from the IPA's Container/
     Plist::ValuePtr infoPlist;
 };
 

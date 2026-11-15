@@ -132,9 +132,17 @@ AppInfo importIpa(const std::string& ipaPath, const std::string& appsRoot) {
         }
         for (const auto& p : keep) fs::rename(p, staging / p.filename(), ec);
     }
+    // An IPA made from an installed app with its data ("with data" / cache-inclusive IPAs, as
+    // IPA Installer and backup tools write them) carries the app's sandbox next to Payload/ as
+    // Container/ (Container/Library/Caches/..., Container/Documents/...). It goes into the app's
+    // home the way it was on the device. Files the app already has here (saves kept from an
+    // earlier install) are not overwritten.
+    const size_t restored = zip.extract("Container/", staging.string(), /*overwrite=*/false);
     fs::remove_all(container, ec);
     fs::rename(staging, container);
-    return readBundle((container / appName).string());
+    AppInfo info = readBundle((container / appName).string());
+    info.restoredDataFiles = restored;
+    return info;
 }
 
 } // namespace Hydrogen::Loader
