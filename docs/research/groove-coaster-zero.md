@@ -17,7 +17,7 @@ by path only. Replies are XML; the root element's name is not checked. `code` 0 
 | Request | When | Stand-in reply | Status |
 |---|---|---|---|
 | `start.php` | launch | `code message en ja my_coin event_id taito_id m4a_path is_tutorial` | verified: accepted |
-| `event.php` | launch | unreachable (connection fails) | verified: game logs an error and carries on |
+| `event.php` | launch | unreachable (connection fails) | verified: game logs an error and carries on. A successful reply (even `code` 0 and `event_id` 0 only) sends the game to a "Download : n/3 [0%]" screen that never finishes: an event comes with three pak downloads (`stage_pak model_pak tuneFile_pak`, format open) |
 | `shop_list.php` | launch | unreachable | verified: with any successful reply (even empty lists) the game stops on a "Download" screen; when unreachable it carries on |
 | `sync.php` | after TOUCH TO START | `code my_coin friend_num m4a_path cm_stage buy_id play_id friend_info` | verified: accepted; `my_coin` shows on the menu |
 | `<m4a_path><name>.m4a.zip` | starting a song | a zip holding `<name>.m4a` (see below) | verified |
