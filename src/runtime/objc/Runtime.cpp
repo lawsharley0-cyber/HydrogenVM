@@ -529,6 +529,7 @@ id Runtime::createInstance(Class cls, uint32_t extraBytes) {
         // Where each object was made, so a message to it after it's freed can
         // point at the API that returned it (an over-release usually starts there).
         std::string site = proc_.backtrace(proc_.currentThread().cpu, 8);
+        if (const std::string api = proc_.activeHostCalls(); !api.empty()) site = "    made inside " + api + "\n" + site;
         std::lock_guard<std::mutex> lk(zombieMu_);
         allocSites_[obj] = std::move(site);
     }
@@ -679,6 +680,16 @@ void Runtime::poolPop(CPU::Cpu& c, uint32_t token) {
         while (ts.pool.size() > mark) {
             const id obj = ts.pool.back();
             ts.pool.pop_back();
+            // An app that releases an object it got autoreleased (Bad Piggies, a
+            // +stringWithUTF8String: result) frees it before its pool drains. On iOS the freed
+            // block usually still looks like the object and the extra release goes unnoticed;
+            // here the heap reuses its first word at once. A pool entry whose class word is no
+            // class is such an object: skip it and say so, instead of messaging freed memory.
+            // (With zombies on, the zombie report names the over-release instead.)
+            if (!zombiesEnabled_ && !info(classOf(obj))) {
+                proc_.reportDefaulted("autorelease pool skipped an object the app had already freed (it released an object it did not own)");
+                continue;
+            }
             release(c, obj);
         }
         ts.marks.pop_back();

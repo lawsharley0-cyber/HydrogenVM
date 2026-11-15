@@ -1522,6 +1522,19 @@ uint32_t Process::insn32At(uint32_t pc, bool thumb) const {
     }
 }
 
+// The host functions this thread is inside right now, innermost first ("-[NSString copy] <-
+// +[NSString stringWithFormat:]"): for a zombie's "allocated by", the API that made the object.
+std::string Process::activeHostCalls() const {
+    const HostCallRing& ring = tHostCalls;
+    std::string out;
+    for (uint32_t i = 0; i < HostCallRing::kSize; ++i) {
+        const HostCallCrumb& cr = ring.crumb[(ring.next - i + HostCallRing::kSize) % HostCallRing::kSize];
+        if (!cr.serial || cr.process != identity_ || cr.returned) continue;
+        out += (out.empty() ? "" : " <- ") + engine_->hleName(cr.hle);
+    }
+    return out;
+}
+
 // "Last host calls" and "likely cause" lines for a crash report. Read on the crashing
 // thread, so the host-call ring is that thread's.
 std::string Process::crashClues(CPU::Exit why, uint32_t insn, bool thumb) const {

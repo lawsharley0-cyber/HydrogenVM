@@ -2809,6 +2809,21 @@ int runFullSubsystemTests() {
         check(found && proc.mem().read<uint32_t>(out) == 0, "a made-up default answer is recorded as Defaulted, once per text with a count");
     }
     {
+        // An app that releases an autoreleased object frees it before its pool drains (Bad
+        // Piggies). The pool skips the freed entry and says so, instead of messaging freed memory.
+        auto& rr = ObjC::rt(proc);
+        const uint32_t pool = rr.poolPush();
+        const uint32_t obj = uint32_t(rr.send(cpu, rr.getClass("NSObject"), "new"));
+        rr.autorelease(cpu, obj);
+        rr.release(cpu, obj);   // the over-release: the object is freed now
+        bool threw = false;
+        try { rr.poolPop(cpu, pool); } catch (...) { threw = true; }
+        bool noted = false;
+        for (const auto& r : proc.defaultedApis().records())
+            if (r.name.find("autorelease pool skipped an object the app had already freed") == 0) noted = true;
+        check(!threw && noted, "an autorelease pool skips an entry the app already freed and records it");
+    }
+    {
         // Stall report: the main thread waiting 6 s on a mutex held by another thread.
         ProcessConfig scfg; scfg.homePath = "/tmp/hvm-stall-test";
         std::string logged;

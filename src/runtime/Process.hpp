@@ -293,6 +293,7 @@ public:
     static StallWatch* newStallWatch();
     static void deleteStallWatch(StallWatch* w);
     GuestThread* currentThreadIfGuest();
+    std::string activeHostCalls() const;   // host functions this thread is inside, innermost first
     std::string threadLivenessJson() const;
     const std::string& crashSignature() const { return crashSignature_; }
     std::vector<std::string> missingSymbols() const;
