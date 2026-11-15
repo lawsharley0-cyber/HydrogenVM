@@ -12,6 +12,8 @@
 #include <cstring>
 #include <memory>
 #include <future>
+#include <strings.h>
+#include <cstdio>
 #include "runtime/libc/HttpClient.hpp"
 
 namespace Hydrogen::Runtime::Foundation {
@@ -423,6 +425,271 @@ void connc_async(Ctx& x, id, SEL, id request, id, uint32_t handler) {
 }
 bool connc_canHandle(Ctx&, id, SEL, id) { return true; }
 
+// ---- NSURLSession (iOS 7): sessions, data and download tasks, completion handlers and
+// delegates. A task fetches the way NSURLConnection does (stand-in server, then the host's
+// HTTP client when the game is allowed online, else the offline error). Results are delivered
+// on the main run loop (a delegate queue is not modelled).
+struct SessionConfig : ObjC::HostObject { id headers = 0; double timeout = 60; bool background = false; };
+struct Session : ObjC::HostObject { id config = 0, delegate = 0, queue = 0; bool invalid = false; };
+struct Task : ObjC::HostObject {
+    id session = 0, request = 0, response = 0, error = 0, description = 0;
+    uint32_t handler = 0;      // a copied completion block, or 0 (delegate)
+    int32_t state = 1;         // NSURLSessionTaskState: 0 running, 1 suspended, 2 canceling, 3 completed
+    uint32_t ident = 0;
+    bool download = false, cancelled = false, started = false;
+    int64_t received = 0, expected = -1;
+    float priority = 0.5f;
+};
+struct SessionState {
+    explicit SessionState(Process&) {}
+    Class config = 0, session = 0, task = 0, dataTask = 0, downloadTask = 0;
+    id shared = 0;
+    uint32_t nextTask = 1;
+    uint32_t noopBlock = 0;
+};
+SessionState& SS(Ctx& x) { return x.proc.service<SessionState>(); }
+SessionConfig* scfg(Ctx& x, id o) { return o ? R(x).hostIf<SessionConfig>(o) : nullptr; }
+Session* sess(Ctx& x, id o) { return o ? R(x).hostIf<Session>(o) : nullptr; }
+Task* task(Ctx& x, id o) { return o ? R(x).hostIf<Task>(o) : nullptr; }
+
+// A global block that does nothing: the completionHandler handed to a delegate's
+// URLSession:dataTask:didReceiveResponse:completionHandler: (the answer does not matter here).
+void noopInvoke(Ctx&) {}
+uint32_t noopBlock(Ctx& x) {
+    auto& st = SS(x);
+    if (st.noopBlock) return st.noopBlock;
+    const uint32_t desc = x.proc.heap().allocZeroed(8);
+    x.mem.write<uint32_t>(desc + 4, 20);   // size of the block literal
+    const uint32_t b = x.proc.heap().allocZeroed(20);
+    const auto isa = x.proc.lookupSymbol("__NSConcreteGlobalBlock");
+    x.mem.write<uint32_t>(b, isa ? x.mem.read<uint32_t>(*isa) : 0);
+    x.mem.write<uint32_t>(b + 4, 1u << 28);   // BLOCK_IS_GLOBAL
+    x.mem.write<uint32_t>(b + 12, x.proc.lookupSymbol("__hvm_url_session_noop_block").value_or(0));
+    x.mem.write<uint32_t>(b + 16, desc);
+    st.noopBlock = b;
+    return b;
+}
+
+// NSURLSessionConfiguration
+id newConfig(Ctx& x, bool background) {
+    const id o = R(x).createInstance(SS(x).config);
+    auto h = std::make_unique<SessionConfig>();
+    h->background = background;
+    R(x).setHost(o, std::move(h));
+    return o;
+}
+id cfgc_default(Ctx& x, id, SEL) { return autoreleased(x, newConfig(x, false)); }
+id cfgc_background(Ctx& x, id, SEL, id) { return autoreleased(x, newConfig(x, true)); }
+id cfg_copy(Ctx& x, id self, SEL, uint32_t) {
+    SessionConfig* c = scfg(x, self);
+    const id o = newConfig(x, c && c->background);
+    if (c) { SessionConfig* n = scfg(x, o); n->timeout = c->timeout; n->headers = retainObj(x, c->headers); }
+    return o;
+}
+void cfg_setHeaders(Ctx& x, id self, SEL, id d) {
+    SessionConfig* c = scfg(x, self);
+    if (!c) return;
+    const id copy = d ? id(R(x).send(x.cpu, d, "copy")) : 0;   // +1, owned by the configuration
+    if (c->headers) R(x).release(x.cpu, c->headers);
+    c->headers = copy;
+}
+id cfg_headers(Ctx& x, id self, SEL) { SessionConfig* c = scfg(x, self); return c ? c->headers : 0; }
+void cfg_setTimeout(Ctx& x, id self, SEL, double t) { if (SessionConfig* c = scfg(x, self)) c->timeout = t; }
+double cfg_timeout(Ctx& x, id self, SEL) { SessionConfig* c = scfg(x, self); return c ? c->timeout : 60; }
+void cfg_ignoreId(Ctx&, id, SEL, id) {}
+void cfg_ignoreInt(Ctx&, id, SEL, uint32_t) {}
+void cfg_ignoreDouble(Ctx&, id, SEL, double) {}
+void cfg_dealloc(Ctx& x, id self, SEL) {
+    if (SessionConfig* c = scfg(x, self); c && c->headers) R(x).release(x.cpu, c->headers);
+    R(x).disposeInstance(x.cpu, self);
+}
+
+// NSURLSession
+id newSession(Ctx& x, id config, id delegate, id queue) {
+    const id o = R(x).createInstance(SS(x).session);
+    auto h = std::make_unique<Session>();
+    h->config = config ? id(R(x).send(x.cpu, config, "copy")) : newConfig(x, false);
+    h->delegate = retainObj(x, delegate);   // a session keeps its delegate until invalidated
+    h->queue = retainObj(x, queue);
+    R(x).setHost(o, std::move(h));
+    return o;
+}
+id sesc_shared(Ctx& x, id, SEL) {
+    auto& st = SS(x);
+    if (!st.shared) { st.shared = newSession(x, 0, 0, 0); R(x).makeImmortal(st.shared); }
+    return st.shared;
+}
+id sesc_withConfig(Ctx& x, id, SEL, id config) { return autoreleased(x, newSession(x, config, 0, 0)); }
+id sesc_withConfigDelegate(Ctx& x, id, SEL, id config, id delegate, id queue) { return autoreleased(x, newSession(x, config, delegate, queue)); }
+id ses_config(Ctx& x, id self, SEL) { Session* s = sess(x, self); return s ? s->config : 0; }
+id ses_delegate(Ctx& x, id self, SEL) { Session* s = sess(x, self); return s ? s->delegate : 0; }
+id ses_queue(Ctx& x, id self, SEL) { Session* s = sess(x, self); return s ? s->queue : 0; }
+void ses_invalidate(Ctx& x, id self, SEL) {
+    Session* s = sess(x, self);
+    if (!s || s->invalid || self == SS(x).shared) return;
+    s->invalid = true;
+    const id del = s->delegate;
+    s->delegate = 0;
+    if (del) {
+        if (R(x).respondsTo(del, R(x).sel("URLSession:didBecomeInvalidWithError:")))
+            R(x).send(x.cpu, del, "URLSession:didBecomeInvalidWithError:", {self, 0});
+        R(x).release(x.cpu, del);
+    }
+}
+void ses_getTasks(Ctx& x, id self, SEL, uint32_t handler) {
+    if (!handler) return;
+    const id empty = makeArray(x, {});
+    ObjC::callBlock(x, handler, {empty, empty, empty});
+}
+void ses_dealloc(Ctx& x, id self, SEL) {
+    if (Session* s = sess(x, self)) for (id* f : {&s->config, &s->delegate, &s->queue}) if (*f) R(x).release(x.cpu, *f);
+    R(x).disposeInstance(x.cpu, self);
+}
+
+id newTask(Ctx& x, id session, id request, uint32_t handler, bool download) {
+    const id o = R(x).createInstance(download ? SS(x).downloadTask : SS(x).dataTask);
+    auto h = std::make_unique<Task>();
+    h->session = retainObj(x, session);
+    h->request = retainObj(x, request);
+    h->handler = handler ? ObjC::blockCopy(x, handler) : 0;
+    h->download = download;
+    h->ident = SS(x).nextTask++;
+    R(x).setHost(o, std::move(h));
+    return autoreleased(x, o);
+}
+id requestFor(Ctx& x, id url) { return autoreleased(x, makeRequest(x, url, false, true)); }
+id ses_dataReq(Ctx& x, id self, SEL, id rq) { return newTask(x, self, rq, 0, false); }
+id ses_dataReqH(Ctx& x, id self, SEL, id rq, uint32_t h) { return newTask(x, self, rq, h, false); }
+id ses_dataUrl(Ctx& x, id self, SEL, id url) { return newTask(x, self, requestFor(x, url), 0, false); }
+id ses_dataUrlH(Ctx& x, id self, SEL, id url, uint32_t h) { return newTask(x, self, requestFor(x, url), h, false); }
+id ses_downReq(Ctx& x, id self, SEL, id rq) { return newTask(x, self, rq, 0, true); }
+id ses_downReqH(Ctx& x, id self, SEL, id rq, uint32_t h) { return newTask(x, self, rq, h, true); }
+id ses_downUrl(Ctx& x, id self, SEL, id url) { return newTask(x, self, requestFor(x, url), 0, true); }
+id ses_downUrlH(Ctx& x, id self, SEL, id url, uint32_t h) { return newTask(x, self, requestFor(x, url), h, true); }
+
+// The result of a task, then delivery on the main run loop.
+void deliverTask(Ctx& x, id t, std::shared_ptr<HttpResponse> resp, bool offline) {
+    Task* k = task(x, t);
+    if (!k) return;
+    Session* s = sess(x, k->session);
+    const id url = req(x, k->request) ? req(x, k->request)->url : 0;
+    const uint32_t pool = R(x).poolPush();
+    id error = 0, response = 0, data = 0, location = 0;
+    if (!offline && url && !resp->url.empty() && !k->cancelled) {
+        HttpRequest h; h.method = req(x, k->request)->method ? utf8(x, req(x, k->request)->method) : "GET"; h.url = urlString(x, url);
+        if (resp->status) x.proc.logf(LogLevel::Info, "Internet: %s -> %d (%zu bytes, NSURLSession)", logUrl(h).c_str(), resp->status, resp->body.size());
+        else x.proc.logf(LogLevel::Info, "Internet: %s failed: %s (NSURLSession)", logUrl(h).c_str(), resp->error.c_str());
+    }
+    if (k->cancelled) {
+        HttpResponse c; c.errorCode = -999; c.error = "cancelled";
+        error = onlineError(x, url, c);
+    } else if (offline) error = notConnectedError(x, url);
+    else if (!resp->status) error = onlineError(x, url, *resp);
+    else {
+        response = httpResponseObject(x, url, *resp);
+        data = makeData(x, resp->body.data(), uint32_t(resp->body.size()));
+        k->received = int64_t(resp->body.size());
+        k->expected = k->received;
+        if (k->download) {
+            // A download lands in tmp/ as a file the handler may move; removed afterwards, as on iOS.
+            const std::string path = x.proc.homePath() + "/tmp/CFNetworkDownload_" + std::to_string(k->ident) + ".tmp";
+            if (std::FILE* f = std::fopen(path.c_str(), "wb")) { std::fwrite(resp->body.data(), 1, resp->body.size(), f); std::fclose(f); }
+            location = id(R(x).send(x.cpu, R(x).getClass("NSURL"), "fileURLWithPath:", {makeString(x, path)}));
+        }
+    }
+    setField(x, k->response, response);
+    setField(x, k->error, error);
+    k->state = 3;
+    if (k->handler) {
+        if (k->download) ObjC::callBlock(x, k->handler, {location, response, error});
+        else ObjC::callBlock(x, k->handler, {data, response, error});
+    } else if (s && s->delegate && !s->invalid) {
+        const id del = retainObj(x, s->delegate);
+        auto says = [&](const char* sel) { return R(x).respondsTo(del, R(x).sel(sel)); };
+        if (response && !k->download) {
+            if (says("URLSession:dataTask:didReceiveResponse:completionHandler:"))
+                R(x).send(x.cpu, del, "URLSession:dataTask:didReceiveResponse:completionHandler:", {k->session, t, response, noopBlock(x)});
+            if (!resp->body.empty() && says("URLSession:dataTask:didReceiveData:"))
+                R(x).send(x.cpu, del, "URLSession:dataTask:didReceiveData:", {k->session, t, data});
+        }
+        if (response && k->download && says("URLSession:downloadTask:didFinishDownloadingToURL:"))
+            R(x).send(x.cpu, del, "URLSession:downloadTask:didFinishDownloadingToURL:", {k->session, t, location});
+        if (says("URLSession:task:didCompleteWithError:"))
+            R(x).send(x.cpu, del, "URLSession:task:didCompleteWithError:", {k->session, t, error});
+        R(x).release(x.cpu, del);
+    }
+    if (location) std::remove(utf8(x, id(R(x).send(x.cpu, location, "path"))).c_str());
+    R(x).poolPop(x.cpu, pool);
+}
+void task_resume(Ctx& x, id self, SEL) {
+    Task* k = task(x, self);
+    if (!k || k->started || k->state != 1) { if (k && k->state == 1) k->state = 0; return; }
+    k->started = true;
+    k->state = 0;
+    R(x).retain(x.cpu, self);   // a running task stays alive until it is done
+    Process* p = &x.proc;
+    RunLoop* loop = &mainRunLoop(x.proc);
+    Request* r = req(x, k->request);
+    const id url = r ? r->url : 0;
+    auto finish = [p, loop, self](std::shared_ptr<HttpResponse> resp, bool offline) {
+        loop->post([p, self, resp, offline](CPU::Cpu& cc) {
+            Ctx cx{*p, cc, p->mem()};
+            deliverTask(cx, self, resp, offline);
+            R(cx).release(cc, self);
+        });
+    };
+    const std::string method = r && r->method ? utf8(x, r->method) : "GET";
+    if (auto reply = url ? standInFetch(x, url, method) : std::nullopt) {
+        auto resp = std::make_shared<HttpResponse>();
+        resp->status = reply->status;
+        resp->url = urlString(x, url);
+        resp->headers = {{"Content-Type", reply->mime}, {"Content-Length", std::to_string(reply->body.size())}};
+        resp->body = std::move(reply->body);
+        finish(resp, false);
+        return;
+    }
+    const auto client = url ? onlineClient(x) : nullptr;
+    if (!client) { finish(std::make_shared<HttpResponse>(), true); return; }
+    HttpRequest h = toHttp(x, r);
+    if (SessionConfig* c = scfg(x, sess(x, k->session) ? sess(x, k->session)->config : 0)) {
+        if (c->headers)
+            for (auto& [hk, hv] : dictEntries(x, c->headers)) {
+                const std::string key = utf8(x, hk);
+                bool have = false;
+                for (auto& [ek, ev] : h.headers) if (strcasecmp(ek.c_str(), key.c_str()) == 0) have = true;
+                if (!have) h.headers.push_back({key, utf8(x, id(R(x).send(x.cpu, hv, "description")))});
+            }
+        if (r && r->timeout >= 60 && c->timeout > 0) h.timeoutSeconds = c->timeout;
+    }
+    client->fetch(h, [finish](HttpResponse resp) { finish(std::make_shared<HttpResponse>(std::move(resp)), false); });
+}
+void task_cancel(Ctx& x, id self, SEL) {
+    Task* k = task(x, self);
+    if (!k || k->state == 3) return;
+    k->cancelled = true;
+    if (!k->started) { k->state = 1; task_resume(x, self, 0); }   // a cancelled task still reports -999
+    k->state = 2;
+}
+void task_suspend(Ctx& x, id self, SEL) { if (Task* k = task(x, self); k && !k->started) k->state = 1; }
+int32_t task_state(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->state : 3; }
+uint32_t task_ident(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->ident : 0; }
+id task_request(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->request : 0; }
+id task_response(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->response : 0; }
+id task_error(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->error : 0; }
+int64_t task_received(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->received : 0; }
+int64_t task_expected(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->expected : -1; }
+float task_priority(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->priority : 0.5f; }
+void task_setPriority(Ctx& x, id self, SEL, float v) { if (Task* k = task(x, self)) k->priority = v; }
+id task_description(Ctx& x, id self, SEL) { Task* k = task(x, self); return k ? k->description : 0; }
+void task_setDescription(Ctx& x, id self, SEL, id d) { if (Task* k = task(x, self)) setField(x, k->description, d); }
+void task_dealloc(Ctx& x, id self, SEL) {
+    if (Task* k = task(x, self)) {
+        for (id* f : {&k->session, &k->request, &k->response, &k->error, &k->description}) if (*f) R(x).release(x.cpu, *f);
+        if (k->handler) ObjC::blockRelease(x, k->handler);
+    }
+    R(x).disposeInstance(x.cpu, self);
+}
+
 // ---- NSURLCache (a no-op cache)
 id cachec_shared(Ctx& x, id cls, SEL) {
     static const char sharedKey = 0; uint32_t& shared = x.proc.processSlot(&sharedKey);
@@ -472,6 +739,51 @@ void registerURLLoading(Process& p, ObjC::Runtime& r) {
        .m<&mreq_setPipelining>("setHTTPShouldUsePipelining:", "v@:c").m<&mreq_setAllowsCellular>("setAllowsCellularAccess:", "v@:c")
        .m<&mreq_setValue>("setValue:forHTTPHeaderField:", "v@:@@").m<&mreq_addValue>("addValue:forHTTPHeaderField:", "v@:@@")
        .m<&mreq_setHeaders>("setAllHTTPHeaderFields:", "v@:@");
+
+    p.def<&noopInvoke>("__hvm_url_session_noop_block");
+    SessionState& ss = p.service<SessionState>();
+    ObjC::ClassBuilder sc = r.defineClass("NSURLSessionConfiguration", "NSObject");
+    ss.config = sc.cls();
+    sc.cm<&cfgc_default>("defaultSessionConfiguration").cm<&cfgc_default>("ephemeralSessionConfiguration")
+      .cm<&cfgc_background>("backgroundSessionConfiguration:").cm<&cfgc_background>("backgroundSessionConfigurationWithIdentifier:")
+      .m<&cfg_copy>("copyWithZone:").m<&cfg_setHeaders>("setHTTPAdditionalHeaders:", "v@:@").m<&cfg_headers>("HTTPAdditionalHeaders")
+      .m<&cfg_setTimeout>("setTimeoutIntervalForRequest:", "v@:d").m<&cfg_timeout>("timeoutIntervalForRequest", "d@:")
+      .m<&cfg_ignoreDouble>("setTimeoutIntervalForResource:", "v@:d").m<&cfg_ignoreInt>("setRequestCachePolicy:", "v@:I")
+      .m<&cfg_ignoreId>("setURLCache:", "v@:@").m<&cfg_ignoreId>("setHTTPCookieStorage:", "v@:@").m<&cfg_ignoreId>("setURLCredentialStorage:", "v@:@")
+      .m<&cfg_ignoreInt>("setHTTPShouldSetCookies:", "v@:c").m<&cfg_ignoreInt>("setAllowsCellularAccess:", "v@:c")
+      .m<&cfg_ignoreInt>("setHTTPMaximumConnectionsPerHost:", "v@:i").m<&cfg_ignoreInt>("setTLSMinimumSupportedProtocol:", "v@:i")
+      .m<&cfg_ignoreInt>("setDiscretionary:", "v@:c").m<&cfg_ignoreInt>("setSessionSendsLaunchEvents:", "v@:c")
+      .m<&cfg_ignoreInt>("setNetworkServiceType:", "v@:I").m<&cfg_ignoreInt>("setHTTPShouldUsePipelining:", "v@:c")
+      .m<&cfg_ignoreInt>("setHTTPCookieAcceptPolicy:", "v@:I").m<&cfg_ignoreId>("setProtocolClasses:", "v@:@")
+      .m<&cfg_ignoreId>("setConnectionProxyDictionary:", "v@:@").m<&cfg_ignoreId>("setSharedContainerIdentifier:", "v@:@")
+      .m<&cfg_dealloc>("dealloc", "v@:");
+    ObjC::ClassBuilder se = r.defineClass("NSURLSession", "NSObject");
+    ss.session = se.cls();
+    se.cm<&sesc_shared>("sharedSession").cm<&sesc_withConfig>("sessionWithConfiguration:")
+      .cm<&sesc_withConfigDelegate>("sessionWithConfiguration:delegate:delegateQueue:")
+      .m<&ses_config>("configuration").m<&ses_delegate>("delegate").m<&ses_queue>("delegateQueue")
+      .m<&ses_dataReq>("dataTaskWithRequest:").m<&ses_dataReqH>("dataTaskWithRequest:completionHandler:", "@@:@@?")
+      .m<&ses_dataUrl>("dataTaskWithURL:").m<&ses_dataUrlH>("dataTaskWithURL:completionHandler:", "@@:@@?")
+      .m<&ses_downReq>("downloadTaskWithRequest:").m<&ses_downReqH>("downloadTaskWithRequest:completionHandler:", "@@:@@?")
+      .m<&ses_downUrl>("downloadTaskWithURL:").m<&ses_downUrlH>("downloadTaskWithURL:completionHandler:", "@@:@@?")
+      .m<&ses_invalidate>("invalidateAndCancel", "v@:").m<&ses_invalidate>("finishTasksAndInvalidate", "v@:")
+      .m<&ses_getTasks>("getTasksWithCompletionHandler:", "v@:@?").m<&ses_dealloc>("dealloc", "v@:");
+    ObjC::ClassBuilder tk = r.defineClass("NSURLSessionTask", "NSObject");
+    ss.task = tk.cls();
+    tk.m<&task_resume>("resume", "v@:").m<&task_cancel>("cancel", "v@:").m<&task_suspend>("suspend", "v@:")
+      .m<&task_state>("state", "i@:").m<&task_ident>("taskIdentifier", "I@:")
+      .m<&task_request>("originalRequest").m<&task_request>("currentRequest").m<&task_response>("response").m<&task_error>("error")
+      .m<&task_received>("countOfBytesReceived", "q@:").m<&task_expected>("countOfBytesExpectedToReceive", "q@:")
+      .m<&task_priority>("priority", "f@:").m<&task_setPriority>("setPriority:", "v@:f")
+      .m<&task_description>("taskDescription").m<&task_setDescription>("setTaskDescription:", "v@:@")
+      .m<&task_dealloc>("dealloc", "v@:");
+    ss.dataTask = r.defineClass("NSURLSessionDataTask", "NSURLSessionTask").cls();
+    ss.downloadTask = r.defineClass("NSURLSessionDownloadTask", "NSURLSessionTask").cls();
+    {   // const int64_t NSURLSessionTransferSizeUnknown = -1
+        const uint32_t unknown = p.defineDataBlock("_NSURLSessionTransferSizeUnknown", 8);
+        p.mem().write<uint32_t>(unknown, 0xFFFFFFFFu);
+        p.mem().write<uint32_t>(unknown + 4, 0xFFFFFFFFu);
+    }
 
     ObjC::ClassBuilder cn = r.defineClass("NSURLConnection", "NSObject");
     s.connection = cn.cls();

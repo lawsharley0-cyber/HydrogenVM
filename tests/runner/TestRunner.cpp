@@ -2902,6 +2902,29 @@ int runFullSubsystemTests() {
         check(text.find("<code>0</code>")!=std::string::npos && text.find("<my_coin>")!=std::string::npos && fetch("http://hvm-test.invalid/x.php")==0,
               "a stand-in server answers Groove Coaster Zero's start.php; other web addresses through NSData stay nil");
 
+        // NSURLSession (iOS 7): a data task runs on resume and finishes on the main run loop.
+        // Answered by the stand-in here; an offline address completes with an error instead.
+        const uint32_t session=call(r.getClass("NSURLSession"),"sharedSession");
+        auto runTask=[&](const char* u){
+            const uint32_t url=call(r.getClass("NSURL"),"URLWithString:",{makeString(cx,u)});
+            const uint32_t t=call(session,"dataTaskWithURL:",{url});
+            call(t,"retain");
+            const bool waiting=call(t,"state")==1;
+            call(t,"resume");
+            for(int i=0;i<20 && call(t,"state")!=3;++i) Foundation::mainRunLoop(proc).runOnce(cpu,0.01);
+            return std::make_pair(t,waiting);
+        };
+        auto [ok,suspendedFirst]=runTask("http://gczero.com/start.php?x");
+        const uint32_t resp=call(ok,"response");
+        const bool served=suspendedFirst && call(ok,"state")==3 && resp && call(resp,"statusCode")==200 && call(ok,"error")==0 &&
+                          int64_t(r.send(cpu,ok,"countOfBytesReceived"))>0;
+        auto [off,unused]=runTask("http://hvm-test.invalid/a");
+        (void)unused;
+        const uint32_t err=call(off,"error");
+        const bool offline=call(off,"state")==3 && err && call(err,"code")==uint32_t(-1009) && call(off,"response")==0;
+        call(ok,"release"); call(off,"release");
+        check(served && offline, "NSURLSession data tasks start on resume and finish on the main run loop (stand-in reply; offline error otherwise)");
+
         // -[CALayer renderInContext:] draws a label that was never on screen (glyph atlases are
         // built that way); its text used to come out empty.
         const uint32_t label=call(call(r.getClass("UILabel"),"alloc"),"initWithFrame:",{0,0,std::bit_cast<uint32_t>(32.0f),std::bit_cast<uint32_t>(32.0f)});
