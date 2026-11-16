@@ -2,6 +2,7 @@
 #include <unordered_set>
 #include "MemoryDiagnostics.hpp"
 #include "Support.hpp"
+#include "compat/Profiles.hpp"
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include "runtime/gl/HostGL.hpp"
@@ -237,6 +238,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     registerUIKit(*this);
     ArgReader::align64Args() = isAndroid();
     if (isAndroid()) Android::registerBionic(*this);
+    Compat::initialize(*this);
 }
 
 Process::~Process() {
