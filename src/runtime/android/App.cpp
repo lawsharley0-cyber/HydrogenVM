@@ -494,7 +494,35 @@ void placeSurface(Process& p, GlSurface& g, const Surface& s) {
     }
 }
 
+// An Android window surface is opaque: the compositor ignores the alpha a game leaves in it, and
+// many games clear with alpha 0. Here the drawable is composited with its alpha, so it is set to
+// 1 before each present (colour writes masked to alpha only), and the game's state restored.
+void makeOpaque(Process& p, CPU::Cpu& c, GlSurface& g) {
+    static const char key = 0;
+    uint32_t& scratch = p.processSlot(&key);
+    if (!scratch) scratch = p.allocStatic(64);
+    auto& m = p.mem();
+    p.callGuest(c, glFn(p, "glGetIntegerv"), {0x8CA6 /*FRAMEBUFFER_BINDING*/, scratch});
+    p.callGuest(c, glFn(p, "glGetBooleanv"), {0x0C23 /*COLOR_WRITEMASK*/, scratch + 4});
+    p.callGuest(c, glFn(p, "glGetFloatv"), {0x0C22 /*COLOR_CLEAR_VALUE*/, scratch + 8});
+    const uint32_t scissor = uint32_t(p.callGuest(c, glFn(p, "glIsEnabled"), {0x0C11 /*SCISSOR_TEST*/})) & 0xFF;
+    const uint32_t fb = m.read<uint32_t>(scratch);
+    p.callGuest(c, glFn(p, fbName(g.api, "glBindFramebuffer")), {0x8D40, g.fbo});
+    if (scissor) p.callGuest(c, glFn(p, "glDisable"), {0x0C11});
+    p.callGuest(c, glFn(p, "glColorMask"), {0, 0, 0, 1});
+    const uint32_t one = 0x3F800000u, zero = 0;
+    p.callGuest(c, glFn(p, "glClearColor"), {zero, zero, zero, one});
+    p.callGuest(c, glFn(p, "glClear"), {0x4000 /*COLOR_BUFFER_BIT*/});
+    p.callGuest(c, glFn(p, "glClearColor"), {m.read<uint32_t>(scratch + 8), m.read<uint32_t>(scratch + 12),
+                                             m.read<uint32_t>(scratch + 16), m.read<uint32_t>(scratch + 20)});
+    p.callGuest(c, glFn(p, "glColorMask"), {m.read<uint8_t>(scratch + 4), m.read<uint8_t>(scratch + 5),
+                                            m.read<uint8_t>(scratch + 6), m.read<uint8_t>(scratch + 7)});
+    if (scissor) p.callGuest(c, glFn(p, "glEnable"), {0x0C11});
+    p.callGuest(c, glFn(p, fbName(g.api, "glBindFramebuffer")), {0x8D40, fb});
+}
+
 void present(Process& p, CPU::Cpu& c, GlSurface& g, const Surface& s) {
+    makeOpaque(p, c, g);
     uint32_t layer = 0;
     int w = 0, h = 0;
     bool direct = false;
