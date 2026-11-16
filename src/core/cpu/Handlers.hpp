@@ -19,7 +19,7 @@
 namespace Hydrogen::CPU {
 
 // Implemented by the Engine.
-Block* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
+const Op* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
 void   hvmCallHle(Cpu* c, uint32_t index);
 void   hvmObserveEntry(Cpu* c, uint32_t address);
 
@@ -179,9 +179,8 @@ HVM_H(H_TableBranch) {
         const Op* _f = __atomic_load_n(&op->link, __ATOMIC_ACQUIRE);              \
         if (__builtin_expect(_f == nullptr, 0)) {                                 \
             c->r[kPC] = op->imm; c->thumb = op->a;                                \
-            Block* _nb = hvmEnterBlock(c, op->imm | op->a);                       \
-            if (!_nb) return;                                                     \
-            _f = _nb->ops.data();                                                 \
+            _f = hvmEnterBlock(c, op->imm | op->a);                               \
+            if (!_f) return;                                                      \
             __atomic_store_n(&op->link, _f, __ATOMIC_RELEASE);                    \
         }                                                                         \
         c->block_pc = op->imm;                                                    \
@@ -305,9 +304,8 @@ HVM_H(H_BranchIndirect) {
     if (__builtin_expect(fe.key == key, 1)) {
         first = fe.first;
     } else {
-        Block* nb = hvmEnterBlock(c, key);
-        if (!nb) return;
-        first = nb->ops.data();
+        first = hvmEnterBlock(c, key);
+        if (!first) return;
     }
     c->block_pc = t;
     HVM_MUSTTAIL return first->fn(c, first, m);
@@ -330,9 +328,8 @@ HVM_H(H_CallIndirect) {
     if (__builtin_expect(fe.key == key, 1)) {
         first = fe.first;
     } else {
-        Block* nb = hvmEnterBlock(c, key);
-        if (!nb) return;
-        first = nb->ops.data();
+        first = hvmEnterBlock(c, key);
+        if (!first) return;
     }
     c->block_pc = t;
     HVM_MUSTTAIL return first->fn(c, first, m);
@@ -879,9 +876,8 @@ HVM_H(H_MultiPopPc) {
     if (__builtin_expect(fe.key == key, 1)) {
         first = fe.first;
     } else {
-        Block* nb = hvmEnterBlock(c, key);
-        if (!nb) return;
-        first = nb->ops.data();
+        first = hvmEnterBlock(c, key);
+        if (!first) return;
     }
     c->block_pc = t;
     HVM_MUSTTAIL return first->fn(c, first, m);

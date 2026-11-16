@@ -120,14 +120,16 @@ public:
     // Run until an exit other than Budget (checking for stop requests).
     Exit runToExit(Cpu& cpu);
 
-    // Discard all decoded blocks. Must not be called while any Cpu is running.
+    // Discard all decoded blocks. Safe while other Cpus run; old blocks are
+    // retired and freed once no Cpu can still be executing them.
     void flushCache();
-    // Discard blocks overlapping [addr, addr+size). Same restriction.
+    // Discard blocks overlapping [addr, addr+size). Safe while other Cpus run.
     void invalidateRange(uint32_t addr, uint32_t size);
+    void unregisterActiveCpu(Cpu& cpu);
 
     // Called from IR handlers.
-    Block* enterBlock(Cpu* c, uint32_t key);
-    void   callHle(Cpu* c, uint32_t index);
+    const Op* enterBlock(Cpu* c, uint32_t key);
+    void      callHle(Cpu* c, uint32_t index);
 
     // Per host thread; Process clears it before running and reads it after a failure.
     static FaultSnapshot& lastFault();
@@ -162,6 +164,12 @@ private:
 
     Memory::GuestArena& mem_;
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks_;
+    std::unordered_map<uint32_t, std::unique_ptr<Block>> hleBlocks_;
+    struct RetiredBatch { uint64_t retireGen; std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks; };
+    std::vector<RetiredBatch> retired_;
+    std::vector<Cpu*> activeCpus_;
+    void registerActiveCpu(Cpu& cpu);
+    void reclaimRetiredLocked();
     std::unordered_map<uint32_t, EntryObserver> entryObservers_;
     std::atomic<uint64_t> gen_{0};       // bumped by flushCache; invalidates per-Cpu caches
     mutable std::mutex mu_;

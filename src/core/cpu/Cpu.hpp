@@ -85,7 +85,7 @@ enum class Exit : uint32_t {
 
 // Per-thread direct-mapped cache in front of the engine's block map. `first`
 // is the block's first op, so indirect branches can jump without touching the Block.
-struct FastEntry { uint32_t key; Block* block; const Op* first; };
+struct FastEntry { const Op* first; uint32_t key; };
 inline constexpr size_t kFastSize = 1u << 14;
 inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
@@ -181,6 +181,11 @@ struct alignas(64) Cpu {
     // complete, stable picture of its guest state.
     std::atomic<uint32_t> suspend_count{0};
     std::atomic<bool> in_guest{false};
+    // Live block-cache retirement state: true while executing inside Engine::run
+    // (outside HLE calls), with the cache generation observed on entry.
+    std::atomic<bool> in_engine{false};
+    std::atomic<uint64_t> active_gen{0};
+    bool registered_active = false;
     // Index of the host function this thread is in (outermost-latest), for the
     // guest sampling profiler. Not used for control flow.
     std::atomic<uint32_t> current_hle{0xFFFFFFFFu};

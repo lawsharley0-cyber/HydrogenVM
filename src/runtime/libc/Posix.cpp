@@ -274,6 +274,9 @@ int32_t x_fgetxattr(Ctx&, int32_t, GuestPtr, GuestPtr, uint32_t, uint32_t, int32
 int32_t p_zero2(Ctx&, int32_t, int32_t) { return 0; }
 int32_t p_zero3(Ctx&, int32_t, int32_t, int32_t) { return 0; }
 void p_void2(Ctx&, GuestPtr, uint32_t) {}
+void p_icacheInvalidate(Ctx& x, GuestPtr addr, uint32_t size) {
+    x.proc.engine().invalidateRange(addr, size);
+}
 
 } // namespace
 
@@ -321,7 +324,7 @@ void registerLibcPosix(Process& p) {
     p.def<&p_nl_langinfo>("_nl_langinfo");
     p.def<&p_zero3>("_getpriority");
     p.def<&p_zero3>("_setpriority");
-    p.def<&p_void2>("_sys_icache_invalidate");
+    p.def<&p_icacheInvalidate>("_sys_icache_invalidate");
     p.def<&p_void2>("_sys_dcache_flush");
     (void)&p_zero; (void)&p_zero2;
 }

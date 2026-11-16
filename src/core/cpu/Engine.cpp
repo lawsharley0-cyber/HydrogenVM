@@ -11,7 +11,7 @@ namespace Hydrogen::CPU {
 
 // -------------------------------------------------------------- IR hooks ---
 
-Block* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
+const Op* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
 void   hvmCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
 void   hvmObserveEntry(Cpu* c, uint32_t address) { c->engine->notifyEntry(*c, address); }
 
@@ -316,7 +316,11 @@ void installFaultHandler() {
 } // namespace
 
 Cpu::Cpu() { registerCpu(this); }
-Cpu::~Cpu() { unregisterCpu(this); delete call_ring.load(std::memory_order_relaxed); }
+Cpu::~Cpu() {
+    if (engine) engine->unregisterActiveCpu(*this);
+    unregisterCpu(this);
+    delete call_ring.load(std::memory_order_relaxed);
+}
 
 void Engine::recordLogLineAsyncSafe(const char* data, size_t len) {
     recordLogLineAsyncSafeImpl(data, len);
@@ -337,7 +341,47 @@ Engine::Engine(Memory::GuestArena& mem) : mem_(mem), hle_(kMaxHle) {
     }
 }
 Engine::~Engine() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (Cpu* c : activeCpus_) {
+            c->engine = nullptr;
+            c->registered_active = false;
+        }
+        activeCpus_.clear();
+        retired_.clear();
+        blocks_.clear();
+        hleBlocks_.clear();
+    }
     if (faultArenaSlot_ < kMaxArenas) g_arenas[faultArenaSlot_].store(0, std::memory_order_release);
+}
+
+void Engine::registerActiveCpu(Cpu& cpu) {
+    if (cpu.registered_active) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    if (!cpu.registered_active) {
+        activeCpus_.push_back(&cpu);
+        cpu.registered_active = true;
+    }
+}
+
+void Engine::unregisterActiveCpu(Cpu& cpu) {
+    std::lock_guard<std::mutex> lk(mu_);
+    activeCpus_.erase(std::remove(activeCpus_.begin(), activeCpus_.end(), &cpu), activeCpus_.end());
+    cpu.registered_active = false;
+}
+
+void Engine::reclaimRetiredLocked() {
+    if (retired_.empty()) return;
+    uint64_t minActive = gen_.load(std::memory_order_acquire);
+    for (Cpu* c : activeCpus_) {
+        if (c->in_engine.load(std::memory_order_seq_cst)) {
+            const uint64_t g = c->active_gen.load(std::memory_order_seq_cst);
+            if (g < minActive) minActive = g;
+        }
+    }
+    retired_.erase(std::remove_if(retired_.begin(), retired_.end(),
+        [minActive](const RetiredBatch& b) { return b.retireGen <= minActive; }),
+        retired_.end());
 }
 
 void Engine::recordHleState(Cpu& c, uint32_t index, bool sampleRegisters) {
@@ -413,14 +457,23 @@ void Engine::callHle(Cpu* c, uint32_t index) {
     // Sample registers while in_guest is still set: once it clears a suspender may rewrite c->r[].
     recordHleState(*c, index);
     c->in_guest.store(false, std::memory_order_release);
+    const bool prevInEngine = c->in_engine.exchange(false, std::memory_order_release);
     const uint32_t outerArg0 = c->progress_argument0, outerArg1 = c->progress_argument1;
     c->progress_argument0 = c->r[0]; c->progress_argument1 = c->r[1];
     c->publishProgress(false);
     struct Reenter {
-        Engine* e; Cpu* c; uint32_t outer, a0, a1;
-        ~Reenter() { c->current_hle.store(outer, std::memory_order_relaxed); e->recordHleState(*c, outer);
-            c->progress_argument0 = a0; c->progress_argument1 = a1; e->enterGuest(*c); }
-    } reenter{this, c, outerHle, outerArg0, outerArg1};
+        Engine* e; Cpu* c; uint32_t outer, a0, a1; bool restoreInEngine;
+        ~Reenter() {
+            c->current_hle.store(outer, std::memory_order_relaxed); e->recordHleState(*c, outer);
+            c->progress_argument0 = a0; c->progress_argument1 = a1;
+            if (restoreInEngine) {
+                c->active_gen.store(e->gen_.load(std::memory_order_acquire), std::memory_order_seq_cst);
+                c->in_engine.store(true, std::memory_order_seq_cst);
+                c->active_gen.store(e->gen_.load(std::memory_order_acquire), std::memory_order_seq_cst);
+            }
+            e->enterGuest(*c);
+        }
+    } reenter{this, c, outerHle, outerArg0, outerArg1, prevInEngine};
     try {
         hle_[index].fn(*c);
     } catch (const GuestFault& f) {
@@ -438,24 +491,39 @@ void Engine::callHle(Cpu* c, uint32_t index) {
 }
 
 
-Block* Engine::enterBlock(Cpu* c, uint32_t key) {
+const Op* Engine::enterBlock(Cpu* c, uint32_t key) {
     const uint64_t g = gen_.load(std::memory_order_acquire);
     if (__builtin_expect(c->fast_gen != g, 0)) {
         if (!c->fast) c->fast.reset(new FastEntry[kFastSize]);
-        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {0xFFFFFFFFu, nullptr, nullptr};
+        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {nullptr, 0xFFFFFFFFu};
         c->fast_gen = g;
     }
     FastEntry& fe = c->fast[fastIndex(key)];
-    if (fe.key == key) return fe.block;
+    if (fe.key == key) return fe.first;
     Block* b = lookupOrDecode(key);
-    fe.key = key; fe.block = b; fe.first = b ? b->ops.data() : nullptr;
-    return b;
+    const Op* first = b ? b->ops.data() : nullptr;
+    fe.key = key; fe.first = first;
+    return first;
 }
 
 Block* Engine::lookupOrDecode(uint32_t key) {
-    // HLE addresses are the same entry regardless of the interworking bit.
-    if (isHleAddress(key & ~1u)) key &= ~1u;
+    // HLE addresses are the same entry regardless of the interworking bit and
+    // live in hleBlocks_ so cache invalidation never frees an active HLE stub.
+    if (isHleAddress(key & ~1u)) {
+        key &= ~1u;
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = hleBlocks_.find(key);
+        if (it != hleBlocks_.end()) return it->second.get();
+        auto b = decodeBlock(key);
+        Block* raw = b.get();
+        ++stats_.blocks_decoded;
+        stats_.guest_insns_decoded += raw->guest_insns;
+        stats_.ops_emitted += raw->ops.size();
+        hleBlocks_.emplace(key, std::move(b));
+        return raw;
+    }
     std::lock_guard<std::mutex> lk(mu_);
+    reclaimRetiredLocked();
     auto it = blocks_.find(key);
     if (it != blocks_.end()) return it->second.get();
     auto b = decodeBlock(key);
@@ -469,8 +537,12 @@ Block* Engine::lookupOrDecode(uint32_t key) {
 
 void Engine::flushCache() {
     std::lock_guard<std::mutex> lk(mu_);
-    blocks_.clear();
-    gen_.fetch_add(1, std::memory_order_acq_rel);
+    const uint64_t newGen = gen_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (!blocks_.empty()) {
+        retired_.push_back({newGen, std::move(blocks_)});
+        blocks_.clear();
+    }
+    reclaimRetiredLocked();
 }
 
 void Engine::invalidateRange(uint32_t addr, uint32_t size) {
@@ -599,6 +671,22 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     const bool previousFaultInGuest = prev && cpu.fault_state &&
         cpu.fault_state->inGuest.load(std::memory_order_relaxed);
     cpu.engine = this;
+    registerActiveCpu(cpu);
+    struct ActiveEngineGuard {
+        Engine& e; Cpu& c; uint64_t prevGen; bool prevIn;
+        ActiveEngineGuard(Engine& eng, Cpu& cpu)
+            : e(eng), c(cpu),
+              prevGen(cpu.active_gen.load(std::memory_order_relaxed)),
+              prevIn(cpu.in_engine.load(std::memory_order_relaxed)) {
+            c.active_gen.store(e.gen_.load(std::memory_order_acquire), std::memory_order_seq_cst);
+            c.in_engine.store(true, std::memory_order_seq_cst);
+            c.active_gen.store(e.gen_.load(std::memory_order_acquire), std::memory_order_seq_cst);
+        }
+        ~ActiveEngineGuard() {
+            c.in_engine.store(prevIn, std::memory_order_release);
+            c.active_gen.store(prevGen, std::memory_order_release);
+        }
+    } activeGuard(*this, cpu);
     if (cpu.fault_state) {
         cpu.fault_state->arena.store(reinterpret_cast<uintptr_t>(mem_.base()), std::memory_order_relaxed);
         // Registers are sampled by enterGuest, after any pending suspension has been honoured.
@@ -644,11 +732,10 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     enterGuest(cpu);
     while (cpu.exit == Exit::None) {
         const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
-        Block* b = enterBlock(&cpu, key);
-        if (!b) break;
+        const Op* first = enterBlock(&cpu, key);
+        if (!first) break;
         cpu.block_pc = key & ~1u;
         cpu.recordFaultRegisters(cpu.block_pc);
-        const Op* first = b->ops.data();
         first->fn(&cpu, first, base);
     }
     t_scope = prev;

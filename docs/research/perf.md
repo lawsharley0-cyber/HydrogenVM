@@ -1,8 +1,63 @@
-# Interpreter performance baseline — 2026-11-16 (WIP)
+# Interpreter performance — 2026-11-16
 
-Owner handoff item 3, issue #493. **Baseline and design findings only: no
-optimization, before/after improvement or completion of item 3 is claimed.**
-This branch stacks on the smoke harness PR #489; merge/rebase that parent first.
+Owner handoff item 3, issue #493. This branch stacks on the smoke harness PR #489;
+merge/rebase that parent first.
+
+## Safe live block retirement and `_sys_icache_invalidate`
+
+- `Engine::hleBlocks_` now keeps immutable HLE trampoline blocks separate from
+  guest-code `blocks_`, so threads blocked in `callHle` never hold references to
+  retirable guest blocks.
+- `Cpu::in_engine` / `Cpu::active_gen` track whether a thread is inside `Engine::run`
+  (outside HLE calls) and which cache generation it observed on entry.
+- `Engine::flushCache()` and `Engine::invalidateRange(addr, size)` move `blocks_`
+  into `retired_` tagged with the new generation and reclaim batches once no active
+  `Cpu` can still execute them.
+- `Posix.cpp` wires `_sys_icache_invalidate` to `Engine::invalidateRange`.
+- `tests/runner/TestRunner.cpp` adds a multithreaded self-modifying-code regression
+  that failed before the fix (`fulltest: 846 passed, 1 failed`) and passes after
+  (`fulltest: 847 passed, 0 failed`).
+
+## Implemented no-JIT optimizations
+
+1. **Compact 16-byte `FastEntry`** (`Cpu.hpp`, `Engine.cpp`, `Handlers.hpp`):
+   `FastEntry` now stores `{first, key}` (16 bytes instead of 24 bytes), shrinking
+   each thread's direct-mapped indirect-branch cache from 384 KB to 256 KB and
+   returning `const Op*` directly from `Engine::enterBlock`.
+2. **`drawImage` axis-aligned loop hoisting** (`Raster.cpp`):
+   Hoisted `y`-invariant bilinear/row calculations out of the inner `x` loop and
+   skipped per-pixel `clip.at(x, y)` calls when `!clip.mask`.
+
+## Interleaved before/after results
+
+Baseline executable: `work/HydrogenVM/build/perf-hvm-baseline` (`6993ed89`,
+runtime base `7fdc8a18`). Optimized executable: `build-perf/hvm` on this branch.
+Measured on Linux x86_64 / WSL2 / Core Ultra 9 185H / Clang 18.1.3 Release (`-O3`).
+
+### CoreMark (3 interleaved pairs, `0x0 0x0 0x66 0`, CRC-validated)
+
+| Pair | Baseline (iter/s) | Optimized (iter/s) |
+|---|---:|---:|
+| 1 | 1638.941244 | 1461.133840 |
+| 2 | 1432.596342 | 1659.751037 |
+| 3 | 1529.402768 | 1418.842225 |
+
+Median: baseline `1529.40` vs optimized `1461.13` (mean `1533.65` vs `1513.24`,
+within host thermal/scheduling variance; no CoreMark speedup claimed).
+
+### Games (interleaved matching-scene runs, GPU, internet/FPS overrides off)
+
+| Fixture / scene | Build | Frames | Avg frame (ms) | p95 (ms) | p99 (ms) | Guest MIPS |
+|---|---|---:|---:|---:|---:|---:|
+| Angry Birds Island 1.7.0 (60 s, taps 20/26/32/42 s) | Baseline | 2,550 | 21.1602 | 21.2337 | 23.8551 | 86.9361 |
+| Angry Birds Island 1.7.0 (60 s, taps 20/26/32/42 s) | Optimized | 2,696 | 19.7201 | 20.4472 | 22.2822 | 89.3750 |
+| Groove Zero 1.0.0 (40 s, tap `160,385@20`) | Baseline | 2,149 | 11.7378 | 16.3840 | 18.0879 | 11.9221 |
+| Groove Zero 1.0.0 (40 s, tap `160,385@20`) | Optimized | 2,261 | 11.2916 | 16.3840 | 17.5636 | 12.0653 |
+
+Angry Birds improved avg frame time by **-6.8%** (`+5.7%` presented frames);
+Groove Coaster Zero improved avg frame time by **-3.8%** (`+5.2%` presented frames).
+Gates after final `src/` edit: `fulltest` **847 passed, 0 failed**; `support`
+**47 passed, 0 failed**; Test Lab **41 passed, 0 failed**; stub audit **0 new/changed**.
 
 ## What already exists
 

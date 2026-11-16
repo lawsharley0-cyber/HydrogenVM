@@ -13800,6 +13800,42 @@ int runFullSubsystemTests() {
     check(runLegacyGlyphTests() == 0, "legacy CGContext glyph outlines and ABI");
     check(runPositionalFormatTests() == 0, "positional formatting arguments and ABI");
     check(runLegacyAnimationTests() == 0, "UIKit animation, window and timer-pool lifetime");
+    {
+        ProcessConfig icCfg;
+        icCfg.homePath = "/tmp/hvm_icache_test";
+        Process icProc(icCfg);
+        const auto icacheSym = icProc.lookupSymbol("_sys_icache_invalidate");
+        const uint32_t icacheFn = icacheSym ? *icacheSym : 0;
+        const uint32_t code = 0x200000u;
+        const uint32_t flag = 0x201000u;
+        const uint32_t spin = 0x202000u;
+        icProc.mem().map(code, 4096, Memory::kProtRW | Memory::kProtExec);
+        icProc.mem().map(flag, 4096, Memory::kProtRW);
+        icProc.mem().map(spin, 4096, Memory::kProtRW | Memory::kProtExec);
+        icProc.mem().write<uint32_t>(flag, 0);
+        // Guest spin loop: ldr r1, [r0]; cmp r1, #0; beq -8; mov r0, #0; bx lr
+        icProc.mem().write<uint32_t>(spin + 0, 0xe5901000u);
+        icProc.mem().write<uint32_t>(spin + 4, 0xe3510000u);
+        icProc.mem().write<uint32_t>(spin + 8, 0x0afffffcu);
+        icProc.mem().write<uint32_t>(spin + 12, 0xe3a00000u);
+        icProc.mem().write<uint32_t>(spin + 16, 0xe12fff1eu);
+        // Initial guest code: mov r0, #11; bx lr
+        icProc.mem().write<uint32_t>(code + 0, 0xe3a0000bu);
+        icProc.mem().write<uint32_t>(code + 4, 0xe12fff1eu);
+
+        auto& cpu = icProc.mainThread().cpu;
+        const uint32_t worker = icProc.startThread(spin, flag, 64u << 10, false);
+        const uint32_t first = uint32_t(icProc.callGuest(cpu, code, {}));
+        // Overwrite guest code while worker is actively running in Engine::run.
+        icProc.mem().write<uint32_t>(code + 0, 0xe3a00016u);
+        if (icacheFn) icProc.callGuest(cpu, icacheFn, {code, 8});
+        const uint32_t second = uint32_t(icProc.callGuest(cpu, code, {}));
+        icProc.mem().write<uint32_t>(flag, 1);
+        uint32_t workerRet = 1;
+        const bool joined = icProc.joinThread(worker, &workerRet);
+        check(icacheFn != 0 && first == 11 && second == 22 && joined && workerRet == 0,
+              "_sys_icache_invalidate retires stale blocks safely under concurrent execution");
+    }
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }
