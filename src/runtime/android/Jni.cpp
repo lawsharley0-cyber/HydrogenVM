@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 namespace Hydrogen::Runtime::Android {
 
@@ -125,8 +126,17 @@ static std::string mangle(const std::string& s) {
     return out;
 }
 
+// HVM_JNI_TRACE=1: each Java method the game calls, and each native the activity calls, once.
+void Jni::traceOnce(const std::string& what) {
+    static const bool on = [] { const char* e = std::getenv("HVM_JNI_TRACE"); return e && *e && *e != '0'; }();
+    if (!on) return;
+    std::lock_guard<std::recursive_mutex> lk(mu);
+    if (traced.insert(what).second) proc.log(LogLevel::Info, what);
+}
+
 bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
                      const std::vector<uint32_t>& words, JValue* result) {
+    traceOnce("JNI native " + cls + "." + name);
     uint32_t fn = 0;
     {
         std::lock_guard<std::recursive_mutex> lk(mu);
@@ -169,18 +179,35 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
         if (id < 0x100 || i >= methods.size()) throw std::runtime_error("JNI: bad method id");
         m = methods[i];
     }
+    traceOnce("JNI call " + m.cls + "." + m.name + m.sig);
     // The implementation for the method's class, or (virtual calls) for the object's own class.
     std::string objCls;
     if (JObject* o = get(self); o && !o->isClass) objCls = o->cls;
-    for (const std::string* c : {&objCls, &m.cls}) {
+    // Then the platform classes every activity and view inherits from: a game's own activity
+    // class (com/foo/GameActivity) calls getFilesDir, getAssets, ... of Context.
+    static const std::string kContext = "android/content/Context", kActivity = "android/app/Activity",
+                             kObject = "java/lang/Object";
+    const std::string& objC = objCls; const std::string& mC = m.cls;
+    for (const std::string* c : {&objC, &mC, &kActivity, &kContext, &kObject}) {
         if (c->empty()) continue;
         auto it = impls.find(*c + "." + m.name + m.sig);
         if (it != impls.end()) return it->second(*this, x, self, args);
     }
     JValue r = 0;
     if (callNative(x, m.cls, m.name, self, nativeWords(argTypes(m.sig), args), &r)) return r;
+    if (quietClasses.count(m.cls) || quietClasses.count(objCls)) return 0;
     if (m.name == "<init>") return 0;   // constructors of helper objects: nothing to set up
-    proc.reportMissing("JNI " + m.cls + "." + m.name + m.sig);
+    {
+        // The first string argument too: generic "call by name" methods differ only in it.
+        std::string what = "JNI " + m.cls + "." + m.name + m.sig;
+        const std::string types = argTypes(m.sig);
+        for (size_t i = 0; i < types.size() && i < args.size(); ++i)
+            if (types[i] == 'L') {
+                std::lock_guard<std::recursive_mutex> lk(mu);
+                if (JObject* o = get(jobject(args[i])); o && o->cls == "java/lang/String") { what += " (\"" + o->str.substr(0, 60) + "\")"; break; }
+            }
+        proc.reportMissing(what);
+    }
     const char rt = returnType(m.sig);
     if (rt == 'L') {
         // A string-returning getter we don't know: an empty string is safer than null.
@@ -513,6 +540,7 @@ Jni& jni(Process& p) {
             vmSet(7, "AttachCurrentThreadAsDaemon", [](Ctx& x) { if (arg(x, 1)) x.mem.write<uint32_t>(arg(x, 1), J(x).envFor(x.proc)); ret(x, 0); });
             j.vm = p.allocStatic(4);
             p.mem().write<uint32_t>(j.vm, vmTable);
+            registerJavaPlatform(j);
             registerJavaClasses(j);
         }
     }

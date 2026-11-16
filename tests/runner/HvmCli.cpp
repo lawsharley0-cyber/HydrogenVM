@@ -24,6 +24,10 @@
 #include <queue>
 #include <shared_mutex>
 #include "loader/AppBundle.hpp"
+#include "loader/Apk.hpp"
+#include "loader/ElfLoader.hpp"
+#include "runtime/gl/HostGL.hpp"
+#include <filesystem>
 #define private public
 #include "runtime/Process.hpp"
 #include "runtime/objc/ObjC.hpp"
@@ -229,6 +233,54 @@ static void linkingInfo(const char* path) {
 
 int hvmRunMain(int argc, char** argv);   // HvmRun.cpp
 
+// `hvm android-imports <apk> [apps-root]`: for every 32-bit ARM library of the APK, the imports
+// that neither HydrogenVM nor another library of the APK provides, by the library they come from
+// (DT_NEEDED). The list to work through when bringing up a new Android game.
+int androidImports(const std::string& apk, std::string root) {
+    namespace fs = std::filesystem;
+    if (root.empty()) root = (fs::temp_directory_path() / "hvm-apps").string();
+    const auto info = Loader::importApk(apk, root);
+    const fs::path app = info.bundlePath;
+    fs::path libDir;
+    for (const char* abi : {"lib/armeabi-v7a", "lib/armeabi"})
+        if (fs::is_directory(app / abi)) { libDir = app / abi; break; }
+    if (libDir.empty()) { std::fprintf(stderr, "no 32-bit ARM libraries\n"); return 3; }
+    std::vector<fs::path> libs;
+    for (const auto& e : fs::directory_iterator(libDir)) if (e.path().extension() == ".so") libs.push_back(e.path());
+    std::sort(libs.begin(), libs.end());
+    Runtime::ProcessConfig cfg;
+    cfg.bundlePath = app.string();
+    cfg.androidLib = libs.front().string();
+    cfg.log = [](Runtime::LogLevel, const std::string&) {};
+    cfg.hostGL = Runtime::HostGL::createEglPlatform();   // its GL entry points, as a game run with --gpu has
+    Runtime::Process p(cfg);
+    uint32_t base = 0x20000000u;
+    struct L { std::string name; Loader::ElfShared so; };
+    std::vector<L> loaded;
+    for (const auto& f : libs) {
+        auto so = Loader::loadElfShared(p.mem(), Loader::readFile(f.string()), base);
+        base = (so.image.highest + 0xFFFFFu) & ~0xFFFFFu;
+        loaded.push_back({f.filename().string(), std::move(so)});
+    }
+    size_t total = 0;
+    for (const auto& l : loaded) {
+        std::set<std::string> missing;
+        for (const auto& imp : l.so.imports) {
+            if (p.lookupSymbol("android:" + imp.symbol) || p.lookupSymbol("_" + imp.symbol)) continue;
+            bool other = false;
+            for (const auto& o : loaded) if (&o != &l && o.so.image.symbols.count(imp.symbol)) other = true;
+            if (!other) missing.insert(imp.symbol + (imp.weak ? " (weak)" : ""));
+        }
+        total += missing.size();
+        std::printf("== %s: %zu imports, %zu missing (needs", l.name.c_str(), l.so.imports.size(), missing.size());
+        for (const auto& n : l.so.needed) std::printf(" %s", n.c_str());
+        std::printf(")\n");
+        for (const auto& m : missing) std::printf("  %s\n", m.c_str());
+    }
+    std::printf("total missing: %zu\n", total);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr, "usage: hvm import <ipa> <apps-root> | info <app> | run <app> [options] | --dump-support\n");
@@ -240,6 +292,7 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[1], "info") && argc == 5 && !std::strcmp(argv[2], "--linking") && !std::strcmp(argv[4], "--json")) { linkingInfo(argv[3]); return 0; }
         if (!std::strcmp(argv[1], "info") && argc >= 3) { printInfo(Loader::readBundle(argv[2])); return 0; }
         if (!std::strcmp(argv[1], "run")) return hvmRunMain(argc - 1, argv + 1);
+        if (!std::strcmp(argv[1], "android-imports") && argc >= 3) return androidImports(argv[2], argc >= 4 ? argv[3] : "");
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;
