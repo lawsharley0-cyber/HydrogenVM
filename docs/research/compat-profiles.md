@@ -51,3 +51,17 @@ the unchanged runtime and this refactor. Tracked as **#496**; not counted as a
 smoke pass and not attributed to the refactor. Its candidate RSS remains below
 the ceiling with zero stub hits. The earlier unavailable-fixture statement
 describes the primary bench search; this later result remains a visible failure.
+
+## Matching fixture follow-up
+
+Owner-supplied Minion Rush 1.0.0 with restored data and Groove Coaster Zero 1.0.0
+now pass the existing 300/60-second fresh-home GPU process checks on 2474be76:
+exit 0, zero crash/stall/stub reports, internet/FPS overrides off. Peak RSS:
+1,018,109,952 / 234,594,304 bytes respectively. Minion includes the restored
+index and seven packs; Groove logs the required stage.pak request.
+
+The corresponding frozen unchanged-runtime profile captures also exit 0. These
+are startup/menu checks: Minion remains at its introductory notice and Groove
+at its title screen. No gameplay, physical-phone or approved-image qualification
+is claimed, and no speed comparison is inferred from separate profiled runs.
+Raw evidence stays private; Army shutdown #496 remains unresolved.
