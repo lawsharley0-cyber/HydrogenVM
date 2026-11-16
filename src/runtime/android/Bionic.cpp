@@ -613,6 +613,8 @@ void registerBionic(Process& p) {
     registerLibAndroid(p);
     registerOpenSLES(p);
     registerLibdl(p);
+    registerEgl(p);
+    registerSyscalls(p);
     p.defineFunction("android:glCompressedTexImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexImage2D>(x); });
     p.defineFunction("android:glCompressedTexSubImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexSubImage2D>(x); });
     // Data.
