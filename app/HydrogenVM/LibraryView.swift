@@ -150,6 +150,10 @@ struct LibraryView: View {
     @State private var pickingFile = false
     @State private var running: InstalledApp?
     @State private var browsing: InstalledApp?
+    /// The game whose page is open (tap a row); Play on the row or the page runs it.
+    @State private var showing: InstalledApp?
+    /// iPhone games now; Android is shown as coming, so the place for it is already there.
+    @State private var platform = 0
     @State private var keepGoing = false
     @State private var testingAllGames = false
     /// A `hydrogenvm://run/<id>` link (Home Screen icon) waiting to be opened.
@@ -162,26 +166,50 @@ struct LibraryView: View {
                     // A Home Screen link is opening a game: stay black, never flash the library.
                     Color.black.ignoresSafeArea()
                 } else if store.apps.isEmpty && store.importing.isEmpty {
+                    ZStack {
+                        LinenBackground()
                     ContentUnavailableView {
                         Label("No apps yet", systemImage: "shippingbox")
                     } description: {
                         Text("Import a decrypted 32-bit .ipa (iOS 3–10). You can also drop .ipa files into HydrogenVM's folder in the Files app.")
                     } actions: {
-                        Button("Import .ipa") { pickingFile = true }.buttonStyle(.borderedProminent)
+                        Button("Import .ipa") { pickingFile = true }
+                            .buttonStyle(GlossButtonStyle(kind: .blue, height: 44))
+                            .frame(maxWidth: 220)
+                    }
+                    .foregroundStyle(Gloss.ink)
                     }
                 } else {
                     List {
-                        if !store.importing.isEmpty {
+                        Section {
+                            Picker("Platform", selection: $platform) {
+                                Text("iPhone").tag(0)
+                                Text("Android · soon").tag(1)
+                            }
+                            .pickerStyle(.segmented)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+                        }
+                        if platform == 1 {
+                            Section {
+                                Text("Android games (.apk) are next. The first one being brought up is Geometry Wars.")
+                                    .font(.subheadline).foregroundStyle(Gloss.inkSoft)
+                            }
+                        }
+                        if platform == 0 && !store.importing.isEmpty {
                             Section("Importing") {
                                 ForEach(store.importing, id: \.self) { name in
                                     HStack { ProgressView(); Text(name).padding(.leading, 8) }
                                 }
                             }
                         }
+                        if platform == 0 {
                         Section {
                             ForEach(store.apps) { app in
                                 LibraryAppRow(app: app) {
                                     if app.info.runnable { running = app }
+                                } details: {
+                                    showing = app
                                 } browse: {
                                     browsing = app
                                 } reset: {
@@ -193,12 +221,35 @@ struct LibraryView: View {
                                 }
                             }
                             .onDelete { idx in idx.map { store.apps[$0] }.forEach(store.delete) }
+                        } header: {
+                            Text("Your games")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Gloss.sectionInk)
+                                .shadow(color: .white, radius: 0, x: 0, y: 1)
+                                .textCase(nil)
+                        }
                         }
                     }
+                    .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(LinenBackground())
                     .refreshable { store.refresh() }
                 }
             }
             .navigationTitle("HydrogenVM")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $showing) { app in
+                GameDetailView(app: app) {
+                    if app.info.runnable { running = app }
+                } browse: {
+                    browsing = app
+                } reset: {
+                    store.resetData(app)
+                } delete: {
+                    showing = nil
+                    store.delete(app)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu("Options", systemImage: "gearshape") {
@@ -338,6 +389,7 @@ struct LibraryView: View {
 private struct LibraryAppRow: View {
     let app: InstalledApp
     let open: () -> Void
+    let details: () -> Void
     let browse: () -> Void
     let reset: () -> Void
     let delete: () -> Void
@@ -376,8 +428,8 @@ private struct LibraryAppRow: View {
     }
 
     var body: some View {
-        Button(action: open) {
-            AppRow(app: app)
+        Button(action: details) {
+            AppRow(app: app, play: app.info.runnable ? open : nil)
         }
         .buttonStyle(.plain)
         .swipeActions(edge: .leading) {
@@ -443,45 +495,44 @@ private struct LibraryAppRow: View {
 
 struct AppRow: View {
     let app: InstalledApp
+    /// Runs the game straight from the row; nil for games that cannot run here.
+    var play: (() -> Void)? = nil
 
-    private var statusBadge: (text: String, color: Color, icon: String) {
-        if app.info.runnable {
-            return ("Ready · ARMv7", .green, "checkmark.circle.fill")
-        } else if app.info.encrypted {
-            return ("Encrypted · FairPlay Unsupported", .orange, "lock.fill")
-        } else if app.info.problem.localizedCaseInsensitiveContains("64") {
-            return ("64-Bit Only · Unsupported", .red, "xmark.octagon.fill")
-        } else {
-            let desc = app.info.problem.isEmpty ? "Unsupported" : app.info.problem
-            return (desc, .orange, "exclamationmark.triangle.fill")
-        }
+    /// One short status, in words a player reads at a glance.
+    static func status(_ info: HVMAppInfo) -> (text: String, color: Color) {
+        if info.runnable { return ("Ready", Gloss.ok) }
+        if info.encrypted { return ("Encrypted", Gloss.warn) }
+        if info.problem.localizedCaseInsensitiveContains("64") { return ("64-bit only", Gloss.bad) }
+        return ("Can't run", Gloss.warn)
     }
 
     var body: some View {
-        HStack(spacing: 14) {
-            AppIcon(path: app.info.iconPath)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(app.title).font(.headline)
-                Text([app.info.version.isEmpty ? nil : "v\(app.info.version)",
-                      app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+",
-                      app.info.bundleIdentifier].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-
-                let badge = statusBadge
-                HStack(spacing: 4) {
-                    Image(systemName: badge.icon)
-                        .font(.caption2)
-                    Text(badge.text)
-                        .font(.caption2.weight(.semibold))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(badge.color.opacity(0.15), in: Capsule())
-                .foregroundStyle(badge.color)
+        HStack(spacing: 12) {
+            GlossIcon(path: app.info.iconPath, title: app.title, size: 48)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(app.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Gloss.ink).lineLimit(1)
+                Text([app.info.version.isEmpty ? nil : app.info.version,
+                      app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+"].compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 13)).foregroundStyle(Gloss.inkSoft).lineLimit(1)
             }
-            Spacer()
-            if app.info.runnable { Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(.tint) }
+            Spacer(minLength: 8)
+            let s = Self.status(app.info)
+            Text(s.text).font(.system(size: 12, weight: .semibold)).foregroundStyle(s.color)
+            if let play {
+                Button(action: play) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(Gloss.link)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Play \(app.title)")
+            } else {
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(white: 0.6))
+                    .accessibilityHidden(true)
+            }
         }
+        .padding(.vertical, 4)
         .contentShape(.rect)
         .opacity(app.info.runnable ? 1 : 0.85)
     }
