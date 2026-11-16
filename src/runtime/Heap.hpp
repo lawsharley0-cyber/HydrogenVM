@@ -45,6 +45,7 @@ private:
     void     bigFree(uint32_t addr, uint32_t size);
     void     release(uint32_t addr, uint32_t size); // back to the free lists (caller holds mu_)
     void     ensureCommitted(uint32_t end);
+    static uint32_t iosRoundedSize(uint32_t size);   // libmalloc's block size for a request
     uint32_t carveRun(uint32_t rounded);           // a fresh 64 KB run for one class; 0 if full
     // Small blocks: the class of the run holding addr and whether addr starts a live block.
     uint32_t smallClassAt(uint32_t addr) const {
