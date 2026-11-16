@@ -13,6 +13,7 @@
 #include "audio/Audio.hpp"
 #include "offline/ClashOffline.hpp"
 #include "loader/ElfLoader.hpp"
+#include "runtime/android/Android.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cxxabi.h>
@@ -203,6 +204,8 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     registerSqlite(*this);
     registerFoundation(*this);
     registerUIKit(*this);
+    ArgReader::align64Args() = isAndroid();
+    if (isAndroid()) Android::registerBionic(*this);
 }
 
 Process::~Process() {
@@ -325,6 +328,7 @@ void Process::waitWhileBackgrounded() {
 }
 
 void Process::load() {
+    if (isAndroid()) { loadAndroid(); return; }
     const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
     if (fs::exists(plist)) infoPlist_ = Plist::parseFile(plist.string());
     const auto offlineBackend = infoPlist_ ? infoPlist_->getString("HydrogenVMOfflineBackend") : "";
@@ -438,6 +442,44 @@ std::vector<std::pair<std::string, bool>> peekDylibLoads(const std::vector<uint8
     return deps;
 }
 } // namespace
+
+void Process::loadAndroid() {
+    const std::string name = fs::path(cfg_.androidLib).filename().string();
+    executablePath_ = cfg_.androidLib;
+    guestExecutablePath_ = guestBundlePath_ + "/lib/" + name;
+    const auto file = Loader::readFile(executablePath_);
+    auto& lib = service<Android::Library>();
+    lib.name = name;
+    lib.so = Loader::loadElfShared(*mem_, file, Android::kLibraryBase);
+    image_.headerAddr = Android::kLibraryBase;
+    for (const auto& [sym, addr] : lib.so.image.symbols) image_.exports.emplace(sym, addr);
+    logf(LogLevel::Info, "Loaded %s: %zu imports, %zu initializers, needs %s", name.c_str(), lib.so.imports.size(),
+         lib.so.initializers.size(), [&] { std::string s; for (auto& n : lib.so.needed) s += (s.empty() ? "" : ", ") + n; return s; }().c_str());
+    setupEnvironment();
+    setupMainThread();
+    std::unordered_map<std::string, uint32_t> cache;
+    std::vector<std::string> missingFns;
+    for (const auto& imp : lib.so.imports) {
+        auto it = cache.find(imp.symbol);
+        uint32_t target;
+        if (it != cache.end()) target = it->second;
+        else {
+            const bool known = lookupSymbol("android:" + imp.symbol) || lookupSymbol("_" + imp.symbol);
+            target = Android::resolveImport(*this, imp.symbol, imp.weak);
+            cache.emplace(imp.symbol, target);
+            if (!known && target) missingFns.push_back(demangle("_" + imp.symbol));
+        }
+        if (imp.type == 2) mem_->write<uint32_t>(imp.address, mem_->read<uint32_t>(imp.address) + target);
+        else mem_->write<uint32_t>(imp.address, target);
+    }
+    unimplementedImports_ = missingFns;
+    if (!missingFns.empty()) {
+        std::string list;
+        for (size_t i = 0; i < missingFns.size(); ++i) list += (i ? ", " : "") + missingFns[i];
+        logf(LogLevel::Info, "%zu imported functions aren't implemented yet (the game may still run until it calls one): %s",
+             missingFns.size(), list.c_str());
+    }
+}
 
 void Process::loadGuestDylibs() {
     uint32_t nextLoadAddr = std::max<uint32_t>(0x04000000u, (image_.highAddr + 0xFFFFu) & ~0xFFFFu);
@@ -1469,6 +1511,11 @@ int Process::run() {
     try {
         // dyld order: libSystem/libobjc setup (+load), dependent dylib initializers in dependency order, then the image's initializers.
         for (auto& h : preInitHooks_) h(c);
+        if (isAndroid()) {
+            for (const uint32_t fn : service<Android::Library>().so.initializers) engine_->callGuest(c, fn, {});
+            exitCode_ = Android::runActivity(*this, c);
+            throw ProcessExit(exitCode_, "activity finished");
+        }
         const uint32_t pvars = allocStatic(20);
         for (const auto& dylib : guestDylibs_) {
             mem_->write<uint32_t>(pvars, dylib.headerAddr);
