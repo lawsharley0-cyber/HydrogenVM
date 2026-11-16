@@ -123,6 +123,7 @@ bool RunLoop::hasModeInput(const std::string& mode) {
         if (tm->modes.empty() ? common : inMode(tm->modes, mode)) return true;
     }
     for (const auto& s : sources) if (s->valid.load() && !s->modes.empty() && inMode(s->modes, mode)) return true;
+    if (!portModes.empty() && inMode(portModes, mode)) return true;
     return false;
 }
 
@@ -899,7 +900,27 @@ void o_performOnThread(Ctx& x, id self, SEL, SEL sel, id thread, id arg, bool wa
 void o_performOnThreadModes(Ctx& x, id self, SEL s, SEL sel, id thread, id arg, bool wait, id) { o_performOnThread(x, self, s, sel, thread, arg, wait); }
 // NSPort / NSMachPort: AFNetworking-style "keep this run loop alive" ports. Nothing arrives on them.
 id port_new(Ctx& x, id cls, SEL) { return autoreleased(x, id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, cls, rt(x).selAlloc)), "init"))); }
-void rl_portNoop(Ctx&, id, SEL, id, id) {}
+// A port added to a loop keeps that mode "having input", as on iOS: the classic network thread
+//   [runLoop addPort:[NSMachPort port] forMode:NSDefaultRunLoopMode];
+//   while (!done) [runLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]];
+// then sleeps until work arrives. Without it, -runMode:beforeDate: returned NO at once and the
+// loop spun, making an NSDate per turn: Army of Darkness Defense's ad thread (Burstly) grew the
+// process by ~60 MB/s until it was killed.
+void rl_addPort(Ctx& x, id self, SEL, id port, id mode) {
+    if (!port || !mode) return;
+    RunLoop& rl = loopOf(x, self);
+    const std::string key = runModeKey(x, mode);
+    std::lock_guard<std::mutex> lk(rl.mu);
+    rl.portModes.push_back(key);
+}
+void rl_removePort(Ctx& x, id self, SEL, id port, id mode) {
+    if (!port || !mode) return;
+    RunLoop& rl = loopOf(x, self);
+    const std::string key = runModeKey(x, mode);
+    std::lock_guard<std::mutex> lk(rl.mu);
+    auto it = std::find(rl.portModes.begin(), rl.portModes.end(), key);
+    if (it != rl.portModes.end()) rl.portModes.erase(it);
+}
 
 id th_current(Ctx& x, id, SEL) { return threadObject(x, &x.proc.currentThread()); }
 id th_main(Ctx& x, id, SEL) { return threadObject(x, &x.proc.mainThread()); }
@@ -1043,7 +1064,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder port = r.defineClass("NSPort", "NSObject");
     port.cm<&port_new>("port");
     r.defineClass("NSMachPort", "NSPort");
-    r.builder(l.nsRunLoop).m<&rl_portNoop>("addPort:forMode:", "v@:@@").m<&rl_portNoop>("removePort:forMode:", "v@:@@");
+    r.builder(l.nsRunLoop).m<&rl_addPort>("addPort:forMode:", "v@:@@").m<&rl_removePort>("removePort:forMode:", "v@:@@");
 
     ObjC::ClassBuilder th = r.defineClass("NSThread", "NSObject");
     l.nsThread = th.cls();
