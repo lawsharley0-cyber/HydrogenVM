@@ -304,29 +304,14 @@ final class RunModel {
         if s.screenSize.width > 0, s.screenSize != screenSize { screenSize = s.screenSize }
     }
 
-    /// A GitHub issue for this session, built from the console: only the lines that
-    /// point at a problem (errors, warnings, missing functions, crashes, GPU status),
-    /// with repeats folded into a count, plus the last few lines for context.
-    func consoleIssueURL() -> URL {
-        let report = ConsoleReport(lines: log.map { ($0.text, $0.level) })
-        let title = "[console] \(app.info.bundleIdentifier): \(report.headline ?? "problem report")"
-        var body = "**App:** \(app.title) \(app.info.version) (`\(app.info.bundleIdentifier)`)\n"
-        body += "**Emulator:** `\(HVMSession.emulatorCommit.prefix(12))` · renderer \(session?.useGPU == false ? "software" : "GPU")"
-        body += " · \(fps) fps · p95 frame \(String(format: "%.1f", frameTimeP95)) ms\n"
-        body += "**Device:** \(CrashReport.deviceModel), iOS \(UIDevice.current.systemVersion)\n\n"
-        let full = report.markdown(limit: 200_000)
-        let short = report.markdown(limit: 3600 - body.count)
-        body += short
-        if short.count < full.count {
-            // GitHub caps the URL, so the full filtered list goes to the clipboard.
-            UIPasteboard.general.string = full
-            body += "\n_The full list of problems was copied to the clipboard; paste it below._\n"
-        }
-        body += "\n_Sent from the in-game console. Describe what you were doing when it went wrong:_\n\n"
-        var url = URLComponents(string: "https://github.com/lawsharley0-cyber/HydrogenVM/issues/new")!
-        url.queryItems = [URLQueryItem(name: "title", value: String(title.prefix(150))),
-                          URLQueryItem(name: "body", value: body)]
-        return url.url!
+    func makeProblemReport(crashJSON: String? = nil) -> PlayerProblemReport {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        return PlayerProblemReport(bundleID: app.info.bundleIdentifier, gameVersion: app.info.version,
+                                   device: CrashReport.deviceModel, osVersion: UIDevice.current.systemVersion,
+                                   build: "\(version) (\(build)) \(HVMSession.emulatorCommit)",
+                                   log: log.map(\.text),
+                                   crashJSON: crashJSON ?? savedCrash?.json ?? session?.crashBundle ?? crashReport)
     }
 
     private func sampleMemory() {
@@ -480,6 +465,7 @@ struct RunView: View {
     let keepGoing: Bool
     @State private var model: RunModel
     @State private var showLog = false
+    @State private var problemReport: PlayerProblemReport?
     @State private var hudExpanded = false
     @State private var overlay = PlayerOverlay()
     @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
@@ -584,7 +570,7 @@ struct RunView: View {
             if showLog {
                 VStack {
                     Spacer()
-                    LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() })
+                    LogPanel(lines: model.log, copyText: { model.logText }, reportAction: { problemReport = model.makeProblemReport() })
                         .frame(height: 220)
                 }
             }
@@ -662,9 +648,10 @@ struct RunView: View {
             GamePhotoPicker { data in model.finishPhoto(data, requestId: request.id) }
                 .interactiveDismissDisabled()
         }
-        .sheet(item: $model.savedCrash) { CrashReportView(report: $0) }
+        .sheet(item: $problemReport) { PlayerProblemReportView(report: $0) }
+        .sheet(item: $model.savedCrash) { PlayerProblemReportView(report: model.makeProblemReport(crashJSON: $0.json)) }
         .alert("\(app.title) crashed", isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {
-            Button("Copy Report") { UIPasteboard.general.string = (model.crashReport ?? "") + "\n\n--- log ---\n" + model.logText; dismiss() }
+            Button("Copy Report") { UIPasteboard.general.string = model.makeProblemReport().text; dismiss() }
             Button("Show Log") { showLog = true }
             Button("Close", role: .cancel) { dismiss() }
         } message: {
@@ -801,6 +788,11 @@ struct RunView: View {
                         .disabled(model.closing)
                         .accessibilityIdentifier("player-inspect")
                     }
+
+                    Button("Report a problem", systemImage: "exclamationmark.bubble") {
+                        problemReport = model.makeProblemReport()
+                    }
+                    .accessibilityIdentifier("player-report-problem")
 
                     // Display Scaling & Interpolation Settings
                     VStack(alignment: .leading, spacing: 6) {
@@ -975,18 +967,17 @@ struct RunView: View {
 struct LogPanel: View {
     let lines: [RunModel.LogLine]
     let copyText: () -> String
-    var issueURL: (() -> URL)? = nil
-    @Environment(\.openURL) private var openURL
+    var reportAction: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 Text("Log").font(.caption.weight(.semibold))
                 Spacer()
-                if let issueURL {
-                    Button("Report on GitHub", systemImage: "exclamationmark.bubble") { openURL(issueURL()) }
+                if let reportAction {
+                    Button("Report a problem", systemImage: "exclamationmark.bubble", action: reportAction)
                         .font(.caption)
-                        .accessibilityHint("Opens a GitHub issue with the errors from this session")
+                        .accessibilityHint("Reviews a local report before copying or sharing")
                 }
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = copyText() }
                     .labelStyle(.iconOnly).font(.caption)
