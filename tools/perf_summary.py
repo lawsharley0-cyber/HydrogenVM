@@ -28,15 +28,17 @@ def host_samples(text, limit=20):
     for line in text.splitlines():
         # perf report --stdio --no-children --sort symbol has a single overhead
         # percentage followed by the privilege marker and symbol.
-        match = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)%\s+(?:.*?\s+)?\[.\]\s+(.+?)\s*$", line)
-        if match:
+        match = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)%\s+(.*)", line)
+        if match and "[.]" in match[2]:
             percent = float(match[1])
             if percent > 100:
                 raise ValueError("invalid perf sample percentage")
             # Newer perf versions append aligned IPC/coverage columns even when
             # only overhead,symbol were requested. Keep the demangled name,
             # including its ordinary single spaces, without those columns.
-            symbol = re.split(r"\s{2,}", match[2].strip(), maxsplit=1)[0]
+            # Split the privilege marker directly. A permissive optional regex
+            # prefix backtracks across perf's very wide padding columns.
+            symbol = re.split(r"\s{2,}", match[2].partition("[.]")[2].strip(), maxsplit=1)[0]
             rows.append({"percent": percent, "symbol": symbol})
     if not rows:
         raise ValueError("no symbol samples in perf report (profiling did not succeed)")

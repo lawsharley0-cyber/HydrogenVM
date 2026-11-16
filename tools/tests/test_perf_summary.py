@@ -47,6 +47,13 @@ class PerfSummaryTests(unittest.TestCase):
         rows = perf_summary.host_samples(" 5.69% [.] drawImage(Surface&, unsigned int)       -      -\n")
         self.assertEqual(rows[0]["symbol"], "drawImage(Surface&, unsigned int)")
 
+    def test_wide_perf_rows_and_optional_binary_columns(self):
+        text = " 5.69% hvm libhvm [.] drawImage(Surface&, unsigned int)" + " " * 10000 + "-      -\n"
+        self.assertEqual(perf_summary.host_samples(text),
+                         [{"percent": 5.69, "symbol": "drawImage(Surface&, unsigned int)"}])
+        with self.assertRaises(ValueError):
+            perf_summary.host_samples("5.69% no user-space privilege marker\n")
+
 
 if __name__ == "__main__":
     unittest.main()

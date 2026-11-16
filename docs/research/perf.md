@@ -101,15 +101,15 @@ mount. Repeating on Linux ext4 succeeded; the failed attempt is not counted.
 Raw private evidence is retained locally in `work/perf-evidence-2/`, outside
 Git. Only these aggregate measurements are committed. `perf_summary.py`
 rejects crashed/missing/invalid metrics, unvalidated or sub-ten-second CoreMark
-runs and absent perf symbols; five synthetic parser tests pass. Parent runtime
+runs and absent perf symbols; six synthetic parser tests pass. Parent runtime
 gates were 846 fulltest / 47 support / 41 Test Lab, zero new stub findings;
 the parent smoke tools suite passed 423 tests with 4 skips. No src/app changes
 are made by this measurement PR.
 
 ## Remaining before item 3 can be completed
 
-The matching with-data Minion Rush and Groove Coaster Zero fixtures remain
-unavailable. A subsequent expanded search found Army of Darkness 1.0.1 outside
+Matching Minion/Groove fixtures have now been measured (follow-up below).
+An expanded search also found Army of Darkness 1.0.1 outside
 the primary bench. Its 90-second tutorial scenario fails graceful shutdown on
 both unchanged runtime `7fdc8a18` (frozen tests-only build `6993ed89`) and profile
 refactor `2474be76`: exit 70, `graceful-stop-watchdog`, signature `d5c54ff6d981`.
@@ -117,10 +117,43 @@ The baseline perf capture contains 15,812 user CPU samples, but this failed run
 is **excluded** from successful performance baselines; raw evidence stays in
 `work/perf-aod-evidence/`. Tracked as **#496**; resolve/minimize the shutdown failure first.
 
-Obtain the remaining smoke-qualified profiles,
+Resolve the failed Army scenario and qualify the intended gameplay scenes,
 then choose a measured hotspot rather than assuming malloc/ObjC dominates.
 The available game's profile alone does not justify a cross-game host-call
 rewrite. Add and prove cache-write/flush retirement correctness before extending
 the cache. For any proposed speed patch, collect interleaved matching-scene
 before/after game and CoreMark numbers and identical conformance/fulltest/smoke
 results. No decode-cache, dispatch or host-call optimization is included here.
+
+## Supplied Minion/Groove baseline follow-up
+
+The owner's matching archives resolve the earlier missing-fixture blocker.
+Archive identities are recorded in smoke-harness research. Frozen executable
+and source provenance are identical to the Angry Birds baseline above.
+Each run uses a separate fresh home, GPU, default-off internet/FPS overrides,
+cpu-clock:u at 99 Hz and HVM_GUEST_PROFILE. Both exit 0 without timeout, crash,
+stall or missing-API taint; zero stub hits and zero lost perf samples.
+
+| Fixture / duration | Frames | Mean ms | p95 ms | p99 ms | Guest MIPS |
+|---|---:|---:|---:|---:|---:|
+| Groove Zero 1.0.0 / 60.4505 s | 3,448 | 10.2031 | 12.0586 | 16.7772 | 2.49985 |
+| Minion Rush 1.0.0 with data / 300.568 s | 3,507 | 40.2809 | 96.469 | 142.606 | 56.0791 |
+
+Selected on-CPU shares: Groove drawImage 9.01%, memmove 4.90%, memset 3.46%,
+publishFrame 2.18%. Minion memset 1.02%, memmove 0.82%, drawImage 0.64%,
+H_BranchIndirect 0.57%, H_MultiPopPc 0.41%, Engine::callHle 0.35%.
+Unresolved addresses remain; no complete CPU attribution is claimed.
+Thread/place sampling has 46,404 Groove samples (96.7% HLE) and 4,929,089
+Minion samples (98.2% HLE), including waiting threads. These are not CPU shares.
+
+Screenshots show Groove title and Minion's introductory notice. The historical
+tap does not dismiss the Minion notice. No terms were accepted; these captures
+qualify startup/menu only, not level entry. The profile-refactor smoke runs also
+pass, but those unprofiled timings are not a before/after speed comparison.
+No interpreter/host-call change or speedup is claimed.
+
+Private evidence is retained outside Git in work/found-fixture-perf-0n5wtad4/.
+The 38 MB Minion perf report exposed excessive regex backtracking on wide padding.
+The summary parser now splits the explicit symbol marker and optional columns;
+six tests pass, including a 10,000-space row. Both actual reports parse
+successfully. This evidence-tool repair does not optimize guest execution.
