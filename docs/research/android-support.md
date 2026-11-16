@@ -13,7 +13,7 @@ Status of Android (.apk) support. Each game brought up adds what it needed; `hvm
 | libOpenSLES | OpenSLES.cpp | Engine, output mix, PCM buffer-queue players on the mixer, volume. No URI/asset players, MIDI or 3D. |
 | libandroid | LibAndroid.cpp | AAssetManager / AAsset / AAssetDir, AConfiguration. Not yet: ALooper, AInputQueue, ANativeWindow, ASensor (NativeActivity games). |
 | libEGL | — | Not yet (NativeActivity / Unity games). |
-| libdl | — | Not yet: one library per game is loaded. |
+| libdl | Linker.cpp | Every library of the APK's ABI folder is loaded in dependency order and bound across libraries (system libraries first, then load order, as Android's linker does). dlopen / dlsym / dladdr / dlerror; dlclose keeps libraries loaded. |
 
 ## Java side (Jni.cpp, Java.cpp, App.cpp)
 
@@ -25,6 +25,10 @@ called there. `HVM_JNI_TRACE=1` logs each method used.
 - **Engine drivers:** EA Blast (Dead Space) and Ubisoft UAF (Rayman Adventures). Each driver
   plays its activity's lifecycle, renderer and touch calls.
 
+## Surfaces
+
+- An Android window surface is opaque: alpha is set to 1 before each present (games clear with alpha 0).
+
 ## CPU
 
 - ARMv7 generic timer reads (CNTVCT/CNTPCT/CNTFRQ), which OpenSSL's startup probe uses.
@@ -34,5 +38,5 @@ called there. `HVM_JNI_TRACE=1` logs each method used.
 | Game | Engine | Status |
 |---|---|---|
 | Dead Space 1.2.0 | EA Blast, ES 1.1 | Plays: picture, ETC1 textures, sound, touch. |
-| Rayman Adventures 1.0.0 | Ubisoft UAF, ES 2, OpenSL ES | Runs without crashing, music and effects play, 22 draws a frame. The picture is white: a rendering issue still open. |
-| Alto's Adventure 1.25 | Unity 4 + Mono, NativeActivity, EGL | Needs multiple libraries + libdl, libandroid input/window/looper, EGL. |
+| Rayman Adventures 1.0.0 | Ubisoft UAF, ES 2, OpenSL ES | Title scene drawn, music and effects play; waits on "Connecting to server" (no Android sockets yet). |
+| Alto's Adventure 1.25 | Unity 4 + Mono, NativeActivity, EGL | All five libraries load and bind. Needs EGL, libandroid input/window/looper and a Unity driver. |

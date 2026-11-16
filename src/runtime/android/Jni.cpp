@@ -144,10 +144,11 @@ bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jo
             if (k.rfind(cls + "." + name + "(", 0) == 0) { fn = v; break; }
     }
     if (!fn) {
-        const auto& lib = proc.service<Library>();
-        auto it = lib.so.image.symbols.find("Java_" + mangle(cls) + "_" + mangle(name));
-        if (it == lib.so.image.symbols.end()) return false;
-        fn = it->second;
+        auto& L = proc.service<Library>();
+        std::lock_guard<std::recursive_mutex> lk(L.mu);
+        auto a = L.find("Java_" + mangle(cls) + "_" + mangle(name));
+        if (!a) return false;
+        fn = *a;
     }
     std::vector<uint32_t> args{envFor(proc), self};
     args.insert(args.end(), words.begin(), words.end());

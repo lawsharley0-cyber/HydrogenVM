@@ -197,11 +197,12 @@ int32_t b_atomicDec(Ctx& x, GuestPtr ptr) { return __atomic_fetch_sub(reinterpre
 // --------------------------------------------------------------- unwinder ---
 
 uint32_t b_findExidx(Ctx& x, uint32_t pc, GuestPtr count) {
-    const auto& lib = x.proc.service<Library>();
-    const auto& img = lib.so.image;
-    if (pc < img.lowest || pc >= img.highest || !lib.so.exidx) return 0;
-    if (count) x.mem.write<uint32_t>(count, lib.so.exidxCount);
-    return lib.so.exidx;
+    auto& L = x.proc.service<Library>();
+    std::lock_guard<std::recursive_mutex> lk(L.mu);
+    const LoadedLib* lib = L.containing(pc & ~1u);
+    if (!lib || !lib->so.exidx) return 0;
+    if (count) x.mem.write<uint32_t>(count, lib->so.exidxCount);
+    return lib->so.exidx;
 }
 
 // ------------------------------------------------------------------ files ---
@@ -611,6 +612,7 @@ void registerBionic(Process& p) {
     registerBionicExtra(p);
     registerLibAndroid(p);
     registerOpenSLES(p);
+    registerLibdl(p);
     p.defineFunction("android:glCompressedTexImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexImage2D>(x); });
     p.defineFunction("android:glCompressedTexSubImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexSubImage2D>(x); });
     // Data.

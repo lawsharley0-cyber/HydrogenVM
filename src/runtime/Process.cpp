@@ -458,31 +458,15 @@ void Process::loadAndroid() {
     if (const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist"; fs::exists(plist)) infoPlist_ = Plist::parseFile(plist.string());
     executablePath_ = cfg_.androidLib;
     guestExecutablePath_ = guestBundlePath_ + "/lib/" + name;
-    const auto file = Loader::readFile(executablePath_);
-    auto& lib = service<Android::Library>();
-    lib.name = name;
-    lib.so = Loader::loadElfShared(*mem_, file, Android::kLibraryBase);
-    image_.headerAddr = Android::kLibraryBase;
-    for (const auto& [sym, addr] : lib.so.image.symbols) image_.exports.emplace(sym, addr);
-    logf(LogLevel::Info, "Loaded %s: %zu imports, %zu initializers, needs %s", name.c_str(), lib.so.imports.size(),
-         lib.so.initializers.size(), [&] { std::string s; for (auto& n : lib.so.needed) s += (s.empty() ? "" : ", ") + n; return s; }().c_str());
     setupEnvironment();
     if (auto env = lookupSymbol("android:environ")) mem_->write<uint32_t>(*env, envp_);
     setupMainThread();
-    std::unordered_map<std::string, uint32_t> cache;
-    std::vector<std::string> missingFns;
-    for (const auto& imp : lib.so.imports) {
-        auto it = cache.find(imp.symbol);
-        uint32_t target;
-        if (it != cache.end()) target = it->second;
-        else {
-            const bool known = lookupSymbol("android:" + imp.symbol) || lookupSymbol("_" + imp.symbol);
-            target = Android::resolveImport(*this, imp.symbol, imp.weak);
-            cache.emplace(imp.symbol, target);
-            if (!known && target) missingFns.push_back(demangle("_" + imp.symbol));
-        }
-        if (imp.type == 2) mem_->write<uint32_t>(imp.address, mem_->read<uint32_t>(imp.address) + target);
-        else mem_->write<uint32_t>(imp.address, target);
+    std::vector<std::string> missingFns = Android::loadLibraries(*this, cfg_.androidLib);
+    {
+        auto& L = service<Android::Library>();
+        image_.headerAddr = Android::kLibraryBase;
+        for (const auto& l : L.libs)
+            for (const auto& [sym, addr] : l->so.image.symbols) image_.exports.emplace(sym, addr);
     }
     unimplementedImports_ = missingFns;
     if (!missingFns.empty()) {
@@ -1524,7 +1508,7 @@ int Process::run() {
         // dyld order: libSystem/libobjc setup (+load), dependent dylib initializers in dependency order, then the image's initializers.
         for (auto& h : preInitHooks_) h(c);
         if (isAndroid()) {
-            for (const uint32_t fn : service<Android::Library>().so.initializers) engine_->callGuest(c, fn, {});
+            Android::runInitializers(*this, c);
             exitCode_ = Android::runActivity(*this, c);
             throw ProcessExit(exitCode_, "activity finished");
         }
