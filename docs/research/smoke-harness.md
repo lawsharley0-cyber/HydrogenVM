@@ -38,3 +38,22 @@ in this bench directory, so their scenarios were not executed. Their RSS
 ceilings and noted tap timings need owner/runner qualification. Missing games
 and missing visual comparisons remain explicit skips. Full scenario commands
 and private CI configuration are in [the testing guide](../testing/smoke.md).
+
+## Expanded fixture search
+
+A later search outside the primary bench found the owner's Army of Darkness
+1.0.1 archive. Its 90-second script reaches the first movement tutorial, but
+**FAILS** at graceful shutdown: exit 70, `graceful-stop-watchdog`, signature
+`d5c54ff6d981`. The same failure reproduces on unchanged runtime `7fdc8a18`
+(frozen build `6993ed89`, tests-only additions) and on profile refactor
+`2474be76`; it is not newly attributed to the refactor. Candidate peak RSS
+510,590,976 bytes, no stub hits. The harness correctly retains the failure.
+No shutdown check or test is waived. Follow-up issue: **#496**.
+
+An older local Minion Rush 1.0.0 archive has no restored DLC index, so it is
+not the requested with-data fixture. The manifest now requires nonempty
+`Container/Library/Caches/dlcs/mnhtn_index_ios`; both synthetic missing/empty
+archives and the actual no-data archive are rejected before launch. Focused
+harness tests are now **13 passed**. Groove Coaster Zero and a matching
+with-data Minion Rush fixture remain unavailable. Initial skip observations
+above describe the original primary-bench search, not this later result.

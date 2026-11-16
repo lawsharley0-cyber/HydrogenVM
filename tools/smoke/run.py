@@ -72,6 +72,10 @@ def load_scenario(path):
             raise ValueError("max_mae must be <= 1")
     if any(not isinstance(line, str) or not line for line in spec.get("required_log", [])):
         raise ValueError("required_log must contain nonempty strings")
+    for member in spec.get("required_members", []):
+        if not isinstance(member, str) or not member:
+            raise ValueError("required_members must contain relative file paths")
+        within(Path(path).parent, member)
     return spec
 
 
@@ -83,6 +87,26 @@ def identity(path):
         if len(names) != 1:
             raise ValueError("expected one app Info.plist in IPA")
         return plistlib.loads(archive.read(names[0]))
+
+
+def require_members(fixture, members):
+    """A present but incomplete archive is not the requested with-data fixture."""
+    if not members:
+        return
+    if fixture.is_dir():
+        for member in members:
+            file = within(fixture, member)
+            if not file.is_file() or file.stat().st_size == 0:
+                raise ValueError(f"required fixture content missing/empty: {member}")
+    else:
+        with zipfile.ZipFile(fixture) as archive:
+            for member in members:
+                try:
+                    info = archive.getinfo(member)
+                except KeyError:
+                    raise ValueError(f"required fixture content missing: {member}") from None
+                if info.is_dir() or info.file_size == 0:
+                    raise ValueError(f"required fixture content empty: {member}")
 
 
 def screenshot_difference(actual, reference):
@@ -197,6 +221,7 @@ def run_scenario(spec, hvm, games, refs, output, require_refs=False):
     info = identity(fixture)
     if info.get("CFBundleIdentifier") != spec["bundle_id"] or str(info.get("CFBundleShortVersionString", info.get("CFBundleVersion"))) != spec["version"]:
         raise ValueError(f"{spec['id']}: fixture identity/version differs from scenario")
+    require_members(fixture, spec.get("required_members", []))
     result["scenario_sha256"] = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
     output.mkdir(parents=True, exist_ok=False)
     points = {p["at"]: p for p in spec.get("screenshots", [])}

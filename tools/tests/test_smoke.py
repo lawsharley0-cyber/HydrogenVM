@@ -8,6 +8,7 @@ import plistlib
 import sys
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -66,6 +67,20 @@ class SmokeTests(unittest.TestCase):
         self.spec["required_log"] = ["expected request"]
         self.assertIn("required log absent", run.evaluate(self.spec, "", self.report, self.execution)[0][0])
         self.assertFalse(run.evaluate(self.spec, "expected request", self.report, self.execution)[0])
+
+    def test_with_data_fixture_rejects_missing_or_empty_content(self):
+        archive = self.root / "game.ipa"
+        member = "Container/Library/Caches/dlcs/mnhtn_index_ios"
+        for content in (None, b"", b"private index"):
+            with self.subTest(content=content):
+                with zipfile.ZipFile(archive, "w") as output:
+                    if content is not None:
+                        output.writestr(member, content)
+                if content:
+                    run.require_members(archive, [member])
+                else:
+                    with self.assertRaisesRegex(ValueError, "fixture content"):
+                        run.require_members(archive, [member])
 
     def test_paths_reject_traversal_and_escape_symlink(self):
         with self.assertRaises(ValueError):

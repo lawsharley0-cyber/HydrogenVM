@@ -4,6 +4,7 @@
   "bundle_id": "com.gameloft.despicableme2",
   "version": "1.0.0",
   "ipa": "Minion Rush 1.0.0 with data.ipa",
+  "required_members": ["Container/Library/Caches/dlcs/mnhtn_index_ios"],
   "source": "docs/research/minion-rush-1.0.0.md; docs/GEMINI_HANDOFF.md (historical alert tap)",
   "home_setup": "Fresh home. The IPA importer restores Container/Library/Caches/dlcs; use the with-data IPA.",
   "run_seconds": 300,
