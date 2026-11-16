@@ -2,6 +2,7 @@
 // CADisplayLink, CAAnimation (accepted; completion callbacks fire, no
 // interpolation yet) and the compositor that turns the layer trees of all
 // visible windows into the framebuffer.
+#include "runtime/Support.hpp"
 #include "UIKit.hpp"
 #include "runtime/gl/HostGL.hpp"
 #include <chrono>
@@ -36,9 +37,9 @@ void l_dealloc(Ctx& x, id self, SEL) {
         auto subs = std::move(d->sublayers);
         d->sublayers.clear();
         for (id s : subs) { if (LayerData* sd = rt(x).hostIf<LayerData>(s)) sd->superlayer = 0; rt(x).release(x.cpu, s); }
-        const id c = d->contents, m = d->mask, n = d->name;
-        d->contents = d->mask = d->name = 0;
-        for (id o : {c, m, n}) if (o) rt(x).release(x.cpu, o);
+        const id c = d->contents, m = d->mask, n = d->name, gc = d->gradientColors, gl = d->gradientLocations;
+        d->contents = d->mask = d->name = d->gradientColors = d->gradientLocations = 0;
+        for (id o : {c, m, n, gc, gl}) if (o) rt(x).release(x.cpu, o);
     }
     dirty(x);
     rt(x).disposeInstance(x.cpu, self);
@@ -542,6 +543,47 @@ struct Compositor {
         }
     }
 
+    // Rasterized at device resolution over the bounds; t is the projection on start→end.
+    void drawGradientLayer(const LayerData& d, const G::Affine& m, const G::Path& devShape, const G::Clip& clip, float alpha) {
+        const float s = std::max(0.25f, std::sqrt(std::fabs(m.a * m.d - m.b * m.c)));
+        G::Image img;
+        img.width = std::max(1, int(std::ceil(d.bounds.w * s)));
+        img.height = std::max(1, int(std::ceil(d.bounds.h * s)));
+        if (int64_t(img.width) * img.height > 4096 * 4096) return;
+        img.rgba.resize(size_t(img.width) * size_t(img.height) * 4);
+        const auto& stops = d.gradientStops;
+        auto sample = [&](float t) {
+            if (t <= stops.front().first) return stops.front().second;
+            if (t >= stops.back().first) return stops.back().second;
+            for (size_t i = 1; i < stops.size(); ++i)
+                if (t <= stops[i].first) {
+                    const auto& [t0, c0] = stops[i - 1];
+                    const auto& [t1, c1] = stops[i];
+                    const float k = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+                    return G::Color{c0.r + (c1.r - c0.r) * k, c0.g + (c1.g - c0.g) * k, c0.b + (c1.b - c0.b) * k, c0.a + (c1.a - c0.a) * k};
+                }
+            return stops.back().second;
+        };
+        const float dx = d.gradientEnd.x - d.gradientStart.x, dy = d.gradientEnd.y - d.gradientStart.y;
+        const float len2 = dx * dx + dy * dy;
+        for (int y = 0; y < img.height; ++y)
+            for (int xx = 0; xx < img.width; ++xx) {
+                const float u = (float(xx) + 0.5f) / float(img.width), v = (float(y) + 0.5f) / float(img.height);
+                const float t = len2 > 0 ? ((u - d.gradientStart.x) * dx + (v - d.gradientStart.y) * dy) / len2 : 0;
+                const G::Color c = sample(t);
+                uint8_t* p = &img.rgba[(size_t(y) * img.width + xx) * 4];
+                const float a = std::clamp(c.a, 0.0f, 1.0f);
+                p[0] = uint8_t(std::lround(std::clamp(c.r, 0.0f, 1.0f) * a * 255));
+                p[1] = uint8_t(std::lround(std::clamp(c.g, 0.0f, 1.0f) * a * 255));
+                p[2] = uint8_t(std::lround(std::clamp(c.b, 0.0f, 1.0f) * a * 255));
+                p[3] = uint8_t(std::lround(a * 255));
+            }
+        const G::Affine im = G::Affine::scale(d.bounds.w / float(img.width), d.bounds.h / float(img.height))
+                                 .then(G::Affine::translate(d.bounds.x, d.bounds.y)).then(m);
+        const G::Clip c2 = d.cornerRadius > 0 ? G::intersectClip(clip, devShape, false) : clip;
+        G::drawImage(dst, img, im, c2, alpha, true);
+    }
+
     void render(id layer, const G::Affine& parentToDevice, const G::Clip& clip, float parentOpacity) {
         const LayerData& d = L(x, layer);
         if (d.hidden || d.opacity <= 0.001f) return;
@@ -580,6 +622,9 @@ struct Compositor {
             if (d.cornerRadius <= 0 && rectangular) G::fillRect(dst, m.applyRect(d.bounds), d.background, clip, G::BlendMode::Normal, alpha);
             else G::fillPath(dst, devShape, false, d.background, clip, G::BlendMode::Normal, alpha);
         }
+
+        // CAGradientLayer
+        if (d.gradientStops.size() >= 1 && d.bounds.w > 0 && d.bounds.h > 0) drawGradientLayer(d, m, devShape, clip, alpha);
 
         // contents
         G::ImagePtr img;
@@ -852,6 +897,46 @@ void l_renderInContextImpl(Ctx& x, id self, id ctx) {
 }
 namespace { void l_renderInContext(Ctx& x, id self, SEL, id ctx) { l_renderInContextImpl(x, self, ctx); } }
 
+// ---- CAGradientLayer (axial): colors spread evenly unless locations are given.
+void gradientRebuild(Ctx& x, LayerData& d) {
+    d.gradientStops.clear();
+    const std::vector<id> colors = d.gradientColors ? Foundation::arrayItems(x, d.gradientColors) : std::vector<id>{};
+    const std::vector<id> locs = d.gradientLocations ? Foundation::arrayItems(x, d.gradientLocations) : std::vector<id>{};
+    for (size_t i = 0; i < colors.size(); ++i) {
+        float t = colors.size() > 1 ? float(i) / float(colors.size() - 1) : 0;
+        if (locs.size() == colors.size()) {
+            uint64_t bits = rt(x).send(x.cpu, locs[i], "floatValue");
+            std::memcpy(&t, &bits, sizeof t);
+        }
+        d.gradientStops.push_back({t, CG::colorOf(x, colors[i])});
+    }
+    std::stable_sort(d.gradientStops.begin(), d.gradientStops.end(), [](auto& a, auto& b) { return a.first < b.first; });
+}
+id gl_colors(Ctx& x, id self, SEL) { return L(x, self).gradientColors; }
+void gl_setColors(Ctx& x, id self, SEL, id a) {
+    LayerData& d = L(x, self);
+    const id old = d.gradientColors;
+    d.gradientColors = a ? id(rt(x).send(x.cpu, a, "copy")) : 0;
+    if (old) rt(x).release(x.cpu, old);
+    gradientRebuild(x, d);
+    dirty(x);
+}
+id gl_locations(Ctx& x, id self, SEL) { return L(x, self).gradientLocations; }
+void gl_setLocations(Ctx& x, id self, SEL, id a) {
+    LayerData& d = L(x, self);
+    const id old = d.gradientLocations;
+    d.gradientLocations = a ? id(rt(x).send(x.cpu, a, "copy")) : 0;
+    if (old) rt(x).release(x.cpu, old);
+    gradientRebuild(x, d);
+    dirty(x);
+}
+void gl_start(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CG::fromG(L(x, self).gradientStart)); }
+void gl_setStart(Ctx& x, id self, SEL, CGPoint p) { L(x, self).gradientStart = CG::toG(p); dirty(x); }
+void gl_end(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CG::fromG(L(x, self).gradientEnd)); }
+void gl_setEnd(Ctx& x, id self, SEL, CGPoint p) { L(x, self).gradientEnd = CG::toG(p); dirty(x); }
+id gl_type(Ctx& x, id, SEL) { return Foundation::constString(x.proc, "axial"); }
+void gl_setType(Ctx&, id, SEL, id) {}
+
 void registerQuartzCore(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
     ObjC::ClassBuilder layer = r.defineClass("CALayer", "NSObject");
@@ -920,6 +1005,15 @@ void registerQuartzCore(Process& p, ObjC::Runtime& r) {
         }
         if (name == "CAPropertyAnimation") b.cm<&anim_withKeyPath>("animationWithKeyPath:");
     }
+    ObjC::ClassBuilder grad = r.defineClass("CAGradientLayer", "CALayer");
+    grad.m<&gl_colors>("colors").m<&gl_setColors>("setColors:", "v@:@")
+        .m<&gl_locations>("locations").m<&gl_setLocations>("setLocations:", "v@:@")
+        .m<&gl_start>("startPoint", P + "@:").m<&gl_setStart>("setStartPoint:", "v@:" + P)
+        .m<&gl_end>("endPoint", P + "@:").m<&gl_setEnd>("setEndPoint:", "v@:" + P)
+        .m<&gl_type>("type");
+    supportMethod(p, grad, "CAGradientLayer", "setType:", [](Ctx& x) { callWrapped<&gl_setType>(x); }, SupportStatus::Approx,
+                  "Only axial gradients are drawn; other types are accepted and drawn as axial", "v@:@");
+
     ObjC::ClassBuilder tf = r.defineClass("CAMediaTimingFunction", "NSObject");
     tf.cm<&tf_withName>("functionWithName:").cm<&tf_withControlPoints>("functionWithControlPoints::::");
     for (const char* n : {"kCAMediaTimingFunctionLinear", "kCAMediaTimingFunctionEaseIn", "kCAMediaTimingFunctionEaseOut",

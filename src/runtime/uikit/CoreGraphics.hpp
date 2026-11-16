@@ -47,6 +47,9 @@ struct GState {
     float charSpacing = 0;
     int textMode = 0;   // kCGTextFill
     bool subpixelPositionFonts = true, subpixelQuantizeFonts = true;
+    // shadow (CGContextSetShadow / SetShadowWithColor): offset in device pixels, blur radius
+    float shadowDX = 0, shadowDY = 0, shadowBlur = 0;
+    G::Color shadowColor{0, 0, 0, 0};
 };
 
 struct ContextData : ObjC::HostObject {
@@ -60,6 +63,9 @@ struct ContextData : ObjC::HostObject {
     std::vector<GState> stack{GState{}};
     G::Path path;                    // device space
     G::Point textPos{};              // text space
+    // Base space (shadow offsets): device pixels per unit, and whether +y is down (UIKit contexts).
+    float baseScale = 1;
+    bool baseYDown = false;
     GState& gs() { return stack.back(); }
     ~ContextData() override;
 };

@@ -53,6 +53,11 @@ struct LayerData : ObjC::HostObject {
     G::Color background{0, 0, 0, 0}, border{0, 0, 0, 1};
     G::ImagePtr backgroundPattern;
     id contents = 0;                 // retained (CGImage)
+    // CAGradientLayer: colors/locations as the app set them (retained arrays), the stops built
+    // from them, and the axis in unit coordinates of the bounds.
+    id gradientColors = 0, gradientLocations = 0;
+    std::vector<std::pair<float, G::Color>> gradientStops;
+    G::Point gradientStart{0.5f, 0.0f}, gradientEnd{0.5f, 1.0f};
     G::Rect contentsRect{0, 0, 1, 1}, contentsCenter{0, 0, 1, 1};
     int gravity = kGravityResize;
     bool magnifyNearest = false;

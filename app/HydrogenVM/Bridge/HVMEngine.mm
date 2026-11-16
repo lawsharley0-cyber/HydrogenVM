@@ -119,6 +119,42 @@ struct CoreTextBackend final : G::TextBackend {
         return base;
     }
 
+    // The font's tables, reassembled into a standalone sfnt (system fonts live in .ttc
+    // collections, which the TrueType loader does not read).
+    std::vector<uint8_t> fontFile(const G::FontDesc &f) override {
+        CTFontRef ft = font(f, 1);
+        std::vector<uint8_t> out;
+        if (!ft) return out;
+        CFArrayRef tags = CTFontCopyAvailableTables(ft, kCTFontTableOptionNoOptions);
+        std::vector<std::pair<uint32_t, NSData *>> tables;
+        for (CFIndex i = 0; tags && i < CFArrayGetCount(tags); ++i) {
+            const uint32_t tag = uint32_t(uintptr_t(CFArrayGetValueAtIndex(tags, i)));
+            if (CFDataRef d = CTFontCopyTable(ft, tag, kCTFontTableOptionNoOptions))
+                tables.push_back({tag, (__bridge_transfer NSData *)d});
+        }
+        if (tags) CFRelease(tags);
+        CFRelease(ft);
+        if (tables.empty()) return out;
+        std::sort(tables.begin(), tables.end(), [](auto &a, auto &b) { return a.first < b.first; });
+        auto put16 = [&](uint32_t v) { out.push_back(uint8_t(v >> 8)); out.push_back(uint8_t(v)); };
+        auto put32 = [&](uint32_t v) { put16(v >> 16); put16(v & 0xFFFF); };
+        const uint32_t n = uint32_t(tables.size());
+        uint32_t pow2 = 1, log2 = 0;
+        while (pow2 * 2 <= n) { pow2 *= 2; ++log2; }
+        put32(0x00010000); put16(n); put16(pow2 * 16); put16(log2); put16(n * 16 - pow2 * 16);
+        uint32_t offset = 12 + n * 16;
+        for (auto &[tag, data] : tables) {
+            put32(tag); put32(0); put32(offset); put32(uint32_t(data.length));
+            offset += (uint32_t(data.length) + 3) & ~3u;
+        }
+        for (auto &[tag, data] : tables) {
+            const uint8_t *b = static_cast<const uint8_t *>(data.bytes);
+            out.insert(out.end(), b, b + data.length);
+            while (out.size() % 4) out.push_back(0);
+        }
+        return out;
+    }
+
     std::vector<CTLineRef> lines(const std::string &s, CTFontRef ft) {
         std::vector<CTLineRef> out;
         NSString *text = str(s);

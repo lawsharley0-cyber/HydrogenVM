@@ -2955,6 +2955,56 @@ int runFullSubsystemTests() {
         proc.callGuest(cpu,*proc.lookupSymbol("_CGColorSpaceRelease"),{space});
         call(label,"release");
         check(inked>20, "-[CALayer renderInContext:] draws a label that was never on screen (its text is drawn first)");
+
+        // Army of Darkness Defense: shadows, CGLayer, CAGradientLayer, CFWriteStream to a file.
+        auto fn=[&](const char* s, std::initializer_list<uint32_t> a){ return uint32_t(proc.callGuest(cpu,*proc.lookupSymbol(s),a)); };
+        auto f32=[](float v){ return std::bit_cast<uint32_t>(v); };
+        const uint32_t sp2=fn("_CGColorSpaceCreateDeviceRGB",{});
+        const uint32_t bm=fn("_CGBitmapContextCreate",{0,32,32,8,128,sp2,1});
+        const uint32_t pix=fn("_CGBitmapContextGetData",{bm});
+        auto at=[&](int px, int py, int ch){ return proc.mem().read<uint8_t>(pix+uint32_t(py*128+px*4+ch)); };
+        const uint32_t black=call(call(r.getClass("UIColor"),"blackColor"),"CGColor");
+        fn("_CGContextSetShadowWithColor",{bm,f32(4),f32(-4),f32(0),black});
+        fn("_CGContextSetRGBFillColor",{bm,f32(1),0,0,f32(1)});
+        fn("_CGContextFillRect",{bm,f32(4),f32(12),f32(8),f32(8)});
+        // user y-up: the rect covers device rows 12..20, columns 4..12; its shadow 4 right and 4 down.
+        const bool shadowed=at(14,22,3)==255 && at(14,22,0)==0 && at(6,14,0)==255 && at(20,28,3)==0;
+        fn("_CGContextSetShadowWithColor",{bm,0,0,0,0});
+        const uint32_t layer=fn("_CGLayerCreateWithContext",{bm,f32(8),f32(8),0});
+        const uint32_t lc=fn("_CGLayerGetContext",{layer});
+        fn("_CGContextSetRGBFillColor",{lc,0,f32(1),0,f32(1)});
+        fn("_CGContextFillRect",{lc,0,0,f32(8),f32(8)});
+        fn("_CGContextDrawLayerAtPoint",{bm,f32(20),f32(20),layer});
+        const bool layered=at(24,8,1)==255 && at(24,8,0)==0 && at(24,16,1)==0;
+        fn("_CGLayerRelease",{layer});
+        check(shadowed && layered, "CGContext shadows are drawn offset in base space, and CGLayer contents draw at a point");
+
+        const uint32_t grad=call(call(r.getClass("CAGradientLayer"),"alloc"),"init");
+        call(grad,"setBounds:",{0,0,f32(32),f32(32)});
+        call(grad,"setPosition:",{f32(16),f32(16)});
+        const uint32_t red=call(call(r.getClass("UIColor"),"redColor"),"CGColor"), blue=call(call(r.getClass("UIColor"),"blueColor"),"CGColor");
+        call(grad,"setColors:",{call(r.getClass("NSArray"),"arrayWithObjects:",{red,blue,0})});
+        const uint32_t bm2=fn("_CGBitmapContextCreate",{0,32,32,8,128,sp2,1});
+        const uint32_t pix2=fn("_CGBitmapContextGetData",{bm2});
+        call(grad,"renderInContext:",{bm2});
+        // renderInContext: draws in UIKit orientation into the y-up bitmap, so either end may be on top.
+        const uint8_t topR=proc.mem().read<uint8_t>(pix2+1*128+16*4), topB=proc.mem().read<uint8_t>(pix2+1*128+16*4+2);
+        const uint8_t botR=proc.mem().read<uint8_t>(pix2+30*128+16*4), botB=proc.mem().read<uint8_t>(pix2+30*128+16*4+2);
+        check(((topR>200 && topB<50 && botB>200 && botR<50) || (topB>200 && topR<50 && botR>200 && botB<50)),
+              "CAGradientLayer draws its colors along its axis");
+        call(grad,"release");
+        fn("_CGContextRelease",{bm2}); fn("_CGContextRelease",{bm}); fn("_CGColorSpaceRelease",{sp2});
+
+        const std::string wpath="/tmp/hvm-test-writestream-"+std::to_string(getpid());
+        const uint32_t url=call(r.getClass("NSURL"),"fileURLWithPath:",{makeString(cx,wpath)});
+        const uint32_t ws=fn("_CFWriteStreamCreateWithFile",{0,url});
+        const uint32_t buf=proc.heap().alloc(4); proc.mem().write<uint32_t>(buf,0x00636261);
+        const bool opened=ws && fn("_CFWriteStreamOpen",{ws})==1;
+        const int32_t wrote=int32_t(fn("_CFWriteStreamWrite",{ws,buf,3}));
+        fn("_CFWriteStreamClose",{ws});
+        std::ifstream wf(proc.hostPath(wpath)); std::string wcontent; std::getline(wf,wcontent);
+        std::remove(proc.hostPath(wpath).c_str());
+        check(opened && wrote==3 && wcontent=="abc", "CFWriteStreamCreateWithFile writes to the file");
     }
     {
         // An app that releases an autoreleased object frees it before its pool drains (Bad
