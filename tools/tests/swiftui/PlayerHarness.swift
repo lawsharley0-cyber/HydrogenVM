@@ -71,6 +71,11 @@ final class HVMSession {
     static let emulatorCommit = "harness"
     var keepGoing = false
     var useGPU = false
+    // Mirror the bridge's stored configuration so the real RunModel compiles
+    // in this engine-free fixture. These do not enable networking or a VM.
+    var playSession = false
+    var allowInternet = false
+    var unlockFrameRate = false
     var onFrame: ((CGImage) -> Void)?
     var onGLLayer: ((CALayer?) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?

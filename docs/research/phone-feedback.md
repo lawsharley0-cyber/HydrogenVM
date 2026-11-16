@@ -28,11 +28,25 @@ retention, credential/email/path/URL omission, malformed crash JSON, bounds,
 absence of crash fields for a normal run and metadata-only issue URLs. It is
 wired into `file-editor.yml` before native shell compilation.
 
-Local validation: tree-sitter Swift syntax parsing passes for all four changed
+Initial local validation: tree-sitter Swift syntax parsing passes for all four changed
 Swift files; workflow YAML parses; `git diff --check` passes. This Windows/WSL
 host has no Swift compiler or Xcode, so the Swift tests, Apple compilation,
 share-sheet interaction and physical iPhone flow are **NOT RUN locally**.
 Keep draft until native CI and the owner's phone checks pass. `ipa.yml` is
-manual-only; the connected GitHub tool has no dispatch operation and local gh
-is unauthenticated. A `[mac]` PR title also requests the existing CI native
-build, but does not replace the requested manual `ipa.yml` qualification.
+manual-only; the connected GitHub tool has no initial dispatch operation and
+local gh is unauthenticated. A `[mac]` PR title also requests native CI.
+
+Subsequent native evidence at production source `3f1c836f`: Swift 6 report
+privacy/metadata tests and unsigned simulator compilation passed. The full UI
+phase stopped before running tests because the existing engine-free HVMSession
+fixture lacked `playSession`, `allowInternet` and `unlockFrameRate`, already
+used by RunModel. The fixture now mirrors those three stored Bool properties;
+no production behavior or test assertion is changed. Report interaction remains
+unqualified until the corrected fixture's UI run completes.
+
+The requested `ipa.yml` was dispatched through the authenticated browser:
+[run #54](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/43914721340).
+Its first attempt failed before starting due to hosted macOS arm64 capacity
+and a GitHub internal server error. One connector retry was accepted and is
+building the device package at the latest observation. No successful package
+or physical phone flow is claimed yet.
