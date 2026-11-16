@@ -36,7 +36,7 @@ final class LibraryStore {
         // Pick up .ipa files dropped into Documents (or the old Documents/Library).
         let dropped = [URL.documentsDirectory, URL.documentsDirectory.appending(path: "Library")]
             .flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
-            .filter { $0.pathExtension.lowercased() == "ipa" }
+            .filter { ["ipa", "apk"].contains($0.pathExtension.lowercased()) }
         for ipa in dropped { importIPA(at: ipa, removeAfter: true) }
         reloadList()
     }
@@ -53,8 +53,9 @@ final class LibraryStore {
         apps = found.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
-    /// Copies (if needed) and extracts an .ipa off the main thread.
+    /// Copies (if needed) and extracts an .ipa (or an Android .apk) off the main thread.
     func importIPA(at url: URL, removeAfter: Bool = false) {
+        if url.pathExtension.lowercased() == "apk" { importAPK(at: url, removeAfter: removeAfter); return }
         let name = url.lastPathComponent
         importing.append(name)
         let scoped = url.startAccessingSecurityScopedResource()
@@ -90,6 +91,37 @@ final class LibraryStore {
                     }
                 }
             }
+            catch { message = (error as NSError).localizedDescription }
+            try? FileManager.default.removeItem(at: staged)
+            let failure = message
+            await MainActor.run {
+                self.importing.removeAll { $0 == name }
+                if let failure { self.lastError = "\(name): \(failure)" }
+                self.reloadList()
+            }
+        }
+    }
+
+    /// Copies and extracts an Android .apk off the main thread.
+    func importAPK(at url: URL, removeAfter: Bool = false) {
+        let name = url.lastPathComponent
+        importing.append(name)
+        let scoped = url.startAccessingSecurityScopedResource()
+        let staged = URL.temporaryDirectory.appending(path: UUID().uuidString + ".apk")
+        do {
+            try FileManager.default.copyItem(at: url, to: staged)
+        } catch {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            importing.removeAll { $0 == name }
+            lastError = "\(name): \(error.localizedDescription)"
+            return
+        }
+        if scoped { url.stopAccessingSecurityScopedResource() }
+        if removeAfter { try? FileManager.default.removeItem(at: url) }
+        let root = Self.appsDir.path(percentEncoded: false)
+        Task.detached {
+            var message: String?
+            do { _ = try HVMEngine.importAPK(staged.path(percentEncoded: false), intoDirectory: root) }
             catch { message = (error as NSError).localizedDescription }
             try? FileManager.default.removeItem(at: staged)
             let failure = message
@@ -152,7 +184,7 @@ struct LibraryView: View {
     @State private var browsing: InstalledApp?
     /// The game whose page is open (tap a row); Play on the row or the page runs it.
     @State private var showing: InstalledApp?
-    /// iPhone games now; Android is shown as coming, so the place for it is already there.
+    /// iPhone games (0) or Android games (1).
     @State private var platform = 0
     @State private var keepGoing = false
     @State private var testingAllGames = false
@@ -171,9 +203,9 @@ struct LibraryView: View {
                     ContentUnavailableView {
                         Label("No apps yet", systemImage: "shippingbox")
                     } description: {
-                        Text("Import a decrypted 32-bit .ipa (iOS 3–10). You can also drop .ipa files into HydrogenVM's folder in the Files app.")
+                        Text("Import a decrypted 32-bit .ipa (iOS 3–10), or an Android .apk with 32-bit ARM code. You can also drop them into HydrogenVM's folder in the Files app.")
                     } actions: {
-                        Button("Import .ipa") { pickingFile = true }
+                        Button("Import a game") { pickingFile = true }
                             .buttonStyle(GlossButtonStyle(kind: .blue, height: 44))
                             .frame(maxWidth: 220)
                     }
@@ -184,28 +216,28 @@ struct LibraryView: View {
                         Section {
                             Picker("Platform", selection: $platform) {
                                 Text("iPhone").tag(0)
-                                Text("Android · soon").tag(1)
+                                Text("Android").tag(1)
                             }
                             .pickerStyle(.segmented)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                         }
-                        if platform == 1 {
+                        if platform == 1 && !store.apps.contains(where: \.info.isAndroid) {
                             Section {
-                                Text("Android games (.apk) are next. The first one being brought up is Geometry Wars.")
+                                Text("Import an Android .apk with 32-bit ARM native code (lib/armeabi or armeabi-v7a). Android support is new: Dead Space is the first game that runs.")
                                     .font(.subheadline).foregroundStyle(Gloss.inkSoft)
                             }
                         }
-                        if platform == 0 && !store.importing.isEmpty {
+                        if !store.importing.isEmpty {
                             Section("Importing") {
                                 ForEach(store.importing, id: \.self) { name in
                                     HStack { ProgressView(); Text(name).padding(.leading, 8) }
                                 }
                             }
                         }
-                        if platform == 0 {
+                        if !store.apps.filter({ $0.info.isAndroid == (platform == 1) }).isEmpty {
                         Section {
-                            ForEach(store.apps) { app in
+                            ForEach(store.apps.filter { $0.info.isAndroid == (platform == 1) }) { app in
                                 LibraryAppRow(app: app) {
                                     if app.info.runnable { running = app }
                                 } details: {
@@ -220,7 +252,10 @@ struct LibraryView: View {
                                     store.importIPA(at: url)
                                 }
                             }
-                            .onDelete { idx in idx.map { store.apps[$0] }.forEach(store.delete) }
+                            .onDelete { idx in
+                                let shown = store.apps.filter { $0.info.isAndroid == (platform == 1) }
+                                idx.map { shown[$0] }.forEach(store.delete)
+                            }
                         } header: {
                             Text("Your games")
                                 .font(.system(size: 13, weight: .semibold))
@@ -275,11 +310,12 @@ struct LibraryView: View {
                 }
             }
             .fileImporter(isPresented: $pickingFile,
-                          allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip, .zip],
+                          allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip,
+                                                UTType(filenameExtension: "apk") ?? .zip, .zip],
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { urls.forEach { store.importIPA(at: $0) } }
             }
-            .onOpenURL { url in if url.pathExtension.lowercased() == "ipa" { store.importIPA(at: url) } }
+            .onOpenURL { url in if ["ipa", "apk"].contains(url.pathExtension.lowercased()) { store.importIPA(at: url) } }
             .alert("Import failed", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }

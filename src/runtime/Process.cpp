@@ -184,6 +184,16 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     t_thread = mainThread_;
     t_processIdentity = identity_;
 
+    // An imported Android app (loader/Apk.hpp) says so in its generated Info.plist.
+    if (cfg_.androidLib.empty() && !cfg_.bundlePath.empty()) {
+        try {
+            const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
+            if (fs::exists(plist))
+                if (auto info = Plist::parseFile(plist.string()))
+                    if (const std::string lib = info->getString("HydrogenVMAndroidLibrary"); !lib.empty())
+                        cfg_.androidLib = (fs::path(cfg_.bundlePath) / lib).string();
+        } catch (...) {}
+    }
     registerLibcString(*this);
     registerLibcStdio(*this);
     registerLibcStdlib(*this);

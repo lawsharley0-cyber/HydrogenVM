@@ -3,6 +3,7 @@
 #include "MachO.hpp"
 #include "Zip.hpp"
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <vector>
 
@@ -74,6 +75,21 @@ AppInfo readBundle(const std::string& appPath) {
         else if (fam->type == Plist::Value::Type::Integer) info.deviceFamily.push_back(int(fam->i));
     }
     collectIcons(info, p);
+
+    if (const std::string lib = p.getString("HydrogenVMAndroidLibrary"); !lib.empty()) {
+        // An imported Android app (Apk.cpp): its native library must be 32-bit ARM.
+        info.androidLibrary = (fs::path(appPath) / lib).string();
+        std::ifstream in(info.androidLibrary, std::ios::binary);
+        unsigned char h[20] = {};
+        in.read(reinterpret_cast<char*>(h), sizeof h);
+        if (!in) { info.problem = "The Android app's native library (" + lib + ") is missing."; return info; }
+        if (h[0] != 0x7F || h[1] != 'E' || h[2] != 'L' || h[3] != 'F' || h[4] != 1 || h[18] != 40) {
+            info.problem = "The Android app's native library isn't 32-bit ARM.";
+            return info;
+        }
+        info.runnable = true;
+        return info;
+    }
 
     if (!fs::is_regular_file(info.executablePath)) { info.problem = "The app's executable (" + exe + ") is missing."; return info; }
     const auto bin = readFile(info.executablePath);
