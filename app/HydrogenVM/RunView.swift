@@ -15,6 +15,11 @@ final class RunModel {
 
     let app: InstalledApp
     private(set) var frame: CGImage?
+    /// The engine has presented GPU frames. A game drawn only on the GPU (Android games, which
+    /// have no UIKit layer over them) never delivers a `frame`, yet it is on screen.
+    private(set) var gpuPresenting = false
+    /// Something of the game is on screen: a composited frame or a GPU present.
+    var hasPicture: Bool { frame != nil || gpuPresenting }
     /// GPU-rendered GL drawable, shown under `frame` (nil on the software renderer).
     private(set) var glLayer: CALayer?
     private(set) var screenSize = CGSize(width: 320, height: 480)
@@ -32,7 +37,7 @@ final class RunModel {
     private(set) var frameTimeP95 = 0.0
     var volume: Double = 1 { didSet { session?.outputVolume = Float(volume) } }
     // A movie shown before the game's first frame still takes touches (a tap to skip it).
-    var inputEnabled: Bool { running && (frame != nil || movie != nil) && !closing && activity.acceptsInput }
+    var inputEnabled: Bool { running && (hasPicture || movie != nil) && !closing && activity.acceptsInput }
     @ObservationIgnored private var activityTimer: Timer?
     @ObservationIgnored private var activeTouches: [Int: CGPoint] = [:]
 
@@ -53,7 +58,7 @@ final class RunModel {
     private func reconcileActivity() {
         guard let session else { return }
         guard !closing else { return }
-        let command = activity.reconcile(ready: frame != nil, backgrounded: session.isBackgrounded, running: running)
+        let command = activity.reconcile(ready: hasPicture, backgrounded: session.isBackgrounded, running: running)
         switch command {
         case .background: session.enterBackground(); stopSensors()
         case .foreground: session.enterForeground()
@@ -265,6 +270,11 @@ final class RunModel {
                 // GPU-presented games show frames without a new UIKit composite,
                 // so count what the engine presented rather than delivered images.
                 let presented = self.session?.framesPresented ?? 0
+                if presented > 0 && self.glLayer != nil && !self.gpuPresenting {
+                    self.gpuPresenting = true
+                    self.reconcileActivity()
+                    if self.inputEnabled && !self.motion.isAccelerometerActive { self.startSensors() }
+                }
                 self.fps = presented >= self.lastPresented ? max(Int(presented - self.lastPresented), self.frameCount) : self.frameCount
                 self.lastPresented = presented
                 self.frameCount = 0
@@ -558,7 +568,7 @@ struct RunView: View {
                         }
                         .padding(20)
                         .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
-                    } else if model.frame == nil && model.running && model.movie == nil {
+                    } else if !model.hasPicture && model.running && model.movie == nil {
                         VStack(spacing: 12) {
                             ProgressView().tint(.white)
                             Text("Starting \(app.title)…").foregroundStyle(.white.opacity(0.8)).font(.callout)
