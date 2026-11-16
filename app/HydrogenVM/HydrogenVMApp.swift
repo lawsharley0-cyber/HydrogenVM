@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         HVMCrashJournal.installSignalHandlers()
         HVMEngine.installPlatformServices()
+        MainActor.assumeIsolated { Gloss.installAppearance() }
         #if COLD_START_URL_TEST && targetEnvironment(simulator)
         // Before any view exists: separates "the process never started" from "the link never
         // arrived" when the cold-start handoff regresses.
