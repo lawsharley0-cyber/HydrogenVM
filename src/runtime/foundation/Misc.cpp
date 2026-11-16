@@ -713,6 +713,10 @@ struct LockData : ObjC::HostObject {
     bool recursive = false;
     int32_t condition = 0;
     id name = 0;
+    // NSCondition: threads in -wait, and signals given to them but not yet taken. The cv is shared
+    // with threads waiting to take the lock, so a signal must be counted: notify_one could wake a
+    // lock waiter instead, and the -wait it was meant for slept on.
+    uint32_t condWaiters = 0, condSignals = 0;
 };
 LockData& ld(Ctx& x, id self) { return rt(x).host<LockData>(self); }
 
@@ -759,8 +763,9 @@ void lock_dealloc(Ctx& x, id self, SEL) {
     rt(x).disposeInstance(x.cpu, self);
 }
 // NSCondition: wait releases the lock, waits for signal, reacquires.
-bool condWait(Ctx& x, LockData& d, double timeout) {
+bool condWait(Ctx& x, LockData& d, double timeout, id self) {
     GuestThread* me = &x.proc.currentThread();
+    BlockedScope blocked(x.proc, "-[NSCondition wait]", self);
     std::unique_lock<std::mutex> lk(d.m);
     const uint32_t depth = d.depth;
     d.owner = nullptr;
@@ -768,14 +773,16 @@ bool condWait(Ctx& x, LockData& d, double timeout) {
     d.cv.notify_all();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(timeout < 0 ? 1e7 : timeout));
     bool signalled = false;
-    // Wait for one signal (spurious wakeups are allowed by NSCondition's contract).
     if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     const auto step = std::chrono::milliseconds(50);
+    ++d.condWaiters;
+    struct Leave { LockData& d; ~Leave() { --d.condWaiters; } } leave{d};
     while (!signalled) {
+        if (d.condSignals) { --d.condSignals; signalled = true; break; }
         const auto now2 = std::chrono::steady_clock::now();
         if (now2 >= deadline) break;
         const std::chrono::steady_clock::time_point until = std::min<std::chrono::steady_clock::time_point>(deadline, now2 + step);
-        signalled = d.cv.wait_until(lk, until) == std::cv_status::no_timeout;
+        d.cv.wait_until(lk, until);
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     }
     while (d.owner) {
@@ -786,10 +793,19 @@ bool condWait(Ctx& x, LockData& d, double timeout) {
     d.depth = depth ? depth : 1;
     return signalled;
 }
-void cond_wait(Ctx& x, id self, SEL) { condWait(x, ld(x, self), -1); }
-bool cond_waitUntil(Ctx& x, id self, SEL, id date) { return condWait(x, ld(x, self), std::max(0.0, dateInterval(x, date) - now())); }
-void cond_signal(Ctx& x, id self, SEL) { ld(x, self).cv.notify_one(); }
-void cond_broadcast(Ctx& x, id self, SEL) { ld(x, self).cv.notify_all(); }
+void cond_wait(Ctx& x, id self, SEL) { condWait(x, ld(x, self), -1, self); }
+bool cond_waitUntil(Ctx& x, id self, SEL, id date) { return condWait(x, ld(x, self), std::max(0.0, dateInterval(x, date) - now()), self); }
+// -signal wakes one waiting thread, -broadcast all; with no thread waiting they do nothing.
+void cond_signal(Ctx& x, id self, SEL) {
+    LockData& d = ld(x, self);
+    { std::lock_guard<std::mutex> lk(d.m); if (d.condSignals < d.condWaiters) ++d.condSignals; }
+    d.cv.notify_all();
+}
+void cond_broadcast(Ctx& x, id self, SEL) {
+    LockData& d = ld(x, self);
+    { std::lock_guard<std::mutex> lk(d.m); d.condSignals = d.condWaiters; }
+    d.cv.notify_all();
+}
 int32_t clock_condition(Ctx& x, id self, SEL) { return ld(x, self).condition; }
 void clock_lockWhen(Ctx& x, id self, SEL, int32_t c) { auto& d = ld(x, self); acquire(x, d, -1, [&] { return d.condition == c; }); }
 bool clock_tryWhen(Ctx& x, id self, SEL, int32_t c) { auto& d = ld(x, self); return acquire(x, d, 0, [&] { return d.condition == c; }); }

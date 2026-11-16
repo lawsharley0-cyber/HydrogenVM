@@ -131,6 +131,9 @@ struct RunLoop {
     void addFrameHook(std::function<void(CPU::Cpu&, double)> h) { std::lock_guard<std::mutex> lk(mu); frameHooks.push_back(std::move(h)); }
 
     std::vector<std::string> commonModes{"s:kCFRunLoopDefaultMode", "s:UITrackingRunLoopMode"};
+    // Modes that have an NSPort added (-addPort:forMode:), once per add. Nothing arrives on the port,
+    // but on iOS it is input: -runMode:beforeDate: then waits until the date instead of returning at once.
+    std::vector<std::string> portModes;
     std::string activeMode;   // the mode of the innermost run; guarded by mu
 
     std::shared_ptr<Timer> addTimer(double delay, double interval, bool repeats, std::function<void(CPU::Cpu&)> fire, id timerObj = 0, const std::string& mode = {});
