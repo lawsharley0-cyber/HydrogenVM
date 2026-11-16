@@ -2,6 +2,24 @@ import XCTest
 
 final class PlayerUITests: XCTestCase {
     @MainActor
+    func testProblemReportReviewsBeforeExplicitCopy() {
+        let app = open()
+        app.buttons["player-controls"].tap()
+        let report = app.buttons["player-report-problem"]
+        XCTAssertTrue(report.waitForExistence(timeout: 5))
+        report.tap()
+        let copy = app.buttons["player-report-copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        XCTAssertEqual(copy.label, "Copy report")
+        XCTAssertTrue(app.buttons["player-report-share"].exists)
+        XCTAssertTrue(app.buttons["player-report-github"].exists)
+        copy.tap()
+        wait(copy, label: "Report copied")
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.otherElements["player-viewport"].exists)
+    }
+
+    @MainActor
     func testCustomKeyInputKeyboardAppearsAndForwardsIncrementalEvents() throws {
         try XCTSkipIf(true, "Fails in CI's simulator for a reason the job log does not show (#384)")
         let app = XCUIApplication()
