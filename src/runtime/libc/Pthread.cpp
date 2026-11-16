@@ -83,8 +83,10 @@ GuestMutex& mutexFor(Ctx& x, uint32_t addr) {
         p = std::make_unique<GuestMutex>();
         p->addr = addr;
         const uint32_t sig = x.mem.read<uint32_t>(addr);
-        if (sig == kSigMutexRecursive) p->type = kRecursive;
-        else if (sig == kSigMutexErrorCheck) p->type = kErrorCheck;
+        // Android's static initializers: PTHREAD_RECURSIVE_MUTEX_INITIALIZER is 0x4000,
+        // PTHREAD_ERRORCHECK_MUTEX_INITIALIZER 0x8000 (a one-word bionic mutex).
+        if (sig == kSigMutexRecursive || sig == 0x4000) p->type = kRecursive;
+        else if (sig == kSigMutexErrorCheck || sig == 0x8000) p->type = kErrorCheck;
     }
     return *p;
 }

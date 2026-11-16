@@ -5,6 +5,7 @@
 // warning/error the runtime logged, missing functions, and performance counters.
 #include "runtime/gl/HostGL.hpp"
 #include "loader/AppBundle.hpp"
+#include "loader/Zip.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "AudioOutput.hpp"
@@ -173,6 +174,31 @@ int hvmRunMain(int argc, char** argv) {
         if (!info.runnable) { std::fprintf(stderr, "can't run: %s\n", info.problem.c_str()); return 3; }
         target = info.bundlePath;
         home.clear();
+    }
+    if (target.size() > 4 && target.compare(target.size() - 4, 4, ".apk") == 0) {
+        // Android: the native library and the assets, extracted once next to a data folder.
+        const fs::path root = home.empty() ? fs::temp_directory_path() / "hvm-apps" : fs::path(home);
+        const fs::path dir = root / fs::path(target).stem();
+        Loader::ZipReader zip(target);
+        std::string lib;
+        for (const char* abi : {"lib/armeabi-v7a/", "lib/armeabi/"}) {
+            for (const auto& e : zip.entries())
+                if (e.name.rfind(abi, 0) == 0 && e.name.size() > 3 && e.name.compare(e.name.size() - 3, 3, ".so") == 0 &&
+                    e.name.find('/', std::strlen(abi)) == std::string::npos) { lib = e.name; break; }
+            if (!lib.empty()) break;
+        }
+        if (lib.empty()) { std::fprintf(stderr, "can't run: the APK has no 32-bit ARM native library\n"); return 3; }
+        zip.extract("lib/", (dir / "lib").string(), false);
+        if (const auto* m = zip.find("AndroidManifest.xml")) {
+            const auto bytes = zip.read(*m);
+            std::ofstream(dir / "AndroidManifest.xml", std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+        }
+        const size_t n = zip.extract("assets/", (dir / "assets").string(), false);
+        if (n && !quiet) std::fprintf(stderr, "[hvm] extracted %zu assets to %s\n", n, (dir / "assets").c_str());
+        cfg.androidLib = (dir / lib).string();
+        target = dir.string();
+        home = (dir / "data").string();
+        fs::create_directories(home);
     }
     cfg.bundlePath = fs::absolute(target).lexically_normal().string();
     if (!cfg.bundlePath.empty() && cfg.bundlePath.back() == '/') cfg.bundlePath.pop_back();

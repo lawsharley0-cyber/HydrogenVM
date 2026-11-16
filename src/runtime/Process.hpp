@@ -39,6 +39,9 @@ struct HttpClient;
 struct ProcessConfig {
     std::string bundlePath;            // …/Foo.app
     std::string homePath;              // sandbox home (Documents/, Library/, tmp/ live here); default: bundle's parent
+    // Android game (runtime/android/Android.hpp): the native library to run, extracted from the
+    // APK. bundlePath is then the folder the APK's assets/ were extracted to.
+    std::string androidLib;
     std::vector<std::string> extraArgs;
     std::function<void(LogLevel, const std::string&)> log;   // called from any thread
     bool stopOnMissingFunction = true; // false: log and return 0
@@ -335,6 +338,7 @@ public:
     std::optional<uint32_t> guestExports(const std::string& symbol) const;
     const std::unordered_map<std::string, uint32_t>& guestExports() const { return guestExports_; }
     const Plist::Value* infoPlist() const { return infoPlist_.get(); }
+    bool isAndroid() const { return !cfg_.androidLib.empty(); }
     // Replaces the app's Info.plist (tests use it to stand in for an installed app).
     void setInfoPlist(Plist::ValuePtr info) { infoPlist_ = std::move(info); }
     // The major version of the iOS SDK the app was built with: DTSDKName "iphoneos3.1" -> 3.
@@ -499,6 +503,7 @@ private:
     uint32_t resolveImport(const Loader::BindRecord& b);
     void setupMainThread();
     void setupEnvironment();
+    void loadAndroid();
     void initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stackAddr = 0);
     void threadMain(GuestThread* t, uint32_t fn, uint32_t arg);
     void joinHostThreads(bool includeRunning);
@@ -622,6 +627,9 @@ private:
 void registerLibcString(Process& p);
 void registerCompilerRt(Process& p);
 void registerLibcStdio(Process& p);
+// Another set of standard streams (stdin, stdout, stderr) at `base`, `stride` bytes apart:
+// Android's __sF array of 84-byte FILEs.
+void registerStdioStreams(Process& p, uint32_t base, uint32_t stride);
 void registerLibcStdlib(Process& p);
 void registerLibcMath(Process& p);
 void registerLibcTime(Process& p);
