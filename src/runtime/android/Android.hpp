@@ -14,6 +14,8 @@
 #include "runtime/Abi.hpp"
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,15 +25,41 @@ class Process;
 
 namespace Hydrogen::Runtime::Android {
 
-// Where the library is loaded in guest memory.
+// Where the first library is loaded in guest memory; the others follow it.
 constexpr uint32_t kLibraryBase = 0x04000000u;
 
-// The loaded library (Process::service).
+// One loaded native library of the game.
+struct LoadedLib {
+    std::string name;            // file name, e.g. libunity.so
+    std::string path;            // host path
+    Loader::ElfShared so;
+    bool bound = false, initialized = false;
+};
+
+// The game's native libraries (Process::service): every lib*.so of the APK's ABI folder, loaded
+// in dependency order, as System.loadLibrary and the dynamic linker would have them. Linker.cpp.
 struct Library {
     explicit Library(Process&) {}
-    Loader::ElfShared so;
-    std::string name;   // file name, e.g. libDeadSpace.so
+    std::vector<std::unique_ptr<LoadedLib>> libs;   // load order: dependencies first
+    LoadedLib* main = nullptr;                      // the one the activity runs (most Java natives)
+    std::string name;                               // main's file name
+    std::string libDir;                             // host folder of the libraries
+    uint32_t nextBase = kLibraryBase;
+    std::recursive_mutex mu;
+
+    // A symbol any of the game's libraries defines, in load order.
+    std::optional<uint32_t> find(const std::string& symbol) const;
+    // The library whose mapping holds `addr`.
+    const LoadedLib* containing(uint32_t addr) const;
+    // Whether any library links against `soname` (DT_NEEDED), e.g. "libGLESv2.so".
+    bool needs(const std::string& soname) const;
 };
+
+// Loads the main library (`mainPath`) and every other library of its folder, binds their
+// imports and returns the names of the imports nothing provides.
+std::vector<std::string> loadLibraries(Process& p, const std::string& mainPath);
+// Runs every library's initializers that hasn't run them yet, dependencies first.
+void runInitializers(Process& p, CPU::Cpu& c);
 
 // A host path the game is about to open or stat: links the APK's assets into an SD-card data
 // folder (Android/data/<package>/files) the first time the game looks in one (App.cpp).

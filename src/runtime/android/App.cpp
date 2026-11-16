@@ -440,8 +440,7 @@ GlSurface makeSurface(Process& p, CPU::Cpu& c, const Surface& s) {
     // The context version the game links against: libGLESv2 (or v3) means an ES 2 context,
     // as GLSurfaceView.setEGLContextClientVersion(2) makes; else ES 1.1.
     int api = 1;
-    for (const auto& n : p.service<Library>().so.needed)
-        if (n == "libGLESv2.so" || n == "libGLESv3.so") api = 2;
+    if (p.service<Library>().needs("libGLESv2.so") || p.service<Library>().needs("libGLESv3.so")) api = 2;
     HostGL::contextCreate(p, g.context, api, g.sharegroup);
     HostGL::contextMakeCurrent(p, g.context);
     const uint32_t names = p.allocStatic(16);
@@ -494,7 +493,35 @@ void placeSurface(Process& p, GlSurface& g, const Surface& s) {
     }
 }
 
+// An Android window surface is opaque: the compositor ignores the alpha a game leaves in it, and
+// many games clear with alpha 0. Here the drawable is composited with its alpha, so it is set to
+// 1 before each present (colour writes masked to alpha only), and the game's state restored.
+void makeOpaque(Process& p, CPU::Cpu& c, GlSurface& g) {
+    static const char key = 0;
+    uint32_t& scratch = p.processSlot(&key);
+    if (!scratch) scratch = p.allocStatic(64);
+    auto& m = p.mem();
+    p.callGuest(c, glFn(p, "glGetIntegerv"), {0x8CA6 /*FRAMEBUFFER_BINDING*/, scratch});
+    p.callGuest(c, glFn(p, "glGetBooleanv"), {0x0C23 /*COLOR_WRITEMASK*/, scratch + 4});
+    p.callGuest(c, glFn(p, "glGetFloatv"), {0x0C22 /*COLOR_CLEAR_VALUE*/, scratch + 8});
+    const uint32_t scissor = uint32_t(p.callGuest(c, glFn(p, "glIsEnabled"), {0x0C11 /*SCISSOR_TEST*/})) & 0xFF;
+    const uint32_t fb = m.read<uint32_t>(scratch);
+    p.callGuest(c, glFn(p, fbName(g.api, "glBindFramebuffer")), {0x8D40, g.fbo});
+    if (scissor) p.callGuest(c, glFn(p, "glDisable"), {0x0C11});
+    p.callGuest(c, glFn(p, "glColorMask"), {0, 0, 0, 1});
+    const uint32_t one = 0x3F800000u, zero = 0;
+    p.callGuest(c, glFn(p, "glClearColor"), {zero, zero, zero, one});
+    p.callGuest(c, glFn(p, "glClear"), {0x4000 /*COLOR_BUFFER_BIT*/});
+    p.callGuest(c, glFn(p, "glClearColor"), {m.read<uint32_t>(scratch + 8), m.read<uint32_t>(scratch + 12),
+                                             m.read<uint32_t>(scratch + 16), m.read<uint32_t>(scratch + 20)});
+    p.callGuest(c, glFn(p, "glColorMask"), {m.read<uint8_t>(scratch + 4), m.read<uint8_t>(scratch + 5),
+                                            m.read<uint8_t>(scratch + 6), m.read<uint8_t>(scratch + 7)});
+    if (scissor) p.callGuest(c, glFn(p, "glEnable"), {0x0C11});
+    p.callGuest(c, glFn(p, fbName(g.api, "glBindFramebuffer")), {0x8D40, fb});
+}
+
 void present(Process& p, CPU::Cpu& c, GlSurface& g, const Surface& s) {
+    makeOpaque(p, c, g);
     uint32_t layer = 0;
     int w = 0, h = 0;
     bool direct = false;
@@ -570,7 +597,7 @@ struct EaBlastDriver final : Driver {
     JValue touchModule = 0;
     explicit EaBlastDriver(Jni& jni) : j(jni) {}
     const char* name() const override { return "EA Blast"; }
-    static bool matches(const Library& lib) { return lib.so.image.symbols.count("Java_com_ea_blast_MainActivity_NativeOnCreate"); }
+    static bool matches(const Library& lib) { return lib.find("Java_com_ea_blast_MainActivity_NativeOnCreate").has_value(); }
     void call(Ctx& x, const char* n, std::vector<uint32_t> w = {}) {
         if (!j.callNative(x, "com/ea/blast/MainActivity", n, activity, w))
             x.proc.logf(LogLevel::Warning, "Android: the game has no MainActivity.%s", n);
@@ -582,7 +609,7 @@ struct EaBlastDriver final : Driver {
         j.callNative(x, "com/ea/EAIO/EAIO", "Startup", j.classFor("com/ea/EAIO/EAIO"), {uint32_t(j.staticFields["hvm.assets"])});
         // The activity's onCreate starts EA's audio core (it makes the AudioTrack and hands it to
         // the native Init) before the game's own NativeOnCreate.
-        if (lib.so.image.symbols.count("Java_com_ea_EAAudioCore_AndroidEAAudioCore_Init"))
+        if (lib.find("Java_com_ea_EAAudioCore_AndroidEAAudioCore_Init"))
             j.invoke(x, j.methodId("com/ea/EAAudioCore/AndroidEAAudioCore", "Startup", "()V", true),
                      j.classFor("com/ea/EAAudioCore/AndroidEAAudioCore"), {});
         call(x, "NativeOnCreate");
@@ -620,7 +647,7 @@ struct UbisoftUafDriver final : Driver {
     jobject lib = 0;
     explicit UbisoftUafDriver(Jni& jni) : j(jni) {}
     const char* name() const override { return "Ubisoft UAF"; }
-    static bool matches(const Library& l) { return l.so.image.symbols.count("Java_com_ubisoft_uaf_UAFJNILib_step"); }
+    static bool matches(const Library& l) { return l.find("Java_com_ubisoft_uaf_UAFJNILib_step").has_value(); }
     void call(Ctx& x, const char* n, std::vector<uint32_t> w = {}) {
         if (!j.callNative(x, "com/ubisoft/uaf/UAFJNILib", n, lib, w))
             x.proc.logf(LogLevel::Warning, "Android: the game has no UAFJNILib.%s", n);
@@ -720,9 +747,17 @@ int runActivity(Process& p, CPU::Cpu& c) {
                                           " has no Java activity HydrogenVM knows how to play)");
     p.logf(LogLevel::Info, "Android: %s (%s), surface %dx%d", lib.name.c_str(), driver->name(), s.width, s.height);
 
-    if (auto it = lib.so.image.symbols.find("JNI_OnLoad"); it != lib.so.image.symbols.end()) {
-        const uint32_t v = uint32_t(p.callGuest(c, it->second, {j.vm, 0}));
-        p.logf(LogLevel::Info, "Android: JNI_OnLoad returned 0x%x", v);
+    // System.loadLibrary of each library calls its JNI_OnLoad, once, in load order.
+    std::vector<std::pair<std::string, uint32_t>> onLoads;
+    {
+        auto& L = p.service<Library>();
+        std::lock_guard<std::recursive_mutex> lk(L.mu);
+        for (const auto& l : L.libs)
+            if (auto it = l->so.image.symbols.find("JNI_OnLoad"); it != l->so.image.symbols.end()) onLoads.emplace_back(l->name, it->second);
+    }
+    for (const auto& [name, fn] : onLoads) {
+        const uint32_t v = uint32_t(p.callGuest(c, fn, {j.vm, 0}));
+        p.logf(LogLevel::Info, "Android: %s JNI_OnLoad returned 0x%x", name.c_str(), v);
     }
     driver->create(x);
     GlSurface g = makeSurface(p, c, s);
