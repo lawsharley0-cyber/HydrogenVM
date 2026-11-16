@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "minion-rush",
+  "bundle_id": "com.gameloft.despicableme2",
+  "version": "1.0.0",
+  "ipa": "Minion Rush 1.0.0 with data.ipa",
+  "source": "docs/research/minion-rush-1.0.0.md; docs/GEMINI_HANDOFF.md (historical alert tap)",
+  "home_setup": "Fresh home. The IPA importer restores Container/Library/Caches/dlcs; use the with-data IPA.",
+  "run_seconds": 300,
+  "rss_limit_mb": 2048,
+  "taps": [[160, 327, 65]],
+  "screenshots": [{"at": 300, "reference": "minion-rush/300.png", "max_mae": 0.04}],
+  "todos": ["Qualify the historical offline-alert tap on current main and record level-entry timing. RSS threshold is a guardrail, not a measured baseline."]
+}

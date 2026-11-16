@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "groove-coaster-zero",
+  "bundle_id": "jp.co.taito.groovecoasterzero",
+  "version": "1.0.0",
+  "ipa": "Groove Coaster Zero 1.0.0.ipa",
+  "source": "docs/research/groove-coaster-zero.md",
+  "home_setup": "Fresh home; offline stand-in serves the IPA's own paks. No music supplied.",
+  "run_seconds": 60,
+  "rss_limit_mb": 1024,
+  "taps": [],
+  "required_log": ["Stand-in server: GET gczero.com/pak/stage.pak"],
+  "screenshots": [{"at": 60, "reference": "groove-coaster-zero/60.png", "max_mae": 0.04}],
+  "todos": ["Record TOUCH TO START, song/menu coordinates and host-qualified timings; this currently checks startup/data update only. Song playback requires private player-supplied music and hit sounds."]
+}
