@@ -47,6 +47,7 @@ unqualified until the corrected fixture's UI run completes.
 The requested `ipa.yml` was dispatched through the authenticated browser:
 [run #54](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/43914721340).
 Its first attempt failed before starting due to hosted macOS arm64 capacity
-and a GitHub internal server error. One connector retry was accepted and is
-building the device package at the latest observation. No successful package
-or physical phone flow is claimed yet.
+and a GitHub internal server error. The connector retry **passed**: unsigned
+device Release compilation, packaging, IPA validation and artifact upload all
+succeeded for production source `3f1c836f`. The later fixture-only change does
+not modify app/ or runtime source. Physical phone interaction remains untested.
