@@ -473,6 +473,16 @@ void Engine::flushCache() {
     gen_.fetch_add(1, std::memory_order_acq_rel);
 }
 
+bool Engine::hasBlocksIn(uint32_t addr, uint32_t size) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint64_t lo = addr, hi = uint64_t(addr) + size;
+    for (auto& [k, b] : blocks_) {
+        const uint64_t bl = k & ~1u, bh = b->end;
+        if (bl < hi && bh > lo) return true;
+    }
+    return false;
+}
+
 void Engine::invalidateRange(uint32_t addr, uint32_t size) {
     // Blocks are linked to each other by raw pointer, so dropping any block
     // means dropping every link into it. Simplest correct approach: flush all if
@@ -642,14 +652,21 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     }
     uint8_t* const base = mem_.base();
     enterGuest(cpu);
-    while (cpu.exit == Exit::None) {
-        const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
-        Block* b = enterBlock(&cpu, key);
-        if (!b) break;
-        cpu.block_pc = key & ~1u;
-        cpu.recordFaultRegisters(cpu.block_pc);
-        const Op* first = b->ops.data();
-        first->fn(&cpu, first, base);
+    for (;;) {
+        while (cpu.exit == Exit::None) {
+            const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
+            Block* b = enterBlock(&cpu, key);
+            if (!b) break;
+            cpu.block_pc = key & ~1u;
+            cpu.recordFaultRegisters(cpu.block_pc);
+            const Op* first = b->ops.data();
+            first->fn(&cpu, first, base);
+        }
+        if (cpu.exit != Exit::Svc || !svcHandler_) break;
+        cpu.exit = Exit::None;
+        if (svcHandler_(cpu, cpu.exit_info)) continue;
+        cpu.exit = Exit::Svc;
+        break;
     }
     t_scope = prev;
     cpu.recordFaultRegisters(cpu.r[kPC]);   // before releasing the CPU to a suspender

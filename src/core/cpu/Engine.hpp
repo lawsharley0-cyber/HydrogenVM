@@ -124,6 +124,14 @@ public:
     void flushCache();
     // Discard blocks overlapping [addr, addr+size). Same restriction.
     void invalidateRange(uint32_t addr, uint32_t size);
+    // Whether any decoded block overlaps [addr, addr+size) (safe while guest code runs).
+    bool hasBlocksIn(uint32_t addr, uint32_t size);
+
+    // A guest SVC (system call instruction). The handler runs on the guest thread between
+    // blocks, with pc already past the instruction; it returns true to go on running, false to
+    // stop with Exit::Svc as before (no handler: always stop).
+    using SvcHandler = std::function<bool(Cpu&, uint32_t imm)>;
+    void setSvcHandler(SvcHandler h) { svcHandler_ = std::move(h); }
 
     // Called from IR handlers.
     Block* enterBlock(Cpu* c, uint32_t key);
@@ -163,6 +171,7 @@ private:
     Memory::GuestArena& mem_;
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks_;
     std::unordered_map<uint32_t, EntryObserver> entryObservers_;
+    SvcHandler svcHandler_;
     std::atomic<uint64_t> gen_{0};       // bumped by flushCache; invalidates per-Cpu caches
     mutable std::mutex mu_;
 

@@ -178,6 +178,11 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     fs::create_directories(app);
     if (!lib.empty()) zip.extract("lib/", (app / "lib").string());
     zip.extract("assets/", (app / "assets").string());
+    // Unity reads its data from inside the APK (Context.getPackageCodePath): keep a copy.
+    bool unity = false;
+    for (const auto& e : zip.entries())
+        if (e.name.size() > 12 && e.name.compare(e.name.size() - 12, 12, "/libunity.so") == 0) unity = true;
+    if (unity) fs::copy_file(apkPath, app / "base.apk", fs::copy_options::overwrite_existing);
     std::ofstream(app / "AndroidManifest.xml", std::ios::binary)
         .write(reinterpret_cast<const char*>(manifestBytes.data()), std::streamsize(manifestBytes.size()));
 

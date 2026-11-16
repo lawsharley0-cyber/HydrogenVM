@@ -126,6 +126,22 @@ static std::string mangle(const std::string& s) {
     return out;
 }
 
+std::string Jni::superOf(const std::string& cls) const {
+    if (cls == "java/lang/Object") return {};
+    auto it = superclasses.find(cls);
+    if (it != superclasses.end()) return it->second;
+    if (cls.size() > 8 && cls.compare(cls.size() - 8, 8, "Activity") == 0) return "android/app/Activity";
+    return "java/lang/Object";
+}
+bool Jni::isSubclass(const std::string& cls, const std::string& of) const {
+    std::string c = cls;
+    for (int depth = 0; depth < 32 && !c.empty(); ++depth) {
+        if (c == of) return true;
+        c = superOf(c);
+    }
+    return false;
+}
+
 // HVM_JNI_TRACE=1: each Java method the game calls, and each native the activity calls, once.
 void Jni::traceOnce(const std::string& what) {
     static const bool on = [] { const char* e = std::getenv("HVM_JNI_TRACE"); return e && *e && *e != '0'; }();
@@ -188,9 +204,15 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
     // class (com/foo/GameActivity) calls getFilesDir, getAssets, ... of Context.
     static const std::string kContext = "android/content/Context", kActivity = "android/app/Activity",
                              kObject = "java/lang/Object";
-    const std::string& objC = objCls; const std::string& mC = m.cls;
-    for (const std::string* c : {&objC, &mC, &kActivity, &kContext, &kObject}) {
-        if (c->empty()) continue;
+    // The object's class and its superclasses, then the method's class and its superclasses.
+    for (const std::string& start : {objCls, m.cls}) {
+        std::string c = start;
+        for (int depth = 0; depth < 32 && !c.empty(); ++depth, c = superOf(c)) {
+            auto it = impls.find(c + "." + m.name + m.sig);
+            if (it != impls.end()) return it->second(*this, x, self, args);
+        }
+    }
+    for (const std::string* c : {&kActivity, &kContext, &kObject}) {
         auto it = impls.find(*c + "." + m.name + m.sig);
         if (it != impls.end()) return it->second(*this, x, self, args);
     }
@@ -361,8 +383,15 @@ Jni& jni(Process& p) {
 
             set(4, "GetVersion", [](Ctx& x) { ret(x, 0x00010006); });
             set(6, "FindClass", [](Ctx& x) { ret(x, J(x).classFor(x.proc.readCString(arg(x, 1), 512))); });
-            set(10, "GetSuperclass", [](Ctx& x) { ret(x, J(x).classFor("java/lang/Object")); });
-            set(11, "IsAssignableFrom", [](Ctx& x) { ret(x, 1); });
+            set(10, "GetSuperclass", [](Ctx& x) {
+                JObject* c = J(x).get(arg(x, 1));
+                const std::string s = c ? J(x).superOf(c->cls) : std::string();
+                ret(x, s.empty() ? 0 : J(x).classFor(s));
+            });
+            set(11, "IsAssignableFrom", [](Ctx& x) {   // (clazz1, clazz2): clazz1 can be cast to clazz2
+                JObject* a = J(x).get(arg(x, 1)); JObject* b = J(x).get(arg(x, 2));
+                ret(x, a && b && J(x).isSubclass(a->cls, b->cls));
+            });
             set(13, "Throw", [](Ctx& x) { ret(x, 0); });
             set(14, "ThrowNew", [](Ctx& x) {
                 x.proc.logf(LogLevel::Warning, "JNI ThrowNew: %s", x.proc.readCString(arg(x, 2), 512).c_str());
@@ -386,8 +415,9 @@ Jni& jni(Process& p) {
             set(30, "NewObjectA", [](Ctx& x) { newObject(x, 2); });
             set(31, "GetObjectClass", [](Ctx& x) { JObject* o = J(x).get(arg(x, 1)); ret(x, J(x).classFor(o ? o->cls : "java/lang/Object")); });
             set(32, "IsInstanceOf", [](Ctx& x) {
+                if (!arg(x, 1)) { ret(x, 1); return; }   // null is an instance of every class
                 JObject* o = J(x).get(arg(x, 1)); JObject* c = J(x).get(arg(x, 2));
-                ret(x, o && c && (o->cls == c->cls || c->cls == "java/lang/Object"));
+                ret(x, o && c && J(x).isSubclass(o->isClass ? std::string("java/lang/Class") : o->cls, c->cls));
             });
             auto getMethod = [](bool isStatic) {
                 return [isStatic](Ctx& x) {

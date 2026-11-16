@@ -22,5 +22,9 @@ void registerBionicExtra(Process& p);
 void registerLibAndroid(Process& p);
 void registerOpenSLES(Process& p);
 void registerLibdl(Process& p);
+void registerEgl(Process& p);
+void registerSyscalls(Process& p);
+// The screen's ANativeWindow, for drivers that hand one to the game (Egl.cpp).
+uint32_t screenNativeWindow(Process& p);
 
 } // namespace Hydrogen::Runtime::Android

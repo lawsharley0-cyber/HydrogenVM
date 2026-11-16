@@ -3,6 +3,7 @@
 // java.lang.ClassLoader / Class, and SDK classes whose calls change nothing for an offline game
 // (analytics, ads, social). Engine-specific classes live with their driver (App.cpp).
 #include "runtime/android/Jni.hpp"
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <random>
@@ -37,8 +38,47 @@ std::string filePath(Jni& j, jobject f) {
 
 } // namespace
 
+jobject makeMotionEvent(Jni& j, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown) {
+    // One pointer per event. The first finger down and the last up are ACTION_DOWN / ACTION_UP;
+    // the others are POINTER_DOWN / POINTER_UP (index 0, the only pointer in the event).
+    uint32_t action;
+    switch (phase) {
+        case TouchPhase::Began: action = pointersDown <= 1 ? 0 : 5; break;
+        case TouchPhase::Moved: action = 2; break;
+        case TouchPhase::Cancelled: action = 3; break;
+        default: action = pointersDown <= 1 ? 1 : 6; break;
+    }
+    const jobject ev = j.newObject("android/view/MotionEvent");
+    const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    std::lock_guard<std::recursive_mutex> lk(j.mu);
+    if (JObject* o = j.get(ev)) {
+        o->fields["action"] = action;
+        o->fields["x"] = jfloat(x);
+        o->fields["y"] = jfloat(y);
+        o->fields["id"] = id;
+        o->fields["time"] = now;
+    }
+    return ev;
+}
+
 void registerJavaPlatform(Jni& j) {
     Process& p = j.proc;
+    // The part of the class hierarchy games test with IsInstanceOf / GetSuperclass.
+    j.superclasses = {
+        {"android/app/Activity", "android/view/ContextThemeWrapper"},
+        {"android/view/ContextThemeWrapper", "android/content/ContextWrapper"},
+        {"android/content/ContextWrapper", "android/content/Context"},
+        {"android/app/Application", "android/content/ContextWrapper"},
+        {"android/app/NativeActivity", "android/app/Activity"},
+        {"com/unity3d/player/UnityPlayerNativeActivity", "android/app/NativeActivity"},
+        {"com/unity3d/player/UnityPlayer", "android/widget/FrameLayout"},
+        {"android/widget/FrameLayout", "android/view/ViewGroup"},
+        {"android/view/ViewGroup", "android/view/View"},
+        {"android/view/MotionEvent", "android/view/InputEvent"},
+        {"android/view/KeyEvent", "android/view/InputEvent"},
+        {"java/io/FileInputStream", "java/io/InputStream"},
+    };
     // Context / Activity. Method lookup falls back to these classes for any activity class
     // (Jni::invoke), so they serve com.foo.GameActivity, NativeActivity and the rest alike.
     for (const char* ctx : {"android/content/Context", "android/app/Activity"}) {
@@ -143,6 +183,44 @@ void registerJavaPlatform(Jni& j) {
         for (char& c : name) if (c == '/') c = '.';
         return JValue(j.newString(name));
     });
+
+    // android.view.MotionEvent (one pointer; see makeMotionEvent).
+    const std::string kMe = "android/view/MotionEvent";
+    auto field = [](Jni& j, jobject ev, const char* f) -> uint64_t {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        JObject* o = j.get(ev);
+        return o ? o->fields[f] : 0;
+    };
+    j.method(kMe, "getAction", "()I", [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "action")); });
+    j.method(kMe, "getActionMasked", "()I", [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "action") & 0xFF); });
+    j.method(kMe, "getActionIndex", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method(kMe, "getPointerCount", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });
+    j.method(kMe, "getPointerId", "(I)I", [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "id")); });
+    j.method(kMe, "findPointerIndex", "(I)I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    for (const char* sig : {"()F", "(I)F"}) {
+        j.method(kMe, "getX", sig, [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "x")); });
+        j.method(kMe, "getY", sig, [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "y")); });
+        j.method(kMe, "getRawX", sig, [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "x")); });
+        j.method(kMe, "getRawY", sig, [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "y")); });
+        j.method(kMe, "getPressure", sig, [](Jni&, Ctx&, jobject, const auto&) { return jfloat(1.0f); });
+        j.method(kMe, "getSize", sig, [](Jni&, Ctx&, jobject, const auto&) { return jfloat(0.1f); });
+        j.method(kMe, "getTouchMajor", sig, [](Jni&, Ctx&, jobject, const auto&) { return jfloat(20.0f); });
+        j.method(kMe, "getTouchMinor", sig, [](Jni&, Ctx&, jobject, const auto&) { return jfloat(20.0f); });
+        j.method(kMe, "getOrientation", sig, [](Jni&, Ctx&, jobject, const auto&) { return jfloat(0.0f); });
+    }
+    j.method(kMe, "getAxisValue", "(I)F", [field](Jni& j, Ctx&, jobject s, const auto& a) {
+        return a[0] == 0 ? JValue(field(j, s, "x")) : a[0] == 1 ? JValue(field(j, s, "y")) : jfloat(0.0f);
+    });
+    j.method(kMe, "getAxisValue", "(II)F", [field](Jni& j, Ctx&, jobject s, const auto& a) {
+        return a[0] == 0 ? JValue(field(j, s, "x")) : a[0] == 1 ? JValue(field(j, s, "y")) : jfloat(0.0f);
+    });
+    for (const char* n : {"getEventTime", "getDownTime"})
+        j.method(kMe, n, "()J", [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "time")); });
+    j.method(kMe, "getSource", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0x1002); });   // SOURCE_TOUCHSCREEN
+    j.method(kMe, "getToolType", "(I)I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });       // TOOL_TYPE_FINGER
+    for (const char* n : {"getDeviceId", "getHistorySize", "getMetaState", "getFlags", "getEdgeFlags", "getButtonState"})
+        j.method(kMe, n, "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method("android/view/InputEvent", "getSource", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0x1002); });
 
     // java.util.UUID: random (version 4) ids, as strings.
     j.method("java/util/UUID", "randomUUID", "()Ljava/util/UUID;", [](Jni& j, Ctx&, jobject, const auto&) {
