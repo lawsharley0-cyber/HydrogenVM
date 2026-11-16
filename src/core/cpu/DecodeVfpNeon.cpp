@@ -201,6 +201,15 @@ DecodeResult decodeThumbVfpNeon(BlockBuilder& bb, uint32_t insn) {
         return decodeNeonLoadStore(bb, (insn & 0x00FFFFFFu) | 0xF4000000u);
     if ((insn >> 28) == 0xE) {
         const uint32_t cp = bits(insn, 11, 8);
+        if (cp == 15 && bits(insn, 27, 20) == 0xC5 && bits(insn, 3, 0) == 14 && bits(insn, 7, 4) <= 1) {
+            bb.emit(&H_ReadGenericTimer, bits(insn, 15, 12), bits(insn, 19, 16));   // MRRC CNTPCT / CNTVCT
+            return DecodeResult::Continue;
+        }
+        if (cp == 15 && bits(insn, 27, 24) == 0xE && bit(insn, 4) && bit(insn, 20) && bits(insn, 23, 21) == 0 &&
+            bits(insn, 19, 16) == 14 && bits(insn, 3, 0) == 0 && bits(insn, 7, 5) == 0) {
+            bb.emit(&H_ReadGenericTimerFreq, bits(insn, 15, 12));                  // MRC CNTFRQ
+            return DecodeResult::Continue;
+        }
         if (cp == 15 && bits(insn, 27, 24) == 0xE && bit(insn, 4)) {
             if (bits(insn, 23, 21) == 0 && bits(insn, 19, 16) == 13 && bits(insn, 3, 0) == 0) {
                 const uint32_t opc2 = bits(insn, 7, 5), rt = bits(insn, 15, 12);

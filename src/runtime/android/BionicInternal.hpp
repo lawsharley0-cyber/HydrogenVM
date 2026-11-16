@@ -1,0 +1,23 @@
+// HydrogenVM — helpers shared by the bionic files of runtime/android (not a public API).
+#pragma once
+#include "runtime/Abi.hpp"
+#include "runtime/Process.hpp"
+#include <cerrno>
+#include <initializer_list>
+
+namespace Hydrogen::Runtime::Android {
+
+// Darwin errno value -> Linux (bionic) errno value.
+int linuxErrno(int darwin);
+// The host's errno as a Linux value.
+int hostErrnoLinux(int hostErrno);
+// Sets the game's errno (a Linux value).
+void setLinuxErrno(Ctx& x, int e);
+template <typename R> R failHost(Ctx& x, R r = R(-1)) { setLinuxErrno(x, hostErrnoLinux(errno)); return r; }
+// Calls the iOS host function bound to `name` (r0-r3, then the stack) and returns r1:r0.
+uint64_t callIos(Ctx& x, const char* name, std::initializer_list<uint32_t> words);
+
+// Registration of the other bionic files.
+void registerBionicExtra(Process& p);
+
+} // namespace Hydrogen::Runtime::Android

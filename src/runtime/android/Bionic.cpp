@@ -12,6 +12,7 @@
 //   * old bionic atomics, Android logging and the unwinder's exception-index lookup.
 #include "runtime/android/Android.hpp"
 #include "runtime/android/Etc1.hpp"
+#include "runtime/android/BionicInternal.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
 #include "runtime/libc/Format.hpp"
@@ -32,11 +33,12 @@
 #include <cstdlib>
 
 namespace Hydrogen::Runtime::Android {
+using namespace std::chrono_literals;
 namespace {
 
-using namespace std::chrono_literals;
-
 // ------------------------------------------------------------------ errno ---
+
+} // namespace
 
 // Darwin errno -> Linux errno. 1-34 agree except 11 (Darwin EDEADLK, Linux EAGAIN).
 int linuxErrno(int d) {
@@ -87,7 +89,6 @@ void setLinuxErrno(Ctx& x, int e) {
     x.mem.write<uint32_t>(darwinErrnoAddr(x), 0);
     x.mem.write<uint32_t>(linuxErrnoCell(x), uint32_t(e));
 }
-template <typename R> R failHost(Ctx& x, R r = R(-1)) { setLinuxErrno(x, hostErrnoLinux(errno)); return r; }
 
 // --------------------------------------------- calling the iOS functions ---
 
@@ -117,6 +118,8 @@ uint64_t callIos(Ctx& x, const char* name, std::initializer_list<uint32_t> words
     c.r[CPU::kLR] = savedLr;
     return r;
 }
+
+namespace {
 
 // ------------------------------------------------------------------- data ---
 
@@ -605,6 +608,7 @@ void b_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t
 
 void registerBionic(Process& p) {
     registerSurfaceFunctions(p);
+    registerBionicExtra(p);
     p.defineFunction("android:glCompressedTexImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexImage2D>(x); });
     p.defineFunction("android:glCompressedTexSubImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexSubImage2D>(x); });
     // Data.

@@ -466,6 +466,7 @@ void Process::loadAndroid() {
     logf(LogLevel::Info, "Loaded %s: %zu imports, %zu initializers, needs %s", name.c_str(), lib.so.imports.size(),
          lib.so.initializers.size(), [&] { std::string s; for (auto& n : lib.so.needed) s += (s.empty() ? "" : ", ") + n; return s; }().c_str());
     setupEnvironment();
+    if (auto env = lookupSymbol("android:environ")) mem_->write<uint32_t>(*env, envp_);
     setupMainThread();
     std::unordered_map<std::string, uint32_t> cache;
     std::vector<std::string> missingFns;

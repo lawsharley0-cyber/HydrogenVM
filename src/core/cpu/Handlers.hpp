@@ -12,6 +12,7 @@
 // registers. Instead we pin only what every handler needs: cpu, op and the
 // arena base.
 #pragma once
+#include <chrono>
 #include "Cpu.hpp"
 #include <cstring>
 #include <climits>
@@ -378,6 +379,23 @@ HVM_H(H_Hle) {
 HVM_H(H_ReadTpid) { c->r[op->a] = op->imm == 2 ? c->tpidrurw : c->tpidruro; HVM_NEXT(); }
 // MCR p15 TPIDRURW (only the RW one is writable from user mode). a = rt
 HVM_H(H_WriteTpid) { c->tpidrurw = c->r[op->a]; HVM_NEXT(); }
+
+// ARMv7 generic timer, as user mode reads it. MRRC p15 CNTPCT / CNTVCT: a = rt (low word),
+// b = rt2 (high word); the count is the host's monotonic clock at kGenericTimerHz.
+// MRC p15 CNTFRQ: a = rt.
+constexpr uint32_t kGenericTimerHz = 24'000'000;
+inline uint64_t genericTimerCount() {
+    const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    return ns / 1000 * (kGenericTimerHz / 1'000'000) + (ns % 1000) * (kGenericTimerHz / 1'000'000) / 1000;
+}
+HVM_H(H_ReadGenericTimer) {
+    const uint64_t v = genericTimerCount();
+    c->r[op->a] = uint32_t(v);
+    c->r[op->b] = uint32_t(v >> 32);
+    HVM_NEXT();
+}
+HVM_H(H_ReadGenericTimerFreq) { c->r[op->a] = kGenericTimerHz; HVM_NEXT(); }
 
 HVM_H(H_Fence) { __atomic_thread_fence(__ATOMIC_SEQ_CST); HVM_NEXT(); }
 
