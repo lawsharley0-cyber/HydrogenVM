@@ -1395,6 +1395,9 @@ int32_t eaf_getProperty(Ctx& x, uint32_t id, uint32_t prop, GuestPtr ioSize, Gue
     } else if (prop == kEafAudioFile) {
         x.mem.write<uint32_t>(out, 0);
         if (ioSize) x.mem.write<uint32_t>(ioSize, 4);
+    } else if (prop == 0x61636E76) {   // 'acnv' kExtAudioFileProperty_AudioConverter: the file stands for its converter
+        x.mem.write<uint32_t>(out, id);
+        if (ioSize) x.mem.write<uint32_t>(ioSize, 4);
     } else {
         return 0x77686174;   // 'what': kAudioFileUnsupportedPropertyError-ish
     }
@@ -2098,6 +2101,19 @@ int32_t aug_stop(Ctx& x, uint32_t graph) {
     return 0;
 }
 int32_t au_converterSetProperty(Ctx&, uint32_t, uint32_t, uint32_t, GuestPtr) { return 0; }
+// AudioConverterGetProperty, for the converter an ExtAudioFile hands out ('acnv'): its input
+// ('acid', the file's format) and output ('acod', the client format) descriptions. Anything else
+// is kAudioConverterErr_PropertyNotSupported, as a real converter answers for what it lacks.
+int32_t au_converterGetProperty(Ctx& x, uint32_t conv, uint32_t prop, GuestPtr ioSize, GuestPtr out) {
+    auto it = EAS(x).files.find(conv);
+    if (it == EAS(x).files.end()) return -50;
+    if ((prop == 0x61636964 || prop == 0x61636F64) && out) {   // 'acid' / 'acod'
+        writeAsbd(x, out, prop == 0x61636964 ? it->second.file : it->second.client);
+        if (ioSize) x.mem.write<uint32_t>(ioSize, 40);
+        return 0;
+    }
+    return 0x70726F70;   // 'prop'
+}
 int32_t aug_dispose(Ctx& x, uint32_t graph) {
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
@@ -3015,6 +3031,8 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // Tuning of the converter inside an ExtAudioFile (bit rate, quality): accepted, the
     // runtime's own encoders and decoders have no such settings.
     supportDef<&au_converterSetProperty>(p, "_AudioConverterSetProperty", SupportStatus::Approx, "Accepted; converter tuning is not applied");
+    supportDef<&au_converterGetProperty>(p, "_AudioConverterGetProperty", SupportStatus::Approx,
+                                         "ExtAudioFile converters: input/output formats; other properties are reported unsupported");
     p.def<&aug_dispose>("_DisposeAUGraph");
     p.def<&aug_addNode>("_AUGraphAddNode");
     p.def<&aug_ok2>("_AUGraphRemoveNode");
