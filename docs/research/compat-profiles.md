@@ -44,3 +44,10 @@ pre-refactor captures is **0.000226588 / 0.0000376583** (tolerance 0.04); peak
 RSS is 402,915,328 / 404,488,192 bytes. This checks refactor equivalence against
 the previous build, not correctness against independently approved references.
 Evidence remains private in `HydrogenVM-perf/build/profile-smoke/run-o584i2kf/`.
+
+A later expanded search located Army of Darkness 1.0.1. Its 90-second tutorial
+script fails graceful shutdown with exit 70 / `graceful-stop-watchdog` on both
+the unchanged runtime and this refactor. Tracked as **#496**; not counted as a
+smoke pass and not attributed to the refactor. Its candidate RSS remains below
+the ceiling with zero stub hits. The earlier unavailable-fixture statement
+describes the primary bench search; this later result remains a visible failure.
