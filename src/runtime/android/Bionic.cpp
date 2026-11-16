@@ -11,6 +11,7 @@
 //     detach-state values, unnamed semaphores, and error codes returned by pthread functions;
 //   * old bionic atomics, Android logging and the unwinder's exception-index lookup.
 #include "runtime/android/Android.hpp"
+#include "runtime/android/Etc1.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
 #include "runtime/libc/Format.hpp"
@@ -27,6 +28,8 @@
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
+#include <set>
+#include <cstdlib>
 
 namespace Hydrogen::Runtime::Android {
 namespace {
@@ -541,10 +544,69 @@ void defineErrnoReturning(Process& p, const char* name) {
     });
 }
 
+// Compressed textures. ETC1 (what Android games ship) is decoded to RGB here, since Apple's
+// GPUs and desktop drivers don't take it; other formats go to the driver as they are.
+void traceFormat(Ctx& x, uint32_t fmt, int32_t w, int32_t h) {
+    static const bool on = [] { const char* e = std::getenv("HVM_JNI_TRACE"); return e && *e && *e != '0'; }();
+    if (!on) return;
+    static std::mutex mu;
+    static std::set<uint32_t> seen;
+    std::lock_guard<std::mutex> lk(mu);
+    if (seen.insert(fmt).second) x.proc.logf(LogLevel::Info, "GL compressed format 0x%04x (%dx%d)", fmt, w, h);
+}
+// Uploads decoded ETC1 as GL_RGB / GL_UNSIGNED_BYTE through `call` (glTexImage2D or
+// glTexSubImage2D), with a byte-aligned unpack row for the duration.
+template <typename F> void uploadEtc1(Ctx& x, int32_t w, int32_t h, int32_t size, GuestPtr data, F call) {
+    if (w <= 0 || h <= 0 || !data || size_t(size) < etc1Size(w, h)) {
+        call(GuestPtr(0));
+        return;
+    }
+    const auto rgb = decodeEtc1(x.mem.host(data), w, h);
+    const uint32_t buf = x.proc.heap().alloc(uint32_t(rgb.size()));
+    if (!buf) throw std::runtime_error("ETC1: out of guest memory");
+    x.mem.copyIn(buf, rgb.data(), rgb.size());
+    static const char key = 0;
+    uint32_t& cell = x.proc.threadSlot(&key);
+    if (!cell) cell = x.proc.allocStatic(16);
+    callIos(x, "_glGetIntegerv", {0x0CF5 /*UNPACK_ALIGNMENT*/, cell});
+    const uint32_t savedAlign = x.mem.read<uint32_t>(cell);
+    callIos(x, "_glPixelStorei", {0x0CF5, 1});
+    call(buf);
+    callIos(x, "_glPixelStorei", {0x0CF5, savedAlign ? savedAlign : 4});
+    x.proc.heap().free(buf);
+}
+void b_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t fmt, int32_t w, int32_t h, int32_t border,
+                              int32_t size, GuestPtr data) {
+    traceFormat(x, fmt, w, h);
+    if (fmt == kGlEtc1Rgb8) {
+        uploadEtc1(x, w, h, size, data, [&](GuestPtr pixels) {
+            callIos(x, "_glTexImage2D", {target, uint32_t(level), 0x1907 /*RGB*/, uint32_t(w), uint32_t(h), uint32_t(border),
+                                          0x1907, 0x1401 /*UNSIGNED_BYTE*/, pixels});
+        });
+        return;
+    }
+    callIos(x, "_glCompressedTexImage2D", {target, uint32_t(level), fmt, uint32_t(w), uint32_t(h), uint32_t(border), uint32_t(size), data});
+}
+void b_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t w, int32_t h,
+                                 uint32_t fmt, int32_t size, GuestPtr data) {
+    traceFormat(x, fmt, w, h);
+    if (fmt == kGlEtc1Rgb8) {
+        uploadEtc1(x, w, h, size, data, [&](GuestPtr pixels) {
+            callIos(x, "_glTexSubImage2D", {target, uint32_t(level), uint32_t(xo), uint32_t(yo), uint32_t(w), uint32_t(h),
+                                             0x1907, 0x1401, pixels});
+        });
+        return;
+    }
+    callIos(x, "_glCompressedTexSubImage2D", {target, uint32_t(level), uint32_t(xo), uint32_t(yo), uint32_t(w), uint32_t(h),
+                                              fmt, uint32_t(size), data});
+}
+
 } // namespace
 
 void registerBionic(Process& p) {
     registerSurfaceFunctions(p);
+    p.defineFunction("android:glCompressedTexImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexImage2D>(x); });
+    p.defineFunction("android:glCompressedTexSubImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexSubImage2D>(x); });
     // Data.
     {
         const uint32_t sF = p.defineDataBlock("android:__sF", kBionicFileSize * 3);

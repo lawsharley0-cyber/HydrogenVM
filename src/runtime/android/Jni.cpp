@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 namespace Hydrogen::Runtime::Android {
 
@@ -125,8 +126,17 @@ static std::string mangle(const std::string& s) {
     return out;
 }
 
+// HVM_JNI_TRACE=1: each Java method the game calls, and each native the activity calls, once.
+void Jni::traceOnce(const std::string& what) {
+    static const bool on = [] { const char* e = std::getenv("HVM_JNI_TRACE"); return e && *e && *e != '0'; }();
+    if (!on) return;
+    std::lock_guard<std::recursive_mutex> lk(mu);
+    if (traced.insert(what).second) proc.log(LogLevel::Info, what);
+}
+
 bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
                      const std::vector<uint32_t>& words, JValue* result) {
+    traceOnce("JNI native " + cls + "." + name);
     uint32_t fn = 0;
     {
         std::lock_guard<std::recursive_mutex> lk(mu);
@@ -169,6 +179,7 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
         if (id < 0x100 || i >= methods.size()) throw std::runtime_error("JNI: bad method id");
         m = methods[i];
     }
+    traceOnce("JNI call " + m.cls + "." + m.name + m.sig);
     // The implementation for the method's class, or (virtual calls) for the object's own class.
     std::string objCls;
     if (JObject* o = get(self); o && !o->isClass) objCls = o->cls;

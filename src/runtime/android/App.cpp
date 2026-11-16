@@ -530,6 +530,12 @@ int runActivity(Process& p, CPU::Cpu& c) {
         if (!j.callNative(x, "com/ea/blast/MainActivity", name, activity, words))
             p.logf(LogLevel::Warning, "Android: the game has no MainActivity.%s", name);
     };
+    // The activity's onCreate starts EA's audio core (it makes the AudioTrack and hands it to
+    // the native Init) before the game's own NativeOnCreate.
+    if (lib.so.image.symbols.count("Java_com_ea_EAAudioCore_AndroidEAAudioCore_Init")) {
+        const jobject audioCls = j.classFor("com/ea/EAAudioCore/AndroidEAAudioCore");
+        j.invoke(x, j.methodId("com/ea/EAAudioCore/AndroidEAAudioCore", "Startup", "()V", true), audioCls, {});
+    }
     activityCall("NativeOnCreate");
     activityCall("NativeOnResume");
 

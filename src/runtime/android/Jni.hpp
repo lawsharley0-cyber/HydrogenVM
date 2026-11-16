@@ -10,6 +10,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -72,6 +73,8 @@ public:
     bool callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
                     const std::vector<uint32_t>& words, JValue* result = nullptr);
 
+    void traceOnce(const std::string& what);
+    std::set<std::string> traced;
     std::recursive_mutex mu;
     struct MethodInfo { std::string cls, name, sig; bool isStatic; };
     std::vector<MethodInfo> methods;
