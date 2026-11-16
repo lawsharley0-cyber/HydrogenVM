@@ -108,8 +108,16 @@ are made by this measurement PR.
 
 ## Remaining before item 3 can be completed
 
-Minion Rush, Groove Coaster Zero and Army of Darkness matching private fixtures
-are absent from this bench directory. Obtain their smoke-qualified profiles,
+The matching with-data Minion Rush and Groove Coaster Zero fixtures remain
+unavailable. A subsequent expanded search found Army of Darkness 1.0.1 outside
+the primary bench. Its 90-second tutorial scenario fails graceful shutdown on
+both unchanged runtime `7fdc8a18` (frozen tests-only build `6993ed89`) and profile
+refactor `2474be76`: exit 70, `graceful-stop-watchdog`, signature `d5c54ff6d981`.
+The baseline perf capture contains 15,812 user CPU samples, but this failed run
+is **excluded** from successful performance baselines; raw evidence stays in
+`work/perf-aod-evidence/`. Tracked as **#496**; resolve/minimize the shutdown failure first.
+
+Obtain the remaining smoke-qualified profiles,
 then choose a measured hotspot rather than assuming malloc/ObjC dominates.
 The available game's profile alone does not justify a cross-game host-call
 rewrite. Add and prove cache-write/flush retirement correctness before extending
