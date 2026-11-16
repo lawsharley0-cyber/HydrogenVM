@@ -50,4 +50,10 @@ Its first attempt failed before starting due to hosted macOS arm64 capacity
 and a GitHub internal server error. The connector retry **passed**: unsigned
 device Release compilation, packaging, IPA validation and artifact upload all
 succeeded for production source `3f1c836f`. The later fixture-only change does
-not modify app/ or runtime source. Physical phone interaction remains untested.
+not modify app/ or runtime source.
+
+Subsequent `File editor Apple validation` [run 43920843844](https://github.com/lawsharley0-cyber/HydrogenVM/actions/runs/43920843844)
+on `945b667d` completed: `HydrogenVMJournalTests.CrashReportTests` passed (5/5 on
+retry), `PlayerViewportTests` passed (4/4), and `SaveEditorUITests.PlayerUITests`
+executed 9 tests with 1 skipped and 1 failure (`PlayerUITests.testBothLandscapeDirectionsAndDisplayModes()`).
+Physical phone review/copy/share interaction remains untested.
