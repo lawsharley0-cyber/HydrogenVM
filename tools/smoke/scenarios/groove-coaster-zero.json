@@ -8,8 +8,8 @@
   "home_setup": "Fresh home; offline stand-in serves the IPA's own paks. No music supplied.",
   "run_seconds": 60,
   "rss_limit_mb": 1024,
-  "taps": [],
+  "taps": [[160, 385, 20]],
   "required_log": ["Stand-in server: GET gczero.com/pak/stage.pak"],
   "screenshots": [{"at": 60, "reference": "groove-coaster-zero/60.png", "max_mae": 0.04}],
-  "todos": ["Record TOUCH TO START, song/menu coordinates and host-qualified timings; this currently checks startup/data update only. Song playback requires private player-supplied music and hit sounds."]
+  "todos": ["Tap [160,385] at 20 s hits TOUCH TO START and enters MenuRouteView. Song playback requires private player-supplied music/hit sounds and approved visual references."]
 }

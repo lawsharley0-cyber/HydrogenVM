@@ -78,4 +78,18 @@ remains in its private log; the process nevertheless exited 0 under unchanged
 criteria. Approved image comparisons remain SKIPPED.
 
 Private evidence: build/found-fixture-smoke/run-idlrywy_/. Army #496 remains a
-failure. Earlier unavailable statements record the initial search only.
+failure on `main` (fix tracked separately in PR #497). Earlier unavailable
+statements record the initial search only.
+
+### Menu/entry follow-up
+
+- **Minion Rush 1.0.0 with data**: tapping `[250, 370]` at 80 s (after the ~71 s
+  initial load hitches) dismisses the introductory `OK` notice and reveals the
+  3D main menu (`PLAY` at `[255, 105]`). `minion-rush.json` is updated to tap
+  `OK` at 80 s and `PLAY` at 95 s over a 120 s run.
+- **Groove Coaster Zero 1.0.0**: tapping `[160, 385]` at 20 s hits
+  `TOUCH TO START`, triggers `GET gczero.com/sync.php` on the stand-in server,
+  and enters `MenuRouteView`. `groove-coaster-zero.json` is updated with this
+  tap.
+- Approved visual-reference comparisons remain **SKIPPED** (`--require-references`
+  is not satisfied without owner-supplied reference PNGs).

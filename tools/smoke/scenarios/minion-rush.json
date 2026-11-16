@@ -7,9 +7,9 @@
   "required_members": ["Container/Library/Caches/dlcs/mnhtn_index_ios"],
   "source": "docs/research/minion-rush-1.0.0.md; docs/GEMINI_HANDOFF.md (historical alert tap)",
   "home_setup": "Fresh home. The IPA importer restores Container/Library/Caches/dlcs; use the with-data IPA.",
-  "run_seconds": 300,
+  "run_seconds": 120,
   "rss_limit_mb": 2048,
-  "taps": [[160, 327, 65]],
-  "screenshots": [{"at": 300, "reference": "minion-rush/300.png", "max_mae": 0.04}],
-  "todos": ["Qualify the historical offline-alert tap on current main and record level-entry timing. RSS threshold is a guardrail, not a measured baseline."]
+  "taps": [[250, 370, 80], [255, 105, 95]],
+  "screenshots": [{"at": 120, "reference": "minion-rush/120.png", "max_mae": 0.04}],
+  "todos": ["Taps [250,370] at 80 s to dismiss the introductory notice (OK) and [255,105] at 95 s for PLAY. Approved visual reference and in-run swipe/gameplay assertions remain pending."]
 }
