@@ -791,6 +791,17 @@ void hg_glShaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings,
         else fullSource.append(p);
     }
 
+    if (const char* dbg = std::getenv("HVM_SHADER_DEBUG"); dbg && *dbg && *dbg != '0') {
+        // The first bytes as the guest sent them (escaped), to tell a malformed source from GLSL
+        // the driver doesn't accept.
+        std::string head;
+        for (unsigned char ch : fullSource.substr(0, 96)) {
+            if (ch >= 32 && ch < 127) head.push_back(char(ch));
+            else { char b[8]; std::snprintf(b, sizeof b, "\\x%02x", ch); head += b; }
+        }
+        x.proc.log(LogLevel::Info, "GPU: shader " + std::to_string(shader) + " source (" + std::to_string(fullSource.size()) +
+                                       " bytes, " + std::to_string(count) + " strings) begins: " + head);
+    }
     fullSource = Shader::normalizeMobileSource(fullSource);
 
     // Mesa and desktop GLSL reject duplicate #define directives without an intervening #undef,

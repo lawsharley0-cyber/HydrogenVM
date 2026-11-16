@@ -74,6 +74,8 @@ public:
                     const std::vector<uint32_t>& words, JValue* result = nullptr);
 
     void traceOnce(const std::string& what);
+    // Classes whose methods all answer 0 / false / null without a missing-API report.
+    std::set<std::string> quietClasses;
     std::set<std::string> traced;
     std::recursive_mutex mu;
     struct MethodInfo { std::string cls, name, sig; bool isStatic; };
@@ -94,7 +96,9 @@ Jni& jni(Process& p);
 std::string argTypes(const std::string& sig);
 char returnType(const std::string& sig);
 
-// The Java classes the game's native code uses (App.cpp).
+// The Java classes the game's native code uses (App.cpp), and the platform ones every engine
+// shares (Java.cpp).
 void registerJavaClasses(Jni& j);
+void registerJavaPlatform(Jni& j);
 
 } // namespace Hydrogen::Runtime::Android

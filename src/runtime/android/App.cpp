@@ -5,6 +5,7 @@
 #include "runtime/gl/HostGL.hpp"
 #include "runtime/uikit/UIKit.hpp"
 #include "loader/Apk.hpp"
+#include "loader/Zip.hpp"
 #include "core/cpu/Engine.hpp"
 #include <chrono>
 #include <cstdio>
@@ -92,7 +93,7 @@ void linkExternalFiles(Process& p, const fs::path& files) {
         if (!fs::exists(fs::symlink_status(link, ec))) fs::create_symlink(e.path(), link, ec);
     }
 }
-std::string externalRoot(Process& p) { return p.config().homePath + "/Library/Caches/sdcard"; }
+std::string externalRoot(Process& p) { return p.homePath() + "/Library/Caches/sdcard"; }
 void linkExternalData(Process& p, const std::string& external) {
     std::ifstream in(p.config().bundlePath + "/AndroidManifest.xml", std::ios::binary);
     const std::vector<uint8_t> m((std::istreambuf_iterator<char>(in)), {});
@@ -113,7 +114,7 @@ void noteExternalPath(Process& p, const std::string& hostPath) {
     static std::mutex mu;
     static std::set<std::string> linked;
     std::lock_guard<std::mutex> lk(mu);
-    if (linked.insert(p.config().homePath + "|" + pkg).second) linkExternalFiles(p, fs::path(prefix) / pkg / "files");
+    if (linked.insert(p.homePath() + "|" + pkg).second) linkExternalFiles(p, fs::path(prefix) / pkg / "files");
 }
 
 void registerJavaClasses(Jni& j) {
@@ -268,7 +269,7 @@ void registerJavaClasses(Jni& j) {
     j.method(kDisp, "SetStdOrientation", "(I)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
     const std::string kDir = "com/ea/blast/GetAppDataDirectoryDelegate";
     j.method(kDir, "GetAppDataDirectory", "()Ljava/lang/String;", [&p](Jni& j, Ctx&, jobject, const auto&) {
-        const std::string host = p.config().homePath + "/Documents";
+        const std::string host = p.homePath() + "/Documents";
         std::error_code ec;
         fs::create_directories(host, ec);
         return JValue(j.newString(p.guestPath(host)));
@@ -365,6 +366,30 @@ void registerJavaClasses(Jni& j) {
         return JValue(count);
     });
 
+    // Ubisoft's mobile SDK and UAF activity: offline answers.
+    const std::string kUafAct = "com/ubisoft/uaf/GameActivity";
+    j.method(kUafAct, "GetMacAddress", "()Ljava/lang/String;", [](Jni& j, Ctx&, jobject, const auto&) { return JValue(j.newString("02:00:00:00:00:00")); });
+    for (const char* n : {"isTwitterAvailable", "isGamePadConnected", "isFacebookAvailable", "isNetworkAvailable", "isGooglePlayServicesAvailable"})
+        j.method(kUafAct, n, "()Z", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method(kUafAct, "isEveryPlayAvailable", "()Z", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    // Generic Java calls by name: battery questions are the ones asked; everything else answers 0.
+    j.method(kUafAct, "CallGenericJavaMethod_Int", "(Ljava/lang/String;I)I", [](Jni& j, Ctx& x, jobject, const auto& a) {
+        const std::string name = j.string(jobject(a[0]));
+        if (name == "getBatteryLevel") return JValue(100);
+        if (name == "getBatteryChargingMode") return JValue(1);
+        x.proc.reportDefaulted("UAF CallGenericJavaMethod_Int(\"" + name + "\") -> 0");
+        return JValue(0);
+    });
+    const std::string kUbiUtils = "ubisoft/mobile/mobileSDK/Utils";
+    j.method(kUbiUtils, "getDeviceGameVersion", "()Ljava/lang/String;", [&p](Jni& j, Ctx&, jobject, const auto&) {
+        const auto* info = p.infoPlist();
+        return JValue(j.newString(info ? info->getString("CFBundleShortVersionString", "1.0") : "1.0"));
+    });
+    // No account was ever stored on this device: the SDK's keychain answers null.
+    j.method("ubisoft/mobile/mobileAuth/MobileAuth", "keyChainGetDataForKey", "(Ljava/lang/String;)Ljava/lang/String;",
+             [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    for (const char* cls : {"ubisoft/mobile/mobileSDK/Utils", "ubisoft/mobile/mobileAuth/MobileAuth"}) j.quietClasses.insert(cls);
+
     // EA's audio core: Java creates the track and hands it to the native Init.
     j.method("com/ea/EAAudioCore/AndroidEAAudioCore", "Startup", "()V", [](Jni& j, Ctx& x, jobject cls, const auto&) {
         const jobject t = j.newObject("android/media/AudioTrack");
@@ -390,6 +415,7 @@ void registerJavaClasses(Jni& j) {
 namespace {
 
 struct GlSurface {
+    int api = 1;
     uint32_t context = 0, sharegroup = 0, layer = 0;
     uint32_t fbo = 0, color = 0, depth = 0;
 };
@@ -400,6 +426,10 @@ uint32_t glFn(Process& p, const char* name) {
     return *a;
 }
 
+// Framebuffer functions: the OES extension names in ES 1.1, the core names in ES 2.
+std::string fbName(int api, const char* core) { return api >= 2 ? std::string(core) : std::string(core) + "OES"; }
+uint32_t glFn(Process& p, const std::string& name) { return glFn(p, name.c_str()); }
+
 // The GLSurfaceView: a host GL context and a framebuffer whose color buffer is the drawable.
 GlSurface makeSurface(Process& p, CPU::Cpu& c, const Surface& s) {
     if (!HostGL::enabled(p)) throw std::runtime_error("Android games need the GPU renderer (HostGL)");
@@ -407,25 +437,31 @@ GlSurface makeSurface(Process& p, CPU::Cpu& c, const Surface& s) {
     g.context = p.allocStatic(16);
     g.sharegroup = p.allocStatic(16);
     g.layer = p.allocStatic(16);
-    HostGL::contextCreate(p, g.context, 1, g.sharegroup);
+    // The context version the game links against: libGLESv2 (or v3) means an ES 2 context,
+    // as GLSurfaceView.setEGLContextClientVersion(2) makes; else ES 1.1.
+    int api = 1;
+    for (const auto& n : p.service<Library>().so.needed)
+        if (n == "libGLESv2.so" || n == "libGLESv3.so") api = 2;
+    HostGL::contextCreate(p, g.context, api, g.sharegroup);
     HostGL::contextMakeCurrent(p, g.context);
     const uint32_t names = p.allocStatic(16);
-    p.callGuest(c, glFn(p, "glGenFramebuffersOES"), {1, names});
-    p.callGuest(c, glFn(p, "glGenRenderbuffersOES"), {2, names + 4});
+    p.callGuest(c, glFn(p, fbName(api, "glGenFramebuffers")), {1, names});
+    p.callGuest(c, glFn(p, fbName(api, "glGenRenderbuffers")), {2, names + 4});
     g.fbo = p.mem().read<uint32_t>(names);
     g.color = p.mem().read<uint32_t>(names + 4);
     g.depth = p.mem().read<uint32_t>(names + 8);
     constexpr uint32_t kFb = 0x8D40, kRb = 0x8D41, kColor0 = 0x8CE0, kDepthAtt = 0x8D00, kDepth24 = 0x81A6;
-    p.callGuest(c, glFn(p, "glBindFramebufferOES"), {kFb, g.fbo});
-    p.callGuest(c, glFn(p, "glBindRenderbufferOES"), {kRb, g.color});
+    p.callGuest(c, glFn(p, fbName(api, "glBindFramebuffer")), {kFb, g.fbo});
+    p.callGuest(c, glFn(p, fbName(api, "glBindRenderbuffer")), {kRb, g.color});
     if (!HostGL::renderbufferStorageFromDrawable(p, g.context, g.layer, s.width, s.height))
         throw std::runtime_error("Android: no drawable storage for the surface");
-    p.callGuest(c, glFn(p, "glFramebufferRenderbufferOES"), {kFb, kColor0, kRb, g.color});
-    p.callGuest(c, glFn(p, "glBindRenderbufferOES"), {kRb, g.depth});
-    p.callGuest(c, glFn(p, "glRenderbufferStorageOES"), {kRb, kDepth24, uint32_t(s.width), uint32_t(s.height)});
-    p.callGuest(c, glFn(p, "glFramebufferRenderbufferOES"), {kFb, kDepthAtt, kRb, g.depth});
-    p.callGuest(c, glFn(p, "glBindRenderbufferOES"), {kRb, g.color});
+    p.callGuest(c, glFn(p, fbName(api, "glFramebufferRenderbuffer")), {kFb, kColor0, kRb, g.color});
+    p.callGuest(c, glFn(p, fbName(api, "glBindRenderbuffer")), {kRb, g.depth});
+    p.callGuest(c, glFn(p, fbName(api, "glRenderbufferStorage")), {kRb, kDepth24, uint32_t(s.width), uint32_t(s.height)});
+    p.callGuest(c, glFn(p, fbName(api, "glFramebufferRenderbuffer")), {kFb, kDepthAtt, kRb, g.depth});
+    p.callGuest(c, glFn(p, fbName(api, "glBindRenderbuffer")), {kRb, g.color});
     p.callGuest(c, glFn(p, "glViewport"), {0, 0, uint32_t(s.width), uint32_t(s.height)});
+    g.api = api;
     return g;
 }
 
@@ -434,6 +470,9 @@ GlSurface* gSurface = nullptr;   // for the framebuffer-0 remap below (one Andro
 // Framebuffer 0 is the surface on Android; here it is our framebuffer object.
 void glBindFramebufferRemap(Ctx& x, uint32_t target, uint32_t fb) {
     x.proc.callGuest(x.cpu, glFn(x.proc, "glBindFramebufferOES"), {target, fb == 0 && gSurface ? gSurface->fbo : fb});
+}
+void glBindFramebufferCoreRemap(Ctx& x, uint32_t target, uint32_t fb) {
+    x.proc.callGuest(x.cpu, glFn(x.proc, "glBindFramebuffer"), {target, fb == 0 && gSurface ? gSurface->fbo : fb});
 }
 void glGetIntegervRemap(Ctx& x, uint32_t pname, GuestPtr out) {
     x.proc.callGuest(x.cpu, glFn(x.proc, "glGetIntegerv"), {pname, out});
@@ -465,9 +504,9 @@ void present(Process& p, CPU::Cpu& c, GlSurface& g, const Surface& s) {
     uint32_t& saved = p.processSlot(&key);
     if (!saved) saved = p.allocStatic(4);
     p.callGuest(c, glFn(p, "glGetIntegerv"), {0x8CA7, saved});
-    p.callGuest(c, glFn(p, "glBindRenderbufferOES"), {0x8D41, g.color});
+    p.callGuest(c, glFn(p, fbName(g.api, "glBindRenderbuffer")), {0x8D41, g.color});
     const bool ok = HostGL::presentRenderbuffer(p, g.context, layer, w, h, rgba, direct);
-    p.callGuest(c, glFn(p, "glBindRenderbufferOES"), {0x8D41, p.mem().read<uint32_t>(saved)});
+    p.callGuest(c, glFn(p, fbName(g.api, "glBindRenderbuffer")), {0x8D41, p.mem().read<uint32_t>(saved)});
     if (!ok) return;
     if (direct) {
         static const char placedKey = 0;
@@ -500,14 +539,174 @@ struct Pointer { int action; float x, y; uint32_t id; };
 void registerSurfaceFunctions(Process& p) {
     // Framebuffer 0 and its binding query go to the surface.
     p.defineFunction("android:glBindFramebufferOES", [](Ctx& x) { callWrapped<&glBindFramebufferRemap>(x); });
+    p.defineFunction("android:glBindFramebuffer", [](Ctx& x) { callWrapped<&glBindFramebufferCoreRemap>(x); });
     p.defineFunction("android:glGetIntegerv", [](Ctx& x) { callWrapped<&glGetIntegervRemap>(x); });
 }
+
+namespace {
+
+// ------------------------------------------------------------ engine drivers ---
+// What a game's Java activity does around the native code differs per engine. A driver plays
+// that part: start-up before and after the GL surface exists, one frame, a touch, pause and
+// resume. The shared loop (surface, presenting, pacing, input queue) is runActivity's.
+
+struct Driver {
+    virtual ~Driver() = default;
+    virtual const char* name() const = 0;
+    virtual void create(Ctx&) {}                                       // activity onCreate / onResume
+    virtual void surfaceReady(Ctx&, const Surface&) {}                 // GL context current, surface sized
+    virtual void frame(Ctx&) = 0;
+    virtual void touch(Ctx&, TouchPhase, float x, float y, uint32_t id, uint32_t activeCount) = 0;
+    virtual void pause(Ctx&) {}
+    virtual void resume(Ctx&) {}
+    virtual bool wantsExit(Ctx&) { return false; }
+};
+
+// EA's Blast framework (Dead Space and other EA games of 2011-2013).
+struct EaBlastDriver final : Driver {
+    Jni& j;
+    jobject activity = 0, renderer = 0, touchCls = 0;
+    int idDown = 0, idMove = 0, idUp = 0, idCancel = 0;
+    JValue touchModule = 0;
+    explicit EaBlastDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "EA Blast"; }
+    static bool matches(const Library& lib) { return lib.so.image.symbols.count("Java_com_ea_blast_MainActivity_NativeOnCreate"); }
+    void call(Ctx& x, const char* n, std::vector<uint32_t> w = {}) {
+        if (!j.callNative(x, "com/ea/blast/MainActivity", n, activity, w))
+            x.proc.logf(LogLevel::Warning, "Android: the game has no MainActivity.%s", n);
+    }
+    void create(Ctx& x) override {
+        activity = jobject(j.staticFields["hvm.activity"]);
+        const auto& lib = x.proc.service<Library>();
+        j.callNative(x, "com/ea/EAThread/EAThread", "Init", j.classFor("com/ea/EAThread/EAThread"), {});
+        j.callNative(x, "com/ea/EAIO/EAIO", "Startup", j.classFor("com/ea/EAIO/EAIO"), {uint32_t(j.staticFields["hvm.assets"])});
+        // The activity's onCreate starts EA's audio core (it makes the AudioTrack and hands it to
+        // the native Init) before the game's own NativeOnCreate.
+        if (lib.so.image.symbols.count("Java_com_ea_EAAudioCore_AndroidEAAudioCore_Init"))
+            j.invoke(x, j.methodId("com/ea/EAAudioCore/AndroidEAAudioCore", "Startup", "()V", true),
+                     j.classFor("com/ea/EAAudioCore/AndroidEAAudioCore"), {});
+        call(x, "NativeOnCreate");
+        call(x, "NativeOnResume");
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        renderer = j.newObject("com/ea/blast/AndroidRenderer");
+        j.callNative(x, "com/ea/blast/AndroidRenderer", "NativeOnSurfaceCreated", renderer, {});
+        j.callNative(x, "com/ea/blast/AndroidRenderer", "NativeOnSurfaceChanged", renderer, {uint32_t(s.width), uint32_t(s.height)});
+        call(x, "NativeOnWindowFocusChanged", {1});
+        touchCls = j.classFor("com/ea/blast/TouchSurfaceAndroid");   // its natives are static
+        auto rawId = [&](const char* n) { JValue v = 0; j.callNative(x, "com/ea/blast/TouchSurfaceAndroid", n, touchCls, {}, &v); return int(uint32_t(v)); };
+        idDown = rawId("NativeGetIdRawPointerDown"); idMove = rawId("NativeGetIdRawPointerMove");
+        idUp = rawId("NativeGetIdRawPointerUp"); idCancel = rawId("NativeGetIdRawPointerCancel");
+        j.callNative(x, "com/ea/blast/ModuleCatalog", "NativeGetModuleTypeIdTouchScreen", j.classFor("com/ea/blast/ModuleCatalog"), {}, &touchModule);
+    }
+    void frame(Ctx& x) override { j.callNative(x, "com/ea/blast/AndroidRenderer", "NativeOnDrawFrame", renderer, {}); }
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t) override {
+        const int action = ph == TouchPhase::Began ? idDown : ph == TouchPhase::Moved ? idMove : ph == TouchPhase::Cancelled ? idCancel : idUp;
+        j.callNative(x, "com/ea/blast/TouchSurfaceAndroid", "NativeOnPointerEvent", touchCls,
+                     {uint32_t(action), uint32_t(touchModule), id, uint32_t(jfloat(px)), uint32_t(jfloat(py))});
+    }
+    void pause(Ctx& x) override { call(x, "NativeOnWindowFocusChanged", {0}); call(x, "NativeOnPause"); }
+    void resume(Ctx& x) override { call(x, "NativeOnResume"); call(x, "NativeOnWindowFocusChanged", {1}); }
+    bool wantsExit(Ctx& x) override {
+        JValue code = 0;
+        return j.callNative(x, "com/ea/blast/MainActivity", "NativeGetExitCode", activity, {}, &code) && int32_t(code) > 0;
+    }
+};
+
+// Ubisoft's UAF framework (Rayman Adventures and other Ubisoft mobile games of 2015-2017):
+// GameActivity.initEngine, then the GL2JNIView renderer's init and step.
+struct UbisoftUafDriver final : Driver {
+    Jni& j;
+    jobject lib = 0;
+    explicit UbisoftUafDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "Ubisoft UAF"; }
+    static bool matches(const Library& l) { return l.so.image.symbols.count("Java_com_ubisoft_uaf_UAFJNILib_step"); }
+    void call(Ctx& x, const char* n, std::vector<uint32_t> w = {}) {
+        if (!j.callNative(x, "com/ubisoft/uaf/UAFJNILib", n, lib, w))
+            x.proc.logf(LogLevel::Warning, "Android: the game has no UAFJNILib.%s", n);
+    }
+    void generic(Ctx& x, const char* method, const std::string& text, int32_t i = 0) {
+        call(x, "callGenericNativeMethod", {j.newString(method), uint32_t(i), uint32_t(jfloat(0)), j.newString(text)});
+    }
+    void create(Ctx& x) override {
+        lib = j.classFor("com/ubisoft/uaf/UAFJNILib");
+        const jobject activity = jobject(j.staticFields["hvm.activity"]), assets = jobject(j.staticFields["hvm.assets"]);
+        call(x, "InitGlobal", {activity});
+        call(x, "InitMobileSDK");
+        generic(x, "setDeviceModel", "hydrogenvm");
+        generic(x, "setDeviceCodeName", "hydrogenvm");
+        generic(x, "setOSVersion", "Android 19");
+        call(x, "setupDeviceInfo", {j.newString("hydrogenvm"), j.newString("hydrogenvm"), j.newString("19"), j.newString("en"), assets});
+    }
+    // Paths as GL2JNIView.init makes them: the app's external files folder, and the main OBB
+    // (Android/obb/<package>/<main file>) — here the .obb shipped inside the APK's assets.
+    std::string externalFiles, obbFile;
+    void paths(Ctx& x) {
+        if (!obbFile.empty()) return;
+        std::error_code ec;
+        const std::string pkg = x.proc.infoPlist() ? x.proc.infoPlist()->getString("CFBundleIdentifier") : "app";
+        const fs::path sd = externalRoot(x.proc);
+        const fs::path files = sd / "Android/data" / pkg / "files", obbDir = sd / "Android/obb" / pkg;
+        fs::create_directories(files, ec);
+        fs::create_directories(obbDir, ec);
+        for (auto& e : fs::directory_iterator(assetsDir(x.proc), ec)) {
+            if (e.path().extension() != ".obb") continue;
+            const fs::path link = obbDir / e.path().filename();
+            if (!fs::exists(fs::symlink_status(link, ec))) fs::create_symlink(e.path(), link, ec);
+            if (obbFile.empty() || e.path().filename().string().rfind("main.", 0) == 0) obbFile = x.proc.guestPath(link.string());
+        }
+        externalFiles = x.proc.guestPath(files.string());
+        // PackInstaller: the first launch unpacks the main OBB (a zip) into the files folder,
+        // which is where the engine reads its bundles from.
+        const fs::path marker = files / ".hvm-obb-unpacked";
+        if (!obbFile.empty() && !fs::exists(marker, ec)) {
+            const std::string host = x.proc.hostPath(obbFile);
+            try {
+                Loader::ZipReader zip(host);
+                const size_t n = zip.extract("", files.string(), true);
+                std::ofstream(marker) << fs::path(host).filename().string() << "\n";
+                x.proc.logf(LogLevel::Info, "Android: unpacked %zu files of %s into the game's files folder", n,
+                            fs::path(host).filename().c_str());
+            } catch (const std::exception& e) {
+                x.proc.logf(LogLevel::Warning, "Android: couldn't unpack the OBB: %s", e.what());
+            }
+        }
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        const jobject assets = jobject(j.staticFields["hvm.assets"]);
+        paths(x);
+        generic(x, "setAppRootPath", externalFiles);
+        call(x, "initNativeEngine", {j.newString("en_US"), j.newString(externalFiles), j.newString(obbFile), assets});
+        call(x, "init", {uint32_t(s.width), uint32_t(s.height), j.newString("en_US"), 0});
+        call(x, "setNativeScreenResolution", {uint32_t(s.width), uint32_t(s.height)});
+        call(x, "setDeviceOrientation", {uint32_t(s.width), uint32_t(s.height)});
+        call(x, "setDeviceTouchOrientation", {uint32_t(s.width), uint32_t(s.height)});
+        call(x, "resume");
+    }
+    void frame(Ctx& x) override { call(x, "step"); }
+    // touch(x, y, prevX, prevY, action, pointerId, pointerCount); actions as MotionEvent's
+    // (0 down, 1 up, 2 move, 3 cancel).
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t count) override {
+        const uint32_t action = ph == TouchPhase::Began ? 0 : ph == TouchPhase::Moved ? 2 : ph == TouchPhase::Cancelled ? 3 : 1;
+        call(x, "touch", {uint32_t(jfloat(px)), uint32_t(jfloat(py)), uint32_t(jfloat(px)), uint32_t(jfloat(py)), action, id, count});
+    }
+    void pause(Ctx& x) override { call(x, "pause"); }
+    void resume(Ctx& x) override { call(x, "resume"); }
+};
+
+std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
+    const auto& lib = p.service<Library>();
+    if (EaBlastDriver::matches(lib)) return std::make_unique<EaBlastDriver>(j);
+    if (UbisoftUafDriver::matches(lib)) return std::make_unique<UbisoftUafDriver>(j);
+    return nullptr;
+}
+
+} // namespace
 
 int runActivity(Process& p, CPU::Cpu& c) {
     Jni& j = jni(p);
     Ctx x{p, c, p.mem()};
     const auto& lib = p.service<Library>();
-    const jobject activity = jobject(j.staticFields["hvm.activity"]);
     const Surface s = surfaceFor(p);
     {   // The player follows UIKit's screen and orientation; there is no UIKit app to set them.
         auto& u = UIKit::ui(p);
@@ -516,89 +715,63 @@ int runActivity(Process& p, CPU::Cpu& c) {
         u.scale = s.scale;
         u.statusBarOrientation = s.portrait ? 1 : 3;   // UIInterfaceOrientationLandscapeRight
     }
-    p.logf(LogLevel::Info, "Android: %s, surface %dx%d", lib.name.c_str(), s.width, s.height);
+    auto driver = driverFor(p, j);
+    if (!driver) throw std::runtime_error("This Android game's engine isn't supported yet (" + lib.name +
+                                          " has no Java activity HydrogenVM knows how to play)");
+    p.logf(LogLevel::Info, "Android: %s (%s), surface %dx%d", lib.name.c_str(), driver->name(), s.width, s.height);
 
     if (auto it = lib.so.image.symbols.find("JNI_OnLoad"); it != lib.so.image.symbols.end()) {
         const uint32_t v = uint32_t(p.callGuest(c, it->second, {j.vm, 0}));
         p.logf(LogLevel::Info, "Android: JNI_OnLoad returned 0x%x", v);
     }
-    // Native classes the activity's Java code would start before the game.
-    j.callNative(x, "com/ea/EAThread/EAThread", "Init", j.classFor("com/ea/EAThread/EAThread"), {});
-    j.callNative(x, "com/ea/EAIO/EAIO", "Startup", j.classFor("com/ea/EAIO/EAIO"), {uint32_t(j.staticFields["hvm.assets"])});
-
-    auto activityCall = [&](const char* name, std::vector<uint32_t> words = {}) {
-        if (!j.callNative(x, "com/ea/blast/MainActivity", name, activity, words))
-            p.logf(LogLevel::Warning, "Android: the game has no MainActivity.%s", name);
-    };
-    // The activity's onCreate starts EA's audio core (it makes the AudioTrack and hands it to
-    // the native Init) before the game's own NativeOnCreate.
-    if (lib.so.image.symbols.count("Java_com_ea_EAAudioCore_AndroidEAAudioCore_Init")) {
-        const jobject audioCls = j.classFor("com/ea/EAAudioCore/AndroidEAAudioCore");
-        j.invoke(x, j.methodId("com/ea/EAAudioCore/AndroidEAAudioCore", "Startup", "()V", true), audioCls, {});
-    }
-    activityCall("NativeOnCreate");
-    activityCall("NativeOnResume");
-
+    driver->create(x);
     GlSurface g = makeSurface(p, c, s);
     gSurface = &g;
-    const jobject renderer = j.newObject("com/ea/blast/AndroidRenderer");
-    j.callNative(x, "com/ea/blast/AndroidRenderer", "NativeOnSurfaceCreated", renderer, {});
-    j.callNative(x, "com/ea/blast/AndroidRenderer", "NativeOnSurfaceChanged", renderer, {uint32_t(s.width), uint32_t(s.height)});
-    activityCall("NativeOnWindowFocusChanged", {1});
+    driver->surfaceReady(x, s);
 
-    // Touches: the host's are in portrait screen points; the surface is landscape pixels.
+    // Touches: the host's are in portrait screen points; the surface is in pixels.
     std::mutex inMu;
     std::deque<Pointer> pending;
-    const jobject touch = j.classFor("com/ea/blast/TouchSurfaceAndroid");   // its natives are static
-    auto rawId = [&](const char* name) {
-        JValue v = 0;
-        j.callNative(x, "com/ea/blast/TouchSurfaceAndroid", name, touch, {}, &v);
-        return int(uint32_t(v));
-    };
-    const int idDown = rawId("NativeGetIdRawPointerDown"), idMove = rawId("NativeGetIdRawPointerMove");
-    const int idUp = rawId("NativeGetIdRawPointerUp"), idCancel = rawId("NativeGetIdRawPointerCancel");
-    JValue touchModule = 0;
-    j.callNative(x, "com/ea/blast/ModuleCatalog", "NativeGetModuleTypeIdTouchScreen", j.classFor("com/ea/blast/ModuleCatalog"), {}, &touchModule);
+    struct Ev { TouchPhase phase; float x, y; uint32_t id; };
+    std::deque<Ev> events;
     const float portraitW = float(p.config().screenWidth);
     p.setTouchHandler([&, portraitW](TouchPhase phase, float tx, float ty, uint32_t finger) {
-        const int action = phase == TouchPhase::Began ? idDown : phase == TouchPhase::Moved ? idMove
-                         : phase == TouchPhase::Cancelled ? idCancel : idUp;
         std::lock_guard<std::mutex> lk(inMu);
-        if (s.portrait) pending.push_back({action, tx * s.scale, ty * s.scale, finger});
-        else pending.push_back({action, ty * s.scale, (portraitW - tx) * s.scale, finger});
+        if (s.portrait) events.push_back({phase, tx * s.scale, ty * s.scale, finger});
+        else events.push_back({phase, ty * s.scale, (portraitW - tx) * s.scale, finger});
     });
+    std::set<uint32_t> down;
 
     using clock = std::chrono::steady_clock;
     auto next = clock::now();
     bool paused = false;
     while (!p.stopping()) {
         if (p.backgroundRequested() && !paused) {
-            activityCall("NativeOnWindowFocusChanged", {0});
-            activityCall("NativeOnPause");
+            driver->pause(x);
             paused = true;
             p.setBackgrounded(true);
         }
         if (paused) {
             p.waitWhileBackgrounded();
             if (p.stopping()) break;
-            activityCall("NativeOnResume");
-            activityCall("NativeOnWindowFocusChanged", {1});
+            driver->resume(x);
             paused = false;
             next = clock::now();
         }
-        std::deque<Pointer> events;
+        std::deque<Ev> batch;
         {
             std::lock_guard<std::mutex> lk(inMu);
-            events.swap(pending);
+            batch.swap(events);
         }
-        for (const auto& e : events)
-            j.callNative(x, "com/ea/blast/TouchSurfaceAndroid", "NativeOnPointerEvent", touch,
-                         {uint32_t(e.action), uint32_t(touchModule), e.id, uint32_t(jfloat(e.x)), uint32_t(jfloat(e.y))});
-        j.callNative(x, "com/ea/blast/AndroidRenderer", "NativeOnDrawFrame", renderer, {});
+        for (const auto& e : batch) {
+            if (e.phase == TouchPhase::Began) down.insert(e.id);
+            driver->touch(x, e.phase, e.x, e.y, e.id, uint32_t(std::max<size_t>(down.size(), 1)));
+            if (e.phase == TouchPhase::Ended || e.phase == TouchPhase::Cancelled) down.erase(e.id);
+        }
+        driver->frame(x);
         present(p, c, g, s);
-        JValue exitCode = 0;
-        if (j.callNative(x, "com/ea/blast/MainActivity", "NativeGetExitCode", activity, {}, &exitCode) && int32_t(exitCode) > 0) {
-            p.logf(LogLevel::Info, "Android: the game asked to exit (%d)", int32_t(exitCode));
+        if (driver->wantsExit(x)) {
+            p.log(LogLevel::Info, "Android: the game asked to exit");
             break;
         }
         next += std::chrono::microseconds(16667);

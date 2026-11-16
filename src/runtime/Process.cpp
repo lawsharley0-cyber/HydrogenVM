@@ -455,6 +455,7 @@ std::vector<std::pair<std::string, bool>> peekDylibLoads(const std::vector<uint8
 
 void Process::loadAndroid() {
     const std::string name = fs::path(cfg_.androidLib).filename().string();
+    if (const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist"; fs::exists(plist)) infoPlist_ = Plist::parseFile(plist.string());
     executablePath_ = cfg_.androidLib;
     guestExecutablePath_ = guestBundlePath_ + "/lib/" + name;
     const auto file = Loader::readFile(executablePath_);

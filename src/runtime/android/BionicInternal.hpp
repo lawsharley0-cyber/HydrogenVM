@@ -19,5 +19,7 @@ uint64_t callIos(Ctx& x, const char* name, std::initializer_list<uint32_t> words
 
 // Registration of the other bionic files.
 void registerBionicExtra(Process& p);
+void registerLibAndroid(Process& p);
+void registerOpenSLES(Process& p);
 
 } // namespace Hydrogen::Runtime::Android

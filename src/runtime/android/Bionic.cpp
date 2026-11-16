@@ -609,6 +609,8 @@ void b_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t
 void registerBionic(Process& p) {
     registerSurfaceFunctions(p);
     registerBionicExtra(p);
+    registerLibAndroid(p);
+    registerOpenSLES(p);
     p.defineFunction("android:glCompressedTexImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexImage2D>(x); });
     p.defineFunction("android:glCompressedTexSubImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexSubImage2D>(x); });
     // Data.
