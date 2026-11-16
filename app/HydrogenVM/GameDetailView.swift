@@ -31,9 +31,11 @@ struct GameDetailView: View {
     }
 
     private var details: String {
-        [app.info.version.isEmpty ? nil : app.info.version,
-         app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+",
-         "armv7"].compactMap { $0 }.joined(separator: " · ")
+        app.info.isAndroid
+            ? [app.info.version.isEmpty ? nil : app.info.version, "Android", "armeabi"].compactMap { $0 }.joined(separator: " · ")
+            : [app.info.version.isEmpty ? nil : app.info.version,
+               app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+",
+               "armv7"].compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {

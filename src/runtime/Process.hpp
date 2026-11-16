@@ -42,6 +42,9 @@ struct ProcessConfig {
     // Android game (runtime/android/Android.hpp): the native library to run, extracted from the
     // APK. bundlePath is then the folder the APK's assets/ were extracted to.
     std::string androidLib;
+    // Android, frames read back from the GPU (no direct presentation): turn a landscape game's
+    // frame to the portrait screen, as the app shows it. The bench keeps it landscape.
+    bool rotateAndroidReadback = false;
     std::vector<std::string> extraArgs;
     std::function<void(LogLevel, const std::string&)> log;   // called from any thread
     bool stopOnMissingFunction = true; // false: log and return 0

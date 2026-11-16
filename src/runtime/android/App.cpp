@@ -3,6 +3,8 @@
 #include "runtime/android/Jni.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/uikit/UIKit.hpp"
+#include "loader/Apk.hpp"
 #include "core/cpu/Engine.hpp"
 #include <chrono>
 #include <cstdio>
@@ -26,14 +28,20 @@ using namespace std::chrono_literals;
 struct Surface {
     int width = 0, height = 0;
     float scale = 2.0f;
+    bool portrait = false;
 };
 Surface surfaceFor(Process& p) {
     const auto& c = p.config();
     Surface s;
     s.scale = c.screenScale;
     const int w = int(float(c.screenWidth) * c.screenScale), h = int(float(c.screenHeight) * c.screenScale);
-    s.width = std::max(w, h);
-    s.height = std::min(w, h);
+    // The generated Info.plist (loader/Apk.cpp) says portrait for portrait games.
+    s.portrait = false;
+    if (const auto* info = p.infoPlist())
+        if (const auto* o = info->get("UISupportedInterfaceOrientations"); o && o->type == Plist::Value::Type::Array)
+            for (const auto& v : o->array) if (v->s == "UIInterfaceOrientationPortrait") s.portrait = true;
+    s.width = s.portrait ? std::min(w, h) : std::max(w, h);
+    s.height = s.portrait ? std::max(w, h) : std::min(w, h);
     return s;
 }
 
@@ -74,45 +82,6 @@ std::string deviceString(const std::string& name) {
     return "0";   // counts of hardware we don't have: cameras, keyboards, ...
 }
 
-// The package name from a binary AndroidManifest.xml (the manifest element's package attribute).
-std::string manifestPackage(const std::vector<uint8_t>& d) {
-    auto u16 = [&](size_t o) -> uint32_t { return o + 2 <= d.size() ? uint32_t(d[o] | d[o + 1] << 8) : 0; };
-    auto u32 = [&](size_t o) -> uint32_t { return o + 4 <= d.size() ? uint32_t(d[o] | d[o + 1] << 8 | d[o + 2] << 16 | uint32_t(d[o + 3]) << 24) : 0; };
-    std::vector<std::string> strings;
-    for (size_t at = 8; at + 8 <= d.size();) {
-        const uint32_t type = u16(at), size = u32(at + 4);
-        if (size < 8 || at + size > d.size()) break;
-        if (type == 0x0001) {
-            const uint32_t count = u32(at + 8), flags = u32(at + 16), start = u32(at + 20);
-            const bool utf8 = flags & 0x100;
-            for (uint32_t i = 0; i < count && i < 100000; ++i) {
-                size_t o = at + start + u32(at + 28 + i * 4);
-                std::string s;
-                if (utf8) {
-                    o += (d[o] & 0x80) ? 2 : 1;                       // length in characters
-                    size_t n = d[o]; if (n & 0x80) { n = ((n & 0x7F) << 8) | d[o + 1]; ++o; } ++o;
-                    if (o + n <= d.size()) s.assign(reinterpret_cast<const char*>(&d[o]), n);
-                } else {
-                    size_t n = u16(o); o += 2;
-                    for (size_t k = 0; k < n && o + k * 2 + 1 < d.size(); ++k) s.push_back(char(u16(o + k * 2)));
-                }
-                strings.push_back(std::move(s));
-            }
-        } else if (type == 0x0102) {
-            const uint32_t name = u32(at + 20);
-            const uint32_t attrStart = u16(at + 24), attrSize = u16(at + 26), attrCount = u16(at + 28);
-            if (name < strings.size() && strings[name] == "manifest")
-                for (uint32_t i = 0; i < attrCount; ++i) {
-                    const size_t a = at + 16 + attrStart + size_t(i) * attrSize;
-                    const uint32_t an = u32(a + 4), raw = u32(a + 8);
-                    if (an < strings.size() && strings[an] == "package" && raw < strings.size()) return strings[raw];
-                }
-        }
-        at += size;
-    }
-    return {};
-}
-
 // Games that keep their data on the SD card (Android/data/<package>/files) find it there: the
 // folder links to the APK's assets.
 void linkExternalFiles(Process& p, const fs::path& files) {
@@ -127,7 +96,7 @@ std::string externalRoot(Process& p) { return p.config().homePath + "/Library/Ca
 void linkExternalData(Process& p, const std::string& external) {
     std::ifstream in(p.config().bundlePath + "/AndroidManifest.xml", std::ios::binary);
     const std::vector<uint8_t> m((std::istreambuf_iterator<char>(in)), {});
-    const std::string pkg = manifestPackage(m);
+    const std::string pkg = Loader::parseManifest(m).package;
     if (!pkg.empty()) linkExternalFiles(p, fs::path(external) / "Android/data" / pkg / "files");
 }
 
@@ -471,7 +440,22 @@ void glGetIntegervRemap(Ctx& x, uint32_t pname, GuestPtr out) {
     if (pname == 0x8CA6 && gSurface && x.mem.read<uint32_t>(out) == gSurface->fbo) x.mem.write<uint32_t>(out, 0);
 }
 
-void present(Process& p, CPU::Cpu& c, GlSurface& g) {
+// Where the surface sits on the emulated (portrait) screen. A landscape surface is shown as
+// UIInterfaceOrientationLandscapeRight: surface point (x, y) at screen point (W - y, x).
+void placeSurface(Process& p, GlSurface& g, const Surface& s) {
+    const float W = float(p.config().screenWidth), sc = s.scale;
+    const int sw = int(W * sc), sh = int(float(p.config().screenHeight) * sc);
+    const float bw = float(s.width) / sc, bh = float(s.height) / sc;
+    if (s.portrait) {
+        const float m[6] = {sc, 0, 0, sc, 0, 0};
+        HostGL::layerPlaced(p, g.layer, m, 0, 0, bw, bh, sw, sh);
+    } else {
+        const float m[6] = {0, sc, -sc, 0, W * sc, 0};
+        HostGL::layerPlaced(p, g.layer, m, 0, 0, bw, bh, sw, sh);
+    }
+}
+
+void present(Process& p, CPU::Cpu& c, GlSurface& g, const Surface& s) {
     uint32_t layer = 0;
     int w = 0, h = 0;
     bool direct = false;
@@ -485,12 +469,26 @@ void present(Process& p, CPU::Cpu& c, GlSurface& g) {
     const bool ok = HostGL::presentRenderbuffer(p, g.context, layer, w, h, rgba, direct);
     p.callGuest(c, glFn(p, "glBindRenderbufferOES"), {0x8D41, p.mem().read<uint32_t>(saved)});
     if (!ok) return;
-    if (!direct && p.config().present && w > 0 && h > 0 && rgba.size() >= size_t(w) * size_t(h) * 4) {
-        // GL rows are bottom-up.
-        std::vector<uint8_t> top(rgba.size());
-        const size_t row = size_t(w) * 4;
-        for (int y = 0; y < h; ++y) std::memcpy(top.data() + size_t(y) * row, rgba.data() + size_t(h - 1 - y) * row, row);
-        p.config().present(top.data(), w, h);
+    if (direct) {
+        static const char placedKey = 0;
+        if (!p.processSlot(&placedKey)) { placeSurface(p, g, s); p.processSlot(&placedKey) = 1; }
+    } else if (p.config().present && w > 0 && h > 0 && rgba.size() >= size_t(w) * size_t(h) * 4) {
+        // GL rows are bottom-up. The bench (no screen) keeps the surface as it is; the app's
+        // screen is portrait, so a landscape surface is turned the way placeSurface puts it.
+        const bool turn = !s.portrait && p.config().rotateAndroidReadback;
+        std::vector<uint8_t> out(rgba.size());
+        if (!turn) {
+            const size_t row = size_t(w) * 4;
+            for (int y = 0; y < h; ++y) std::memcpy(out.data() + size_t(y) * row, rgba.data() + size_t(h - 1 - y) * row, row);
+            p.config().present(out.data(), w, h);
+        } else {
+            // Portrait pixel (px, py) shows surface pixel (py, h - 1 - px) (top-down rows).
+            const uint32_t* src = reinterpret_cast<const uint32_t*>(rgba.data());
+            uint32_t* dst = reinterpret_cast<uint32_t*>(out.data());
+            for (int py = 0; py < w; ++py)
+                for (int px = 0; px < h; ++px) dst[size_t(py) * size_t(h) + size_t(px)] = src[size_t(px) * size_t(w) + size_t(py)];
+            p.config().present(out.data(), h, w);
+        }
     }
     p.perf().notePresented();
 }
@@ -511,6 +509,13 @@ int runActivity(Process& p, CPU::Cpu& c) {
     const auto& lib = p.service<Library>();
     const jobject activity = jobject(j.staticFields["hvm.activity"]);
     const Surface s = surfaceFor(p);
+    {   // The player follows UIKit's screen and orientation; there is no UIKit app to set them.
+        auto& u = UIKit::ui(p);
+        u.screenW = float(p.config().screenWidth);
+        u.screenH = float(p.config().screenHeight);
+        u.scale = s.scale;
+        u.statusBarOrientation = s.portrait ? 1 : 3;   // UIInterfaceOrientationLandscapeRight
+    }
     p.logf(LogLevel::Info, "Android: %s, surface %dx%d", lib.name.c_str(), s.width, s.height);
 
     if (auto it = lib.so.image.symbols.find("JNI_OnLoad"); it != lib.so.image.symbols.end()) {
@@ -553,7 +558,8 @@ int runActivity(Process& p, CPU::Cpu& c) {
         const int action = phase == TouchPhase::Began ? idDown : phase == TouchPhase::Moved ? idMove
                          : phase == TouchPhase::Cancelled ? idCancel : idUp;
         std::lock_guard<std::mutex> lk(inMu);
-        pending.push_back({action, ty * s.scale, (portraitW - tx) * s.scale, finger});
+        if (s.portrait) pending.push_back({action, tx * s.scale, ty * s.scale, finger});
+        else pending.push_back({action, ty * s.scale, (portraitW - tx) * s.scale, finger});
     });
 
     using clock = std::chrono::steady_clock;
@@ -583,7 +589,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
             j.callNative(x, "com/ea/blast/TouchSurfaceAndroid", "NativeOnPointerEvent", touch,
                          {uint32_t(e.action), uint32_t(touchModule), e.id, uint32_t(jfloat(e.x)), uint32_t(jfloat(e.y))});
         j.callNative(x, "com/ea/blast/AndroidRenderer", "NativeOnDrawFrame", renderer, {});
-        present(p, c, g);
+        present(p, c, g, s);
         JValue exitCode = 0;
         if (j.callNative(x, "com/ea/blast/MainActivity", "NativeGetExitCode", activity, {}, &exitCode) && int32_t(exitCode) > 0) {
             p.logf(LogLevel::Info, "Android: the game asked to exit (%d)", int32_t(exitCode));

@@ -9,6 +9,7 @@
 #import <UIKit/UIKit.h>
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
+#include "loader/Apk.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
@@ -67,6 +68,7 @@ static NSString *str(const std::string &s) {
         _iconPath = a.iconPaths.empty() ? nil : str(a.iconPaths.front());
         _runnable = a.runnable;
         _encrypted = a.encrypted;
+        _isAndroid = !a.androidLibrary.empty();
         _problem = str(a.problem);
     }
     return self;
@@ -596,6 +598,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.screenWidth = 320;
         cfg.screenHeight = 568;   // UIKit drops to 480 unless the app opts into 4"
         cfg.screenScale = 2;
+        cfg.rotateAndroidReadback = true;   // the player's screen is portrait
         auto sessionLog = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
             core->logToFile("", msg);
@@ -1035,6 +1038,17 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 + (HVMAppInfo *)importIPA:(NSString *)ipaPath intoDirectory:(NSString *)appsRoot error:(NSError **)error {
     try {
         auto info = Hydrogen::Loader::importIpa(ipaPath.UTF8String, appsRoot.UTF8String);
+        return [[HVMAppInfo alloc] initWithInfo:info];
+    } catch (const std::exception &e) {
+        if (error)
+            *error = [NSError errorWithDomain:@"HydrogenVM" code:1 userInfo:@{NSLocalizedDescriptionKey: str(e.what())}];
+        return nil;
+    }
+}
+
++ (HVMAppInfo *)importAPK:(NSString *)apkPath intoDirectory:(NSString *)appsRoot error:(NSError **)error {
+    try {
+        auto info = Hydrogen::Loader::importApk(apkPath.UTF8String, appsRoot.UTF8String);
         return [[HVMAppInfo alloc] initWithInfo:info];
     } catch (const std::exception &e) {
         if (error)

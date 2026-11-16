@@ -23,6 +23,7 @@ add_library(hvm_core STATIC
   src/loader/ElfLoader.cpp
   src/loader/MachO.cpp
   src/loader/Zip.cpp
+  src/loader/Apk.cpp
   src/loader/Plist.cpp
   src/loader/AppBundle.cpp
   src/selftest/SelfTest.cpp

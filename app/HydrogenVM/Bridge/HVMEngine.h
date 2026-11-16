@@ -23,6 +23,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy, nullable) NSString *iconPath;
 @property (nonatomic, readonly) BOOL runnable;
 @property (nonatomic, readonly) BOOL encrypted;
+/// An Android game imported from an .apk (its native library runs; Java is played by HydrogenVM).
+@property (nonatomic, readonly) BOOL isAndroid;
 /// Why the app can't run (encrypted, 64-bit only, missing executable…), empty when runnable.
 @property (nonatomic, readonly, copy) NSString *problem;
 @end
@@ -195,6 +197,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 + (HVMSelfTestResult *)runSelfTest;
 /// Extract an .ipa into appsRoot/<bundle id>/<Name>.app. Call off the main thread.
 + (nullable HVMAppInfo *)importIPA:(NSString *)ipaPath intoDirectory:(NSString *)appsRoot error:(NSError **)error;
+/// Import an Android .apk (32-bit ARM native code) into the same Apps folder.
++ (nullable HVMAppInfo *)importAPK:(NSString *)apkPath intoDirectory:(NSString *)appsRoot error:(NSError **)error;
 /// Inspect an already extracted .app.
 + (nullable HVMAppInfo *)appInfoAtPath:(NSString *)appPath;
 /// Decode an image file with the engine's decoder (handles Xcode-crushed CgBI PNGs).
