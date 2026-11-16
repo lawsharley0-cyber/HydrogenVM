@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — QuartzCore HLE: CALayer, CATransform3D, CATransaction,
 // CADisplayLink, CAAnimation (accepted; completion callbacks fire, no
 // interpolation yet) and the compositor that turns the layer trees of all
@@ -848,7 +849,7 @@ void runFrame(Ctx& x, double now) {
             if (!l.obj || l.paused) continue;
             // "Unlock frame rate" (experimental, per game): every screen frame, whatever the game
             // asked for; -frameInterval still reports the game's own value.
-            const int interval = x.proc.config().unlockFrameRate ? 1 : l.interval;
+            const int interval = Compat::unlockFrameRate(x.proc) ? 1 : l.interval;
             if (l.interval > 1 && interval == 1 && !u.unlockLogged) {
                 u.unlockLogged = true;
                 x.proc.logf(LogLevel::Info, "Unlock frame rate: a display link asking for every %d frames (%d fps) runs every frame",

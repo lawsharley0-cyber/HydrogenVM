@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — NSData / NSMutableData. Bytes live in a guest heap buffer so
 // -bytes / -mutableBytes can hand guest code a real pointer.
 #include "Foundation.hpp"
@@ -109,7 +110,7 @@ id di_initWithContentsOfURL(Ctx& x, id self, SEL s, id url) {
             assign(x, self, reinterpret_cast<const uint8_t*>(reply->body.data()), uint32_t(reply->body.size()));
             return self;
         }
-        if (x.proc.config().internetAccess) {
+        if (Compat::internetAccess(x.proc)) {
             if (auto body = url ? onlineFetchContents(x, url) : std::nullopt) {
                 assign(x, self, reinterpret_cast<const uint8_t*>(body->data()), uint32_t(body->size()));
                 return self;

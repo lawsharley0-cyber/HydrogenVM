@@ -1,0 +1,73 @@
+#include "runtime/compat/Profiles.hpp"
+#include "runtime/foundation/Foundation.hpp"
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
+using namespace Hydrogen;
+using namespace Hydrogen::Runtime;
+int runCompatProfileTests() {
+    int failed=0,passed=0;
+    auto check=[&](bool ok,const char* name) {
+        std::printf("%s profile: %s\n",ok?"ok":"FAIL",name); ok?++passed:++failed;
+    };
+    const auto root=std::filesystem::temp_directory_path()/("hvm-profile-tests-"+std::to_string(getpid()));
+    std::filesystem::remove_all(root);
+    int contentLogs=0,serverLogs=0,choiceLogs=0;
+    auto log=[&](LogLevel,const std::string& line) {
+        if(line.find("Compatibility profile: restored-gameloft-content")!=std::string::npos) ++contentLogs;
+        if(line.find("Compatibility profile: groove-zero-server")!=std::string::npos) ++serverLogs;
+        if(line.find("Compatibility profile: allow-internet")!=std::string::npos ||
+           line.find("Compatibility profile: unlock-frame-rate")!=std::string::npos) ++choiceLogs;
+    };
+    ProcessConfig cfg; cfg.homePath=(root/"first").string(); cfg.log=log;
+    {
+        Process p(cfg);
+        auto& cpu=p.mainThread().cpu;
+        cpu.r[CPU::kSP]=p.heap().allocZeroed(65536)+65536-256;
+        Ctx x{p,cpu,p.mem()};
+        check(!Compat::internetAccess(p) && !Compat::unlockFrameRate(p) && choiceLogs==0,"per-game choices default off");
+        check(!Compat::restoredContentReachable(p),"no content marker means no offline reachability exception");
+        const auto marker=std::filesystem::path(p.homePath())/"Library/Caches/dlcs/mnhtn_index_ios";
+        std::filesystem::create_directories(marker.parent_path()); std::ofstream(marker)<<"owner fixture";
+        check(Compat::restoredContentReachable(p) && Compat::restoredContentReachable(p) && contentLogs==1,
+              "restored-content condition applies and logs once per process");
+        check(!Compat::internetAccess(p),"offline reachability exception never enables internet");
+        std::filesystem::remove(marker);
+        check(!Compat::restoredContentReachable(p),"removing marker preserves live predicate behavior");
+        check(Compat::serverProfile("gczero.com") && Compat::serverProfile("staging.gczero.com"),"both original exact stand-in hosts match");
+        check(!Compat::serverProfile("gczero.com.attacker.invalid") && !Compat::serverProfile("unrelated.invalid"),"unrelated hosts do not match");
+        auto start=Foundation::standInFetch(x,std::string("http://gczero.com/start.php"),"GET");
+        auto alias=Foundation::standInFetch(x,std::string("http://staging.gczero.com/start.php"),"GET");
+        check(start && alias && start->body==alias->body && start->body.find("<stage_pak>")!=std::string::npos,
+              "stand-in aliases preserve the existing local reply");
+        check(serverLogs==1,"both stand-in aliases log the profile only once");
+        check(!Foundation::standInFetch(x,std::string("http://gczero.com/shop_list.php"),"GET"),"shop remains unreachable");
+        const auto unknown=Foundation::standInFetch(x,std::string("http://gczero.com/not-implemented.php"),"GET");
+        check(unknown && unknown->body.find("<code>0</code>")!=std::string::npos,
+              "unknown endpoint retains existing explicitly-defaulted reply");
+        check(!Foundation::standInFetch(x,std::string("http://unrelated.invalid/start.php"),"GET"),"unrelated URL gets no stand-in");
+    }
+    // A second Process receives its own activation log, even in the same host.
+    {
+        Process p(cfg); Compat::noteApplied(p,Compat::Kind::RestoredContent);
+        Compat::noteApplied(p,Compat::Kind::RestoredContent);
+        check(contentLogs==2,"activation is per process, not process-global static once");
+    }
+    cfg.homePath=(root/"choices").string(); cfg.internetAccess=true; cfg.unlockFrameRate=true;
+    {
+        Process p(cfg); Compat::initialize(p);
+        check(Compat::internetAccess(p) && Compat::unlockFrameRate(p) && choiceLogs==2,
+              "explicit choices are preserved and each logs once");
+    }
+    bool documented=true;
+    for(const auto& entry:Compat::profiles())
+        documented &= *entry.id && *entry.match && *entry.effect && *entry.evidence && *entry.verify;
+    check(documented,"every profile records detection, effect, evidence and verification");
+    std::filesystem::remove_all(root);
+    std::printf("compatibility profiles: %d passed, %d failed\n",passed,failed);
+    return failed;
+}
+#ifdef HVM_COMPAT_PROFILE_MAIN
+int main(){ return runCompatProfileTests(); }
+#endif

@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — run loops, timers, dates, delayed/cross-thread performs, NSThread.
 #include <exception>
 #include "Foundation.hpp"
@@ -404,7 +405,7 @@ void scheduleTimer(Ctx& x, id timer, RunLoop& rl, const std::string& mode) {
     rt(x).retain(x.cpu, timer);   // the run loop retains scheduled timers
     Process* p = &x.proc;
     double interval = d->interval;   // what -timeInterval reports stays the game's own value
-    if (d->repeats && x.proc.config().unlockFrameRate && interval > 1.0 / 50 && interval <= 1.0 / 20) {
+    if (d->repeats && Compat::unlockFrameRate(x.proc) && interval > 1.0 / 50 && interval <= 1.0 / 20) {
         static std::once_flag logged;
         std::call_once(logged, [&] {
             x.proc.logf(LogLevel::Info, "Unlock frame rate: a repeating %.4f s timer (%.0f per second) fires every 1/60 s instead",
