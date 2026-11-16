@@ -57,3 +57,25 @@ archives and the actual no-data archive are rejected before launch. Focused
 harness tests are now **13 passed**. Groove Coaster Zero and a matching
 with-data Minion Rush fixture remain unavailable. Initial skip observations
 above describe the original primary-bench search, not this later result.
+
+## Owner-supplied fixtures: November 16 follow-up
+
+The supplied IPA folder resolved the two missing fixtures. Original archives were
+left unchanged; private scenario copies override only the IPA filename.
+
+| Fixture | Archive SHA-256 | Duration | Result | Peak RSS |
+|---|---|---:|---|---:|
+| Minion Rush 1.0.0 with data | 3d162e5ebeb1044ed04cac55f27a9e0a07f3515263c5fc8d3603d3ba7f048c64 | 300 s | PASS, exit 0 | 1,018,109,952 bytes |
+| Groove Coaster Zero 1.0.0 | 0d5bc908afe2a432dabe098f72483083421a06416dd3ca5e73b19c3abf1fd228 | 60 s | PASS, exit 0 | 234,594,304 bytes |
+
+Both fresh-home GPU runs used profile-refactor runtime 2474be76, internet/FPS
+overrides off, with zero crash/stall/stub reports. Minion's restored index is
+18 bytes with seven data packs. Groove's required stage.pak request was logged.
+Screenshots show Groove's title screen and Minion's introductory notice; the
+historical Minion tap did not dismiss that notice. No terms were accepted and
+no level-entry/gameplay claim is made. A Minion thread-exit autorelease warning
+remains in its private log; the process nevertheless exited 0 under unchanged
+criteria. Approved image comparisons remain SKIPPED.
+
+Private evidence: build/found-fixture-smoke/run-idlrywy_/. Army #496 remains a
+failure. Earlier unavailable statements record the initial search only.
