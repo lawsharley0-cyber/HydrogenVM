@@ -69,6 +69,8 @@ static NSString *str(const std::string &s) {
         _runnable = a.runnable;
         _encrypted = a.encrypted;
         _isAndroid = !a.androidLibrary.empty();
+        _engine = str(a.engine);
+        _engineSupported = a.engineSupport == "driver";
         _problem = str(a.problem);
     }
     return self;

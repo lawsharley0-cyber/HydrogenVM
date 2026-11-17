@@ -567,9 +567,14 @@ struct AppRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Gloss.ink).lineLimit(1)
                 Text([app.info.version.isEmpty ? nil : app.info.version,
-                      app.info.isAndroid ? "Android" : (app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+")]
+                      app.info.isAndroid ? (app.info.engine.isEmpty ? "Android" : "Android · \(app.info.engine)")
+                                         : (app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+")]
                         .compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 13)).foregroundStyle(Gloss.inkSoft).lineLimit(1)
+                if app.info.isAndroid && !app.info.engine.isEmpty && !app.info.engineSupported {
+                    Label("\(app.info.engine) isn't supported yet", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 12)).foregroundStyle(Gloss.warn).lineLimit(1)
+                }
             }
             Spacer(minLength: 8)
             let s = Self.status(app.info)

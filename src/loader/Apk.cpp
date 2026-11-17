@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <cctype>
 
 namespace fs = std::filesystem;
 
@@ -137,6 +138,31 @@ std::vector<ResValue> resolveStrings(const std::vector<uint8_t>& d, uint32_t id)
     return out;
 }
 
+AndroidEngine detectAndroidEngine(const std::vector<std::string>& libs, const std::string& dex) {
+    auto has = [&](const char* n) { return std::find(libs.begin(), libs.end(), n) != libs.end(); };
+    auto any = [&](auto pred) { return std::any_of(libs.begin(), libs.end(), pred); };
+    auto in = [&](const char* s) { return dex.find(s) != std::string::npos; };
+    if (has("libil2cpp.so")) return {"Unity (IL2CPP)", "none"};
+    if (has("libunity.so") && has("libmono.so")) return {"Unity (Mono)", "driver"};
+    if (has("libunity.so")) return {"Unity", "driver"};
+    if (has("libUE4.so")) return {"Unreal Engine 4", "none"};
+    if (has("libUE3.so") || any([](const std::string& n) { return n.rfind("libUnrealEngine3", 0) == 0; })) return {"Unreal Engine 3", "none"};
+    if (in("Lcom/ea/blast/")) return {"EA Blast", "driver"};
+    if (has("libuaf.so")) return {"Ubisoft UAF", "driver"};
+    if (in("Lorg/cocos2dx/") || any([](const std::string& n) {
+            std::string l = n; for (char& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
+            return l.find("cocos") != std::string::npos; }))
+        return {"Cocos2d-x", "none"};
+    if (has("libyoyo.so")) return {"GameMaker", "none"};
+    if (has("libgdx.so") || in("Lcom/badlogic/gdx/")) return {"libGDX", "none"};
+    if (has("libCore.so") && in("Lcom/adobe/air/")) return {"Adobe AIR", "none"};
+    if (has("libcorona.so")) return {"Corona", "none"};
+    if (any([](const std::string& n) { return n.rfind("libs3e", 0) == 0; })) return {"Marmalade", "none"};
+    if (in("Landroid/app/NativeActivity;")) return {"NativeActivity", "planned"};
+    if (libs.empty()) return {"Java only", "none"};
+    return {"Java + native", "none"};
+}
+
 AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     ZipReader zip(apkPath);
     const auto* manifestEntry = zip.find("AndroidManifest.xml");
@@ -205,6 +231,22 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
         }
     }
 
+    // Which engine: native library names (the chosen ABI) and the class names the DEX holds.
+    std::vector<std::string> libNames;
+    if (!lib.empty()) {
+        const std::string dir = lib.substr(0, lib.rfind('/') + 1);
+        for (const auto& e : zip.entries())
+            if (e.name.rfind(dir, 0) == 0 && e.name.find('/', dir.size()) == std::string::npos) libNames.push_back(e.name.substr(dir.size()));
+    }
+    std::string dexText;
+    for (const auto& e : zip.entries())
+        if (e.name.rfind("classes", 0) == 0 && e.name.size() > 4 && e.name.compare(e.name.size() - 4, 4, ".dex") == 0 && e.size < (256u << 20)) {
+            const auto d = zip.read(e);
+            dexText.append(reinterpret_cast<const char*>(d.data()), d.size());
+        }
+    const AndroidEngine engine = detectAndroidEngine(libNames, dexText);
+    dexText.clear();
+
     const bool portrait = m.screenOrientation.find("ortrait") != std::string::npos;
     std::ofstream plist(app / "Info.plist");
     plist << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -216,6 +258,8 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
           << "\t<key>CFBundleShortVersionString</key><string>" << xmlEscape(m.versionName) << "</string>\n"
           << "\t<key>CFBundleExecutable</key><string>" << xmlEscape(lib) << "</string>\n"
           << "\t<key>HydrogenVMAndroidLibrary</key><string>" << xmlEscape(lib) << "</string>\n"
+          << "\t<key>HydrogenVMAndroidEngine</key><string>" << xmlEscape(engine.name) << "</string>\n"
+          << "\t<key>HydrogenVMAndroidEngineSupport</key><string>" << xmlEscape(engine.support) << "</string>\n"
           << "\t<key>MinimumOSVersion</key><string>Android</string>\n"
           << (haveIcon ? "\t<key>CFBundleIconFile</key><string>icon.png</string>\n" : "")
           << "\t<key>UISupportedInterfaceOrientations</key><array><string>"

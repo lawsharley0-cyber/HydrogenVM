@@ -408,6 +408,11 @@ final class BatchTestRunner {
 
         var newTargets: [BatchTarget] = []
         for app in options.games(from: apps) {
+            // Android games only run on the GPU renderer: one GPU run, whatever the mode.
+            if app.info.isAndroid {
+                newTargets.append(BatchTarget(app: app, useGPU: true))
+                continue
+            }
             switch options.rendererMode {
             case .software:
                 newTargets.append(BatchTarget(app: app, useGPU: false))

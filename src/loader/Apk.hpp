@@ -29,6 +29,12 @@ std::vector<ResValue> resolveStrings(const std::vector<uint8_t>& arsc, uint32_t 
 // assets (assets/), AndroidManifest.xml, the icon, and a generated Info.plist that marks the
 // folder as an Android app (key HydrogenVMAndroidLibrary: the library, relative to the folder).
 // Data beside an earlier copy (Documents/, Library/, tmp/) is kept. Throws on bad archives.
+// The engine an APK's game is built on, from its native library names and the classes its DEX
+// names, and whether HydrogenVM has a driver for it ("driver", "planned", "none"). Kept in step
+// with tools/android_gaps.py and runtime/android/App.cpp's drivers.
+struct AndroidEngine { std::string name, support; };
+AndroidEngine detectAndroidEngine(const std::vector<std::string>& libNames, const std::string& dexText);
+
 AppInfo importApk(const std::string& apkPath, const std::string& appsRoot);
 
 } // namespace Hydrogen::Loader

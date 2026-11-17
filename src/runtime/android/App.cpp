@@ -823,6 +823,14 @@ int runActivity(Process& p, CPU::Cpu& c) {
         u.scale = s.scale;
         u.statusBarOrientation = s.portrait ? 1 : 3;   // UIInterfaceOrientationLandscapeRight
     }
+    // The Android Test Lab (tests/android/): a library exporting hvm_test_main(JNIEnv*, JavaVM*)
+    // runs its checks instead of an activity; the exit code is the number of failures.
+    if (const auto test = lib.find("hvm_test_main")) {
+        if (const auto onLoad = lib.find("JNI_OnLoad")) p.callGuest(c, *onLoad, {j.vm, 0});
+        const uint32_t failures = uint32_t(p.callGuest(c, *test, {j.envFor(p), j.vm}));
+        p.logf(LogLevel::Info, "Android Test Lab: %u failure(s)", failures);
+        return int(failures);
+    }
     auto driver = driverFor(p, j);
     if (!driver) throw std::runtime_error("This Android game's engine isn't supported yet (" + lib.name +
                                           " has no Java activity HydrogenVM knows how to play)");

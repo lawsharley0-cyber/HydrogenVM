@@ -80,6 +80,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests
       - name: Support registration tests
         run: build/hvm_support_tests
+      - name: Android Test Lab (desktop and phone mode)
+        run: python3 tools/android_testlab.py --phone --out report/android-testlab
       - name: Guest termination watchdog is a failed run
         run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime

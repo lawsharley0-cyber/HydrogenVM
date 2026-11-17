@@ -29,6 +29,7 @@ struct Futexes {
     std::mutex mu;
     std::condition_variable cv;
     std::unordered_map<uint32_t, uint32_t> wakes;   // address -> wakes not yet taken
+    std::unordered_map<uint32_t, uint32_t> waiters; // address -> threads waiting there
 };
 
 int32_t futex(Process& p, uint32_t addr, uint32_t op, uint32_t val, uint32_t timeout, uint32_t) {
@@ -47,6 +48,20 @@ int32_t futex(Process& p, uint32_t addr, uint32_t op, uint32_t val, uint32_t tim
                 due = cmd == 0 ? clock::now() + std::chrono::nanoseconds(ns) : clock::time_point(std::chrono::nanoseconds(ns));
             }
             BlockedScope blocked(p, "futex wait", addr);
+            ++f.waiters[addr];
+            struct Leave {
+                Futexes& f; uint32_t addr;
+                ~Leave() {   // owed wakes never outnumber the threads still waiting
+                    uint32_t left = 0;
+                    if (auto it = f.waiters.find(addr); it != f.waiters.end()) {
+                        left = --it->second;
+                        if (!left) f.waiters.erase(it);
+                    }
+                    if (auto it = f.wakes.find(addr); it != f.wakes.end() && it->second > left) {
+                        if (left) it->second = left; else f.wakes.erase(it);
+                    }
+                }
+            } leave{f, addr};
             for (;;) {
                 if (auto it = f.wakes.find(addr); it != f.wakes.end() && it->second) {
                     if (--it->second == 0) f.wakes.erase(it);
@@ -60,12 +75,20 @@ int32_t futex(Process& p, uint32_t addr, uint32_t op, uint32_t val, uint32_t tim
             }
         }
         case 1: case 10: {            // FUTEX_WAKE, FUTEX_WAKE_BITSET
+            // Linux wakes at most `val` of the threads actually waiting and returns how many; a
+            // wake nobody is waiting for is not saved up for a later wait.
+            uint32_t woken = 0;
             {
                 std::lock_guard<std::mutex> lk(f.mu);
-                f.wakes[addr] += std::min<uint32_t>(val, 64);
+                const auto w = f.waiters.find(addr);
+                const uint32_t waiting = w == f.waiters.end() ? 0 : w->second;
+                const auto pending = f.wakes.find(addr);
+                const uint32_t owed = pending == f.wakes.end() ? 0 : pending->second;
+                woken = waiting > owed ? std::min(val, waiting - owed) : 0;
+                if (woken) f.wakes[addr] += woken;
             }
-            f.cv.notify_all();
-            return int32_t(std::min<uint32_t>(val, 64));
+            if (woken) f.cv.notify_all();
+            return int32_t(woken);
         }
         default:
             p.reportDefaulted("futex op " + std::to_string(op) + " -> ENOSYS");

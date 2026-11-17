@@ -25,6 +25,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL encrypted;
 /// An Android game imported from an .apk (its native library runs; Java is played by HydrogenVM).
 @property (nonatomic, readonly) BOOL isAndroid;
+/// Android: the game's engine ("Unity (Mono)", "EA Blast", "Cocos2d-x"…), empty if unknown.
+@property (nonatomic, readonly, copy) NSString *engine;
+/// Android: YES when HydrogenVM has a driver for that engine.
+@property (nonatomic, readonly) BOOL engineSupported;
 /// Why the app can't run (encrypted, 64-bit only, missing executable…), empty when runnable.
 @property (nonatomic, readonly, copy) NSString *problem;
 @end
