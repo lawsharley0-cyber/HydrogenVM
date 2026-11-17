@@ -188,6 +188,12 @@ static std::vector<uint32_t> nativeWords(const std::string& types, const std::ve
     return w;
 }
 
+bool isPluginClass(const std::string& cls) {
+    for (const char* platform : {"android/", "java/", "javax/", "dalvik/", "org/json/", "org/xml/", "org/w3c/", "com/android/"})
+        if (cls.rfind(platform, 0) == 0) return false;
+    return !cls.empty();
+}
+
 JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>& args) {
     MethodInfo m;
     {
@@ -225,6 +231,22 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
         auto it = impls.find(*c + "." + m.name + m.sig);
         if (it != impls.end()) return it->second(*this, x, self, args);
     }
+    // Reflection-style callers (Unity's AndroidJavaObject.Call<T>) ask for an object-returning
+    // method as returning java.lang.Object: the same name and arguments with any object return.
+    if (const size_t close = m.sig.find(')'); close != std::string::npos && close + 1 < m.sig.size() &&
+                                              (m.sig[close + 1] == 'L' || m.sig[close + 1] == '[')) {
+        const std::string params = m.sig.substr(0, close + 1);
+        for (const std::string& start : {objCls, m.cls, kActivity, kContext, kObject}) {
+            std::string c = start;
+            for (int depth = 0; depth < 32 && !c.empty(); ++depth, c = superOf(c)) {
+                const std::string prefix = c + "." + m.name + params;
+                for (auto it = impls.lower_bound(prefix); it != impls.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it) {
+                    const char r0 = it->first[prefix.size()];
+                    if (r0 == 'L' || r0 == '[') return it->second(*this, x, self, args);
+                }
+            }
+        }
+    }
     JValue r = 0;
     if (callNative(x, m.cls, m.name, self, nativeWords(argTypes(m.sig), args), &r)) return r;
     if (quietClasses.count(m.cls) || quietClasses.count(objCls)) return 0;
@@ -244,6 +266,15 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
     if (rt == 'L') {
         // A string-returning getter we don't know: an empty string is safer than null.
         if (m.sig.size() >= 19 && m.sig.compare(m.sig.size() - 18, 18, "Ljava/lang/String;") == 0) return newString("");
+        // A game's own Java plugins (ad, purchase, social SDKs; not android/ or java/ classes):
+        // an object of the declared type. Unity's AndroidJavaObject throws on null, which stops
+        // the script that asked (and with it, things like the title screen's input).
+        if (isPluginClass(m.cls)) {
+            const size_t open = m.sig.rfind(")L");
+            std::string type = open == std::string::npos ? "java/lang/Object" : m.sig.substr(open + 2, m.sig.size() - open - 3);
+            if (type == "java/lang/Object") type = m.cls;
+            return newObject(type);
+        }
     }
     return 0;
 }
@@ -428,6 +459,21 @@ Jni& jni(Process& p) {
                     if (JObject* m = j.get(arg(x, 1))) isStatic = m->fields["hvm.static"] != 0;
                 }
                 ret(x, j.methodId(cls.empty() ? "java/lang/Object" : cls, name, sig.empty() ? "()V" : sig, isStatic));
+            });
+            set(8, "FromReflectedField", [](Ctx& x) {
+                Jni& j = J(x);
+                std::string cls, name, sig;
+                bool isStatic = false;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(j.mu);
+                    JObject* f = j.get(arg(x, 1));
+                    if (!f) { ret(x, 0); return; }
+                    name = f->str;
+                    if (auto* s = std::any_cast<std::string>(&f->host)) sig = *s;
+                    isStatic = f->fields["hvm.static"] != 0;
+                    if (JObject* c = j.get(jobject(f->fields["hvm.declaring"]))) cls = c->cls;
+                }
+                ret(x, j.fieldId(cls.empty() ? "java/lang/Object" : cls, name, sig.empty() ? "Ljava/lang/Object;" : sig, isStatic));
             });
             set(9, "ToReflectedMethod", [](Ctx& x) {
                 Jni& j = J(x);

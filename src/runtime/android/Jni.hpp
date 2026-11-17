@@ -99,6 +99,8 @@ public:
 Jni& jni(Process& p);
 // Argument types of a method signature ("(ILjava/lang/String;[BF)V" -> "IL[F"), and its return type.
 std::string argTypes(const std::string& sig);
+// Not a platform class (android/, java/, ...): a game's own or a third-party SDK's Java class.
+bool isPluginClass(const std::string& cls);
 char returnType(const std::string& sig);
 
 // The Java classes the game's native code uses (App.cpp), and the platform ones every engine
