@@ -479,6 +479,8 @@ Block* Engine::lookupOrDecode(uint32_t key) {
     stats_.guest_insns_decoded += raw->guest_insns;
     stats_.ops_emitted += raw->ops.size();
     blocks_.emplace(key, std::move(b));
+    if (!isHleAddress(key & ~1u) && raw->end > (key & ~1u))
+        for (uint32_t pg = (key & ~1u) >> 12; pg <= (raw->end - 1) >> 12; ++pg) pageBlocks_[pg].push_back(key);
     return raw;
 }
 
@@ -490,6 +492,7 @@ void Engine::flushCache() {
         if (isHleAddress(uint32_t(it->first) & ~1u)) ++it;
         else it = blocks_.erase(it);
     }
+    pageBlocks_.clear();
     gen_.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -500,13 +503,48 @@ void Engine::resetFastCache(Cpu& c) {
 }
 
 bool Engine::hasBlocksIn(uint32_t addr, uint32_t size) {
+    if (!size) return false;
     std::lock_guard<std::mutex> lk(mu_);
     const uint64_t lo = addr, hi = uint64_t(addr) + size;
-    for (auto& [k, b] : blocks_) {
-        const uint64_t bl = k & ~1u, bh = b->end;
-        if (bl < hi && bh > lo) return true;
+    for (uint64_t pg = lo >> 12; pg <= (hi - 1) >> 12; ++pg) {
+        auto it = pageBlocks_.find(uint32_t(pg));
+        if (it == pageBlocks_.end()) continue;
+        for (const uint32_t key : it->second) {
+            auto b = blocks_.find(key);
+            if (b != blocks_.end() && (key & ~1u) < hi && b->second->end > lo) return true;
+        }
     }
     return false;
+}
+
+void Engine::retireRange(uint32_t addr, uint32_t size) {
+    if (!size) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint64_t lo = addr, hi = uint64_t(addr) + size;
+    for (uint64_t pg = lo >> 12; pg <= (hi - 1) >> 12; ++pg) {
+        auto pit = pageBlocks_.find(uint32_t(pg));
+        if (pit == pageBlocks_.end()) continue;
+        auto& keys = pit->second;
+        for (size_t i = 0; i < keys.size();) {
+            auto it = blocks_.find(keys[i]);
+            if (it == blocks_.end()) { keys[i] = keys.back(); keys.pop_back(); continue; }   // already gone
+            const uint64_t bl = it->first & ~1u, bh = it->second->end;
+            if (bl < hi && bh > lo) {
+                std::unique_ptr<Block> b = std::move(it->second);
+                blocks_.erase(it);
+                Op& o = b->ops[0];
+                o.fn = &H_Stale;
+                o.imm = b->key;
+                b->valid = false;
+                retired_.push_back(std::move(b));   // links may still reach it
+                keys[i] = keys.back();
+                keys.pop_back();
+                continue;
+            }
+            ++i;
+        }
+        if (keys.empty()) pageBlocks_.erase(pit);
+    }
 }
 
 void Engine::invalidateRange(uint32_t addr, uint32_t size) {

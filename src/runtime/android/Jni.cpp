@@ -410,6 +410,62 @@ Jni& jni(Process& p) {
             set(16, "ExceptionDescribe", [](Ctx& x) { ret(x, 0); });
             set(17, "ExceptionClear", [](Ctx& x) { ret(x, 0); });
             set(18, "FatalError", [](Ctx& x) { throw std::runtime_error("JNI FatalError: " + x.proc.readCString(arg(x, 1), 1024)); });
+            // Reflection: a java.lang.reflect.Method keeps its name, signature (host) and class.
+            set(7, "FromReflectedMethod", [](Ctx& x) {
+                Jni& j = J(x);
+                std::string cls, name, sig;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(j.mu);
+                    JObject* m = j.get(arg(x, 1));
+                    if (!m) { ret(x, 0); return; }
+                    name = m->str;
+                    if (auto* s = std::any_cast<std::string>(&m->host)) sig = *s;
+                    if (JObject* c = j.get(jobject(m->fields["hvm.declaring"]))) cls = c->cls;
+                }
+                bool isStatic = false;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(j.mu);
+                    if (JObject* m = j.get(arg(x, 1))) isStatic = m->fields["hvm.static"] != 0;
+                }
+                ret(x, j.methodId(cls.empty() ? "java/lang/Object" : cls, name, sig.empty() ? "()V" : sig, isStatic));
+            });
+            set(9, "ToReflectedMethod", [](Ctx& x) {
+                Jni& j = J(x);
+                const uint32_t id = arg(x, 2);
+                Jni::MethodInfo mi;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(j.mu);
+                    const uint32_t i = (id - 0x100) / 4;
+                    if (id < 0x100 || i >= j.methods.size()) { ret(x, 0); return; }
+                    mi = j.methods[i];
+                }
+                const jobject m = j.newObject("java/lang/reflect/Method");
+                const jobject c = j.classFor(mi.cls);
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                if (JObject* o = j.get(m)) { o->str = mi.name; o->host = mi.sig; o->fields["hvm.declaring"] = c; }
+                ret(x, m);
+            });
+            // Direct byte buffers: a guest address and a capacity.
+            set(229, "NewDirectByteBuffer", [](Ctx& x) {
+                Jni& j = J(x);
+                const uint64_t cap = uint64_t(arg(x, 3)) << 32 | arg(x, 2);
+                const jobject b = j.newObject("java/nio/DirectByteBuffer");
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                if (JObject* o = j.get(b)) { o->fields["hvm.address"] = arg(x, 1); o->fields["hvm.capacity"] = cap; }
+                ret(x, b);
+            });
+            set(230, "GetDirectBufferAddress", [](Ctx& x) {
+                Jni& j = J(x);
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                JObject* o = j.get(arg(x, 1));
+                ret(x, o ? uint32_t(o->fields["hvm.address"]) : 0);
+            });
+            set(231, "GetDirectBufferCapacity", [](Ctx& x) {
+                Jni& j = J(x);
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                JObject* o = j.get(arg(x, 1));
+                ret(x, o && o->fields.count("hvm.address") ? o->fields["hvm.capacity"] : uint64_t(-1));
+            });
             set(19, "PushLocalFrame", [](Ctx& x) { ret(x, 0); });
             set(20, "PopLocalFrame", [](Ctx& x) { ret(x, arg(x, 1)); });
             set(21, "NewGlobalRef", [](Ctx& x) { if (JObject* o = J(x).get(arg(x, 1))) o->permanent = true; ret(x, arg(x, 1)); });

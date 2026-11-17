@@ -22,8 +22,28 @@ called there. `HVM_JNI_TRACE=1` logs each method used.
 
 - **Platform:** Context/Activity folders and package, File, ClassLoader, UUID, Environment,
   AssetManager / InputStream, AudioTrack. Analytics and ads SDKs answer quietly.
-- **Engine drivers:** EA Blast (Dead Space) and Ubisoft UAF (Rayman Adventures). Each driver
-  plays its activity's lifecycle, renderer and touch calls.
+- **Engine drivers:** EA Blast (Dead Space), Ubisoft UAF (Rayman Adventures) and Unity (Alto's
+  Adventure). Each driver plays its activity's lifecycle, renderer and touch calls.
+- **Framework services (JavaServices.cpp):** android.os.Build, Context service names and the
+  services (window/display metrics, telephony, connectivity: offline), SharedPreferences kept in
+  `Library/shared_prefs/<name>.prefs`, the launch Intent, PackageManager, Locale, boxed
+  primitives, reflection (FromReflectedMethod / ToReflectedMethod), direct byte buffers,
+  JNIBridge interface proxies (Unity's Runnable / listener callbacks) and FMOD's Java audio
+  device (fmodProcess into an AudioTrack).
+
+## Signals (Signals.cpp)
+
+- Linux numbers and sa_flags; faults still go through the iOS sigaction table (Darwin numbers).
+- pthread_kill / tkill / tgkill run the handler on the target thread at its next safepoint: end
+  of a time slice, return from a host function, or inside a host wait (mutex, condition,
+  semaphore, futex, sleep, looper poll). Per-thread masks, sigsuspend. Boehm GC's stop-the-world
+  (SIGPWR / SIGXCPU) in Unity's Mono depends on this.
+
+## libandroid events (Looper.cpp)
+
+- ALooper (per thread; wake, poll with idents or callbacks), AInputQueue and AInputEvent /
+  AMotionEvent / AKeyEvent accessors (events fed by `pushTouchEvent`, ready for a NativeActivity
+  driver), ASensorManager with one accelerometer (device lying flat).
 
 ## Surfaces
 
@@ -32,11 +52,15 @@ called there. `HVM_JNI_TRACE=1` logs each method used.
 ## CPU
 
 - ARMv7 generic timer reads (CNTVCT/CNTPCT/CNTFRQ), which OpenSSL's startup probe uses.
+- `svc #0` Linux system calls (Syscalls.cpp). cacheflush (Mono's JIT) drops only the blocks over
+  the flushed range: blocks are indexed by page, a dropped block's first op re-dispatches
+  (H_Stale) so links into it stay safe, and other threads are held only when decoded code
+  really overlaps.
 
 ## Games
 
 | Game | Engine | Status |
 |---|---|---|
 | Dead Space 1.2.0 | EA Blast, ES 1.1 | Plays: picture, ETC1 textures, sound, touch. |
-| Rayman Adventures 1.0.0 | Ubisoft UAF, ES 2, OpenSL ES | Title scene drawn, music and effects play; waits on "Connecting to server" (no Android sockets yet). |
-| Alto's Adventure 1.25 | Unity 4 + Mono, NativeActivity, EGL | All five libraries load and bind. Needs EGL, libandroid input/window/looper and a Unity driver. |
+| Rayman Adventures 1.0.0 | Ubisoft UAF, ES 2, OpenSL ES | Loading scene drawn, music and effects play; stays on "Connecting". Ubisoft's servers for it are gone and the game reportedly no longer works on real phones either ([TCRF](https://new.tcrf.net/Rayman_Adventures)); it never reaches its sockets. |
+| Alto's Adventure 1.25 | Unity 4 + Mono, EGL, FMOD (Java audio) | Boots through Mono and Unity to its animated title screen (Linux bench). Touch through nativeInjectEvent. |

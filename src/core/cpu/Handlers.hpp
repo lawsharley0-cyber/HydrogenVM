@@ -293,6 +293,23 @@ HVM_H(H_CmpBranch) {
 //                          c = 1: stay in current state (BranchWritePC)
 // b = insns retired. The per-thread block cache is probed inline (returns and
 // computed jumps nearly always hit); misses go through the engine.
+// The first op of a block whose guest code was rewritten (Engine::invalidateRange): links and
+// lookup caches still reaching it go on to the block decoded from the new code. imm = key.
+HVM_H(H_Stale) {
+    const uint32_t key = op->imm;
+    c->r[kPC] = key & ~1u;
+    c->thumb = key & 1;
+    if (c->fast) {
+        FastEntry& fe = c->fast[fastIndex(key)];
+        if (fe.first == op) fe.key = 0xFFFFFFFFu;
+    }
+    Block* nb = hvmEnterBlock(c, key);
+    if (!nb) return;
+    c->block_pc = key & ~1u;
+    const Op* first = nb->ops.data();
+    HVM_MUSTTAIL return first->fn(c, first, m);
+}
+
 HVM_H(H_BranchIndirect) {
     uint32_t t = c->r[op->a];
     if (op->c == 0) c->thumb = t & 1;

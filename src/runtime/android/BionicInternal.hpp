@@ -25,6 +25,11 @@ void registerLibdl(Process& p);
 void registerEgl(Process& p);
 void registerSyscalls(Process& p);
 void registerSignals(Process& p);
+void registerFmodBridge(Process& p);
+void registerLooper(Process& p);
+// The AInputQueue a NativeActivity gets, and a touch delivered through it (Looper.cpp).
+uint32_t inputQueue(Process& p);
+void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown);
 // Sends a Linux signal to the guest thread with Linux thread id `tid` (tkill). 0 or a Linux errno.
 int sendSignalToTid(Process& p, CPU::Cpu& self, uint32_t tid, int sig);
 // The screen's ANativeWindow, for drivers that hand one to the game (Egl.cpp).

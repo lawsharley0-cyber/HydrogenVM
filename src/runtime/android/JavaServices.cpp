@@ -7,11 +7,16 @@
 // The answers describe an offline phone: no network, no SIM, one display the size of the
 // game's surface.
 #include "runtime/android/Jni.hpp"
+#include "runtime/android/BionicInternal.hpp"
 #include "runtime/android/Surface.hpp"
+#include <algorithm>
+#include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <system_error>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -118,7 +123,58 @@ jobject boxed(Jni& j, char t, JValue v) {
     return b;
 }
 
+// FMOD's Java output (org.fmod.FMODAudioDevice): a thread that asks the library for mixed
+// PCM (fmodProcess into a direct buffer) and writes it to an AudioTrack, which paces it.
+// fmodGetInfo: 0 sample rate, 1 DSP buffer length (frames), 2 number of DSP buffers.
+void fmodThread(Ctx& x, uint32_t self) {
+    if (GuestThread* t = x.proc.currentThreadIfGuest()) t->role.store("FMOD audio thread: mixes the game's sound into an AudioTrack");
+    Jni& j = jni(x.proc);
+    const std::string kF = "org/fmod/FMODAudioDevice";
+    const std::string runKey = "hvm.fmod.running." + std::to_string(self);
+    auto running = [&] {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        return j.staticFields[runKey] != 0 && !x.proc.stopping();
+    };
+    auto info = [&](uint32_t what) {
+        JValue r = 0;
+        j.callNative(x, kF, "fmodGetInfo", self, {what}, &r);
+        return int32_t(r);
+    };
+    int32_t rate = 0;
+    while (running() && (rate = info(0)) <= 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (!running()) return;
+    int32_t len = info(1), num = info(2);
+    x.proc.logf(LogLevel::Info, "FMOD: Java audio output, %d Hz, %d-frame buffers x %d", rate, len, num);
+    if (len <= 0 || len > 16384) len = 1024;
+    const uint32_t bytes = uint32_t(len) * 4;   // 16-bit stereo
+    const uint32_t buf = x.proc.heap().allocZeroed(bytes);
+    const jobject dbb = j.newObject("java/nio/DirectByteBuffer");
+    const jobject arr = j.newArray('S', uint32_t(len) * 2);
+    const jobject track = j.newObject("android/media/AudioTrack");
+    {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(dbb)) { o->fields["hvm.address"] = buf; o->fields["hvm.capacity"] = bytes; o->permanent = true; }
+        if (JObject* o = j.get(arr)) o->permanent = true;
+    }
+    const uint32_t trackBytes = std::max<uint32_t>(8192, uint32_t(len) * uint32_t(std::max(num, 2)) * 4);
+    j.invoke(x, j.methodId("android/media/AudioTrack", "<init>", "(IIIIII)V", false), track, {3, uint32_t(rate), 12, 2, trackBytes, 1});
+    j.invoke(x, j.methodId("android/media/AudioTrack", "play", "()V", false), track, {});
+    const uint32_t write = j.methodId("android/media/AudioTrack", "write", "([SII)I", false);
+    while (running()) {
+        j.callNative(x, kF, "fmodProcess", self, {dbb});
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* a = j.get(arr)) std::memcpy(a->data.data(), x.mem.host(buf), bytes);
+        }
+        j.invoke(x, write, track, {arr, 0, uint32_t(len) * 2});
+    }
+    j.invoke(x, j.methodId("android/media/AudioTrack", "stop", "()V", false), track, {});
+    j.invoke(x, j.methodId("android/media/AudioTrack", "release", "()V", false), track, {});
+}
+
 } // namespace
+
+void registerFmodBridge(Process& p) { p.def<&fmodThread>("__hvm_fmod_audio"); }
 
 JValue invokeProxy(Jni& j, Ctx& x, jobject self, const std::string& name, const std::string& sig,
                    const std::vector<JValue>& args) {
@@ -532,6 +588,59 @@ void registerJavaServices(Jni& j) {
         if (JObject* o = j.get(jobject(a[0]))) o->fields["hvm.proxy"] = 0;
         return JValue(0);
     });
+
+    // Unity's Java side: input devices (none beyond the touchscreen), splash and indicator.
+    j.method("android/view/InputDevice", "getDeviceIds", "()[I", [](Jni& j, Ctx&, jobject, const auto&) {
+        return JValue(j.newArray('I', 0));
+    });
+    for (const char* n : {"setFullscreen"})
+        j.method("com/unity3d/player/UnityPlayer", n, "(Z)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    for (const char* n : {"startActivityIndicator", "stopActivityIndicator"})
+        j.method("com/unity3d/player/UnityPlayer", n, "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method("com/unity3d/player/UnityPlayer", "getSplashMode", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    for (const char* ctx : {"android/content/Context", "android/app/Activity"})
+        j.method(ctx, "setRequestedOrientation", "(I)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    // ReflectionHelper.getMethodID(class, name, signature, isStatic): a Method for FromReflectedMethod.
+    j.method("com/unity3d/player/ReflectionHelper", "getMethodID", "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/reflect/Method;",
+             [](Jni& j, Ctx&, jobject, const auto& a) {
+        const std::string name = str(j, a[1]), sig = str(j, a[2]);
+        const jobject m = j.newObject("java/lang/reflect/Method");
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(m)) { o->str = name; o->host = sig; o->fields["hvm.declaring"] = a[0]; o->fields["hvm.static"] = a[3] & 0xFF; }
+        return JValue(m);
+    });
+    j.method("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;", [](Jni& j, Ctx&, jobject, const auto& a) {
+        std::string name = str(j, a[0]);
+        for (char& c : name) if (c == '.') c = '/';
+        return JValue(j.classFor(name));
+    });
+
+    // FMOD's Java audio device.
+    const std::string kFmod = "org/fmod/FMODAudioDevice";
+    j.method(kFmod, "start", "()V", [&p](Jni& j, Ctx& x, jobject self, const auto&) {
+        const std::string runKey = "hvm.fmod.running." + std::to_string(self);
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (j.staticFields[runKey]) return JValue(0);
+            j.staticFields[runKey] = 1;
+            if (JObject* o = j.get(self)) o->permanent = true;
+        }
+        if (auto fn = p.lookupSymbol("__hvm_fmod_audio")) x.proc.startThread(*fn, self, 512u << 10, true);
+        return JValue(0);
+    });
+    for (const char* n : {"stop", "close"})
+        j.method(kFmod, n, "()V", [](Jni& j, Ctx&, jobject self, const auto&) {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            j.staticFields["hvm.fmod.running." + std::to_string(self)] = 0;
+            return JValue(0);
+        });
+    j.method(kFmod, "isRunning", "()Z", [](Jni& j, Ctx&, jobject self, const auto&) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        return JValue(j.staticFields["hvm.fmod.running." + std::to_string(self)] ? 1 : 0);
+    });
+    // No microphone.
+    j.method(kFmod, "startAudioRecord", "(III)I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(uint32_t(-1)); });
+    j.method(kFmod, "stopAudioRecord", "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
 
     // Boxed primitives the proxies and games use.
     for (const auto& [cls, sig] : std::vector<std::pair<std::string, std::string>>{

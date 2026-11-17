@@ -129,6 +129,10 @@ public:
     void resetFastCache(Cpu& c);
     // Whether any decoded block overlaps [addr, addr+size) (safe while guest code runs).
     bool hasBlocksIn(uint32_t addr, uint32_t size);
+    // Drops just the blocks over [addr, addr+size) (rewritten code, e.g. a JIT patching its own
+    // output): links and caches that still reach them are sent on to fresh blocks. Only while
+    // no other thread runs guest code; HLE blocks are never dropped.
+    void retireRange(uint32_t addr, uint32_t size);
 
     // A guest SVC (system call instruction). The handler runs on the guest thread between
     // blocks, with pc already past the instruction; it returns true to go on running, false to
@@ -178,6 +182,8 @@ private:
 
     Memory::GuestArena& mem_;
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks_;
+    std::vector<std::unique_ptr<Block>> retired_;   // retireRange: kept, links may reach them
+    std::unordered_map<uint32_t, std::vector<uint32_t>> pageBlocks_;   // 4 KB page -> keys of blocks over it
     std::unordered_map<uint32_t, EntryObserver> entryObservers_;
     SvcHandler svcHandler_;
     SafepointHook safepointHook_;

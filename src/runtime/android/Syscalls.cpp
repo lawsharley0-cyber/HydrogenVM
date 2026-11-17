@@ -9,6 +9,7 @@
 #include "runtime/android/BionicInternal.hpp"
 #include "runtime/Support.hpp"
 #include "core/cpu/Engine.hpp"
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -85,9 +86,8 @@ int32_t cacheflush(Process& p, CPU::Cpu& self, uint32_t start, uint32_t end) {
         eng.suspend(t->cpu);
         held.push_back(&t->cpu);
     }
-    eng.invalidateRange(start, end - start);
-    eng.resetFastCache(self);
-    for (CPU::Cpu* c : held) { eng.resetFastCache(*c); eng.resume(*c); }
+    eng.retireRange(start, end - start);
+    for (CPU::Cpu* c : held) eng.resume(*c);
     return 0;
 }
 
