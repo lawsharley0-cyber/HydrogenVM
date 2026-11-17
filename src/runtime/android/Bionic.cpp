@@ -625,6 +625,7 @@ void registerBionic(Process& p) {
     registerSignals(p);
     registerFmodBridge(p);
     registerLooper(p);
+    installProcFs(p);
     p.defineFunction("android:glCompressedTexImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexImage2D>(x); });
     p.defineFunction("android:glCompressedTexSubImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexSubImage2D>(x); });
     // Data.

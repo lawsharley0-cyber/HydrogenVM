@@ -979,6 +979,8 @@ std::string Process::hostPath(const std::string& guestPath) const {
         }
     }
     const std::string norm = canonVar(p);
+    // Android games read Linux's /proc; the phone has none (and a Linux host's own must not leak in).
+    if (procPath && (norm == "/proc" || norm.rfind("/proc/", 0) == 0)) return procPath(norm);
     // Guest paths, most specific first (the bundle sits inside the home).
     if (matchesPathPrefix(norm, guestBundlePath_)) return bundlePath() + norm.substr(guestBundlePath_.size());
     if (matchesPathPrefix(norm, guestHomePath_)) return homePath_ + norm.substr(guestHomePath_.size());

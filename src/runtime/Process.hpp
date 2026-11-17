@@ -455,6 +455,9 @@ public:
     const std::string& guestExecutablePath() const { return guestExecutablePath_; }
 
     std::string hostPath(const std::string& guestPath) const;
+    // Android: a stand-in for Linux's /proc (runtime/android/ProcFs.cpp). Given a normalized guest
+    // path under /proc, returns the host file or folder that answers for it.
+    std::function<std::string(const std::string&)> procPath;
     std::string guestPath(const std::string& hostPath) const;
 
     // ---- logging / diagnostics
