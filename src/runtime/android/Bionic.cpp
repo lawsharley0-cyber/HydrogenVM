@@ -513,8 +513,7 @@ int32_t semTake(Ctx& x, GuestPtr s, int64_t deadlineNs) {
         BlockedScope blocked(x.proc, "sem_wait", s);
         while (!ss.count[s]) {
             if (deadlineNs > 0) {
-                const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
+                const int64_t now = x.proc.wallNowNs();
                 if (now >= deadlineNs) break;
             }
             ss.cv.wait_for(lk, 20ms);

@@ -149,6 +149,12 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
         if (const char* gld = std::getenv("HVM_GUEST_LIB_DIR"); gld && *gld)
             cfg_.guestLibDir = gld;
     }
+    if (!cfg_.replayPath.empty()) session_.startReplay(cfg_.replayPath);
+    else if (!cfg_.recordPath.empty()) {
+        std::string app = cfg_.bundlePath;
+        if (const auto slash = app.find_last_of('/'); slash != std::string::npos) app = app.substr(slash + 1);
+        session_.startRecording(cfg_.recordPath, app);
+    }
     mem_ = std::make_unique<Memory::GuestArena>(cfg_.hostPageSize);
     if (cfg_.memoryBudgetBytes) mem_->setCommitBudget(cfg_.memoryBudgetBytes);
     engine_ = std::make_unique<CPU::Engine>(*mem_);
@@ -325,13 +331,64 @@ void Process::requestGracefulStop(double timeout) {
         }
     }).detach();
 }
+void Process::noteInput(SessionEvent e) {
+    if (session_.mode() != Session::Mode::Record) return;
+    e.ms = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - perf_.origin).count());
+    e.frames = perf_.framesPresented.load(std::memory_order_relaxed);
+    session_.note(e);
+}
+
+// Replay: feeds a recording's input back when the game has presented as many frames as it had
+// when the player gave it, or 1.5 s after the recorded time if the game is drawing fewer frames
+// (a slower machine, a static menu). Runs for the length of Process::run().
+class SessionReplayer {
+public:
+    explicit SessionReplayer(Process& p) : p_(p) {
+        if (p.session().mode() == Session::Mode::Replay && !p.session().events().empty())
+            thread_ = std::thread([this] { loop(); });
+    }
+    ~SessionReplayer() {
+        done_ = true;
+        if (thread_.joinable()) thread_.join();
+    }
+private:
+    void loop() {
+        using namespace std::chrono;
+        const auto& events = p_.session().events();
+        size_t delivered = 0;
+        for (const SessionEvent& e : events) {
+            for (;;) {
+                if (done_ || p_.stopping()) return;
+                const uint64_t ms = uint64_t(duration_cast<milliseconds>(steady_clock::now() - p_.perf().origin).count());
+                const uint64_t frames = p_.perf().framesPresented.load(std::memory_order_relaxed);
+                const bool ready = e.kind != SessionEvent::Kind::Touch || p_.acceptsTouches();   // the game's view is up
+                if (ready && ms >= e.ms / 2 && (frames >= e.frames || ms >= e.ms + 1500)) break;
+                std::this_thread::sleep_for(milliseconds(2));
+            }
+            switch (e.kind) {
+                case SessionEvent::Kind::Touch: p_.injectTouch(TouchPhase(e.phase), e.x, e.y, e.finger); break;
+                case SessionEvent::Kind::Accel: p_.setAcceleration(e.x, e.y, e.z); break;
+                case SessionEvent::Kind::Background: p_.enterBackground(); break;
+                case SessionEvent::Kind::Foreground: p_.enterForeground(); break;
+            }
+            ++delivered;
+        }
+        p_.log(LogLevel::Info, "Replay: all " + std::to_string(delivered) + " recorded inputs delivered");
+    }
+    Process& p_;
+    std::atomic<bool> done_{false};
+    std::thread thread_;
+};
+
 void Process::enterBackground() {
     if (stopping() || backgroundRequested_.load() || !lifecycleHandler_) return;
+    noteInput({0, 0, SessionEvent::Kind::Background, 0, 0, 0, 0, 0});
     backgroundRequested_ = true;
     lifecycleHandler_(Lifecycle::Background);
 }
 void Process::enterForeground() {
     if (stopping() || !lifecycleHandler_) return;
+    noteInput({0, 0, SessionEvent::Kind::Foreground, 0, 0, 0, 0, 0});
     backgroundRequested_ = false;
     setBackgrounded(false);
     lifecycleHandler_(Lifecycle::Foreground);
@@ -1543,6 +1600,7 @@ int Process::run() {
         try { memorySampler = std::make_unique<MemorySampler>(*this); }
         catch (...) { /* best-effort diagnostics, including thread creation */ }
     }
+    SessionReplayer replayer(*this);
     std::unique_ptr<GuestSampler> sampler;
     if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;

@@ -29,7 +29,7 @@ std::string runModeKey(Ctx& x, id mode) {
 
 double now() {
     using namespace std::chrono;
-    return duration<double>(system_clock::now().time_since_epoch()).count() - 978307200.0;
+    return double(guestWallNowNs()) / 1e9 - 978307200.0;   // shifted on replay (runtime/Session.hpp)
 }
 
 // ------------------------------------------------------------- RunLoop ---

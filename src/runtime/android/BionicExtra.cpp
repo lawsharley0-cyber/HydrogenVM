@@ -238,7 +238,7 @@ int32_t p_condTimedwaitMonotonic(Ctx& x, GuestPtr cond, GuestPtr mutex, GuestPtr
     using namespace std::chrono;
     const int64_t due = int64_t(x.mem.read<int32_t>(abstime)) * 1'000'000'000 + x.mem.read<int32_t>(abstime + 4);
     const int64_t mono = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
-    const int64_t real = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count() + (due - mono);
+    const int64_t real = x.proc.wallNowNs() + (due - mono);
     static const char key = 0;
     uint32_t& ts = x.proc.threadSlot(&key);
     if (!ts) ts = x.proc.allocStatic(8);

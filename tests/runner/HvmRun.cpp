@@ -1,6 +1,8 @@
 // `hvm run <bundle.app | file.ipa> [--home DIR] [--keep-going] [--trace] [--quiet]
 //          [--run-for SECONDS] [--screenshot FILE.png] [--tap X,Y@T] [--drag X1,Y1,X2,Y2@T]
-//          [--report FILE.json] [-- args...]`
+//          [--report FILE.json] [--record FILE.hvmrec | --replay FILE.hvmrec] [-- args...]`
+// --record saves the session's seed, start time and every input (runtime/Session.hpp);
+// --replay plays a recording back (taps from the phone included) under the same seed and date.
 // --report writes a machine-readable summary: exit status, crash report, every
 // warning/error the runtime logged, missing functions, and performance counters.
 #include "runtime/gl/HostGL.hpp"
@@ -152,6 +154,8 @@ int hvmRunMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--phone")) phone = true;
         else if (!std::strcmp(argv[i], "--phone-memory") && i + 1 < argc) { phone = true; phoneMemoryMB = std::max(64, std::atoi(argv[++i])); }
         else if (!std::strcmp(argv[i], "--unlock-fps")) cfg.unlockFrameRate = true;
+        else if (!std::strcmp(argv[i], "--record") && i + 1 < argc) cfg.recordPath = argv[++i];
+        else if (!std::strcmp(argv[i], "--replay") && i + 1 < argc) cfg.replayPath = argv[++i];
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--guest-libs")) cfg.guestLibs = true;
         else if (!std::strcmp(argv[i], "--guest-lib-dir") && i + 1 < argc) { cfg.guestLibDir = argv[++i]; cfg.guestLibs = true; }

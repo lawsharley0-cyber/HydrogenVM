@@ -450,6 +450,35 @@ already seen run. Every step is checked against Arm's own definition of the inst
 - Every change from the automated fix agent (H1) must pass I2 for CPU work and the C1 replay of
   the game it targets. A model's fix that can't be checked doesn't merge.
 
+### I6. From Argon's blueprint (2026-11-17): what we adopted
+Reviewed `HydrogenVM_Next-Gen_Engine__Agentic_Architecture__Ranked_Research_Blueprint.pdf`
+against the current code. Several of its gaps were already closed (the Android dynamic linker,
+Bionic, EGL, OpenSL ES and AAssetManager are in `src/runtime/android/`).
+- **Adopted, next in Group A — 16 KB page protection (its #6, closes B-101/B-102):**
+  host-page `mprotect` where all four 4 KB guest pages share one permission (zero cost on the
+  hot path; today the CPU enforces no guest permissions at all), a small shadow check only for the
+  few split pages, and the exact faulting instruction read from the signal context, verified to
+  point into the current block, with today's `block_pc` as the fallback. Checked under `--phone`
+  and by I2.
+- **Adopted, narrowed — native bundled libraries (its #3, second half):** recognise statically
+  linked zlib (inflate), libpng row filters and Tremor/Vorbis in a game binary by byte signatures
+  at import and run host versions of those pure buffer-in/buffer-out functions. Not Box2D or
+  other libraries whose structs and float results differ by version. Every swap is checked by
+  replaying the game with and without it.
+- **Already planned, confirmed:** AOT packs (its #4 = I4), record/replay (its #7 = C1, built
+  first as seed + clock + frame-keyed input, then T7's deterministic scheduler), differential
+  fuzzing against Unicorn (its #10 = I2), fix agent with proof (its #1 = H1/I5, using tests and
+  replays as the proof rather than Z3), dead-server peers (its #11 = F1, taint tracking later).
+- **Later, measured first:** per-flag liveness, trace blocks and verified superhandlers (its #8,
+  #9) go into I3 only where the corpus profile shows a win.
+- **Not adopted as written:** running DEX through the ARM `Op` pipeline (its #2). Dalvik has up
+  to 65,535 registers per frame, objects, garbage collection and exceptions, so it gets its own
+  interpreter (Phase D); our JNI is already host code, so there is no cross-VM boundary to remove.
+  Metal presentation (its #5) waits for a profile from the phone showing presentation, not
+  emulation, is the bottleneck.
+- **Agreed anti-patterns (its #12):** no whole-binary superset translation, no models in the
+  instruction or frame loop.
+
 ## Order and timeline
 
 | Weeks | Main track | In parallel |

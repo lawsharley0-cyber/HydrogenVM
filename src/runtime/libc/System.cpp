@@ -299,7 +299,7 @@ int32_t sysctlValue(Ctx& x, const std::string& name, GuestPtr oldp, GuestPtr old
     if (name == "kern.ostype") return str("Darwin");
     if (name == "kern.hostname") return str(si.hostname);
     if (name == "kern.version") return str("Darwin Kernel Version 13.0.0: HydrogenVM; root:xnu/RELEASE_ARM_S5L8950X");
-    if (name == "kern.boottime") { const uint32_t tv[2] = {uint32_t(std::time(nullptr) - 86400), 0}; return writeSysctl(x, oldp, oldlenp, tv, 8); }
+    if (name == "kern.boottime") { const uint32_t tv[2] = {uint32_t(x.proc.wallNowNs() / 1'000'000'000 - 86400), 0}; return writeSysctl(x, oldp, oldlenp, tv, 8); }
     if (name == "kern.maxproc") return u32(512);
     x.proc.reportDefaulted("sysctl \"" + name + "\" is not known (answered ENOENT)");
     setErrno(x, ENOENT);
@@ -1206,8 +1206,7 @@ int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint
 int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 uint32_t sys_ftime(Ctx& x, GuestPtr tp) {
     if (tp) {
-        const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        const uint64_t now = uint64_t(x.proc.wallNowNs() / 1'000'000);
         x.mem.write<uint32_t>(tp + 0, uint32_t(now / 1000));
         x.mem.write<uint16_t>(tp + 4, uint16_t(now % 1000));
         x.mem.write<uint16_t>(tp + 6, 0);
@@ -1246,9 +1245,8 @@ void registerLibcSystem(Process& p) {
     p.def<&s_strsignal>("_strsignal");
     p.def<&f_writev>("_writev");
     p.def<&f_flock>("_flock");
-    std::random_device rd;
     const uint32_t guard = p.defineDataBlock("___stack_chk_guard", 4);
-    p.mem().write<uint32_t>(guard, (rd() & 0xFFFFFF00u) | 0x0A);
+    p.mem().write<uint32_t>(guard, (uint32_t(p.entropy()) & 0xFFFFFF00u) | 0x0A);
     p.def<&s_error>("___error");
     p.def<&s_stack_chk_fail>("___stack_chk_fail");
     p.def<&s_noop>("__hvm_noop");

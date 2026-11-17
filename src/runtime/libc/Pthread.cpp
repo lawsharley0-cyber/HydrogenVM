@@ -216,7 +216,7 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
                 if (waiter->signaled) break;
             }
             if (deadlineNs) {
-                const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                const int64_t now = x.proc.wallNowNs();
                 if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
             }
         }
@@ -245,7 +245,7 @@ int32_t pc_timedwait(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
 }
 int32_t pc_timedwait_rel(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
     const int64_t s = x.mem.read<int32_t>(ts), ns = x.mem.read<int32_t>(ts + 4);
-    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const int64_t now = x.proc.wallNowNs();
     return condWait(x, cv, mu, now + s * 1000000000LL + ns + 1);
 }
 int32_t pc_signal(Ctx& x, GuestPtr cv) {

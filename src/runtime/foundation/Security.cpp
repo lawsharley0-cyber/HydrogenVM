@@ -236,8 +236,7 @@ int32_t s_delete(Ctx& x, id query) {
 }
 
 int32_t s_randomBytes(Ctx& x, GuestPtr, uint32_t count, GuestPtr out) {
-    static thread_local std::mt19937_64 rng{std::random_device{}()};
-    for (uint32_t i = 0; i < count; ++i) x.mem.write<uint8_t>(out + i, uint8_t(rng()));
+    for (uint32_t i = 0; i < count; ++i) x.mem.write<uint8_t>(out + i, uint8_t(x.proc.entropy()));
     return 0;
 }
 
