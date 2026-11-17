@@ -84,9 +84,21 @@ std::string deviceString(const std::string& name) {
 void linkExternalFiles(Process& p, const fs::path& files) {
     std::error_code ec;
     fs::create_directories(files, ec);
+    // Relative links, so they survive the app's data folder moving (iOS can give an app a new
+    // container path); a link left from an earlier install that no longer leads to the assets is
+    // made again.
     for (auto& e : fs::directory_iterator(assetsDir(p), ec)) {
         const fs::path link = files / e.path().filename();
-        if (!fs::exists(fs::symlink_status(link, ec))) fs::create_symlink(e.path(), link, ec);
+        const fs::path target = fs::relative(e.path(), files, ec);
+        const fs::file_status st = fs::symlink_status(link, ec);
+        if (fs::is_symlink(st)) {
+            std::error_code rc;
+            if (fs::read_symlink(link, rc) == (target.empty() ? e.path() : target) && fs::exists(link, rc)) continue;
+            fs::remove(link, rc);
+        } else if (fs::exists(st)) {
+            continue;   // the game's own file or folder
+        }
+        fs::create_symlink(target.empty() ? e.path() : target, link, ec);
     }
 }
 std::string externalRoot(Process& p) { return p.homePath() + "/Library/Caches/sdcard"; }
@@ -107,10 +119,12 @@ void noteExternalPath(Process& p, const std::string& hostPath) {
     const size_t end = hostPath.find('/', prefix.size());
     const std::string pkg = hostPath.substr(prefix.size(), end == std::string::npos ? std::string::npos : end - prefix.size());
     if (pkg.empty() || pkg == "." || pkg == ".." || pkg.find('\0') != std::string::npos) return;
-    static std::mutex mu;
-    static std::set<std::string> linked;
-    std::lock_guard<std::mutex> lk(mu);
-    if (linked.insert(p.homePath() + "|" + pkg).second) linkExternalFiles(p, fs::path(prefix) / pkg / "files");
+    // Once per game run: the app keeps running between games, and a game re-imported in the
+    // same session has a fresh folder to link again.
+    struct Linked { explicit Linked(Process&) {} std::mutex mu; std::set<std::string> pkgs; };
+    auto& l = p.service<Linked>();
+    std::lock_guard<std::mutex> lk(l.mu);
+    if (l.pkgs.insert(pkg).second) linkExternalFiles(p, fs::path(prefix) / pkg / "files");
 }
 
 void registerJavaClasses(Jni& j) {
