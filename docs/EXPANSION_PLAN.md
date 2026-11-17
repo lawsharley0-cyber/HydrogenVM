@@ -398,6 +398,58 @@ emulator code. Everything is checked against real games before it ships.
 - **Done when:** the safe-mode fallback for the known crash classes is chosen automatically,
   and the choice is visible in the report.
 
+## Phase I — Correct by construction, then fast (≈10–14 weeks, starts after A)
+
+The goal is to stop guessing what the CPU should do and to stop interpreting code we have
+already seen run. Every step is checked against Arm's own definition of the instruction set.
+
+### I1. Reference CPU generated from Arm's specification (1–2 weeks)
+- **What:** Arm publishes the A-profile architecture as machine-readable JSON
+  (`Instructions.json`: A64, A32 and T32 encodings, decode rules and ASL pseudocode;
+  `Registers.json`). A generator in `tools/armspec/` turns the A32, T32, VFP and NEON entries
+  into a slow, independent reference interpreter (`src/core/refcpu/`, test builds only) and a
+  decode table.
+- **Licence:** read Arm's `notice` file before importing anything; the spec is vendored by
+  path and version, not edited.
+- **Done when:** the reference CPU runs the existing CPU unit tests and the Test Lab apps with
+  the same results as the fast CPU, and every A32/T32 encoding has a generated decode test.
+
+### I2. Differential fuzzing: fast CPU against the reference (1 week)
+- **What:** random and corpus-derived instruction sequences (taken from real game code) run on
+  both CPUs from the same state; any difference in registers, flags or memory is minimized to
+  one instruction and filed. Runs in CI on a time budget and longer in the nightly run (A4).
+- **Optional:** the same harness against a real AArch32 device (an ARM board or old Android
+  phone) as a third opinion where the spec leaves behaviour implementation-defined.
+- **Done when:** a deliberately broken flag in one handler is caught and minimized within the
+  CI budget.
+
+### I3. Profile-guided interpreter speedups (2–3 weeks)
+- **What:** measure which instruction pairs and short sequences the nightly corpus actually
+  runs most, and fuse the top ones into single handlers; link blocks directly where the target
+  is fixed; tighten the dispatch path. Every change runs under I2 before merging.
+- **Reference point:** Podish, a JIT-less x86 interpreter on iPhone, reports about 2× over iSH
+  from pre-decoded blocks, tail-call dispatch, block linking and ~256 profile-chosen fused pairs.
+- **Done when:** guest MIPS on the bench corpus is up by at least 1.5× with I2 clean.
+
+### I4. Recompiled Packs: ahead-of-time translation, interpreter as the safety net (6–10 weeks)
+- **What:** iOS forbids creating code at runtime but runs code that was compiled ahead of time
+  and signed into the app. The bench records which blocks a game runs (nightly runs, replays,
+  the auto-player), translates those blocks from ARMv7 to native ARM64 C/LLVM on the PC, and
+  builds a per-game framework that is signed into HydrogenVM at the next sideload.
+- **At runtime:** a block with a native version runs natively; anything else — code the pack
+  doesn't cover, indirect jumps to unknown targets, code the game writes itself (Mono's JIT on
+  Android) — falls back to the interpreter. Code retirement (`retireRange`) and `cacheflush`
+  already make the handoff safe; a pack is ignored if the game binary's hash doesn't match.
+- **Checked by:** I2 per block (native result against the reference CPU) and C1 replays
+  (a whole session must produce the same frame hashes with and without the pack).
+- **First target:** Dead Space (heavy, already working, good replay candidate).
+- **Done when:** Dead Space runs with a pack on the phone, replays match, and the hot path is
+  measurably faster.
+
+### I5. Proof-checked fixes (folds into H1)
+- Every change from the automated fix agent (H1) must pass I2 for CPU work and the C1 replay of
+  the game it targets. A model's fix that can't be checked doesn't merge.
+
 ## Order and timeline
 
 | Weeks | Main track | In parallel |
@@ -409,6 +461,9 @@ emulator code. Everything is checked against real games before it ships.
 | 8–15 | D DEX interpreter | E2 HD/widescreen, E3 controllers, G1 compatibility list |
 | 12–16 | F1 server toolkit (Rayman) | E4 quick-save spike → build |
 | 10–16 | H1 automated fix agent | H2 improvement packs, H3 on-device helpers |
+| 3–5 | I1 reference CPU, I2 differential fuzzing | C1 record/replay (moved up: I4 and H1 depend on it) |
+| 6–9 | I3 interpreter speedups | |
+| 9–19 | I4 Recompiled Packs (Dead Space first) | I5 with H1 |
 
 About four months of focused work in total, faster with several agents on the parallel
 column. Phase A comes first because every later card is cheaper with it in place.

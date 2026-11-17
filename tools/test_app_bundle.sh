@@ -8,6 +8,7 @@ cxx="${CXX:-clang++}"
 sources=(
   tests/loader/AppBundleReadTests.cpp
   src/loader/AppBundle.cpp
+  src/loader/AndroidEngine.cpp
   src/loader/Plist.cpp
   src/loader/Zip.cpp
   src/loader/MachO.cpp
