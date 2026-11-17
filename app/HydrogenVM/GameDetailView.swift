@@ -47,7 +47,7 @@ struct GameDetailView: View {
                         Text(app.title)
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(Gloss.ink)
-                            .shadow(color: .white, radius: 0, x: 0, y: 1)
+                            .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
                         Text(details).font(.system(size: 13)).foregroundStyle(Gloss.inkSoft)
                         Text(app.info.bundleIdentifier).font(.system(size: 12)).foregroundStyle(Gloss.inkSoft).lineLimit(1)
                         let s = AppRow.status(app.info)
@@ -149,7 +149,7 @@ struct GlossLinkRow: View {
                 Image(systemName: systemImage).font(.system(size: 16, weight: .semibold)).foregroundStyle(tint).frame(width: 24)
                 Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(tint == Gloss.link ? Gloss.ink : tint)
                 Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(white: 0.6))
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Gloss.chevron)
             }
             .padding(.horizontal, 14)
             .frame(minHeight: 48)
