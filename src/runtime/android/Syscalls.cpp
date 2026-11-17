@@ -101,6 +101,7 @@ int32_t linuxSyscall(Process& p, CPU::Cpu& c, uint32_t nr, const uint32_t a[6]) 
         case 20: return 1000;                                              // getpid
         case 240: return futex(p, a[0], a[1], a[2], a[3], a[4]);           // futex
         case 158: std::this_thread::yield(); return 0;                     // sched_yield
+        case 241: return 0;                                                // sched_setaffinity: any core is fine
         case 263: {                                                        // clock_gettime
             const int32_t r = int32_t(callIos(x, "android:clock_gettime", {a[0], a[1]}));
             return r < 0 ? -kEINVAL : 0;
