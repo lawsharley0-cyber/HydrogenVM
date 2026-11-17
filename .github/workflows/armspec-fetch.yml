@@ -1,0 +1,34 @@
+name: Arm spec fetch (temporary)
+on:
+  push:
+    branches: [agent/armspec]
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Arm AArch32 ISA XML and Unicorn
+        run: |
+          mkdir -p out && cd out
+          ok=""
+          for v in 2025-03 2024-12 2024-09 2024-06 2024-03 2023-12 2023-09 2023-06 2023-03 2022-12 2022-09 2022-06 2022-03 2021-12; do
+            for base in armv9-a-architecture armv8-a-architecture; do
+              for name in ISA_AArch32_xml_A_profile-$v AArch32_ISA_xml_A_profile-$v; do
+                url="https://developer.arm.com/-/media/developer/products/architecture/$base/$v/$name.tar.gz"
+                if curl -fsSL -o aarch32.tar.gz "$url"; then echo "got $url"; echo "$url" > SOURCE; ok=1; break 3; fi
+              done
+            done
+          done
+          if [ -z "$ok" ]; then
+            url=https://developer.arm.com/-/media/developer/products/architecture/armv8-a-architecture/2019-12/AArch32_ISA_xml_v86A-2019-12.tar.gz
+            curl -fsSL -o aarch32.tar.gz "$url" && echo "$url" > SOURCE && echo "got $url"
+          fi
+          ls -la
+          mkdir x && tar -xzf aarch32.tar.gz -C x && find x -maxdepth 3 | head -20
+          find x -iname '*notice*' -o -iname '*licen*' | head
+          for f in $(find x -iname '*notice*' -o -iname '*licen*' | head -3); do echo "=== $f"; sed -e 's/<[^>]*>/ /g' "$f" | tr -s ' \n' | head -c 4000; echo; done
+          pip download unicorn==2.1.1 --no-deps --only-binary=:all: --platform manylinux_2_28_x86_64 --python-version 3.12 -d wheels || pip download unicorn --no-deps -d wheels
+          ls wheels
+      - uses: actions/upload-artifact@v4
+        with:
+          name: armspec
+          path: out/
