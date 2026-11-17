@@ -149,7 +149,8 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
         if (const char* gld = std::getenv("HVM_GUEST_LIB_DIR"); gld && *gld)
             cfg_.guestLibDir = gld;
     }
-    mem_ = std::make_unique<Memory::GuestArena>();
+    mem_ = std::make_unique<Memory::GuestArena>(cfg_.hostPageSize);
+    if (cfg_.memoryBudgetBytes) mem_->setCommitBudget(cfg_.memoryBudgetBytes);
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
     mem_->map(kStaticBase, 1u << 20, Memory::kProtRW);
@@ -178,6 +179,20 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
     guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
 
+    // Phone mode: the iPhone's file system ignores case, so two bundle files whose names differ
+    // only by case are one file there (the second copy wins at import). Say so up front.
+    if (cfg_.phoneMode && !cfg_.bundlePath.empty()) {
+        std::map<std::string, std::string> seen;
+        size_t collisions = 0;
+        for (auto it = fs::recursive_directory_iterator(cfg_.bundlePath, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            std::string rel = fs::relative(it->path(), cfg_.bundlePath, ec).string(), key = rel;
+            for (char& c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
+            auto [pos, fresh] = seen.emplace(key, rel);
+            if (!fresh && pos->second != rel && ++collisions <= 20)
+                logf(LogLevel::Warning, "phone mode: \"%s\" and \"%s\" are the same file on the iPhone (names differ only by case)", pos->second.c_str(), rel.c_str());
+        }
+        if (collisions > 20) logf(LogLevel::Warning, "phone mode: %zu case collisions in the bundle in all", collisions);
+    }
     mainThreadOwner_ = std::make_unique<GuestThread>(*this);
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
@@ -953,6 +968,31 @@ bool matchesPathPrefix(const std::string& path, const std::string& prefix) {
 std::string canonVar(const std::string& p) { return p.compare(0, 13, "/private/var/") == 0 ? p.substr(8) : p; }
 } // namespace
 
+std::string Process::phoneCaseFold(const std::string& host) const {
+    if (!cfg_.phoneMode) return host;
+    std::error_code ec;
+    if (std::filesystem::exists(host, ec)) return host;
+    // Start from the deepest root we own; resolve each following component case-insensitively.
+    std::string root;
+    if (matchesPathPrefix(host, bundlePath())) root = bundlePath();
+    else if (matchesPathPrefix(host, homePath_)) root = homePath_;
+    else return host;
+    auto lower = [](std::string s) { for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c))); return s; };
+    std::filesystem::path cur = root;
+    const std::filesystem::path rest = std::filesystem::path(host.substr(root.size())).relative_path();
+    for (auto it = rest.begin(); it != rest.end(); ++it) {
+        const std::filesystem::path next = cur / *it;
+        if (std::filesystem::exists(next, ec)) { cur = next; continue; }
+        const std::string want = lower(it->string());
+        bool found = false;
+        for (const auto& e : std::filesystem::directory_iterator(cur, ec)) {
+            if (lower(e.path().filename().string()) == want) { cur = e.path(); found = true; break; }
+        }
+        if (!found) return host;   // not there in any case: the caller gets "no such file"
+    }
+    return cur.string();
+}
+
 std::string Process::hostPath(const std::string& guestPath) const {
     if (guestPath.empty()) return {};
     std::string p = guestPath;
@@ -981,9 +1021,12 @@ std::string Process::hostPath(const std::string& guestPath) const {
     const std::string norm = canonVar(p);
     // Android games read Linux's /proc; the phone has none (and a Linux host's own must not leak in).
     if (procPath && (norm == "/proc" || norm.rfind("/proc/", 0) == 0)) return procPath(norm);
+    // Phone mode: the iPhone has no /proc or /sys; never let the Linux host's answer.
+    if (cfg_.phoneMode && (matchesPathPrefix(norm, "/proc") || matchesPathPrefix(norm, "/sys")))
+        return homePath_ + "/.hvm-phone-absent" + norm;
     // Guest paths, most specific first (the bundle sits inside the home).
-    if (matchesPathPrefix(norm, guestBundlePath_)) return bundlePath() + norm.substr(guestBundlePath_.size());
-    if (matchesPathPrefix(norm, guestHomePath_)) return homePath_ + norm.substr(guestHomePath_.size());
+    if (matchesPathPrefix(norm, guestBundlePath_)) return phoneCaseFold(bundlePath() + norm.substr(guestBundlePath_.size()));
+    if (matchesPathPrefix(norm, guestHomePath_)) return phoneCaseFold(homePath_ + norm.substr(guestHomePath_.size()));
     const std::string hostTmp = homePath_ + "/tmp";
     if (matchesPathPrefix(norm, "/tmp")) return hostTmp + norm.substr(4);
     if (matchesPathPrefix(norm, "/var/tmp")) return hostTmp + norm.substr(8);

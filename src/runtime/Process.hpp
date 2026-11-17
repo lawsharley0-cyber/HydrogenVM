@@ -57,6 +57,13 @@ struct ProcessConfig {
     // NSTimers of 1/50 s to 1/20 s (a timer-driven 30 fps game loop) every 1/60 s. A game that
     // ties its game speed to the frame count, rather than to elapsed time, runs faster with it.
     bool unlockFrameRate = false;
+    // Phone mode (bench only: hvm run --phone): behave like the iPhone where it differs from a
+    // Linux host. No /proc or /sys, case-insensitive file lookups (APFS), and a guest memory
+    // budget past which the game is closed (as iOS would). The CLI adds 16 KB host pages,
+    // the GLES1-over-ES2 path and a container path that changes on every run.
+    bool phoneMode = false;
+    size_t hostPageSize = 0;             // 0: the host's own; 16384 to act like an iPhone
+    uint64_t memoryBudgetBytes = 0;      // 0: none
     bool internetAccess = false;      // per-game opt-in (player's "Allow internet" switch): real TCP/UDP and DNS
     // With internetAccess: guest TCP to port 443 goes through this (old game TLS in, modern TLS out).
     std::shared_ptr<TlsBridge> tlsBridge;
@@ -455,6 +462,9 @@ public:
     const std::string& guestExecutablePath() const { return guestExecutablePath_; }
 
     std::string hostPath(const std::string& guestPath) const;
+    // Phone mode: a host path that doesn't exist, resolved the way APFS would (case-insensitive,
+    // component by component, within the bundle or the home). Otherwise the path unchanged.
+    std::string phoneCaseFold(const std::string& host) const;
     // Android: a stand-in for Linux's /proc (runtime/android/ProcFs.cpp). Given a normalized guest
     // path under /proc, returns the host file or folder that answers for it.
     std::function<std::string(const std::string&)> procPath;

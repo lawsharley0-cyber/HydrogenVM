@@ -135,6 +135,11 @@ struct CrashReportView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text(report.summary)
                 Text("Report \(report.signature)").font(.caption.monospaced())
+                SendReportButton(make: {
+                    ProblemReport(title: "[\(report.signature)] \(report.app): \(report.summary.prefix(90))",
+                                  summary: "\(report.summary)\n\n**App:** `\(report.app)` · \(ProblemReporter.deviceLine) · **Report:** `\(report.signature)`",
+                                  parts: [.init(name: "report.json", text: report.json, language: "json")])
+                }, fallback: report.issueURL)
                 Button("Copy report", systemImage: "doc.on.doc") { UIPasteboard.general.string = report.json }
                 ShareLink(item: report.file) { Label("Share", systemImage: "square.and.arrow.up") }
                 Link(destination: report.issueURL) { Label("Report on GitHub", systemImage: "link") }

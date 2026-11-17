@@ -32,7 +32,10 @@ struct HydrogenVMApp: App {
                 Tab("Library", systemImage: "square.grid.2x2") { LibraryView() }
                 Tab("Diagnostics", systemImage: "stethoscope") { DiagnosticsView() }
             }
-            .task { recoveredCrash = CrashReport.recover() }
+            .task {
+                recoveredCrash = CrashReport.recover()
+                await ProblemReporter.flushQueue()   // reports that couldn't be sent earlier
+            }
             .sheet(item: $recoveredCrash) { CrashReportView(report: $0) }
             // A `hydrogenvm://run/<id>` link from a Home Screen icon arrives here, both when the
             // app is already running and when the link is what launched it: a scene-based app
