@@ -1,0 +1,57 @@
+name: CPU differential check
+# HydrogenVM's ARMv7 interpreter against Unicorn (an independent emulator built from QEMU).
+# Pull requests that touch the CPU run a short pass; main and the nightly schedule run longer
+# with a fresh seed. See tools/cpudiff/cpudiff.py.
+on:
+  pull_request:
+    paths:
+      - 'src/core/cpu/**'
+      - 'src/core/memory/**'
+      - 'tests/runner/CpuDiff.cpp'
+      - 'tools/cpudiff/**'
+      - '.github/workflows/cpudiff.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/core/cpu/**'
+      - 'tools/cpudiff/**'
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: Cases to run
+        default: '200000'
+permissions:
+  contents: read
+concurrency:
+  group: cpudiff-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cpudiff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain and Unicorn
+        timeout-minutes: 15
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev libicu-dev pkg-config uuid-dev libavformat-dev libavcodec-dev libavutil-dev
+          pip install --break-system-packages unicorn==2.1.1
+      - name: Build hvm_cpudiff
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target hvm_cpudiff
+      - name: Compare with Unicorn
+        run: |
+          cases=${{ github.event.inputs.cases }}
+          if [ -z "$cases" ]; then
+            if [ "${{ github.event_name }}" = pull_request ]; then cases=30000; else cases=200000; fi
+          fi
+          python3 tools/cpudiff/cpudiff.py --cases "$cases" --seed ${{ github.run_number }} --out report/cpudiff.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cpudiff-report
+          path: report/cpudiff.json

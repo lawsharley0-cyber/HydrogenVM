@@ -70,6 +70,8 @@ endif()
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off)
 
+add_executable(hvm_cpudiff tests/runner/CpuDiff.cpp)
+target_link_libraries(hvm_cpudiff PRIVATE hvm_core)
 add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/HostFaultTests.cpp tests/runner/ThreadProgressTests.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/SuspendTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/runner/ArenaPoolTests.cpp tests/host/minimp3_hwcap_test.cpp)
 add_executable(hvm_host_fault_tests tests/runner/HostFaultTests.cpp)
 target_link_libraries(hvm_host_fault_tests PRIVATE hvm_core)
