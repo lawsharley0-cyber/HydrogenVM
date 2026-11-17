@@ -37,7 +37,7 @@ class HvmSideTests(unittest.TestCase):
         _, (arm, thumb) = cpudiff.run_hvm(str(HVM), [self.case(False, "010090e0", [0xFFFFFFFF, 1]),
                                                      self.case(True, "4018", [5, 7])])
         self.assertEqual((arm["status"], arm["r"][0], arm["nzcv"]), ("ok", 0, 0x6))   # Z and C
-        self.assertEqual((thumb["status"], thumb["r"][0]), ("ok", 5))
+        self.assertEqual((thumb["status"], thumb["r"][0]), ("ok", 12))   # 0x1840: adds r0, r0, r1
 
     def test_jump_to_top_of_memory_is_a_guest_fault(self):
         # mvn pc, pc, lsr r8 with a shift >= 32: PC = 0xFFFFFFFF, a Thumb jump to 0xFFFFFFFE.
