@@ -1,49 +1,50 @@
-# HydrogenVM report — ec32329
+# HydrogenVM report — 8abce8d
 
-2026-11-17T01:55:57+00:00 · AMD EPYC 9V74 80-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-11-17T06:18:13+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 267.0s |
-| tools | 1 | 0 | 0 | 6.0s |
-| cpu | 15 | 0 | 0 | 0.6s |
+| build | 1 | 0 | 0 | 393.3s |
+| tools | 1 | 0 | 0 | 6.6s |
+| cpu | 15 | 0 | 0 | 0.7s |
 | ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 18.2s |
+| bench | 5 | 0 | 0 | 24.6s |
 
 ## Speed
 
-CoreMark **2326.3** iterations/s (778.8 guest MIPS)
+CoreMark **1712.0** iterations/s (574.0 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **161.5%** | 969 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **121.2%** | 969 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **96.9%** | 775 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **51.1%** | 665 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **118.9%** | 713 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **89.2%** | 713 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **71.3%** | 571 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.6%** | 489 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 545 MIPS, ctests_arm 634 MIPS, ftests_vfp_thumb_softfp 573 MIPS, ftests_neon_thumb 521 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 442 MIPS, ctests_arm 495 MIPS, ftests_vfp_thumb_softfp 389 MIPS, ftests_neon_thumb 398 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
 | CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.03s | 61 | 0.32 ms | 5.77 ms | 0 |
+| FoundationTest | 0.67s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.40 ms | 7.01 ms | 0 |
 
-## Problems (54)
+## Problems (55)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 51.1% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 37.6% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (53)
+### Warnings (54)
 
 - **build / compiler**: src/loader/MachO.cpp:213:31: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
-- **build / compiler**: src/runtime/android/BionicExtra.cpp:203:9: warning: unused function 'p_enosys' [-Wunused-function]
+- **build / compiler**: src/runtime/android/BionicExtra.cpp:204:9: warning: unused function 'p_enosys' [-Wunused-function]
+- **build / compiler**: src/runtime/android/Looper.cpp:31:35: warning: unused variable 'kPollCallback' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/android/OpenSLES.cpp:28:52: warning: unused variable 'kMemoryFailure' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/android/OpenSLES.cpp:31:38: warning: unused variable 'kPlayPaused' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/android/OpenSLES.cpp:32:85: warning: unused variable 'kLocatorOutputMix' [-Wunused-const-variable]
