@@ -31,6 +31,38 @@ called there. `HVM_JNI_TRACE=1` logs each method used.
   JNIBridge interface proxies (Unity's Runnable / listener callbacks) and FMOD's Java audio
   device (fmodProcess into an AudioTrack).
 
+## Gap finder and placeholders (`tools/android_gaps.py`)
+
+The Android counterpart of the iOS census and failure ledger: what each game needs that
+HydrogenVM doesn't have, ranked across games, and labelled placeholders for it.
+
+```sh
+python3 tools/android_gaps.py scan <apk or folder>... --run 60   # build/android-gaps/ledger.{md,json}
+python3 tools/android_gaps.py placeholders build/android-gaps/ledger.json --write
+ninja -C build hvm
+```
+
+- **scan**, per APK:
+  - The engine, and whether HydrogenVM has a driver for it.
+  - The ABIs it ships (64-bit-only games can't run).
+  - Expansion (.obb) data.
+  - Native imports nothing provides (`hvm android-imports --json`).
+  - The Java methods its DEX declares `native`.
+  - Its framework references.
+  - With `--run`: what a GPU run actually hit (missing functions, and Java methods with their exact signatures).
+
+  The ledger lists every gap with the games that need it, most-needed first.
+- **placeholders** merges the ledger into `src/runtime/android/placeholders/{jni,native}.inc`.
+  It never removes an entry. Delete a line once the real thing exists; a real implementation
+  already wins, because placeholders are registered last and skip existing names.
+- **A placeholder is not support.** Each one is registered as `SupportStatus::Stub`, answers a
+  safe default, and is reported under `defaultedApis` as `placeholder …` when a game reaches
+  it, so it stays visible as work to do:
+  - **Java:** 0, false, `""`, or an object of the declared type for a game's own or
+    third-party plugin classes. Unity's AndroidJavaObject throws on null.
+  - **Platform objects:** null.
+  - **Native:** 0, or −1 with errno `ENOSYS` for calls whose failure is reported that way.
+
 ## Signals (Signals.cpp)
 
 - Linux numbers and sa_flags; faults still go through the iOS sigaction table (Darwin numbers).

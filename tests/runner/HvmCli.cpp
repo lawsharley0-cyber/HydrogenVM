@@ -236,7 +236,17 @@ int hvmRunMain(int argc, char** argv);   // HvmRun.cpp
 // `hvm android-imports <apk> [apps-root]`: for every 32-bit ARM library of the APK, the imports
 // that neither HydrogenVM nor another library of the APK provides, by the library they come from
 // (DT_NEEDED). The list to work through when bringing up a new Android game.
-int androidImports(const std::string& apk, std::string root) {
+std::string jsonEscape(const std::string& s) {
+    std::string r;
+    for (const unsigned char c : s) {
+        if (c == '"' || c == '\\') { r += '\\'; r += char(c); }
+        else if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); r += b; }
+        else r += char(c);
+    }
+    return r;
+}
+
+int androidImports(const std::string& apk, std::string root, bool json) {
     namespace fs = std::filesystem;
     if (root.empty()) root = (fs::temp_directory_path() / "hvm-apps").string();
     const auto info = Loader::importApk(apk, root);
@@ -261,6 +271,40 @@ int androidImports(const std::string& apk, std::string root) {
         auto so = Loader::loadElfShared(p.mem(), Loader::readFile(f.string()), base);
         base = (so.image.highest + 0xFFFFFu) & ~0xFFFFFu;
         loaded.push_back({f.filename().string(), std::move(so)});
+    }
+    if (json) {
+        // For tools/android_gaps.py: per library, what it needs, what is missing, and the entry
+        // points that tell which engine and Java glue it expects.
+        std::printf("{\"libraries\": [");
+        bool firstLib = true;
+        for (const auto& l : loaded) {
+            std::printf("%s\n  {\"name\": \"%s\", \"imports\": %zu, \"needed\": [", firstLib ? "" : ",", jsonEscape(l.name).c_str(), l.so.imports.size());
+            firstLib = false;
+            for (size_t i = 0; i < l.so.needed.size(); ++i) std::printf("%s\"%s\"", i ? ", " : "", jsonEscape(l.so.needed[i]).c_str());
+            std::printf("], \"missing\": [");
+            bool first = true;
+            std::set<std::string> seen;
+            for (const auto& imp : l.so.imports) {
+                if (!seen.insert(imp.symbol).second) continue;
+                if (p.lookupSymbol("android:" + imp.symbol) || p.lookupSymbol("_" + imp.symbol)) continue;
+                bool other = false;
+                for (const auto& o : loaded) if (&o != &l && o.so.image.symbols.count(imp.symbol)) other = true;
+                if (other) continue;
+                std::printf("%s{\"symbol\": \"%s\", \"weak\": %s}", first ? "" : ", ", jsonEscape(imp.symbol).c_str(), imp.weak ? "true" : "false");
+                first = false;
+            }
+            std::printf("], \"entryPoints\": [");
+            first = true;
+            for (const auto& [name, addr] : l.so.image.symbols) {
+                (void)addr;
+                if (name != "JNI_OnLoad" && name != "ANativeActivity_onCreate" && name != "android_main" && name.rfind("Java_", 0) != 0) continue;
+                std::printf("%s\"%s\"", first ? "" : ", ", jsonEscape(name).c_str());
+                first = false;
+            }
+            std::printf("]}");
+        }
+        std::printf("\n]}\n");
+        return 0;
     }
     size_t total = 0;
     for (const auto& l : loaded) {
@@ -292,7 +336,15 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[1], "info") && argc == 5 && !std::strcmp(argv[2], "--linking") && !std::strcmp(argv[4], "--json")) { linkingInfo(argv[3]); return 0; }
         if (!std::strcmp(argv[1], "info") && argc >= 3) { printInfo(Loader::readBundle(argv[2])); return 0; }
         if (!std::strcmp(argv[1], "run")) return hvmRunMain(argc - 1, argv + 1);
-        if (!std::strcmp(argv[1], "android-imports") && argc >= 3) return androidImports(argv[2], argc >= 4 ? argv[3] : "");
+        if (!std::strcmp(argv[1], "android-imports") && argc >= 3) {
+            bool json = false;
+            std::string root;
+            for (int i = 3; i < argc; ++i) {
+                if (!std::strcmp(argv[i], "--json")) json = true;
+                else root = argv[i];
+            }
+            return androidImports(argv[2], root, json);
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;

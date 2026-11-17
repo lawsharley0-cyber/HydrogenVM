@@ -110,6 +110,8 @@ void registerJavaPlatform(Jni& j);
 // Framework services: Build, system services, SharedPreferences, Intent, PackageManager, Locale,
 // interface proxies (JavaServices.cpp).
 void registerJavaServices(Jni& j);
+// Generated Java placeholders (Placeholders.cpp); registered last, never over a real method.
+void registerJniPlaceholders(Jni& j);
 // A method call on a JNIBridge interface proxy: forwarded to the library's JNIBridge.invoke.
 JValue invokeProxy(Jni& j, Ctx& x, jobject self, const std::string& name, const std::string& sig,
                    const std::vector<JValue>& args);
