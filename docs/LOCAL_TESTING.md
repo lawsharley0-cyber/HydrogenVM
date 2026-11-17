@@ -135,6 +135,41 @@ or raises what is expected of them; a listed game that now fails keeps its entry
 regression cannot be recorded away. The games are private files, so this runs where the
 games are, not in CI.
 
+## Nightly corpus run (Windows PC, WSL)
+
+Every night the PC builds the newest `main` and runs every `.ipa` and `.apk` in the Desktop
+`test_ipa` folder under phone mode (`--phone`: 16 KB pages, no `/proc`, case-insensitive files,
+the phone's memory budget). It compares each game with the previous night and, when a game got
+worse, opens one GitHub issue with the game and the commit range to bisect. Game files and
+screenshots stay on the PC; the issue holds only names, statuses and API names.
+
+```sh
+tools/nightly/run_nightly.sh /mnt/c/Users/<you>/Desktop/test_ipa            # try it once
+tools/nightly/run_nightly.sh /mnt/c/Users/<you>/Desktop/test_ipa --publish  # also file issues
+```
+
+`run_nightly.sh` keeps its own clone in `/var/tmp/hvm-nightly/src` (moved to `origin/main` each
+night) and never touches your checkout. Results land in `/var/tmp/hvm-nightly/state/nights/<date>/`
+(`status.json`, `summary.md`, `shots/`); `state/latest.json` is the last night.
+
+What counts as worse: `runs` → `no-picture` → `hang` → `crash` → `load-fail` (any step down),
+sound that stopped, or new missing APIs. A screenshot that looks very different is listed under
+"Worth a look" but does not open an issue on its own (title screens animate).
+
+Per-game options, as files next to the game with the same name:
+- `<game>.taps`: one `seconds x y` per line in portrait points, e.g. `10 160 240` taps the centre
+  at 10 s.
+- `<game>.skip`: leave the game out.
+
+**Schedule it** (Task Scheduler on Windows): create a basic task, daily at 03:00, action
+"Start a program":
+- Program: `wsl.exe`
+- Arguments: `-e bash -lc "~/HydrogenVM/tools/nightly/run_nightly.sh /mnt/c/Users/<you>/Desktop/test_ipa --publish"`
+
+Tick "Run whether user is logged on or not" and "Wake the computer to run this task". `--publish`
+needs `gh auth login` done once inside WSL. Build prerequisites are the same as for
+`tools/local_test.sh`.
+
 ## Verification and current game limit
 
 The local runtime suite passes **79 checks**. The viewer smoke test receives live

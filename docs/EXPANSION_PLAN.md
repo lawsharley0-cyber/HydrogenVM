@@ -40,6 +40,11 @@ overlap (see "Running it" at the end).
 
 ## Phase A — Tighten the feedback loop (≈2 weeks)
 
+> **Status (2026-11-17): built.** A1 one-tap reports (needs a GitHub token on the Diagnostics
+> tab), A2 `--phone`, A3 engine badge and APK batch runs, A4 `tools/nightly/` (needs scheduling
+> on the PC, see `docs/LOCAL_TESTING.md`), A5 `tools/android_testlab.py` in CI. The Test Lab's
+> first run found and fixed a futex wake-count bug.
+
 Everything later goes faster once bugs reproduce off the phone and reports arrive complete.
 
 ### A1. One-tap problem reports (2–3 days)
