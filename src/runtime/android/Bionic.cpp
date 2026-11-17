@@ -704,6 +704,7 @@ void registerBionic(Process& p) {
                           "pthread_attr_setschedparam", "pthread_attr_getschedparam", "pthread_getschedparam",
                           "pthread_setschedparam"})
         if (p.lookupSymbol(std::string("_") + n)) defineErrnoReturning(p, n);
+    registerNativePlaceholders(p);   // last: never replaces a real function
 }
 
 uint32_t resolveImport(Process& p, const std::string& name, bool weak) {

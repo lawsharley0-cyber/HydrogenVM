@@ -684,6 +684,7 @@ Jni& jni(Process& p) {
             p.mem().write<uint32_t>(j.vm, vmTable);
             registerJavaPlatform(j);
             registerJavaClasses(j);
+            registerJniPlaceholders(j);
         }
     }
     return j;

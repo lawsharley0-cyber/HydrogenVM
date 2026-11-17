@@ -29,6 +29,8 @@ void registerFmodBridge(Process& p);
 void registerLooper(Process& p);
 // Generated files for guest paths under /proc (ProcFs.cpp).
 void installProcFs(Process& p);
+// Placeholders from tools/android_gaps.py (Placeholders.cpp); registered after everything real.
+void registerNativePlaceholders(Process& p);
 // The AInputQueue a NativeActivity gets, and a touch delivered through it (Looper.cpp).
 uint32_t inputQueue(Process& p);
 void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown);
