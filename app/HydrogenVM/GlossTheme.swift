@@ -2,33 +2,54 @@ import SwiftUI
 import UIKit
 
 /// The "Gloss" look: iPhone OS 6, toned down. Glossy blue-grey bars, a quiet linen
-/// ground, white grouped cards and one glossy action color. The gloss stays on bars and
+/// ground, grouped cards and one glossy action color. The gloss stays on bars and
 /// buttons; body text is plain system type so long lists stay easy to read.
+///
+/// Every color has a light and a dark version and follows the phone's appearance
+/// (Settings → Display & Brightness): dark mode is slate bars over a charcoal linen with
+/// dark cards and light text, so nothing is ever dark-on-dark or light-on-light.
 enum Gloss {
-    static let barTop = UIColor(red: 0.561, green: 0.643, blue: 0.741, alpha: 1)      // #8fa4bd
-    static let barMid = UIColor(red: 0.427, green: 0.518, blue: 0.635, alpha: 1)      // #6d84a2
-    static let barLow = UIColor(red: 0.388, green: 0.482, blue: 0.604, alpha: 1)      // #637b9a
-    static let barBottom = UIColor(red: 0.337, green: 0.435, blue: 0.561, alpha: 1)   // #566f8f
-    static let barEdge = UIColor(red: 0.247, green: 0.333, blue: 0.455, alpha: 1)     // #3f5574
+    /// A color that resolves for the current appearance.
+    static func adaptive(_ light: UIColor, _ dark: UIColor) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? dark : light }
+    }
+    private static func rgb(_ hex: UInt32) -> UIColor {
+        UIColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
+                blue: CGFloat(hex & 0xff) / 255, alpha: 1)
+    }
+    private static func color(_ light: UInt32, _ dark: UInt32) -> Color {
+        Color(uiColor: adaptive(rgb(light), rgb(dark)))
+    }
 
-    static let linen = Color(red: 0.902, green: 0.910, blue: 0.925)                   // #e6e8ec
-    static let card = Color.white
-    static let cardEdge = Color(red: 0.722, green: 0.745, blue: 0.784)                // #b8bec8
-    static let rowRule = Color(red: 0.882, green: 0.894, blue: 0.914)                 // #e1e4e9
-    static let ink = Color(red: 0.169, green: 0.192, blue: 0.220)                     // #2b3138
-    static let inkSoft = Color(red: 0.373, green: 0.420, blue: 0.478)                 // #5f6b7a
-    static let sectionInk = Color(red: 0.298, green: 0.345, blue: 0.408)              // #4c5868
-    static let link = Color(red: 0.184, green: 0.373, blue: 0.620)                    // #2f5f9e
-    static let ok = Color(red: 0.184, green: 0.478, blue: 0.243)                      // #2f7a3e
-    static let warn = Color(red: 0.604, green: 0.353, blue: 0.0)                      // #9a5a00
-    static let bad = Color(red: 0.690, green: 0.200, blue: 0.170)
+    // Bar gradient stops, light and dark.
+    static let barLight: [UIColor] = [rgb(0x8fa4bd), rgb(0x6d84a2), rgb(0x637b9a), rgb(0x566f8f)]
+    static let barDark: [UIColor] = [rgb(0x46566c), rgb(0x34425a), rgb(0x2c394d), rgb(0x232e3f)]
+    static let barEdge = adaptive(rgb(0x3f5574), rgb(0x0f151d))
+    static let barMid = adaptive(rgb(0x6d84a2), rgb(0x3f5170))
+
+    static let linen = color(0xe6e8ec, 0x16181c)
+    static let card = color(0xffffff, 0x24272d)
+    static let cardEdge = color(0xb8bec8, 0x3a3f48)
+    static let rowRule = color(0xe1e4e9, 0x33373e)
+    static let ink = color(0x2b3138, 0xe9ecf0)
+    static let inkSoft = color(0x5f6b7a, 0xa3adba)
+    static let sectionInk = color(0x4c5868, 0x9ba6b4)
+    static let link = color(0x2f5f9e, 0x80b3f5)
+    static let ok = color(0x2f7a3e, 0x5cc26f)
+    static let warn = color(0x9a5a00, 0xe5a445)
+    static let bad = color(0xb0332b, 0xf26b5f)
+    /// The one-pixel emboss under text on the linen: a highlight in light mode, a shadow in dark.
+    static let emboss = Color(uiColor: adaptive(.white, UIColor.black.withAlphaComponent(0.6)))
+    /// Chevrons and other quiet glyphs.
+    static let chevron = color(0x999999, 0x6c727b)
 
     /// Bars and the tab bar, through UIKit appearance so native navigation keeps working
     /// (back swipe, large-title collapse, accessibility sizes).
     @MainActor static func installAppearance() {
         let bar = UINavigationBarAppearance()
         bar.configureWithOpaqueBackground()
-        bar.backgroundImage = verticalGradient([barTop, barMid, barLow, barBottom], stops: [0, 0.5, 0.5, 1])
+        bar.backgroundImage = adaptiveImage(light: verticalGradient(barLight, stops: [0, 0.5, 0.5, 1]),
+                                            dark: verticalGradient(barDark, stops: [0, 0.5, 0.5, 1]))
         bar.shadowColor = barEdge
         let titleShadow = NSShadow()
         titleShadow.shadowColor = UIColor.black.withAlphaComponent(0.4)
@@ -64,6 +85,15 @@ enum Gloss {
         UISegmentedControl.appearance().setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
     }
 
+    /// One image with a light and a dark version; UIKit picks the one for the current appearance
+    /// and switches when it changes.
+    static func adaptiveImage(light: UIImage, dark: UIImage) -> UIImage {
+        let asset = UIImageAsset()
+        asset.register(light, with: UITraitCollection(userInterfaceStyle: .light))
+        asset.register(dark, with: UITraitCollection(userInterfaceStyle: .dark))
+        return asset.image(with: UITraitCollection(userInterfaceStyle: .light))
+    }
+
     /// A 1-pt-wide gradient strip; UIKit stretches it across the bar.
     static func verticalGradient(_ colors: [UIColor], stops: [CGFloat]) -> UIImage {
         let size = CGSize(width: 1, height: 64)
@@ -77,17 +107,19 @@ enum Gloss {
 
 /// The quiet linen ground: two faint hairline weaves over a light grey.
 struct LinenBackground: View {
+    @Environment(\.colorScheme) private var scheme
     var body: some View {
+        let dark = scheme == .dark
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Gloss.linen))
             var y: CGFloat = 0
             while y < size.height {
-                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: 1)), with: .color(.white.opacity(0.35)))
+                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: 1)), with: .color(.white.opacity(dark ? 0.025 : 0.35)))
                 y += 3
             }
             var x: CGFloat = 0
             while x < size.width {
-                ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(.black.opacity(0.025)))
+                ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(.black.opacity(dark ? 0.18 : 0.025)))
                 x += 3
             }
         }
@@ -100,6 +132,7 @@ struct LinenBackground: View {
 /// an embossed label. `.green` is the one "go" action on a screen (Play).
 struct GlossButtonStyle: ButtonStyle {
     enum Kind { case green, blue, plain }
+    @Environment(\.colorScheme) private var scheme
     var kind: Kind = .blue
     var height: CGFloat = 50
 
@@ -113,6 +146,9 @@ struct GlossButtonStyle: ButtonStyle {
             return (Color(red: 0.498, green: 0.588, blue: 0.702), Color(red: 0.420, green: 0.518, blue: 0.643),
                     Color(red: 0.373, green: 0.471, blue: 0.600), Color(red: 0.353, green: 0.451, blue: 0.576),
                     Color(red: 0.235, green: 0.318, blue: 0.439), .white)
+        case .plain where scheme == .dark:
+            return (Color(white: 0.33), Color(white: 0.27), Color(white: 0.23), Color(white: 0.20),
+                    Color(white: 0.12), Gloss.ink)
         case .plain:
             return (Color(white: 0.99), Color(white: 0.95), Color(white: 0.91), Color(white: 0.87),
                     Gloss.cardEdge, Gloss.ink)
@@ -124,7 +160,7 @@ struct GlossButtonStyle: ButtonStyle {
         return configuration.label
             .font(.system(size: kind == .green ? 18 : 15, weight: .bold))
             .foregroundStyle(c.text)
-            .shadow(color: kind == .plain ? .white : .black.opacity(0.35), radius: 0, x: 0, y: kind == .plain ? 1 : -1)
+            .shadow(color: kind == .plain ? Gloss.emboss : .black.opacity(0.35), radius: 0, x: 0, y: kind == .plain ? 1 : -1)
             .frame(maxWidth: .infinity, minHeight: height)
             .background {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -152,7 +188,7 @@ struct GlossSectionLabel: View {
         Text(text)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(Gloss.sectionInk)
-            .shadow(color: .white, radius: 0, x: 0, y: 1)
+            .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
             .padding(.top, 14)

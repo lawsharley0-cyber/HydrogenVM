@@ -435,6 +435,21 @@ void Engine::callHle(Cpu* c, uint32_t index) {
         c->exit_info = index;
         t_hostError = hle_[index].name + ": " + e.what();
     }
+    if (__builtin_expect(c->async_pending.load(std::memory_order_acquire) != 0, 0) && c->exit == Exit::None) {
+        try {
+            runSafepoint(*c);
+        } catch (const GuestFault& f) {
+            c->exit = f.exit;
+            c->exit_info = f.info;
+            c->r[kPC] = f.pc;
+            c->thumb = f.thumb;
+            if (f.exit == Exit::HostError) t_hostError = f.what();
+        } catch (const std::exception& e) {
+            c->exit = Exit::HostError;
+            c->exit_info = index;
+            t_hostError = std::string("signal handler: ") + e.what();
+        }
+    }
 }
 
 
@@ -464,13 +479,72 @@ Block* Engine::lookupOrDecode(uint32_t key) {
     stats_.guest_insns_decoded += raw->guest_insns;
     stats_.ops_emitted += raw->ops.size();
     blocks_.emplace(key, std::move(b));
+    if (!isHleAddress(key & ~1u) && raw->end > (key & ~1u))
+        for (uint32_t pg = (key & ~1u) >> 12; pg <= (raw->end - 1) >> 12; ++pg) pageBlocks_[pg].push_back(key);
     return raw;
 }
 
 void Engine::flushCache() {
     std::lock_guard<std::mutex> lk(mu_);
-    blocks_.clear();
+    // HLE blocks stay: they never change, and a thread blocked inside a host function is
+    // still running the HLE block that called it.
+    for (auto it = blocks_.begin(); it != blocks_.end();) {
+        if (isHleAddress(uint32_t(it->first) & ~1u)) ++it;
+        else it = blocks_.erase(it);
+    }
+    pageBlocks_.clear();
     gen_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void Engine::resetFastCache(Cpu& c) {
+    if (!c.fast) return;
+    for (size_t i = 0; i < kFastSize; ++i) c.fast[i] = {0xFFFFFFFFu, nullptr, nullptr};
+    c.fast_gen = gen_.load(std::memory_order_acquire);
+}
+
+bool Engine::hasBlocksIn(uint32_t addr, uint32_t size) {
+    if (!size) return false;
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint64_t lo = addr, hi = uint64_t(addr) + size;
+    for (uint64_t pg = lo >> 12; pg <= (hi - 1) >> 12; ++pg) {
+        auto it = pageBlocks_.find(uint32_t(pg));
+        if (it == pageBlocks_.end()) continue;
+        for (const uint32_t key : it->second) {
+            auto b = blocks_.find(key);
+            if (b != blocks_.end() && (key & ~1u) < hi && b->second->end > lo) return true;
+        }
+    }
+    return false;
+}
+
+void Engine::retireRange(uint32_t addr, uint32_t size) {
+    if (!size) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint64_t lo = addr, hi = uint64_t(addr) + size;
+    for (uint64_t pg = lo >> 12; pg <= (hi - 1) >> 12; ++pg) {
+        auto pit = pageBlocks_.find(uint32_t(pg));
+        if (pit == pageBlocks_.end()) continue;
+        auto& keys = pit->second;
+        for (size_t i = 0; i < keys.size();) {
+            auto it = blocks_.find(keys[i]);
+            if (it == blocks_.end()) { keys[i] = keys.back(); keys.pop_back(); continue; }   // already gone
+            const uint64_t bl = it->first & ~1u, bh = it->second->end;
+            if (bl < hi && bh > lo) {
+                std::unique_ptr<Block> b = std::move(it->second);
+                blocks_.erase(it);
+                Op& o = b->ops[0];
+                o.fn = &H_Stale;
+                o.imm = b->key;
+                b->valid = false;
+                retired_.push_back(std::move(b));   // links may still reach it
+                keys[i] = keys.back();
+                keys.pop_back();
+                continue;
+            }
+            ++i;
+        }
+        if (keys.empty()) pageBlocks_.erase(pit);
+    }
 }
 
 void Engine::invalidateRange(uint32_t addr, uint32_t size) {
@@ -642,14 +716,21 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     }
     uint8_t* const base = mem_.base();
     enterGuest(cpu);
-    while (cpu.exit == Exit::None) {
-        const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
-        Block* b = enterBlock(&cpu, key);
-        if (!b) break;
-        cpu.block_pc = key & ~1u;
-        cpu.recordFaultRegisters(cpu.block_pc);
-        const Op* first = b->ops.data();
-        first->fn(&cpu, first, base);
+    for (;;) {
+        while (cpu.exit == Exit::None) {
+            const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
+            Block* b = enterBlock(&cpu, key);
+            if (!b) break;
+            cpu.block_pc = key & ~1u;
+            cpu.recordFaultRegisters(cpu.block_pc);
+            const Op* first = b->ops.data();
+            first->fn(&cpu, first, base);
+        }
+        if (cpu.exit != Exit::Svc || !svcHandler_) break;
+        cpu.exit = Exit::None;
+        if (svcHandler_(cpu, cpu.exit_info)) continue;
+        cpu.exit = Exit::Svc;
+        break;
     }
     t_scope = prev;
     cpu.recordFaultRegisters(cpu.r[kPC]);   // before releasing the CPU to a suspender
@@ -728,6 +809,14 @@ Exit Engine::runToExit(Cpu& cpu) {
         const Exit e = run(cpu, kSlice);
         if (e == Exit::MemFault && faultHook_ && faultHook_(cpu, e)) continue;
         if (e != Exit::Budget) return e;
+        if (__builtin_expect(cpu.async_pending.load(std::memory_order_acquire) != 0, 0)) {
+            try {
+                runSafepoint(cpu);
+            } catch (const GuestFault& f) {
+                cpu.exit = f.exit; cpu.exit_info = f.info; cpu.r[kPC] = f.pc; cpu.thumb = f.thumb;
+                return f.exit;
+            }
+        }
     }
 }
 

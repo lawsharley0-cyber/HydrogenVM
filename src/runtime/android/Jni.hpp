@@ -74,6 +74,11 @@ public:
                     const std::vector<uint32_t>& words, JValue* result = nullptr);
 
     void traceOnce(const std::string& what);
+    // Class hierarchy: the superclass of a class (java/lang/Object for one HydrogenVM doesn't
+    // know, android/app/Activity for an unknown *Activity), and subclass tests for IsInstanceOf.
+    std::map<std::string, std::string> superclasses;
+    std::string superOf(const std::string& cls) const;
+    bool isSubclass(const std::string& cls, const std::string& of) const;
     // Classes whose methods all answer 0 / false / null without a missing-API report.
     std::set<std::string> quietClasses;
     std::set<std::string> traced;
@@ -100,5 +105,14 @@ char returnType(const std::string& sig);
 // shares (Java.cpp).
 void registerJavaClasses(Jni& j);
 void registerJavaPlatform(Jni& j);
+// Framework services: Build, system services, SharedPreferences, Intent, PackageManager, Locale,
+// interface proxies (JavaServices.cpp).
+void registerJavaServices(Jni& j);
+// A method call on a JNIBridge interface proxy: forwarded to the library's JNIBridge.invoke.
+JValue invokeProxy(Jni& j, Ctx& x, jobject self, const std::string& name, const std::string& sig,
+                   const std::vector<JValue>& args);
+// An android.view.MotionEvent of one pointer, for engines that take Java input events (Java.cpp).
+// The caller removes it after use.
+jobject makeMotionEvent(Jni& j, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown);
 
 } // namespace Hydrogen::Runtime::Android

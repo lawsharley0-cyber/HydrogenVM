@@ -13,6 +13,7 @@
 #include <cstring>
 #include <ctime>
 #include <cwctype>
+#include <array>
 #include <map>
 #include <mutex>
 #include <string>
@@ -205,19 +206,6 @@ int32_t p_epollCreate(Ctx& x, int32_t) { setLinuxErrno(x, 38); return -1; }
 int32_t p_epollCtl(Ctx& x, int32_t, int32_t, int32_t, GuestPtr) { setLinuxErrno(x, 9); return -1; }
 int32_t p_epollWait(Ctx& x, int32_t, GuestPtr, int32_t, int32_t) { setLinuxErrno(x, 9); return -1; }
 uint32_t p_mremap(Ctx& x, GuestPtr, uint32_t, uint32_t, uint32_t) { setLinuxErrno(x, 12); return 0xFFFFFFFFu; }
-int32_t p_tkill(Ctx& x, int32_t tid, int32_t sig) {
-    if (sig == 0) return 0;
-    if (tid == p_gettid(x)) return int32_t(callIos(x, "_raise", {uint32_t(sig)}));
-    x.proc.reportDefaulted("tkill of another thread (signal " + std::to_string(sig) + ") ignored");
-    return 0;
-}
-int32_t p_sigsuspend(Ctx& x, GuestPtr) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    if (x.proc.stopping()) throw ProcessExit(0, "stopping");
-    setLinuxErrno(x, 4);   // EINTR
-    return -1;
-}
-uint32_t p_bsdSignal(Ctx& x, int32_t sig, GuestPtr handler) { return uint32_t(callIos(x, "_signal", {uint32_t(sig), handler})); }
 int32_t p_clockGetres(Ctx& x, int32_t, GuestPtr ts) {
     if (ts) { x.mem.write<int32_t>(ts, 0); x.mem.write<int32_t>(ts + 4, 1); }
     return 0;
@@ -401,10 +389,7 @@ void registerBionicExtra(Process& p) {
     A(p_epollCtl, "epoll_ctl", "no epoll: EBADF");
     A(p_epollWait, "epoll_wait", "no epoll: EBADF");
     A(p_mremap, "mremap", "ENOMEM (callers fall back to a new mapping)");
-    A(p_tkill, "tkill", "own thread: raise; others ignored");
-    A(p_sigsuspend, "sigsuspend", "short sleep, then EINTR");
     A(p_ok3, "setitimer", "accepted, no timer signal");
-    R(p_bsdSignal, "bsd_signal", "signal");
     A(p_clockGetres, "clock_getres", "1 ns");
     A(p_null, "getgrnam", "no groups");
     A(p_null, "getgrgid", "no groups");

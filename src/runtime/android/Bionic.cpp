@@ -422,7 +422,9 @@ int32_t b_mutexInit(Ctx& x, GuestPtr mu, GuestPtr attr) {
     uint32_t darwinAttr = 0;
     if (attr) {
         x.mem.write<uint32_t>(scratch, 0x4D555458);
-        x.mem.write<uint32_t>(scratch + 4, x.mem.read<uint32_t>(attr));
+        // Types: Linux NORMAL 0 / RECURSIVE 1 / ERRORCHECK 2, Darwin NORMAL 0 / ERRORCHECK 1 / RECURSIVE 2.
+        static const uint32_t kType[3] = {0, 2, 1};
+        x.mem.write<uint32_t>(scratch + 4, kType[x.mem.read<uint32_t>(attr) % 3]);
         darwinAttr = scratch;
     }
     return linuxErrno(int32_t(callIos(x, "_pthread_mutex_init", {mu, darwinAttr})));
@@ -517,6 +519,11 @@ int32_t semTake(Ctx& x, GuestPtr s, int64_t deadlineNs) {
             }
             ss.cv.wait_for(lk, 20ms);
             if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+            if (x.cpu.async_pending.load(std::memory_order_acquire)) {   // a signal: its handler runs here
+                lk.unlock();
+                x.proc.engine().runSafepoint(x.cpu);
+                lk.lock();
+            }
         }
     }
     if (!ss.count[s]) { lk.unlock(); setLinuxErrno(x, deadlineNs < 0 ? 11 : 110); return -1; }   // EAGAIN / ETIMEDOUT
@@ -613,6 +620,11 @@ void registerBionic(Process& p) {
     registerLibAndroid(p);
     registerOpenSLES(p);
     registerLibdl(p);
+    registerEgl(p);
+    registerSyscalls(p);
+    registerSignals(p);
+    registerFmodBridge(p);
+    registerLooper(p);
     p.defineFunction("android:glCompressedTexImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexImage2D>(x); });
     p.defineFunction("android:glCompressedTexSubImage2D", [](Ctx& x) { callWrapped<&b_glCompressedTexSubImage2D>(x); });
     // Data.

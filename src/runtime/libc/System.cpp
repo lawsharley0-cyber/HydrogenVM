@@ -919,6 +919,49 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
     if (pc == lastPc && addr == lastAddr) { if (++repeats > 8) return false; }   // the handler isn't fixing it
     else { lastPc = pc; lastAddr = addr; repeats = 0; }
     auto& m = p.mem();
+    if (p.isAndroid()) {
+        // Linux ARM frame: siginfo {signo, errno, code, addr}; ucontext {flags, link, stack{sp, flags,
+        // size}, sigcontext {trap_no, error_code, oldmask, r0-r10, fp, ip, sp, lr, pc, cpsr,
+        // fault_address}, sigmask[128], regspace[128]}. Linux SIGBUS is 7.
+        const int linuxSig = sig == 10 ? 7 : sig;
+        const uint32_t ucl = (c.r[CPU::kSP] - 128 - 768) & ~15u;
+        const uint32_t sil = (ucl - 128) & ~15u;
+        const uint32_t spl = (sil - 16) & ~15u;
+        std::memset(m.host(sil), 0, ucl + 768 - sil);
+        m.write<uint32_t>(sil + 0, uint32_t(linuxSig));
+        m.write<uint32_t>(sil + 8, linuxSig == 11 ? 1u : 2u);   // SEGV_MAPERR / BUS_ADRERR
+        m.write<uint32_t>(sil + 12, addr);
+        const uint32_t sc = ucl + 20;
+        m.write<uint32_t>(sc + 0, 14);                          // trap_no: data abort
+        for (int i = 0; i < 16; ++i) m.write<uint32_t>(sc + 12 + 4 * i, c.r[i]);
+        m.write<uint32_t>(sc + 76, c.cpsr() | (c.thumb ? 0x20u : 0u));
+        m.write<uint32_t>(sc + 80, addr);
+        if (pc >= Memory::GuestArena::kHleBase)
+            p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x in %s (lr 0x%08x)", linuxSig, addr,
+                   p.engine().hleName((pc - Memory::GuestArena::kHleBase) / 4).c_str(), c.r[CPU::kLR]);
+        else
+            p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", linuxSig, addr, pc);
+        p.perf().faultsToApp++;
+        const uint32_t savedSp = c.r[CPU::kSP];
+        c.r[CPU::kSP] = spl;
+        ++depth;
+        try {
+            p.engine().callGuest(c, a.handler, {uint32_t(linuxSig), sil, ucl});
+        } catch (...) {
+            --depth;
+            c.r[CPU::kSP] = savedSp;
+            return false;
+        }
+        --depth;
+        for (int i = 0; i < 16; ++i) c.r[i] = m.read<uint32_t>(sc + 12 + 4 * i);
+        const uint32_t cpsr = m.read<uint32_t>(sc + 76);
+        c.setApsrFlags(cpsr);
+        c.thumb = ((cpsr >> 5) & 1) | (c.r[CPU::kPC] & 1);
+        c.r[CPU::kPC] &= ~1u;
+        c.exit = CPU::Exit::None;
+        c.exit_info = 0;
+        return true;
+    }
     // Frame below the red zone: mcontext (340), ucontext (32), siginfo (64).
     const uint32_t mc = (c.r[CPU::kSP] - 128 - 340) & ~15u;
     const uint32_t uc = (mc - 32) & ~15u;

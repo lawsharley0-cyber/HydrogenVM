@@ -6,6 +6,7 @@
 // initialised ones (PTHREAD_MUTEX_INITIALIZER) just work. All waits poll the
 // process stop flag so quitting an app never hangs on a guest lock.
 #include "runtime/Process.hpp"
+#include "core/cpu/Engine.hpp"
 #include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include <cerrno>
@@ -104,6 +105,11 @@ int lockMutex(Ctx& x, GuestMutex& m, bool tryOnly) {
         while (m.owner) {
             m.cv.wait_for(lk, 50ms);
             if (m.owner) { checkStop(x); blocked.setOwner(m.owner); }
+            if (m.owner && x.cpu.async_pending.load(std::memory_order_acquire)) {   // signal handlers run while waiting
+                lk.unlock();
+                x.proc.engine().runSafepoint(x.cpu);
+                lk.lock();
+            }
         }
     }
     m.owner = me;
@@ -203,6 +209,12 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
             waiter->cv.wait_for(lk, 50ms);
             if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
             if (waiter->signaled) break;
+            if (x.cpu.async_pending.load(std::memory_order_acquire)) {   // signal handlers run while waiting
+                lk.unlock();
+                x.proc.engine().runSafepoint(x.cpu);
+                lk.lock();
+                if (waiter->signaled) break;
+            }
             if (deadlineNs) {
                 const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                 if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }

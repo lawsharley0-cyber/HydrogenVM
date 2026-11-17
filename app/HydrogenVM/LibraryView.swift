@@ -51,6 +51,8 @@ final class LibraryStore {
             }
         }
         apps = found.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        // Shortcuts, Spotlight and Siri list one "Play <game>" per installed game.
+        HydrogenShortcuts.updateAppShortcutParameters()
     }
 
     /// Copies (if needed) and extracts an .ipa (or an Android .apk) off the main thread.
@@ -121,7 +123,20 @@ final class LibraryStore {
         let root = Self.appsDir.path(percentEncoded: false)
         Task.detached {
             var message: String?
-            do { _ = try HVMEngine.importAPK(staged.path(percentEncoded: false), intoDirectory: root) }
+            do {
+                let info = try HVMEngine.importAPK(staged.path(percentEncoded: false), intoDirectory: root)
+                // Kept like an .ipa, so Reinstall and Verify work for Android games too.
+                let keep = UserDefaults.standard.object(forKey: "keepIpaForReinstall") as? Bool ?? true
+                if keep, let sha256 = staged.sha256 {
+                    let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                    let dir = appSupport.appendingPathComponent("HydrogenVM/IPAs/\(info.bundleIdentifier)", isDirectory: true)
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    for old in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+                        try? FileManager.default.removeItem(at: old)
+                    }
+                    try FileManager.default.copyItem(at: staged, to: dir.appendingPathComponent("\(sha256).apk"))
+                }
+            }
             catch { message = (error as NSError).localizedDescription }
             try? FileManager.default.removeItem(at: staged)
             let failure = message
@@ -224,7 +239,7 @@ struct LibraryView: View {
                         }
                         if platform == 1 && !store.apps.contains(where: \.info.isAndroid) {
                             Section {
-                                Text("Import an Android .apk with 32-bit ARM native code (lib/armeabi or armeabi-v7a). Android support is new: Dead Space is the first game that runs.")
+                                Text("Import an Android .apk with 32-bit ARM native code (lib/armeabi or armeabi-v7a). Android support is new: games built on EA's Blast engine (Dead Space) and Unity run so far.")
                                     .font(.subheadline).foregroundStyle(Gloss.inkSoft)
                             }
                         }
@@ -251,6 +266,7 @@ struct LibraryView: View {
                                 } reinstall: { url in
                                     store.importIPA(at: url)
                                 }
+                                .listRowBackground(Gloss.card)
                             }
                             .onDelete { idx in
                                 let shown = store.apps.filter { $0.info.isAndroid == (platform == 1) }
@@ -260,7 +276,7 @@ struct LibraryView: View {
                             Text("Your games")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(Gloss.sectionInk)
-                                .shadow(color: .white, radius: 0, x: 0, y: 1)
+                                .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
                                 .textCase(nil)
                         }
                         }
@@ -293,7 +309,7 @@ struct LibraryView: View {
                         }
                         Divider()
                         Toggle("Continue past missing functions", isOn: $keepGoing)
-                        Toggle("Keep .ipa for reinstall", isOn: $keepIpaForReinstall)
+                        Toggle("Keep .ipa / .apk for reinstall", isOn: $keepIpaForReinstall)
                         Toggle("Show debug overlay while playing", isOn: $showDebugOverlay)
                         Text("Off: nothing of HydrogenVM is drawn over a game. Hold three fingers on the screen for a moment to open pause, volume, log and quit.")
                             .font(.footnote).foregroundStyle(.secondary)
@@ -440,16 +456,19 @@ private struct LibraryAppRow: View {
     @State private var showingVerifyError = false
     @State private var makingClip = false
 
+    /// "ipa" or "apk": the kind of file this game was imported from.
+    private var packageExtension: String { app.info.isAndroid ? "apk" : "ipa" }
+
     private var storedIPAURL: URL? {
         guard let appSupport = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return nil }
         let ipaDir = appSupport.appendingPathComponent("HydrogenVM/IPAs/\(app.info.bundleIdentifier)", isDirectory: true)
         let files = (try? FileManager.default.contentsOfDirectory(at: ipaDir, includingPropertiesForKeys: nil)) ?? []
-        return files.first { $0.pathExtension == "ipa" }
+        return files.first { $0.pathExtension.lowercased() == packageExtension }
     }
 
     private func doVerify() {
         guard let ipa = storedIPAURL else {
-            verifyError = "Stored .ipa missing. Cannot verify."
+            verifyError = "The original .\(packageExtension) isn't stored, so there is nothing to check against. Reinstall the game from its .\(packageExtension) to keep a copy."
             showingVerifyError = true
             return
         }
@@ -496,11 +515,11 @@ private struct LibraryAppRow: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text("Your saves are kept.") }
-        .alert("Stored .ipa missing", isPresented: $showingReinstallMissing) {
-            Button("Choose .ipa…") { pickingReinstallIPA = true }
+        .alert("Original .\(packageExtension) not stored", isPresented: $showingReinstallMissing) {
+            Button("Choose .\(packageExtension)…") { pickingReinstallIPA = true }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("Reinstalling needs the original .ipa. Choose it from your files.") }
-        .fileImporter(isPresented: $pickingReinstallIPA, allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip, .zip]) { result in
+        } message: { Text("Reinstalling needs the game's original .\(packageExtension). Choose it from your files.") }
+        .fileImporter(isPresented: $pickingReinstallIPA, allowedContentTypes: [UTType(filenameExtension: packageExtension) ?? .zip, .zip]) { result in
             if case .success(let url) = result { reinstall(url) }
         }
         .sheet(isPresented: $makingClip) { AddToHomeScreenSheet(app: app) }
@@ -548,7 +567,8 @@ struct AppRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Gloss.ink).lineLimit(1)
                 Text([app.info.version.isEmpty ? nil : app.info.version,
-                      app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+"].compactMap { $0 }.joined(separator: " · "))
+                      app.info.isAndroid ? "Android" : (app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+")]
+                        .compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 13)).foregroundStyle(Gloss.inkSoft).lineLimit(1)
             }
             Spacer(minLength: 8)
@@ -564,7 +584,7 @@ struct AppRow: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Play \(app.title)")
             } else {
-                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(white: 0.6))
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Gloss.chevron)
                     .accessibilityHidden(true)
             }
         }

@@ -126,6 +126,22 @@ static std::string mangle(const std::string& s) {
     return out;
 }
 
+std::string Jni::superOf(const std::string& cls) const {
+    if (cls == "java/lang/Object") return {};
+    auto it = superclasses.find(cls);
+    if (it != superclasses.end()) return it->second;
+    if (cls.size() > 8 && cls.compare(cls.size() - 8, 8, "Activity") == 0) return "android/app/Activity";
+    return "java/lang/Object";
+}
+bool Jni::isSubclass(const std::string& cls, const std::string& of) const {
+    std::string c = cls;
+    for (int depth = 0; depth < 32 && !c.empty(); ++depth) {
+        if (c == of) return true;
+        c = superOf(c);
+    }
+    return false;
+}
+
 // HVM_JNI_TRACE=1: each Java method the game calls, and each native the activity calls, once.
 void Jni::traceOnce(const std::string& what) {
     static const bool on = [] { const char* e = std::getenv("HVM_JNI_TRACE"); return e && *e && *e != '0'; }();
@@ -183,14 +199,29 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
     traceOnce("JNI call " + m.cls + "." + m.name + m.sig);
     // The implementation for the method's class, or (virtual calls) for the object's own class.
     std::string objCls;
-    if (JObject* o = get(self); o && !o->isClass) objCls = o->cls;
+    bool proxy = false;
+    {
+        std::lock_guard<std::recursive_mutex> lk(mu);
+        if (JObject* o = get(self); o && !o->isClass) {
+            objCls = o->cls;
+            auto it = o->fields.find("hvm.proxy");
+            proxy = it != o->fields.end() && it->second;
+        }
+    }
+    if (proxy) return invokeProxy(*this, x, self, m.name, m.sig, args);
     // Then the platform classes every activity and view inherits from: a game's own activity
     // class (com/foo/GameActivity) calls getFilesDir, getAssets, ... of Context.
     static const std::string kContext = "android/content/Context", kActivity = "android/app/Activity",
                              kObject = "java/lang/Object";
-    const std::string& objC = objCls; const std::string& mC = m.cls;
-    for (const std::string* c : {&objC, &mC, &kActivity, &kContext, &kObject}) {
-        if (c->empty()) continue;
+    // The object's class and its superclasses, then the method's class and its superclasses.
+    for (const std::string& start : {objCls, m.cls}) {
+        std::string c = start;
+        for (int depth = 0; depth < 32 && !c.empty(); ++depth, c = superOf(c)) {
+            auto it = impls.find(c + "." + m.name + m.sig);
+            if (it != impls.end()) return it->second(*this, x, self, args);
+        }
+    }
+    for (const std::string* c : {&kActivity, &kContext, &kObject}) {
         auto it = impls.find(*c + "." + m.name + m.sig);
         if (it != impls.end()) return it->second(*this, x, self, args);
     }
@@ -361,8 +392,15 @@ Jni& jni(Process& p) {
 
             set(4, "GetVersion", [](Ctx& x) { ret(x, 0x00010006); });
             set(6, "FindClass", [](Ctx& x) { ret(x, J(x).classFor(x.proc.readCString(arg(x, 1), 512))); });
-            set(10, "GetSuperclass", [](Ctx& x) { ret(x, J(x).classFor("java/lang/Object")); });
-            set(11, "IsAssignableFrom", [](Ctx& x) { ret(x, 1); });
+            set(10, "GetSuperclass", [](Ctx& x) {
+                JObject* c = J(x).get(arg(x, 1));
+                const std::string s = c ? J(x).superOf(c->cls) : std::string();
+                ret(x, s.empty() ? 0 : J(x).classFor(s));
+            });
+            set(11, "IsAssignableFrom", [](Ctx& x) {   // (clazz1, clazz2): clazz1 can be cast to clazz2
+                JObject* a = J(x).get(arg(x, 1)); JObject* b = J(x).get(arg(x, 2));
+                ret(x, a && b && J(x).isSubclass(a->cls, b->cls));
+            });
             set(13, "Throw", [](Ctx& x) { ret(x, 0); });
             set(14, "ThrowNew", [](Ctx& x) {
                 x.proc.logf(LogLevel::Warning, "JNI ThrowNew: %s", x.proc.readCString(arg(x, 2), 512).c_str());
@@ -372,6 +410,62 @@ Jni& jni(Process& p) {
             set(16, "ExceptionDescribe", [](Ctx& x) { ret(x, 0); });
             set(17, "ExceptionClear", [](Ctx& x) { ret(x, 0); });
             set(18, "FatalError", [](Ctx& x) { throw std::runtime_error("JNI FatalError: " + x.proc.readCString(arg(x, 1), 1024)); });
+            // Reflection: a java.lang.reflect.Method keeps its name, signature (host) and class.
+            set(7, "FromReflectedMethod", [](Ctx& x) {
+                Jni& j = J(x);
+                std::string cls, name, sig;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(j.mu);
+                    JObject* m = j.get(arg(x, 1));
+                    if (!m) { ret(x, 0); return; }
+                    name = m->str;
+                    if (auto* s = std::any_cast<std::string>(&m->host)) sig = *s;
+                    if (JObject* c = j.get(jobject(m->fields["hvm.declaring"]))) cls = c->cls;
+                }
+                bool isStatic = false;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(j.mu);
+                    if (JObject* m = j.get(arg(x, 1))) isStatic = m->fields["hvm.static"] != 0;
+                }
+                ret(x, j.methodId(cls.empty() ? "java/lang/Object" : cls, name, sig.empty() ? "()V" : sig, isStatic));
+            });
+            set(9, "ToReflectedMethod", [](Ctx& x) {
+                Jni& j = J(x);
+                const uint32_t id = arg(x, 2);
+                Jni::MethodInfo mi;
+                {
+                    std::lock_guard<std::recursive_mutex> lk(j.mu);
+                    const uint32_t i = (id - 0x100) / 4;
+                    if (id < 0x100 || i >= j.methods.size()) { ret(x, 0); return; }
+                    mi = j.methods[i];
+                }
+                const jobject m = j.newObject("java/lang/reflect/Method");
+                const jobject c = j.classFor(mi.cls);
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                if (JObject* o = j.get(m)) { o->str = mi.name; o->host = mi.sig; o->fields["hvm.declaring"] = c; }
+                ret(x, m);
+            });
+            // Direct byte buffers: a guest address and a capacity.
+            set(229, "NewDirectByteBuffer", [](Ctx& x) {
+                Jni& j = J(x);
+                const uint64_t cap = uint64_t(arg(x, 3)) << 32 | arg(x, 2);
+                const jobject b = j.newObject("java/nio/DirectByteBuffer");
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                if (JObject* o = j.get(b)) { o->fields["hvm.address"] = arg(x, 1); o->fields["hvm.capacity"] = cap; }
+                ret(x, b);
+            });
+            set(230, "GetDirectBufferAddress", [](Ctx& x) {
+                Jni& j = J(x);
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                JObject* o = j.get(arg(x, 1));
+                ret(x, o ? uint32_t(o->fields["hvm.address"]) : 0);
+            });
+            set(231, "GetDirectBufferCapacity", [](Ctx& x) {
+                Jni& j = J(x);
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                JObject* o = j.get(arg(x, 1));
+                ret(x, o && o->fields.count("hvm.address") ? o->fields["hvm.capacity"] : uint64_t(-1));
+            });
             set(19, "PushLocalFrame", [](Ctx& x) { ret(x, 0); });
             set(20, "PopLocalFrame", [](Ctx& x) { ret(x, arg(x, 1)); });
             set(21, "NewGlobalRef", [](Ctx& x) { if (JObject* o = J(x).get(arg(x, 1))) o->permanent = true; ret(x, arg(x, 1)); });
@@ -386,8 +480,9 @@ Jni& jni(Process& p) {
             set(30, "NewObjectA", [](Ctx& x) { newObject(x, 2); });
             set(31, "GetObjectClass", [](Ctx& x) { JObject* o = J(x).get(arg(x, 1)); ret(x, J(x).classFor(o ? o->cls : "java/lang/Object")); });
             set(32, "IsInstanceOf", [](Ctx& x) {
+                if (!arg(x, 1)) { ret(x, 1); return; }   // null is an instance of every class
                 JObject* o = J(x).get(arg(x, 1)); JObject* c = J(x).get(arg(x, 2));
-                ret(x, o && c && (o->cls == c->cls || c->cls == "java/lang/Object"));
+                ret(x, o && c && J(x).isSubclass(o->isClass ? std::string("java/lang/Class") : o->cls, c->cls));
             });
             auto getMethod = [](bool isStatic) {
                 return [isStatic](Ctx& x) {

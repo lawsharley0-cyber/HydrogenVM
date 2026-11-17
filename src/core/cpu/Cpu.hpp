@@ -180,6 +180,10 @@ struct alignas(64) Cpu {
     // host code or is parked, i.e. whenever its registers in r[] are a
     // complete, stable picture of its guest state.
     std::atomic<uint32_t> suspend_count{0};
+    // Set by another thread to have this one run Engine's safepoint hook (asynchronous
+    // signal delivery): at the end of a time slice, on return from a host function, and in
+    // host waits that check it.
+    std::atomic<uint32_t> async_pending{0};
     std::atomic<bool> in_guest{false};
     // Index of the host function this thread is in (outermost-latest), for the
     // guest sampling profiler. Not used for control flow.

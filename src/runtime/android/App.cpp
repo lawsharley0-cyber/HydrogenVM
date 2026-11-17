@@ -1,6 +1,7 @@
 // HydrogenVM — an Android game's activity: the Java classes its native code calls, and the
 // lifecycle and frame loop a GLSurfaceView would drive. See Android.hpp.
 #include "runtime/android/Jni.hpp"
+#include "runtime/android/Surface.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/gl/HostGL.hpp"
 #include "runtime/uikit/UIKit.hpp"
@@ -21,16 +22,6 @@
 namespace fs = std::filesystem;
 
 namespace Hydrogen::Runtime::Android {
-namespace {
-
-using namespace std::chrono_literals;
-
-// The surface: the emulated screen in landscape (games of this era are landscape).
-struct Surface {
-    int width = 0, height = 0;
-    float scale = 2.0f;
-    bool portrait = false;
-};
 Surface surfaceFor(Process& p) {
     const auto& c = p.config();
     Surface s;
@@ -45,6 +36,11 @@ Surface surfaceFor(Process& p) {
     s.height = s.portrait ? std::max(w, h) : std::min(w, h);
     return s;
 }
+
+
+namespace {
+
+using namespace std::chrono_literals;
 
 std::string assetsDir(Process& p) { return p.config().bundlePath + "/assets"; }
 
@@ -426,13 +422,6 @@ void registerJavaClasses(Jni& j) {
 
 // ------------------------------------------------------------- the activity ---
 
-namespace {
-
-struct GlSurface {
-    int api = 1;
-    uint32_t context = 0, sharegroup = 0, layer = 0;
-    uint32_t fbo = 0, color = 0, depth = 0;
-};
 
 uint32_t glFn(Process& p, const char* name) {
     auto a = p.lookupSymbol(std::string("_") + name);
@@ -444,52 +433,74 @@ uint32_t glFn(Process& p, const char* name) {
 std::string fbName(int api, const char* core) { return api >= 2 ? std::string(core) : std::string(core) + "OES"; }
 uint32_t glFn(Process& p, const std::string& name) { return glFn(p, name.c_str()); }
 
-// The GLSurfaceView: a host GL context and a framebuffer whose color buffer is the drawable.
-GlSurface makeSurface(Process& p, CPU::Cpu& c, const Surface& s) {
+int linkedGlesApi(Process& p) {
+    auto& L = p.service<Library>();
+    return L.needs("libGLESv2.so") || L.needs("libGLESv3.so") ? 2 : 1;
+}
+
+void createContext(Process& p, GlSurface& g, int api, uint32_t shareSharegroup) {
     if (!HostGL::enabled(p)) throw std::runtime_error("Android games need the GPU renderer (HostGL)");
-    GlSurface g;
+    g.api = api;
     g.context = p.allocStatic(16);
-    g.sharegroup = p.allocStatic(16);
-    g.layer = p.allocStatic(16);
-    // The context version the game links against: libGLESv2 (or v3) means an ES 2 context,
-    // as GLSurfaceView.setEGLContextClientVersion(2) makes; else ES 1.1.
-    int api = 1;
-    if (p.service<Library>().needs("libGLESv2.so") || p.service<Library>().needs("libGLESv3.so")) api = 2;
+    g.sharegroup = shareSharegroup ? shareSharegroup : p.allocStatic(16);
     HostGL::contextCreate(p, g.context, api, g.sharegroup);
-    HostGL::contextMakeCurrent(p, g.context);
+}
+
+void attachDrawable(Process& p, CPU::Cpu& c, GlSurface& g, int w, int h, bool depthStencil) {
+    g.layer = p.allocStatic(16);
+    g.width = w;
+    g.height = h;
+    const int api = g.api;
     const uint32_t names = p.allocStatic(16);
     p.callGuest(c, glFn(p, fbName(api, "glGenFramebuffers")), {1, names});
     p.callGuest(c, glFn(p, fbName(api, "glGenRenderbuffers")), {2, names + 4});
     g.fbo = p.mem().read<uint32_t>(names);
     g.color = p.mem().read<uint32_t>(names + 4);
     g.depth = p.mem().read<uint32_t>(names + 8);
-    constexpr uint32_t kFb = 0x8D40, kRb = 0x8D41, kColor0 = 0x8CE0, kDepthAtt = 0x8D00, kDepth24 = 0x81A6;
+    constexpr uint32_t kFb = 0x8D40, kRb = 0x8D41, kColor0 = 0x8CE0, kDepthAtt = 0x8D00, kStencilAtt = 0x8D20;
+    constexpr uint32_t kDepth24 = 0x81A6, kDepth24Stencil8 = 0x88F0;
     p.callGuest(c, glFn(p, fbName(api, "glBindFramebuffer")), {kFb, g.fbo});
     p.callGuest(c, glFn(p, fbName(api, "glBindRenderbuffer")), {kRb, g.color});
-    if (!HostGL::renderbufferStorageFromDrawable(p, g.context, g.layer, s.width, s.height))
+    if (!HostGL::renderbufferStorageFromDrawable(p, g.context, g.layer, w, h))
         throw std::runtime_error("Android: no drawable storage for the surface");
     p.callGuest(c, glFn(p, fbName(api, "glFramebufferRenderbuffer")), {kFb, kColor0, kRb, g.color});
-    p.callGuest(c, glFn(p, fbName(api, "glBindRenderbuffer")), {kRb, g.depth});
-    p.callGuest(c, glFn(p, fbName(api, "glRenderbufferStorage")), {kRb, kDepth24, uint32_t(s.width), uint32_t(s.height)});
-    p.callGuest(c, glFn(p, fbName(api, "glFramebufferRenderbuffer")), {kFb, kDepthAtt, kRb, g.depth});
+    if (depthStencil) {
+        // Depth with stencil where the context has packed depth-stencil (ES 2 games use stencil
+        // for masks); ES 1.1 surfaces keep the 24-bit depth they always had.
+        p.callGuest(c, glFn(p, fbName(api, "glBindRenderbuffer")), {kRb, g.depth});
+        const uint32_t fmt = api >= 2 ? kDepth24Stencil8 : kDepth24;
+        p.callGuest(c, glFn(p, fbName(api, "glRenderbufferStorage")), {kRb, fmt, uint32_t(w), uint32_t(h)});
+        p.callGuest(c, glFn(p, fbName(api, "glFramebufferRenderbuffer")), {kFb, kDepthAtt, kRb, g.depth});
+        if (api >= 2) p.callGuest(c, glFn(p, fbName(api, "glFramebufferRenderbuffer")), {kFb, kStencilAtt, kRb, g.depth});
+    }
     p.callGuest(c, glFn(p, fbName(api, "glBindRenderbuffer")), {kRb, g.color});
-    p.callGuest(c, glFn(p, "glViewport"), {0, 0, uint32_t(s.width), uint32_t(s.height)});
-    g.api = api;
+    p.callGuest(c, glFn(p, "glViewport"), {0, 0, uint32_t(w), uint32_t(h)});
+}
+
+// The GLSurfaceView: a host GL context of the version the game links and its window framebuffer.
+GlSurface makeSurface(Process& p, CPU::Cpu& c, const Surface& s) {
+    GlSurface g;
+    createContext(p, g, linkedGlesApi(p));
+    HostGL::contextMakeCurrent(p, g.context);
+    attachDrawable(p, c, g, s.width, s.height);
     return g;
 }
 
-GlSurface* gSurface = nullptr;   // for the framebuffer-0 remap below (one Android process at a time)
+// The window surface current on each thread: its framebuffer stands for framebuffer 0.
+namespace { thread_local GlSurface* tCurrent = nullptr; }
+void setCurrentSurface(GlSurface* g) { tCurrent = g; }
+GlSurface* currentSurface() { return tCurrent; }
 
 // Framebuffer 0 is the surface on Android; here it is our framebuffer object.
 void glBindFramebufferRemap(Ctx& x, uint32_t target, uint32_t fb) {
-    x.proc.callGuest(x.cpu, glFn(x.proc, "glBindFramebufferOES"), {target, fb == 0 && gSurface ? gSurface->fbo : fb});
+    x.proc.callGuest(x.cpu, glFn(x.proc, "glBindFramebufferOES"), {target, fb == 0 && tCurrent && tCurrent->fbo ? tCurrent->fbo : fb});
 }
 void glBindFramebufferCoreRemap(Ctx& x, uint32_t target, uint32_t fb) {
-    x.proc.callGuest(x.cpu, glFn(x.proc, "glBindFramebuffer"), {target, fb == 0 && gSurface ? gSurface->fbo : fb});
+    x.proc.callGuest(x.cpu, glFn(x.proc, "glBindFramebuffer"), {target, fb == 0 && tCurrent && tCurrent->fbo ? tCurrent->fbo : fb});
 }
 void glGetIntegervRemap(Ctx& x, uint32_t pname, GuestPtr out) {
     x.proc.callGuest(x.cpu, glFn(x.proc, "glGetIntegerv"), {pname, out});
-    if (pname == 0x8CA6 && gSurface && x.mem.read<uint32_t>(out) == gSurface->fbo) x.mem.write<uint32_t>(out, 0);
+    if (pname == 0x8CA6 && tCurrent && tCurrent->fbo && x.mem.read<uint32_t>(out) == tCurrent->fbo) x.mem.write<uint32_t>(out, 0);
 }
 
 // Where the surface sits on the emulated (portrait) screen. A landscape surface is shown as
@@ -550,8 +561,7 @@ void present(Process& p, CPU::Cpu& c, GlSurface& g, const Surface& s) {
     p.callGuest(c, glFn(p, fbName(g.api, "glBindRenderbuffer")), {0x8D41, p.mem().read<uint32_t>(saved)});
     if (!ok) return;
     if (direct) {
-        static const char placedKey = 0;
-        if (!p.processSlot(&placedKey)) { placeSurface(p, g, s); p.processSlot(&placedKey) = 1; }
+        if (!g.placed) { placeSurface(p, g, s); g.placed = true; }
     } else if (p.config().present && w > 0 && h > 0 && rgba.size() >= size_t(w) * size_t(h) * 4) {
         // GL rows are bottom-up. The bench (no screen) keeps the surface as it is; the app's
         // screen is portrait, so a landscape surface is turned the way placeSurface puts it.
@@ -574,8 +584,6 @@ void present(Process& p, CPU::Cpu& c, GlSurface& g, const Surface& s) {
 }
 
 struct Pointer { int action; float x, y; uint32_t id; };
-
-} // namespace
 
 void registerSurfaceFunctions(Process& p) {
     // Framebuffer 0 and its binding query go to the surface.
@@ -601,6 +609,9 @@ struct Driver {
     virtual void pause(Ctx&) {}
     virtual void resume(Ctx&) {}
     virtual bool wantsExit(Ctx&) { return false; }
+    // The engine sets up EGL on the window itself and presents with eglSwapBuffers (Egl.cpp);
+    // otherwise HydrogenVM makes the GL context and presents after each frame, as GLSurfaceView.
+    virtual bool ownsGl() const { return false; }
 };
 
 // EA's Blast framework (Dead Space and other EA games of 2011-2013).
@@ -735,10 +746,64 @@ struct UbisoftUafDriver final : Driver {
     void resume(Ctx& x) override { call(x, "resume"); }
 };
 
+// Unity 4/5 (UnityPlayer + NativeLoader): libmain loads Mono and Unity and registers the
+// player's natives; Unity makes its own EGL context on the window and renders in nativeRender.
+struct UnityDriver final : Driver {
+    Jni& j;
+    jobject player = 0;
+    explicit UnityDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "Unity"; }
+    bool ownsGl() const override { return true; }
+    static bool matches(const Library& l) {
+        for (const auto& lib : l.libs) if (lib->name == "libunity.so") return true;
+        return false;
+    }
+    bool call(Ctx& x, const char* n, std::vector<uint32_t> w = {}, JValue* r = nullptr) {
+        if (j.callNative(x, "com/unity3d/player/UnityPlayer", n, player, w, r)) return true;
+        x.proc.logf(LogLevel::Warning, "Android: Unity has no UnityPlayer.%s", n);
+        return false;
+    }
+    void create(Ctx& x) override {
+        player = j.newObject("com/unity3d/player/UnityPlayer");
+        if (JObject* o = j.get(player)) o->permanent = true;
+        const jobject activity = jobject(j.staticFields["hvm.activity"]);
+        auto& L = x.proc.service<Library>();
+        const std::string libDir = x.proc.guestPath(L.libDir);
+        // NativeLoader.load(nativeLibraryDir): dlopens libmono and libunity, RegisterNatives.
+        JValue loaded = 0;
+        if (!j.callNative(x, "com/unity3d/player/NativeLoader", "load", j.classFor("com/unity3d/player/NativeLoader"),
+                          {j.newString(libDir)}, &loaded))
+            x.proc.log(LogLevel::Warning, "Android: libmain has no NativeLoader.load");
+        else if (!(loaded & 0xFF))
+            x.proc.log(LogLevel::Warning, "Android: NativeLoader.load returned false");
+        // The APK: Unity reads its data (assets/bin/Data) from inside it.
+        call(x, "nativeFile", {j.newString(x.proc.guestPath(x.proc.config().bundlePath + "/base.apk"))});
+        call(x, "initJni", {activity});
+        call(x, "nativeInitWWW", {j.classFor("com/unity3d/player/WWW")});
+    }
+    void surfaceReady(Ctx& x, const Surface&) override {
+        const jobject surface = j.newObject("android/view/Surface");
+        if (JObject* o = j.get(surface)) o->permanent = true;
+        call(x, "nativeRecreateGfxState", {0, surface});
+        call(x, "nativeResume");
+        call(x, "nativeFocusChanged", {1});
+    }
+    void frame(Ctx& x) override { call(x, "nativeRender"); }
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t count) override {
+        // A MotionEvent for nativeInjectEvent (its accessors are in Java.cpp).
+        const jobject ev = makeMotionEvent(j, ph, px, py, id, count);
+        call(x, "nativeInjectEvent", {ev});
+        j.remove(ev);
+    }
+    void pause(Ctx& x) override { call(x, "nativeFocusChanged", {0}); call(x, "nativePause"); }
+    void resume(Ctx& x) override { call(x, "nativeResume"); call(x, "nativeFocusChanged", {1}); }
+};
+
 std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
     const auto& lib = p.service<Library>();
     if (EaBlastDriver::matches(lib)) return std::make_unique<EaBlastDriver>(j);
     if (UbisoftUafDriver::matches(lib)) return std::make_unique<UbisoftUafDriver>(j);
+    if (UnityDriver::matches(lib)) return std::make_unique<UnityDriver>(j);
     return nullptr;
 }
 
@@ -774,8 +839,11 @@ int runActivity(Process& p, CPU::Cpu& c) {
         p.logf(LogLevel::Info, "Android: %s JNI_OnLoad returned 0x%x", name.c_str(), v);
     }
     driver->create(x);
-    GlSurface g = makeSurface(p, c, s);
-    gSurface = &g;
+    GlSurface g;
+    if (!driver->ownsGl()) {
+        g = makeSurface(p, c, s);
+        setCurrentSurface(&g);
+    }
     driver->surfaceReady(x, s);
 
     // Touches: the host's are in portrait screen points; the surface is in pixels.
@@ -818,7 +886,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
             if (e.phase == TouchPhase::Ended || e.phase == TouchPhase::Cancelled) down.erase(e.id);
         }
         driver->frame(x);
-        present(p, c, g, s);
+        if (!driver->ownsGl()) present(p, c, g, s);
         if (driver->wantsExit(x)) {
             p.log(LogLevel::Info, "Android: the game asked to exit");
             break;
@@ -828,7 +896,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
         if (next > now) std::this_thread::sleep_until(next);
         else if (now - next > 100ms) next = now;
     }
-    gSurface = nullptr;
+    setCurrentSurface(nullptr);
     p.setTouchHandler({});
     return 0;
 }

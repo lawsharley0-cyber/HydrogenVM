@@ -1,5 +1,6 @@
 // HydrogenVM — time and sleeping.
 #include "runtime/Process.hpp"
+#include "core/cpu/Engine.hpp"
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -34,7 +35,8 @@ void sleepFor(Ctx& x, std::chrono::nanoseconds d) {
     const auto end = Clock::now() + d;
     while (Clock::now() < end) {
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
-        std::this_thread::sleep_for(std::min<std::chrono::nanoseconds>(end - Clock::now(), std::chrono::milliseconds(50)));
+        if (x.cpu.async_pending.load(std::memory_order_acquire)) x.proc.engine().runSafepoint(x.cpu);   // signal handlers
+        std::this_thread::sleep_for(std::min<std::chrono::nanoseconds>(end - Clock::now(), std::chrono::milliseconds(20)));
     }
 }
 
