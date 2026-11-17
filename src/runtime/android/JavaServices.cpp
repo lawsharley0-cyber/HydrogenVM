@@ -609,11 +609,60 @@ void registerJavaServices(Jni& j) {
         if (JObject* o = j.get(m)) { o->str = name; o->host = sig; o->fields["hvm.declaring"] = a[0]; o->fields["hvm.static"] = a[3] & 0xFF; }
         return JValue(m);
     });
-    j.method("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;", [](Jni& j, Ctx&, jobject, const auto& a) {
-        std::string name = str(j, a[0]);
-        for (char& c : name) if (c == '.') c = '/';
-        return JValue(j.classFor(name));
+    // Class.forName: every class "exists". A game's Java-side plugins (ads, purchases, social
+    // SDKs) have no host implementation; their methods answer 0 / null (reported as missing), so
+    // the game's own setup code carries on instead of throwing (Unity's AndroidJavaClass calls
+    // forName through reflection, with an Object return type).
+    for (const char* sig : {"(Ljava/lang/String;)Ljava/lang/Class;", "(Ljava/lang/String;)Ljava/lang/Object;"})
+        j.method("java/lang/Class", "forName", sig, [](Jni& j, Ctx&, jobject, const auto& a) {
+            std::string name = str(j, a[0]);
+            for (char& c : name) if (c == '.') c = '/';
+            return JValue(j.classFor(name));
+        });
+
+    // ReflectionHelper.getFieldID(class, name, signature, isStatic): a Field for FromReflectedField.
+    j.method("com/unity3d/player/ReflectionHelper", "getFieldID", "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/reflect/Field;",
+             [](Jni& j, Ctx&, jobject, const auto& a) {
+        const std::string name = str(j, a[1]), sig = str(j, a[2]);
+        const jobject f = j.newObject("java/lang/reflect/Field");
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(f)) { o->str = name; o->host = sig; o->fields["hvm.declaring"] = a[0]; o->fields["hvm.static"] = a[3] & 0xFF; }
+        return JValue(f);
     });
+    j.method("java/lang/Object", "getClass", "()Ljava/lang/Class;", [](Jni& j, Ctx&, jobject self, const auto&) {
+        std::string cls = "java/lang/Object";
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* o = j.get(self)) cls = o->isClass ? "java/lang/Class" : o->cls;
+        }
+        return JValue(j.classFor(cls));
+    });
+    // UnityPlayer.currentActivity, and its loadLibrary (the game's libraries are already loaded).
+    j.method("com/unity3d/player/UnityPlayer", "loadLibrary", "(Ljava/lang/String;)Z", [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });
+
+    // Libraries: everything the game ships is loaded at start, so loading one again succeeds and
+    // findLibrary names its file.
+    for (const char* sig : {"(Ljava/lang/String;)V"}) {
+        j.method("java/lang/System", "load", sig, [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+        j.method("java/lang/System", "loadLibrary", sig, [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    }
+    j.method("java/lang/ClassLoader", "findLibrary", "(Ljava/lang/String;)Ljava/lang/String;", [&p](Jni& j, Ctx&, jobject, const auto& a) {
+        const std::string dir = p.guestPath(p.service<Library>().libDir);
+        return JValue(j.newString(dir + "/lib" + str(j, a[0]) + ".so"));
+    });
+    j.method("java/lang/Class", "getName", "()Ljava/lang/String;", [](Jni& j, Ctx&, jobject self, const auto&) {
+        std::string n;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* o = j.get(self)) n = o->cls;
+        }
+        for (char& c : n) if (c == '/') c = '.';
+        return JValue(j.newString(n));
+    });
+    for (const char* ctx : {"android/content/Context", "android/app/Activity"})
+        j.method(ctx, "getClassLoader", "()Ljava/lang/ClassLoader;", [](Jni& j, Ctx&, jobject, const auto&) {
+            return JValue(singleton(j, "java/lang/ClassLoader"));
+        });
 
     // FMOD's Java audio device.
     const std::string kFmod = "org/fmod/FMODAudioDevice";

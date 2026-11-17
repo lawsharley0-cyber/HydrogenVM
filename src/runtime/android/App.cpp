@@ -8,6 +8,7 @@
 #include "loader/Apk.hpp"
 #include "loader/Zip.hpp"
 #include "core/cpu/Engine.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -141,6 +142,7 @@ void registerJavaClasses(Jni& j) {
     am.permanent = true;
     const jobject assets = j.add(std::move(am));
     j.staticFields["hvm.activity"] = activity;
+    j.staticFields["com/unity3d/player/UnityPlayer.currentActivity"] = activity;   // Unity's AndroidJavaClass reads it
     j.staticFields["hvm.assets"] = assets;
 
     j.method(kAct, "GetInstance", "()Lcom/ea/blast/MainActivity;", [activity](Jni&, Ctx&, jobject, const auto&) { return JValue(activity); });
@@ -858,6 +860,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
         else events.push_back({phase, ty * s.scale, (portraitW - tx) * s.scale, finger});
     });
     std::set<uint32_t> down;
+    std::map<uint32_t, uint32_t> pointers;   // host finger id -> Android pointer id
 
     using clock = std::chrono::steady_clock;
     auto next = clock::now();
@@ -880,10 +883,23 @@ int runActivity(Process& p, CPU::Cpu& c) {
             std::lock_guard<std::mutex> lk(inMu);
             batch.swap(events);
         }
+        // Android numbers pointers from 0 (the first finger down is 0, the next free number for
+        // each later one); engines treat pointer 0 as the primary touch (Unity's taps and mouse
+        // emulation). The host's finger ids are mapped to those numbers.
         for (const auto& e : batch) {
+            uint32_t pointer = 0;
+            if (auto it = pointers.find(e.id); it != pointers.end()) {
+                pointer = it->second;
+            } else {
+                while (std::any_of(pointers.begin(), pointers.end(), [&](const auto& kv) { return kv.second == pointer; })) ++pointer;
+                if (e.phase == TouchPhase::Began) pointers[e.id] = pointer;
+            }
             if (e.phase == TouchPhase::Began) down.insert(e.id);
-            driver->touch(x, e.phase, e.x, e.y, e.id, uint32_t(std::max<size_t>(down.size(), 1)));
-            if (e.phase == TouchPhase::Ended || e.phase == TouchPhase::Cancelled) down.erase(e.id);
+            driver->touch(x, e.phase, e.x, e.y, pointer, uint32_t(std::max<size_t>(down.size(), 1)));
+            if (e.phase == TouchPhase::Ended || e.phase == TouchPhase::Cancelled) {
+                down.erase(e.id);
+                pointers.erase(e.id);
+            }
         }
         driver->frame(x);
         if (!driver->ownsGl()) present(p, c, g, s);

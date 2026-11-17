@@ -4,6 +4,7 @@
 // (analytics, ads, social). Engine-specific classes live with their driver (App.cpp).
 #include "runtime/android/Jni.hpp"
 #include <chrono>
+#include <ctime>
 #include <cstdio>
 #include <filesystem>
 #include <random>
@@ -49,8 +50,10 @@ jobject makeMotionEvent(Jni& j, TouchPhase phase, float x, float y, uint32_t id,
         default: action = pointersDown <= 1 ? 1 : 6; break;
     }
     const jobject ev = j.newObject("android/view/MotionEvent");
-    const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count());
+    // Event times are SystemClock.uptimeMillis(): the same CLOCK_MONOTONIC the game reads.
+    timespec ts{};
+    ::clock_gettime(CLOCK_MONOTONIC, &ts);
+    const uint64_t now = uint64_t(ts.tv_sec) * 1000 + uint64_t(ts.tv_nsec) / 1000000;
     std::lock_guard<std::recursive_mutex> lk(j.mu);
     if (JObject* o = j.get(ev)) {
         o->fields["action"] = action;
@@ -187,7 +190,28 @@ void registerJavaPlatform(Jni& j) {
         JObject* o = j.get(ev);
         return o ? o->fields[f] : 0;
     };
-    j.method(kMe, "getAction", "()I", [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "action")); });
+    // MotionEvent.obtain(other): a copy the game keeps (Unity queues it for its own thread)
+    // until it calls recycle().
+    j.method(kMe, "obtain", "(Landroid/view/MotionEvent;)Landroid/view/MotionEvent;", [kMe](Jni& j, Ctx&, jobject, const auto& a) {
+        std::map<std::string, uint64_t> fields;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            JObject* o = j.get(jobject(a[0]));
+            if (!o) return JValue(0);
+            fields = o->fields;
+        }
+        const jobject copy = j.newObject(kMe);
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* c = j.get(copy)) c->fields = std::move(fields);
+        return JValue(copy);
+    });
+    j.method(kMe, "recycle", "()V", [](Jni& j, Ctx&, jobject s, const auto&) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(s); o && !o->permanent) j.remove(s);
+        return JValue(0);
+    });
+    j.method(kMe, "getAction", "()I", [field](Jni& j, Ctx&, jobject s, const auto&) {
+        return JValue(field(j, s, "action")); });
     j.method(kMe, "getActionMasked", "()I", [field](Jni& j, Ctx&, jobject s, const auto&) { return JValue(field(j, s, "action") & 0xFF); });
     j.method(kMe, "getActionIndex", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
     j.method(kMe, "getPointerCount", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });
