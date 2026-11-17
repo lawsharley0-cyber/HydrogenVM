@@ -2,7 +2,8 @@
 
 How we get from "three Android games and a strong iOS library" to "most games just work, bugs
 are found without Lawson playing, and the old games feel better than they did". It covers the
-feedback-loop tools, Android breadth, automation, the player experience and growth.
+feedback-loop tools, Android breadth, automation, the player experience, growth and a
+self-improving loop.
 
 This plan extends [PLAN.md](PLAN.md); it doesn't replace its rules. The hard rules in
 [AGENTS.md](../AGENTS.md) apply to every card:
@@ -339,6 +340,59 @@ Lawson's call on timing; the tooling above produces the material.
 
 ---
 
+---
+
+## Phase H — Self-improving loop (≈2–3 weeks, after A and C)
+
+The emulator gets better continuously without a person writing each fix. Fixes are made
+**off the phone**. iOS can't compile or load code the app writes for itself (the same rule
+that makes HydrogenVM JIT-less), and small on-device models are not reliable enough for
+emulator code. Everything is checked against real games before it ships.
+
+### H1. Automated fix agent (1–2 weeks)
+- **Input:** the gap ledger (`tools/android_gaps.py`), the nightly status (A4), new A1
+  reports with their C1 replays, and the auto-player's crash scripts (C2).
+- **Loop**, on the test machine or CI on a schedule:
+  1. Pick the top-ranked gap or regression that no open PR covers.
+  2. Hand it to a strong model (Claude or Gemini, through its CLI or API) with the head-engineer
+     prompt (`docs/HEAD_ENGINEER_PROMPT.md`) and the evidence.
+  3. Require a test that fails first, the fix, and the gates.
+  4. Re-run the affected games under `--phone`, plus the original replay.
+  5. Open a PR with the evidence.
+- **Guards:**
+  - a per-run budget;
+  - one area per PR;
+  - hotspot files are never edited by two runs at once;
+  - no merge without green gates and the game re-check;
+  - a policy setting for whether green fix PRs auto-merge or wait for Lawson.
+- **Done when:** a planted gap, such as a removed JNI method a game uses, is found, fixed,
+  tested and proposed with no person involved.
+
+### H2. Downloadable improvement packs (1 week)
+- **What:** the parts of the runtime that are data become signed packs the app downloads, so
+  games improve without reinstalling:
+  - placeholder tables (`placeholders/*.inc` as data);
+  - per-game compatibility profiles;
+  - Java-method stand-ins described as data (return values, fields);
+  - fake-server rules (F1);
+  - control layouts (E3).
+- **How:** packs are versioned and signed with a project key (the app holds only the public
+  key) and served from GitHub Releases. They are checked on launch and cached; one switch in
+  Settings rolls back to the built-in tables. Anything that needs new code still ships in an
+  IPA.
+- **Done when:** a pack published from CI changes a game's behaviour on the phone on next
+  launch, and a pack with a bad signature is refused.
+
+### H3. On-device helpers (3–5 days)
+- Rules first:
+  - match a crash against known patterns to pick the C3 safe-mode fallback;
+  - suggest a control layout from the game's engine and input APIs;
+  - flag "this game needs Allow internet".
+- A tiny on-device model is an option only if the rules stop scaling; it never writes or loads
+  code.
+- **Done when:** the safe-mode fallback for the known crash classes is chosen automatically,
+  and the choice is visible in the report.
+
 ## Order and timeline
 
 | Weeks | Main track | In parallel |
@@ -349,6 +403,7 @@ Lawson's call on timing; the tooling above produces the material.
 | 5–8 | C1 record/replay, C2 auto-player | C3 safe mode, E1 faster launches |
 | 8–15 | D DEX interpreter | E2 HD/widescreen, E3 controllers, G1 compatibility list |
 | 12–16 | F1 server toolkit (Rayman) | E4 quick-save spike → build |
+| 10–16 | H1 automated fix agent | H2 improvement packs, H3 on-device helpers |
 
 About four months of focused work in total, faster with several agents on the parallel
 column. Phase A comes first because every later card is cheaper with it in place.
