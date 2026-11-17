@@ -24,6 +24,9 @@ void registerOpenSLES(Process& p);
 void registerLibdl(Process& p);
 void registerEgl(Process& p);
 void registerSyscalls(Process& p);
+void registerSignals(Process& p);
+// Sends a Linux signal to the guest thread with Linux thread id `tid` (tkill). 0 or a Linux errno.
+int sendSignalToTid(Process& p, CPU::Cpu& self, uint32_t tid, int sig);
 // The screen's ANativeWindow, for drivers that hand one to the game (Egl.cpp).
 uint32_t screenNativeWindow(Process& p);
 

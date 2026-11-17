@@ -118,10 +118,6 @@ void registerJavaPlatform(Jni& j) {
         j.method(c, "getAssets", "()Landroid/content/res/AssetManager;", [](Jni& j, Ctx&, jobject, const auto&) {
             return JValue(jobject(j.staticFields["hvm.assets"]));
         });
-        j.method(c, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [&p](Jni& j, Ctx&, jobject, const auto& a) {
-            p.reportDefaulted("Context.getSystemService(\"" + j.string(jobject(a[0])) + "\") -> null");
-            return JValue(0);
-        });
     }
     j.method("android/os/Environment", "getExternalStorageDirectory", "()Ljava/io/File;", [&p](Jni& j, Ctx&, jobject, const auto&) {
         return JValue(newFile(j, ensureDir(p, sdcard(p))));
@@ -250,6 +246,7 @@ void registerJavaPlatform(Jni& j) {
                             "com/facebook/AppEventsLogger", "com/chartboost/sdk/Chartboost",
                             "com/adjust/sdk/Adjust", "com/appsflyer/AppsFlyerLib"})
         j.quietClasses.insert(cls);
+    registerJavaServices(j);
 }
 
 } // namespace Hydrogen::Runtime::Android

@@ -199,7 +199,16 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
     traceOnce("JNI call " + m.cls + "." + m.name + m.sig);
     // The implementation for the method's class, or (virtual calls) for the object's own class.
     std::string objCls;
-    if (JObject* o = get(self); o && !o->isClass) objCls = o->cls;
+    bool proxy = false;
+    {
+        std::lock_guard<std::recursive_mutex> lk(mu);
+        if (JObject* o = get(self); o && !o->isClass) {
+            objCls = o->cls;
+            auto it = o->fields.find("hvm.proxy");
+            proxy = it != o->fields.end() && it->second;
+        }
+    }
+    if (proxy) return invokeProxy(*this, x, self, m.name, m.sig, args);
     // Then the platform classes every activity and view inherits from: a game's own activity
     // class (com/foo/GameActivity) calls getFilesDir, getAssets, ... of Context.
     static const std::string kContext = "android/content/Context", kActivity = "android/app/Activity",

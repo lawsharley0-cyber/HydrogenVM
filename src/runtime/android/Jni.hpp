@@ -105,6 +105,12 @@ char returnType(const std::string& sig);
 // shares (Java.cpp).
 void registerJavaClasses(Jni& j);
 void registerJavaPlatform(Jni& j);
+// Framework services: Build, system services, SharedPreferences, Intent, PackageManager, Locale,
+// interface proxies (JavaServices.cpp).
+void registerJavaServices(Jni& j);
+// A method call on a JNIBridge interface proxy: forwarded to the library's JNIBridge.invoke.
+JValue invokeProxy(Jni& j, Ctx& x, jobject self, const std::string& name, const std::string& sig,
+                   const std::vector<JValue>& args);
 // An android.view.MotionEvent of one pointer, for engines that take Java input events (Java.cpp).
 // The caller removes it after use.
 jobject makeMotionEvent(Jni& j, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown);

@@ -124,6 +124,9 @@ public:
     void flushCache();
     // Discard blocks overlapping [addr, addr+size). Same restriction.
     void invalidateRange(uint32_t addr, uint32_t size);
+    // Drops a Cpu's block lookup cache (indirect branches read it without checking the
+    // cache generation). Only for a Cpu that is not running guest code.
+    void resetFastCache(Cpu& c);
     // Whether any decoded block overlaps [addr, addr+size) (safe while guest code runs).
     bool hasBlocksIn(uint32_t addr, uint32_t size);
 
@@ -132,6 +135,11 @@ public:
     // stop with Exit::Svc as before (no handler: always stop).
     using SvcHandler = std::function<bool(Cpu&, uint32_t imm)>;
     void setSvcHandler(SvcHandler h) { svcHandler_ = std::move(h); }
+    // Runs on a thread whose Cpu::async_pending is set, outside guest code (see Cpu).
+    using SafepointHook = std::function<void(Cpu&)>;
+    void setSafepointHook(SafepointHook h) { safepointHook_ = std::move(h); }
+    // Runs the hook now if this Cpu has something pending (from a host wait). May throw GuestFault.
+    void runSafepoint(Cpu& c) { if (safepointHook_ && c.async_pending.load(std::memory_order_acquire)) safepointHook_(c); }
 
     // Called from IR handlers.
     Block* enterBlock(Cpu* c, uint32_t key);
@@ -172,6 +180,7 @@ private:
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks_;
     std::unordered_map<uint32_t, EntryObserver> entryObservers_;
     SvcHandler svcHandler_;
+    SafepointHook safepointHook_;
     std::atomic<uint64_t> gen_{0};       // bumped by flushCache; invalidates per-Cpu caches
     mutable std::mutex mu_;
 

@@ -435,6 +435,21 @@ void Engine::callHle(Cpu* c, uint32_t index) {
         c->exit_info = index;
         t_hostError = hle_[index].name + ": " + e.what();
     }
+    if (__builtin_expect(c->async_pending.load(std::memory_order_acquire) != 0, 0) && c->exit == Exit::None) {
+        try {
+            runSafepoint(*c);
+        } catch (const GuestFault& f) {
+            c->exit = f.exit;
+            c->exit_info = f.info;
+            c->r[kPC] = f.pc;
+            c->thumb = f.thumb;
+            if (f.exit == Exit::HostError) t_hostError = f.what();
+        } catch (const std::exception& e) {
+            c->exit = Exit::HostError;
+            c->exit_info = index;
+            t_hostError = std::string("signal handler: ") + e.what();
+        }
+    }
 }
 
 
@@ -469,8 +484,19 @@ Block* Engine::lookupOrDecode(uint32_t key) {
 
 void Engine::flushCache() {
     std::lock_guard<std::mutex> lk(mu_);
-    blocks_.clear();
+    // HLE blocks stay: they never change, and a thread blocked inside a host function is
+    // still running the HLE block that called it.
+    for (auto it = blocks_.begin(); it != blocks_.end();) {
+        if (isHleAddress(uint32_t(it->first) & ~1u)) ++it;
+        else it = blocks_.erase(it);
+    }
     gen_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void Engine::resetFastCache(Cpu& c) {
+    if (!c.fast) return;
+    for (size_t i = 0; i < kFastSize; ++i) c.fast[i] = {0xFFFFFFFFu, nullptr, nullptr};
+    c.fast_gen = gen_.load(std::memory_order_acquire);
 }
 
 bool Engine::hasBlocksIn(uint32_t addr, uint32_t size) {
@@ -745,6 +771,14 @@ Exit Engine::runToExit(Cpu& cpu) {
         const Exit e = run(cpu, kSlice);
         if (e == Exit::MemFault && faultHook_ && faultHook_(cpu, e)) continue;
         if (e != Exit::Budget) return e;
+        if (__builtin_expect(cpu.async_pending.load(std::memory_order_acquire) != 0, 0)) {
+            try {
+                runSafepoint(cpu);
+            } catch (const GuestFault& f) {
+                cpu.exit = f.exit; cpu.exit_info = f.info; cpu.r[kPC] = f.pc; cpu.thumb = f.thumb;
+                return f.exit;
+            }
+        }
     }
 }
 

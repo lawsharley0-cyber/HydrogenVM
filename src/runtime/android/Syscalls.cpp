@@ -54,6 +54,7 @@ int32_t futex(Process& p, uint32_t addr, uint32_t op, uint32_t val, uint32_t tim
                 if (p.mem().read<uint32_t>(addr) != val) return 0;   // the word changed: a wake we may have missed
                 if (p.stopping()) throw ProcessExit(0, "stopping");
                 if (timed && clock::now() >= due) return -kETIMEDOUT;
+                if (p.currentThread().cpu.async_pending.load(std::memory_order_acquire)) return -4;   // EINTR: the handler runs on return
                 f.cv.wait_for(lk, std::chrono::milliseconds(20));
             }
         }
@@ -85,7 +86,8 @@ int32_t cacheflush(Process& p, CPU::Cpu& self, uint32_t start, uint32_t end) {
         held.push_back(&t->cpu);
     }
     eng.invalidateRange(start, end - start);
-    for (CPU::Cpu* c : held) eng.resume(*c);
+    eng.resetFastCache(self);
+    for (CPU::Cpu* c : held) { eng.resetFastCache(*c); eng.resume(*c); }
     return 0;
 }
 
@@ -104,11 +106,8 @@ int32_t linuxSyscall(Process& p, CPU::Cpu& c, uint32_t nr, const uint32_t a[6]) 
             return r < 0 ? -kEINVAL : 0;
         }
         case 78: return int32_t(callIos(x, "_gettimeofday", {a[0], a[1]}));   // gettimeofday
-        case 238: {                                                        // tkill
-            if (a[1] == 0) return 0;
-            p.reportDefaulted("tkill by system call (signal " + std::to_string(a[1]) + ") ignored");
-            return 0;
-        }
+        case 238: return -sendSignalToTid(p, c, a[0], int(a[1]));          // tkill
+        case 268: return -sendSignalToTid(p, c, a[1], int(a[2]));          // tgkill
         case 172: return 0;                                                // prctl
         default:
             p.reportDefaulted("Linux system call " + std::to_string(nr) + " -> ENOSYS");
