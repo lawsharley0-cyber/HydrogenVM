@@ -23,6 +23,7 @@ void registerUIKit(Process& p) {
     UIKit::registerPlatformStubs(p, r);
     UIKit::registerAVWriter(p, r);
     UIKit::registerMiscFrameworks(p, r);
+    UIKit::registerLegacySdks(p, r);
 }
 
 } // namespace Hydrogen::Runtime

@@ -4692,6 +4692,69 @@ int runFullSubsystemTests() {
                   "loadNibNamed: missing NIB returns nil for an app built with SDK 2/3, raises for SDK 4");
         }
 
+        // Dead 2009-2015 SDK offline overrides (OpenFeint 2.4-2.12+ & Everyplay 1760):
+        // verify before/after behavior against synthetic guest SDK classes.
+        {
+            int approveCalls = 0, lastApproved = -1, originalModalCalls = 0;
+            int deniedDelegateCalls = 0, deniedInvCalls = 0;
+            uint32_t receivedParam = 0;
+            bool originalExpiredAlert = false;
+
+            auto ofCls = r.defineClass("OpenFeint", "NSObject");
+            ofCls.classMethod("userDidApproveFeint:", [&](Ctx& x) {
+                ++approveCalls;
+                lastApproved = int(x.cpu.r[2] & 0xffu);
+            }, "v12@0:4c8")
+                 .classMethod("presentUserFeintApprovalModal:deniedDelegate:", [&](Ctx&) {
+                     ++originalModalCalls;
+                 }, "v16@0:4^{OFDelegate=}8^{OFDelegate=}12")
+                 .classMethod("presentUserFeintApprovalModalInvocation:deniedInvocation:", [&](Ctx&) {
+                     ++originalModalCalls;
+                 }, "v16@0:4@8@12");
+
+            auto epCls = r.defineClass("Everyplay", "NSObject");
+            epCls.method("showExpiredMessage", [&](Ctx&) {
+                originalExpiredAlert = true;
+            }, "v8@0:4");
+
+            auto delCls = r.defineClass("HVMLegacySdkDelegate", "NSObject");
+            delCls.method("onDenied:", [&](Ctx& x) {
+                ++deniedDelegateCalls;
+                receivedParam = x.cpu.r[2];
+            }, "v12@0:4@8")
+                  .method("invoke", [&](Ctx&) {
+                      ++deniedInvCalls;
+                  }, "v8@0:4");
+
+            const ObjC::id epObj = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, epCls.cls(), r.selAlloc)), r.selInit));
+            r.send(cpu, epObj, "showExpiredMessage");
+            const bool failBeforeExpired = originalExpiredAlert;
+            originalExpiredAlert = false;
+
+            UIKit::applyLegacySdkOverrides(cx.proc, r);
+
+            const ObjC::id delObj = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, delCls.cls(), r.selAlloc)), r.selInit));
+            const ObjC::id paramObj = Foundation::makeString(cx, "of-param");
+            const uint32_t delegateAddr = cx.proc.heap().allocZeroed(16);
+            cx.mem.write<uint32_t>(delegateAddr + 0, delObj);
+            cx.mem.write<uint32_t>(delegateAddr + 4, paramObj);
+            cx.mem.write<uint32_t>(delegateAddr + 12, r.sel("onDenied:"));
+
+            r.send(cpu, ofCls.cls(), "presentUserFeintApprovalModal:deniedDelegate:", {0, delegateAddr});
+            for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(cx.proc).runOnce(cpu, 0.0);
+
+            r.send(cpu, ofCls.cls(), "presentUserFeintApprovalModalInvocation:deniedInvocation:", {0, delObj});
+            for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(cx.proc).runOnce(cpu, 0.0);
+
+            r.send(cpu, epObj, "showExpiredMessage");
+
+            check(failBeforeExpired && !originalExpiredAlert && originalModalCalls == 0 &&
+                  approveCalls == 2 && lastApproved == 0 &&
+                  deniedDelegateCalls == 1 && receivedParam == paramObj &&
+                  deniedInvCalls == 1,
+                  "LegacySdks takes OpenFeint declined offline path and suppresses dead Everyplay alert");
+        }
+
         // A real, minimal NIBArchive: root -> NSArray -> NSString. This must
         // decode a known object. A missing or malformed name raises instead.
         auto nibBytes = [](const std::string& marker) {
