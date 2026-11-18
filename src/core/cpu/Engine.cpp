@@ -8,6 +8,9 @@
 #include <cerrno>
 #include <unistd.h>   // write() in the host-fault diagnostics
 #include <ucontext.h>
+#if defined(__APPLE__)
+#include <mach/thread_status.h>
+#endif
 
 namespace Hydrogen::CPU {
 
@@ -74,10 +77,12 @@ void captureRegisters(FaultScope* s, void* uctx) {
     if (!uctx) return;
     auto* uc = static_cast<ucontext_t*>(uctx);
 #if defined(__APPLE__) && defined(__aarch64__)
-    s->hostPc = uintptr_t(uc->uc_mcontext->__ss.__pc);
-    for (int i = 0; i < 29; ++i) s->regs[s->nregs++] = uintptr_t(uc->uc_mcontext->__ss.__x[i]);
-    s->regs[s->nregs++] = uintptr_t(uc->uc_mcontext->__ss.__fp);
-    s->regs[s->nregs++] = uintptr_t(uc->uc_mcontext->__ss.__lr);
+    // The accessor macros work whether or not the SDK makes fp/lr/pc opaque (arm64e).
+    const auto& ss = uc->uc_mcontext->__ss;
+    s->hostPc = uintptr_t(arm_thread_state64_get_pc(ss));
+    for (int i = 0; i < 29; ++i) s->regs[s->nregs++] = uintptr_t(ss.__x[i]);
+    s->regs[s->nregs++] = uintptr_t(arm_thread_state64_get_fp(ss));
+    s->regs[s->nregs++] = uintptr_t(arm_thread_state64_get_lr(ss));
 #elif defined(__APPLE__) && defined(__x86_64__)
     const auto& ss = uc->uc_mcontext->__ss;
     s->hostPc = uintptr_t(ss.__rip);
