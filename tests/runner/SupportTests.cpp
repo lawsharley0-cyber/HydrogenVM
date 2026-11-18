@@ -28,7 +28,7 @@ int main() {
     cfg.homePath = home.string();
     Process p(cfg);
     auto& registry = supportRegistry(p);
-    for (const char* name : {"_mprotect", "_madvise", "_msync", "_glDrawBuffers", "_glReadBuffer",
+    for (const char* name : {"_madvise", "_msync", "_glDrawBuffers", "_glReadBuffer",
                             "_glGenQueriesEXT", "_glGenQueries", "_glDeleteQueriesEXT", "_glDeleteQueries",
                             "_glIsQueryEXT", "_glIsQuery", "_glBeginQueryEXT", "_glBeginQuery",
                             "_glEndQueryEXT", "_glEndQuery", "_glGetQueryivEXT", "_glGetQueryiv",

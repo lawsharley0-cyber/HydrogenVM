@@ -547,6 +547,7 @@ struct LibraryView: View {
     /// Default display mode for games that have no setting of their own (PlayerSettings).
     @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleMode = PlayerScaleMode.fit.rawValue
     @AppStorage("hvm.zombies") private var zombies = false
+    @AppStorage("player.safeModeAlwaysRetry") private var safeModeAlwaysRetry = false
     @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
     @State private var store = LibraryStore()
     @State private var pickingFile = false
@@ -674,6 +675,7 @@ struct LibraryView: View {
                             }
                         }
                         Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
+                        Toggle("Always retry crashed games in Safe Mode", isOn: $safeModeAlwaysRetry)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
