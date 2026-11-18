@@ -1,5 +1,6 @@
 import io
 from pathlib import Path
+import plistlib
 import random
 import struct
 import sys
@@ -21,6 +22,24 @@ class FrameTests(unittest.TestCase):
         self.assertEqual(events[0], 'touch 0 80.000 360.000')
         self.assertEqual(events[-1], 'touch 3 160.000 120.000')
         self.assertEqual([line.split()[1] for line in events], ['0'] + ['1'] * 5 + ['3'])
+
+    def test_android_landscape_uses_portrait_host_points(self):
+        frame = bot.Frame(960, 640, 2, b'')
+        with patch.object(bot.time, 'sleep'):
+            for android, expected in [(True, '80.000 120.000'), (False, '120.000 240.000')]:
+                controls = io.StringIO()
+                bot.gesture(controls, frame, [(0.25, 0.75)], android=android)
+                self.assertEqual(controls.getvalue().splitlines(), ['touch 0 ' + expected, 'touch 3 ' + expected])
+
+    def test_detects_apk_variants_and_imported_bundles(self):
+        for name in ('game.apk', 'game.apks', 'game.apkm', 'game.xapk'):
+            self.assertTrue(bot.android_game(Path(name)))
+        with TemporaryDirectory() as tmp:
+            app = Path(tmp)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'HydrogenVMAndroidLibrary': 'libgame.so'}))
+            self.assertTrue(bot.android_game(app))
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable': 'Game'}))
+            self.assertFalse(bot.android_game(app))
 
     def test_frame_and_text_heuristic(self):
         with TemporaryDirectory() as tmp:
