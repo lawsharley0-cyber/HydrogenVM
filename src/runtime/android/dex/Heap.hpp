@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -37,7 +38,8 @@ public:
 
 class Arena final : public Heap {
 public:
-    explicit Arena(size_t byteLimit = 128 * 1024 * 1024);
+    using ClassAssignable = std::function<bool(std::u16string_view, std::u16string_view)>;
+    explicit Arena(size_t byteLimit = 128 * 1024 * 1024, ClassAssignable classAssignable = {});
     ~Arena() override;
     uint32_t object(std::u16string type) override;
     uint32_t intern(std::u16string text) override;
@@ -54,6 +56,7 @@ public:
 private:
     struct Storage;
     std::unique_ptr<Storage> storage_;
+    ClassAssignable classAssignable_;
 };
 
 } // namespace Hydrogen::Runtime::Android::Dex

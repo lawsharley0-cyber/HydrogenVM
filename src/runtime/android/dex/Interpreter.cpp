@@ -289,8 +289,18 @@ void fillData(Heap& heap, const Code& code, uint32_t pc, uint32_t ref) {
 
 } // namespace
 
-Execution execute(Heap& heap, const File& file, const EncodedMethod& method, std::span<const Value> args,
-                  uint64_t instructionLimit) {
+Execution executeLinked(Heap& heap, Linkage* linkage, const File& file, const EncodedMethod& method,
+                        std::span<const Value> args, Budget& budget) {
+    if (budget.depth >= 256) throw JavaException{u"Ljava/lang/StackOverflowError;"};
+    struct Depth {
+        Budget& budget;
+        explicit Depth(Budget& b) : budget(b) { ++budget.depth; }
+        ~Depth() { --budget.depth; }
+    } depth(budget);
+    auto services = [&]() -> Linkage& {
+        if (!linkage) throw FormatError("instruction requires a linked DEX class path");
+        return *linkage;
+    };
     if (!method.codeOffset) throw FormatError("method has no code");
     const auto code = file.code(method.codeOffset);
     const auto proto = file.proto(file.method(method.index).proto);
@@ -312,13 +322,16 @@ Execution execute(Heap& heap, const File& file, const EncodedMethod& method, std
 
     MonitorScope monitors(heap);
     std::optional<JavaException> pending;
+    std::optional<Value> result;
     uint32_t pc = 0;
-    while (instructionLimit--) {
+    while (budget.remaining != 0) {
+        --budget.remaining;
         const auto first = unit(code, pc);
         const unsigned op = first & 255, a8 = first >> 8, a4 = a8 & 15, b4 = a8 >> 4;
         const auto n = [&](size_t k) { return unit(code, size_t(pc) + k); };
         uint32_t next = pc + 1;
         if (op != 0x0d) pending.reset();
+        if (op < 0x0a || op > 0x0c) result.reset();
         try {
             if (op >= 0x7b && op <= 0x8f) {
                 unary(f, op, a4, b4);
@@ -352,6 +365,13 @@ Execution execute(Heap& heap, const File& file, const EncodedMethod& method, std
                         else if (op <= 6) f.wide(dest, f.wide(source));
                         else f.put(dest, {ValueKind::Reference, f.reference(source)});
                         next = pc + encoding + 1;
+                        break;
+                    }
+                    case 0x0a: case 0x0b: case 0x0c: {
+                        constexpr ValueKind kinds[]{ValueKind::Word, ValueKind::Wide, ValueKind::Reference};
+                        if (!result || result->kind != kinds[op - 0x0a]) throw FormatError("invalid move-result");
+                        f.put(a8, *result);
+                        result.reset();
                         break;
                     }
                     case 0x0d:
@@ -400,6 +420,10 @@ Execution execute(Heap& heap, const File& file, const EncodedMethod& method, std
                         next = pc + (op == 0x1a ? 2 : 3);
                         break;
                     }
+                    case 0x1c:
+                        f.put(a8, {ValueKind::Reference, services().classObject(file.type(n(1)))});
+                        next = pc + 2;
+                        break;
                     case 0x1d: monitors.enter(f.reference(a8)); break;
                     case 0x1e: monitors.leave(f.reference(a8)); break;
                     case 0x1f: case 0x20: {
@@ -411,10 +435,31 @@ Execution execute(Heap& heap, const File& file, const EncodedMethod& method, std
                         break;
                     }
                     case 0x21: f.word(a4, heap.length(f.reference(b4))); break;
+                    case 0x22:
+                        f.put(a8, {ValueKind::Reference, services().newInstance(file.type(n(1)), budget)});
+                        next = pc + 2;
+                        break;
                     case 0x23:
                         f.put(a4, {ValueKind::Reference, heap.array(file.type(n(1)), as<int32_t>(f.word(b4)))});
                         next = pc + 2;
                         break;
+                    case 0x24: case 0x25: {
+                        const bool range = op == 0x25;
+                        const unsigned count = range ? a8 : b4;
+                        const auto descriptor = file.type(n(1));
+                        if (descriptor.size() < 2 || descriptor[0] != u'[' || descriptor[1] == u'J' ||
+                            descriptor[1] == u'D' || (!range && count > 5))
+                            throw FormatError("invalid filled-new-array operands");
+                        const auto reference = heap.array(descriptor, int32_t(count));
+                        const unsigned registers = n(2);
+                        for (unsigned i = 0; i < count; ++i) {
+                            const unsigned source = range ? registers + i : i == 4 ? a4 : (registers >> (4 * i)) & 15;
+                            heap.setElement(reference, int32_t(i), arrayValue(f, source, descriptor[1]));
+                        }
+                        result = Value{ValueKind::Reference, reference};
+                        next = pc + 3;
+                        break;
+                    }
                     case 0x26:
                         fillData(heap, code, pc, f.reference(a8));
                         next = pc + 3;
@@ -457,6 +502,50 @@ Execution execute(Heap& heap, const File& file, const EncodedMethod& method, std
                         arrayOp(heap, f, op, a8, n(1) & 255, n(1) >> 8);
                         next = pc + 2;
                         break;
+                    case 0x52: case 0x53: case 0x54: case 0x55: case 0x56: case 0x57: case 0x58:
+                    case 0x59: case 0x5a: case 0x5b: case 0x5c: case 0x5d: case 0x5e: case 0x5f:
+                    case 0x60: case 0x61: case 0x62: case 0x63: case 0x64: case 0x65: case 0x66:
+                    case 0x67: case 0x68: case 0x69: case 0x6a: case 0x6b: case 0x6c: case 0x6d: {
+                        const bool stat = op >= 0x60;
+                        const bool put = stat ? op >= 0x67 : op >= 0x59;
+                        const unsigned reg = stat ? a8 : a4;
+                        const auto index = n(1);
+                        const auto type = file.type(file.field(index).type);
+                        const std::optional<uint32_t> receiver = stat ? std::nullopt : std::optional(f.reference(b4));
+                        std::optional<Value> write;
+                        if (put) write = arrayValue(f, reg, type.at(0));
+                        const auto value = services().field(file, index, receiver, write, budget);
+                        if (!put) f.put(reg, value);
+                        next = pc + 2;
+                        break;
+                    }
+                    case 0x6e: case 0x6f: case 0x70: case 0x71: case 0x72:
+                    case 0x74: case 0x75: case 0x76: case 0x77: case 0x78: {
+                        const bool range = op >= 0x74;
+                        const auto kind = InvokeKind(op - (range ? 0x74 : 0x6e));
+                        const unsigned count = range ? a8 : b4;
+                        const unsigned registers = n(2);
+                        if (!range && count > 5) throw FormatError("invalid invoke register count");
+                        const auto argReg = [&](unsigned i) {
+                            if (i >= count) throw FormatError("invoke argument outside register list");
+                            return range ? registers + i : i == 4 ? a4 : (registers >> (4 * i)) & 15;
+                        };
+                        std::vector<Value> call;
+                        unsigned i = 0;
+                        if (kind != InvokeKind::Static)
+                            call.push_back({ValueKind::Reference, f.reference(argReg(i++))});
+                        for (const auto t : file.proto(file.method(n(1)).proto).parameters) {
+                            const auto param = file.type(t);
+                            const unsigned reg = argReg(i++);
+                            if ((param == u"J" || param == u"D") && argReg(i++) != reg + 1)
+                                throw FormatError("wide invoke register pair is discontiguous");
+                            call.push_back(arrayValue(f, reg, param.at(0)));
+                        }
+                        if (i != count) throw FormatError("invoke argument word count disagrees with prototype");
+                        result = services().invoke(file, method, n(1), kind, call, budget);
+                        next = pc + 3;
+                        break;
+                    }
                     default: throw FormatError("unsupported Dalvik opcode " + std::to_string(op));
                 }
             }
@@ -470,6 +559,12 @@ Execution execute(Heap& heap, const File& file, const EncodedMethod& method, std
         pc = next;
     }
     throw FormatError("Dalvik instruction limit exceeded");
+}
+
+Execution execute(Heap& heap, const File& file, const EncodedMethod& method,
+                  std::span<const Value> args, uint64_t instructionLimit) {
+    Budget budget{instructionLimit};
+    return executeLinked(heap, nullptr, file, method, args, budget);
 }
 
 } // namespace Hydrogen::Runtime::Android::Dex

@@ -66,7 +66,8 @@ struct Arena::Storage {
     }
 };
 
-Arena::Arena(size_t byteLimit) : storage_(std::make_unique<Storage>(byteLimit)) {}
+Arena::Arena(size_t byteLimit, ClassAssignable classAssignable)
+    : storage_(std::make_unique<Storage>(byteLimit)), classAssignable_(std::move(classAssignable)) {}
 Arena::~Arena() = default;
 
 uint32_t Arena::object(std::u16string type) {
@@ -172,16 +173,22 @@ bool Arena::assignable(std::u16string_view from, std::u16string_view to) const {
         return false;
     }
     // Runtime-generated exception hierarchy until the class linker is attached.
-    if (from == u"Ljava/lang/OutOfMemoryError;")
+    if (from == u"Ljava/lang/OutOfMemoryError;" || from == u"Ljava/lang/StackOverflowError;")
         return to == u"Ljava/lang/Error;" || to == u"Ljava/lang/VirtualMachineError;" || to == u"Ljava/lang/Throwable;";
+    if (from == u"Ljava/lang/NoClassDefFoundError;" || from == u"Ljava/lang/ExceptionInInitializerError;" ||
+        from == u"Ljava/lang/UnsatisfiedLinkError;" || from == u"Ljava/lang/NoSuchFieldError;" ||
+        from == u"Ljava/lang/NoSuchMethodError;" || from == u"Ljava/lang/AbstractMethodError;" ||
+        from == u"Ljava/lang/IncompatibleClassChangeError;" || from == u"Ljava/lang/InstantiationError;")
+        return to == u"Ljava/lang/Error;" || to == u"Ljava/lang/LinkageError;" || to == u"Ljava/lang/Throwable;";
     if (from == u"Ljava/lang/ArrayIndexOutOfBoundsException;" && to == u"Ljava/lang/IndexOutOfBoundsException;")
         return true;
     if (from == u"Ljava/lang/ArithmeticException;" || from == u"Ljava/lang/NullPointerException;" ||
         from == u"Ljava/lang/ArrayIndexOutOfBoundsException;" || from == u"Ljava/lang/ClassCastException;" ||
         from == u"Ljava/lang/NegativeArraySizeException;" || from == u"Ljava/lang/ArrayStoreException;" ||
-        from == u"Ljava/lang/IllegalMonitorStateException;")
+        from == u"Ljava/lang/IllegalMonitorStateException;" || from == u"Ljava/lang/UnsupportedOperationException;" ||
+        from == u"Ljava/lang/IllegalThreadStateException;")
         return to == u"Ljava/lang/RuntimeException;" || to == u"Ljava/lang/Exception;" || to == u"Ljava/lang/Throwable;";
-    return false;
+    return classAssignable_ && classAssignable_(from, to);
 }
 
 } // namespace Hydrogen::Runtime::Android::Dex
