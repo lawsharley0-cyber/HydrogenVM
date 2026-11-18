@@ -17,6 +17,7 @@ inline size_t etc1Size(int w, int h) { return size_t((w + 3) / 4) * size_t((h + 
 
 // Decodes `w` x `h` pixels from `data` (at least etc1Size bytes) to tightly packed RGB8,
 // top row first as in the source.
+void decodeEtc1Block(const uint8_t* data, uint8_t (&rgb)[4][4][3]);
 std::vector<uint8_t> decodeEtc1(const uint8_t* data, int w, int h);
 
 } // namespace Hydrogen::Runtime::Android
