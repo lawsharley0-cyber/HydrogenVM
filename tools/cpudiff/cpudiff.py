@@ -289,6 +289,8 @@ def not_comparable(asm: str) -> str:
         return "PC-relative load or store (reads neighbouring test slots, laid out differently)"
     if re.search(r"\bpc\b", asm):
         return "PC as an operand (UNPREDICTABLE for most instructions)"
+    if re.search(r"\bvmrs\b.*\b(mvfr[01]|fpsid)\b", asm):
+        return "VFP ID register (describes the emulated core; Unicorn models a different one)"
     for ins in asm.split(";"):
         m = re.match(r"\s*(ldr|str)(d|ex|exd|b|h|sb|sh)?\w*\s+(r\d+|sp|lr)(?:,\s*(r\d+|sp|lr))?,\s*\[(r\d+|sp)\]?.*?(!|\],\s*#|\],\s*-?r)", ins)
         if m and m.group(5) in (m.group(3), m.group(4)):
