@@ -1,5 +1,6 @@
 // HydrogenVM — an Android game's activity: the Java classes its native code calls, and the
 // lifecycle and frame loop a GLSurfaceView would drive. See Android.hpp.
+#include "runtime/android/BionicInternal.hpp"
 #include "runtime/android/Jni.hpp"
 #include "runtime/android/Surface.hpp"
 #include "runtime/audio/Audio.hpp"
@@ -1065,6 +1066,320 @@ struct Sdl12Driver final : Driver {
     bool wantsExit(Ctx&) override { return exited; }
 };
 
+// NativeActivity (android.app.NativeActivity + android_native_app_glue):
+// ANativeActivity_onCreate populates ANativeActivityCallbacks, then the game's android_main
+// thread runs its own ALooper_pollAll + EGL loop on ANativeWindow and AInputQueue.
+struct NativeActivityDriver final : Driver {
+    Jni& j;
+    uint32_t activityPtr = 0, callbacksPtr = 0;
+    explicit NativeActivityDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "NativeActivity"; }
+    bool ownsGl() const override { return true; }
+    static bool matches(const Library& l) { return l.find("ANativeActivity_onCreate").has_value(); }
+    void cb(Ctx& x, uint32_t offset, std::initializer_list<uint32_t> args) {
+        if (!callbacksPtr) return;
+        const uint32_t fn = x.mem.read<uint32_t>(callbacksPtr + offset);
+        if (fn) x.proc.callGuest(x.cpu, fn, args);
+    }
+    void create(Ctx& x) override {
+        const auto& lib = x.proc.service<Library>();
+        const auto onCreate = lib.find("ANativeActivity_onCreate");
+        if (!onCreate) return;
+        const std::string pkg = x.proc.infoPlist() ? x.proc.infoPlist()->getString("CFBundleIdentifier", "app") : "app";
+        const std::string internal = x.proc.homePath() + "/Documents";
+        const std::string external = externalRoot(x.proc) + "/Android/data/" + pkg + "/files";
+        const std::string obb = externalRoot(x.proc) + "/Android/obb/" + pkg;
+        std::error_code ec;
+        fs::create_directories(internal, ec);
+        fs::create_directories(external, ec);
+        fs::create_directories(obb, ec);
+        linkExternalData(x.proc, externalRoot(x.proc));
+
+        callbacksPtr = x.proc.allocStatic(64);
+        activityPtr = x.proc.allocStatic(40);
+        x.mem.write<uint32_t>(activityPtr + 0, callbacksPtr);
+        x.mem.write<uint32_t>(activityPtr + 4, j.vm);
+        x.mem.write<uint32_t>(activityPtr + 8, j.envFor(x.proc));
+        x.mem.write<uint32_t>(activityPtr + 12, uint32_t(j.staticFields["hvm.activity"]));
+        x.mem.write<uint32_t>(activityPtr + 16, x.proc.allocCString(x.proc.guestPath(internal)));
+        x.mem.write<uint32_t>(activityPtr + 20, x.proc.allocCString(x.proc.guestPath(external)));
+        x.mem.write<int32_t>(activityPtr + 24, 19);   // sdkVersion
+        x.mem.write<uint32_t>(activityPtr + 28, 0);   // instance
+        x.mem.write<uint32_t>(activityPtr + 32, assetManagerHandle(x.proc));
+        x.mem.write<uint32_t>(activityPtr + 36, x.proc.allocCString(x.proc.guestPath(obb)));
+
+        x.proc.callGuest(x.cpu, *onCreate, {activityPtr, 0, 0});
+        cb(x, 0, {activityPtr});   // onStart
+        cb(x, 4, {activityPtr});   // onResume
+    }
+    void surfaceReady(Ctx& x, const Surface&) override {
+        cb(x, 44, {activityPtr, inputQueue(x.proc)});           // onInputQueueCreated
+        cb(x, 28, {activityPtr, screenNativeWindow(x.proc)});   // onNativeWindowCreated
+        cb(x, 24, {activityPtr, 1});                            // onWindowFocusChanged(true)
+    }
+    void frame(Ctx&) override {}
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t count) override {
+        pushTouchEvent(x.proc, ph, px, py, id, count);
+    }
+    void pause(Ctx& x) override {
+        cb(x, 24, {activityPtr, 0});   // onWindowFocusChanged(false)
+        cb(x, 12, {activityPtr});      // onPause
+    }
+    void resume(Ctx& x) override {
+        cb(x, 4, {activityPtr});       // onResume
+        cb(x, 24, {activityPtr, 1});   // onWindowFocusChanged(true)
+    }
+};
+
+// Marmalade SDK (libs3e_android.so, e.g. Vector): LoaderActivity / LoaderThread.
+struct MarmaladeDriver final : Driver {
+    Jni& j;
+    jobject loaderThread = 0;
+    bool threaded = false;
+    std::atomic<bool> exited{false};
+    explicit MarmaladeDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "Marmalade"; }
+    bool ownsGl() const override { return threaded; }
+    static bool matches(const Library& l) {
+        for (const auto& lib : l.libs)
+            if (lib->name.rfind("libs3e", 0) == 0) return true;
+        return l.find("Java_com_ideaworks3d_marmalade_LoaderThread_runNative").has_value() ||
+               l.find("Java_com_ideaworks3d_marmalade_LoaderThread_initNative").has_value();
+    }
+    void create(Ctx& x) override {
+        const std::string kAct = "com/ideaworks3d/marmalade/LoaderActivity";
+        const std::string kThr = "com/ideaworks3d/marmalade/LoaderThread";
+        const std::string kView = "com/ideaworks3d/marmalade/LoaderView";
+        for (const auto& c : {kAct, kThr, kView, std::string("com/ideaworks3d/marmalade/LoaderAPI"),
+                              std::string("com/ideaworks3d/marmalade/ResourceUtility")})
+            j.quietClasses.insert(c);
+        const jobject act = jobject(j.staticFields["hvm.activity"]);
+        const jobject assets = jobject(j.staticFields["hvm.assets"]);
+        j.method(kAct, "getAssets", "()Landroid/content/res/AssetManager;", [assets](Jni&, Ctx&, jobject, const auto&) { return JValue(assets); });
+        j.method(kThr, "getActivity", "()Lcom/ideaworks3d/marmalade/LoaderActivity;", [act](Jni&, Ctx&, jobject, const auto&) { return JValue(act); });
+        loaderThread = j.newObject(kThr);
+        if (JObject* o = j.get(loaderThread)) o->permanent = true;
+
+        const auto& lib = x.proc.service<Library>();
+        threaded = lib.find("Java_com_ideaworks3d_marmalade_LoaderThread_runNative").has_value();
+        j.callNative(x, kThr, "initNative", loaderThread, {});
+        j.callNative(x, kAct, "onCreateNative", act, {});
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        const std::string kThr = "com/ideaworks3d/marmalade/LoaderThread";
+        const std::string kView = "com/ideaworks3d/marmalade/LoaderView";
+        j.callNative(x, kView, "onSurfaceCreatedNative", j.newObject(kView), {});
+        j.callNative(x, kView, "onSurfaceChangedNative", j.newObject(kView), {uint32_t(s.width), uint32_t(s.height)});
+        if (threaded) {
+            const uint32_t entry = x.proc.registerHostFunction("__hvm_marmalade_main", [this, kThr](Ctx& tx) {
+                j.callNative(tx, kThr, "runNative", loaderThread, {});
+                exited.store(true);
+            });
+            x.proc.startThread(entry, 0, 2u << 20, true);
+        }
+    }
+    void frame(Ctx& x) override {
+        if (!threaded) j.callNative(x, "com/ideaworks3d/marmalade/LoaderThread", "onDrawFrameNative", loaderThread, {});
+    }
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t) override {
+        const uint32_t action = ph == TouchPhase::Began ? 0 : ph == TouchPhase::Moved ? 2 : 1;
+        j.callNative(x, "com/ideaworks3d/marmalade/LoaderThread", "onTouchEventNative", loaderThread,
+                     {id, action, uint32_t(int(px)), uint32_t(int(py))});
+    }
+    void pause(Ctx& x) override { j.callNative(x, "com/ideaworks3d/marmalade/LoaderThread", "onPauseNative", loaderThread, {}); }
+    void resume(Ctx& x) override { j.callNative(x, "com/ideaworks3d/marmalade/LoaderThread", "onResumeNative", loaderThread, {}); }
+    bool wantsExit(Ctx&) override { return exited.load(); }
+};
+
+// Allegro 5 (org.liballeg.android.AllegroActivity, e.g. Open Surge).
+struct AllegroDriver final : Driver {
+    Jni& j;
+    jobject act = 0, surf = 0, touchCls = 0;
+    explicit AllegroDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "Allegro 5"; }
+    bool ownsGl() const override { return true; }
+    static bool matches(const Library& l) {
+        return l.find("Java_org_liballeg_android_AllegroActivity_nativeOnCreate").has_value();
+    }
+    void create(Ctx& x) override {
+        const std::string kAct = "org/liballeg/android/AllegroActivity";
+        const std::string kSurf = "org/liballeg/android/AllegroSurface";
+        for (const char* c : {"org/liballeg/android/AllegroActivity", "org/liballeg/android/AllegroSurface",
+                              "org/liballeg/android/AllegroAPKList", "org/liballeg/android/AllegroAPKStream",
+                              "org/liballeg/android/Const", "org/liballeg/android/KeyListener",
+                              "org/liballeg/android/TouchListener", "org/liballeg/android/Sensors"})
+            j.quietClasses.insert(c);
+        act = j.newObject(kAct);
+        if (JObject* o = j.get(act)) o->permanent = true;
+        surf = j.newObject(kSurf);
+        if (JObject* o = j.get(surf)) o->permanent = true;
+        touchCls = j.classFor("org/liballeg/android/TouchListener");
+        j.method(kAct, "getResources", "()Landroid/content/res/Resources;", [](Jni& jni, Ctx&, jobject, const auto&) {
+            return JValue(jni.newObject("android/content/res/Resources"));
+        });
+        j.method(kAct, "getAssets", "()Landroid/content/res/AssetManager;", [](Jni& jni, Ctx&, jobject, const auto&) {
+            return JValue(jni.staticFields["hvm.assets"]);
+        });
+        j.method(kAct, "getUserLibName", "()Ljava/lang/String;", [](Jni& jni, Ctx& tx, jobject, const auto&) {
+            return JValue(jni.newString(tx.proc.service<Library>().name));
+        });
+        j.method(kAct, "getResourcesDir", "()Ljava/lang/String;", [](Jni& jni, Ctx& tx, jobject, const auto&) {
+            const std::string d = tx.proc.homePath() + "/Documents";
+            std::error_code ec; fs::create_directories(d, ec);
+            return JValue(jni.newString(tx.proc.guestPath(d)));
+        });
+        j.method(kAct, "getPubDataDir", "()Ljava/lang/String;", [](Jni& jni, Ctx& tx, jobject, const auto&) {
+            const std::string d = tx.proc.homePath() + "/Documents";
+            std::error_code ec; fs::create_directories(d, ec);
+            return JValue(jni.newString(tx.proc.guestPath(d)));
+        });
+        j.method(kAct, "getTempDir", "()Ljava/lang/String;", [](Jni& jni, Ctx& tx, jobject, const auto&) {
+            const std::string d = tx.proc.homePath() + "/tmp";
+            std::error_code ec; fs::create_directories(d, ec);
+            return JValue(jni.newString(tx.proc.guestPath(d)));
+        });
+        j.method(kAct, "getApkPath", "()Ljava/lang/String;", [](Jni& jni, Ctx& tx, jobject, const auto&) {
+            return JValue(jni.newString(tx.proc.guestPath(tx.proc.config().bundlePath + "/base.apk")));
+        });
+        j.method(kAct, "getModel", "()Ljava/lang/String;", [](Jni& jni, Ctx&, jobject, const auto&) {
+            return JValue(jni.newString("HydrogenVM"));
+        });
+        j.method(kAct, "getManufacturer", "()Ljava/lang/String;", [](Jni& jni, Ctx&, jobject, const auto&) {
+            return JValue(jni.newString("HydrogenVM"));
+        });
+        j.method(kAct, "showMessageBox", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)I", [](Jni&, Ctx&, jobject, const auto&) {
+            return JValue(1);
+        });
+        j.method(kAct, "postRunnable", "(Ljava/lang/Runnable;)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+        j.callNative(x, kAct, "nativeOnCreate", act, {});
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        j.callNative(x, "org/liballeg/android/AllegroSurface", "nativeOnCreate", surf, {});
+        j.callNative(x, "org/liballeg/android/AllegroSurface", "nativeOnChange", surf, {1u, uint32_t(s.width), uint32_t(s.height)});
+        j.callNative(x, "org/liballeg/android/AllegroActivity", "nativeOnResume", act, {});
+    }
+    void frame(Ctx&) override {}
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t) override {
+        const uint32_t action = ph == TouchPhase::Began ? 0 : ph == TouchPhase::Moved ? 2 : ph == TouchPhase::Cancelled ? 3 : 1;
+        j.callNative(x, "org/liballeg/android/TouchListener", "nativeOnTouch", touchCls,
+                     {id, action, uint32_t(jfloat(px)), uint32_t(jfloat(py))});
+    }
+    void pause(Ctx& x) override { j.callNative(x, "org/liballeg/android/AllegroActivity", "nativeOnPause", act, {}); }
+    void resume(Ctx& x) override { j.callNative(x, "org/liballeg/android/AllegroActivity", "nativeOnResume", act, {}); }
+};
+
+// HyperRogue (com.roguetemple.hyperroid.HyperRogue).
+struct HyperRogueDriver final : Driver {
+    Jni& j;
+    jobject cls = 0;
+    explicit HyperRogueDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "HyperRogue"; }
+    static bool matches(const Library& l) {
+        return l.find("Java_com_roguetemple_hyperroid_HyperRogue_draw").has_value();
+    }
+    void create(Ctx& x) override {
+        const std::string kHR = "com/roguetemple/hyperroid/HyperRogue";
+        j.quietClasses.insert(kHR);
+        cls = j.classFor(kHR);
+        const std::string files = x.proc.homePath() + "/Documents";
+        std::error_code ec;
+        fs::create_directories(files, ec);
+        j.callNative(x, kHR, "setFilesDir", cls, {j.newString(x.proc.guestPath(files))});
+        j.callNative(x, kHR, "initGame", cls, {});
+    }
+    void surfaceReady(Ctx& x, const Surface&) override {
+        j.callNative(x, "com/roguetemple/hyperroid/HyperRogue", "glhrinit", cls, {});
+    }
+    void frame(Ctx& x) override {
+        j.callNative(x, "com/roguetemple/hyperroid/HyperRogue", "update", cls, {});
+        j.callNative(x, "com/roguetemple/hyperroid/HyperRogue", "draw", cls, {});
+    }
+    void touch(Ctx&, TouchPhase, float, float, uint32_t, uint32_t) override {}
+};
+
+// Cocos2d-x (org.cocos2dx.lib.Cocos2dxRenderer / Cocos2dxActivity / Cocos2dxHelper).
+struct Cocos2dxDriver final : Driver {
+    Jni& j;
+    jobject renderer = 0;
+    explicit Cocos2dxDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "Cocos2d-x"; }
+    static bool matches(const Library& l) {
+        return l.find("Java_org_cocos2dx_lib_Cocos2dxRenderer_nativeInit").has_value() ||
+               l.find("Java_org_cocos2dx_lib_Cocos2dxRenderer_nativeRender").has_value();
+    }
+    void create(Ctx&) override {
+        for (const char* c : {"org/cocos2dx/lib/Cocos2dxActivity", "org/cocos2dx/lib/Cocos2dxRenderer",
+                              "org/cocos2dx/lib/Cocos2dxHelper", "org/cocos2dx/lib/Cocos2dxBitmap"})
+            j.quietClasses.insert(c);
+        renderer = j.newObject("org/cocos2dx/lib/Cocos2dxRenderer");
+        if (JObject* o = j.get(renderer)) o->permanent = true;
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        j.callNative(x, "org/cocos2dx/lib/Cocos2dxRenderer", "nativeInit", renderer, {uint32_t(s.width), uint32_t(s.height)});
+    }
+    void frame(Ctx& x) override {
+        j.callNative(x, "org/cocos2dx/lib/Cocos2dxRenderer", "nativeRender", renderer, {});
+    }
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t) override {
+        const std::string kR = "org/cocos2dx/lib/Cocos2dxRenderer";
+        if (ph == TouchPhase::Began)
+            j.callNative(x, kR, "nativeTouchesBegin", renderer, {id, uint32_t(jfloat(px)), uint32_t(jfloat(py))});
+        else if (ph == TouchPhase::Moved) {
+            const jobject ids = j.newArray('I', 1), xs = j.newArray('F', 1), ys = j.newArray('F', 1);
+            if (JObject* o = j.get(ids)) std::memcpy(o->data.data(), &id, 4);
+            if (JObject* o = j.get(xs)) std::memcpy(o->data.data(), &px, 4);
+            if (JObject* o = j.get(ys)) std::memcpy(o->data.data(), &py, 4);
+            j.callNative(x, kR, "nativeTouchesMove", renderer, {ids, xs, ys});
+        } else if (ph == TouchPhase::Cancelled) {
+            const jobject ids = j.newArray('I', 1), xs = j.newArray('F', 1), ys = j.newArray('F', 1);
+            if (JObject* o = j.get(ids)) std::memcpy(o->data.data(), &id, 4);
+            if (JObject* o = j.get(xs)) std::memcpy(o->data.data(), &px, 4);
+            if (JObject* o = j.get(ys)) std::memcpy(o->data.data(), &py, 4);
+            j.callNative(x, kR, "nativeTouchesCancel", renderer, {ids, xs, ys});
+        } else {
+            j.callNative(x, kR, "nativeTouchesEnd", renderer, {id, uint32_t(jfloat(px)), uint32_t(jfloat(py))});
+        }
+    }
+    void pause(Ctx& x) override { j.callNative(x, "org/cocos2dx/lib/Cocos2dxRenderer", "nativeOnPause", renderer, {}); }
+    void resume(Ctx& x) override { j.callNative(x, "org/cocos2dx/lib/Cocos2dxRenderer", "nativeOnResume", renderer, {}); }
+};
+
+// GameMaker (com.yoyogames.runner.RunnerJNILib).
+struct GameMakerDriver final : Driver {
+    Jni& j;
+    jobject cls = 0;
+    int width = 0, height = 0;
+    explicit GameMakerDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "GameMaker"; }
+    static bool matches(const Library& l) {
+        return l.find("Java_com_yoyogames_runner_RunnerJNILib_Process").has_value() ||
+               l.find("Java_com_yoyogames_runner_RunnerJNILib_Startup").has_value();
+    }
+    void create(Ctx& x) override {
+        const std::string kGM = "com/yoyogames/runner/RunnerJNILib";
+        j.quietClasses.insert(kGM);
+        cls = j.classFor(kGM);
+        const std::string apk = x.proc.guestPath(x.proc.config().bundlePath + "/base.apk");
+        const std::string save = x.proc.guestPath(x.proc.homePath() + "/Documents");
+        const std::string pkg = x.proc.infoPlist() ? x.proc.infoPlist()->getString("CFBundleIdentifier", "app") : "app";
+        j.callNative(x, kGM, "Startup", cls, {j.newString(apk), j.newString(save), j.newString(pkg), 0, 0});
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        width = s.width;
+        height = s.height;
+        j.callNative(x, "com/yoyogames/runner/RunnerJNILib", "RestoreGraphics", cls, {});
+    }
+    void frame(Ctx& x) override {
+        j.callNative(x, "com/yoyogames/runner/RunnerJNILib", "Process", cls,
+                     {uint32_t(width), uint32_t(height), 0, 0, 0, 0, 0, 60});
+    }
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t) override {
+        const uint32_t type = ph == TouchPhase::Began ? 0 : ph == TouchPhase::Moved ? 2 : 1;
+        j.callNative(x, "com/yoyogames/runner/RunnerJNILib", "TouchEvent", cls,
+                     {type, id, uint32_t(jfloat(px)), uint32_t(jfloat(py))});
+    }
+};
+
 std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
     const auto& lib = p.service<Library>();
     if (EaBlastDriver::matches(lib)) return std::make_unique<EaBlastDriver>(j);
@@ -1073,6 +1388,12 @@ std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
     if (LiquidWarsDriver::matches(lib)) return std::make_unique<LiquidWarsDriver>(j);
     if (SdlDriver::matches(lib)) return std::make_unique<SdlDriver>(j);
     if (Sdl12Driver::matches(lib)) return std::make_unique<Sdl12Driver>(j);
+    if (MarmaladeDriver::matches(lib)) return std::make_unique<MarmaladeDriver>(j);
+    if (AllegroDriver::matches(lib)) return std::make_unique<AllegroDriver>(j);
+    if (HyperRogueDriver::matches(lib)) return std::make_unique<HyperRogueDriver>(j);
+    if (Cocos2dxDriver::matches(lib)) return std::make_unique<Cocos2dxDriver>(j);
+    if (GameMakerDriver::matches(lib)) return std::make_unique<GameMakerDriver>(j);
+    if (NativeActivityDriver::matches(lib)) return std::make_unique<NativeActivityDriver>(j);
     return nullptr;
 }
 
