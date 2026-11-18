@@ -206,8 +206,14 @@ def run_unicorn(cases, halt: int):
         uc.mem_write(at, code)
         uc.mem_map(WINDOW, WINDOW_SIZE, unicorn.UC_PROT_READ | unicorn.UC_PROT_WRITE)
         uc.mem_write(WINDOW, pat)
-        uc.reg_write(A.UC_ARM_REG_C1_C0_2, uc.reg_read(A.UC_ARM_REG_C1_C0_2) | (0xF << 20))   # CPACR: VFP/NEON on
-        uc.reg_write(A.UC_ARM_REG_FPEXC, 0x40000000)
+        # VFP/NEON: on by default in Unicorn 2; older versions need CPACR and FPEXC set.
+        for reg, value in ((getattr(A, "UC_ARM_REG_C1_C0_2", None), 0xF << 20), (getattr(A, "UC_ARM_REG_FPEXC", None), 0x40000000)):
+            if reg is None:
+                continue
+            try:
+                uc.reg_write(reg, uc.reg_read(reg) | value)
+            except UcError:
+                pass
         s = case["state"]
         for i, v in enumerate(s["r"]):
             uc.reg_write(A.UC_ARM_REG_R0 + i, v)
