@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — NSURLRequest / NSMutableURLRequest / NSURLConnection. Offline unless the player
 // allowed the game online (then the host's HTTP client fetches: libc/HttpClient.hpp); shut-down
 // servers with a stand-in are answered locally either way (ServerStandIn.cpp).
@@ -174,7 +175,7 @@ id notConnectedError(Ctx& x, id url) {
 
 // ---- Online downloads (the player allowed this game online; libc/HttpClient.hpp)
 std::shared_ptr<HttpClient> onlineClient(Ctx& x) {
-    return x.proc.config().internetAccess ? x.proc.config().httpClient : nullptr;
+    return Compat::internetAccess(x.proc) ? x.proc.config().httpClient : nullptr;
 }
 HttpRequest toHttp(Ctx& x, Request* r) {
     HttpRequest h;

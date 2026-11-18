@@ -112,6 +112,14 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic, readonly, copy) NSArray<NSString *> *glErrorLog;
 /// Path to the current session's input/seed recording (`last-session.hvmrec`).
 @property (nonatomic, readonly, copy, nullable) NSString *recordingPath;
+/// Safe-mode fallback identifier (e.g. "gles1-emulation"), if launched with one.
+@property (nonatomic, copy, nullable) NSString *safeModeFallback;
+/// Safe-mode fallback: force GLES1-over-ES2 emulation.
+@property (nonatomic) BOOL gles1Emulate;
+/// Safe-mode fallback: cap reported GL_MAX_TEXTURE_SIZE (0 = default 4096).
+@property (nonatomic) uint32_t maxTextureSize;
+/// Safe-mode fallback: override guest memory budget in bytes (0 = default).
+@property (nonatomic) uint64_t memoryBudgetBytes;
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line, HVMLogLevel level);
 /// exitCode is the guest's exit status; crashReport is non-nil when it crashed (or failed to load).
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);
@@ -215,6 +223,14 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 + (nullable CGImageRef)decodeImageAtPath:(NSString *)path CF_RETURNS_RETAINED;
 /// Install the CoreText text renderer and ImageIO decoder (call once at launch).
 + (void)installPlatformServices;
+/// Choose ONE safe-mode fallback id from a crash report/log and current session settings.
++ (nullable NSString *)chooseFallbackForCrashReport:(NSString *)crashReport
+                                     internetAccess:(BOOL)internetAccess
+                                    unlockFrameRate:(BOOL)unlockFrameRate
+                                       gles1Emulate:(BOOL)gles1Emulate
+                                     maxTextureSize:(uint32_t)maxTextureSize;
+/// Human-readable label for a safe-mode fallback id.
++ (nullable NSString *)fallbackLabelForId:(NSString *)fallbackId;
 @end
 
 NS_ASSUME_NONNULL_END
