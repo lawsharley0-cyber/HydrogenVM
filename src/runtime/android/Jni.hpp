@@ -7,6 +7,7 @@
 #include "runtime/android/Android.hpp"
 #include "runtime/Process.hpp"
 #include <any>
+#include <atomic>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -46,6 +47,8 @@ class Jni {
 public:
     explicit Jni(Process& p);
     Process& proc;
+    // Retained APK bytecode must never override a hand-written native engine driver.
+    std::atomic<bool> interpretsDex{false};
 
     // Objects.
     jobject add(JObject o);
