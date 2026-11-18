@@ -267,6 +267,7 @@ void registerLibAndroid(Process& p) {
     A(c_country, "AConfiguration_getCountry", "US");
 #undef R
 #undef A
+    registerAAudio(p);
 }
 
 } // namespace Hydrogen::Runtime::Android

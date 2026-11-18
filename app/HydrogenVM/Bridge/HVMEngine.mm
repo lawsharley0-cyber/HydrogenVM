@@ -964,6 +964,26 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p) p->setAcceleration(float(x), float(y), float(z));
 }
 
+- (void)sendAndroidKey:(int32_t)keyCode down:(BOOL)down {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectKey(keyCode, down != NO);
+}
+
+- (void)sendJoystickLX:(float)lx ly:(float)ly rx:(float)rx ry:(float)ry hatX:(float)hatX hatY:(float)hatY {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectJoystick(lx, ly, rx, ry, hatX, hatY);
+}
+
 @end
 
 // --------------------------------------------------------------- engine ---
