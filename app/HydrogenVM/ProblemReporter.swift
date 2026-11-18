@@ -102,6 +102,56 @@ enum ProblemReporter {
         return (body, comments)
     }
 
+    // MARK: Deduplication
+
+    enum DedupeKey: Equatable, Sendable {
+        case signature(String)
+        case console(game: String, message: String)
+    }
+
+    static func dedupeKey(forTitle title: String) -> DedupeKey? {
+        guard title.hasPrefix("["), let close = title.firstIndex(of: "]") else { return nil }
+        let tag = String(title[title.index(after: title.startIndex)..<close]).trimmingCharacters(in: .whitespaces)
+        guard !tag.isEmpty else { return nil }
+        if tag == "console" {
+            let rest = title[title.index(after: close)...].trimmingCharacters(in: .whitespaces)
+            guard let sep = rest.range(of: ": ") else { return nil }
+            let game = String(rest[..<sep.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let msg = String(rest[sep.upperBound...]).trimmingCharacters(in: .whitespaces)
+            guard !game.isEmpty, !msg.isEmpty else { return nil }
+            return .console(game: game, message: msg)
+        }
+        return .signature(tag)
+    }
+
+    static func searchQuery(for key: DedupeKey) -> String {
+        switch key {
+        case .signature(let sig):
+            return "repo:\(repository) is:issue is:open in:title \(sig)"
+        case .console(let game, let message):
+            let snippet = String(message.prefix(80)).replacingOccurrences(of: "\"", with: " ")
+            return "repo:\(repository) is:issue is:open in:title \"[console] \(game): \(snippet)\""
+        }
+    }
+
+    static func matchingIssue(in items: [[String: Any]], for key: DedupeKey) -> (number: Int, url: URL)? {
+        for item in items {
+            guard let number = item["number"] as? Int,
+                  let title = item["title"] as? String,
+                  let html = (item["html_url"] as? String).flatMap(URL.init(string:)) else { continue }
+            if dedupeKey(forTitle: title) == key {
+                return (number, html)
+            }
+        }
+        return nil
+    }
+
+    static func renderSeenAgain(_ report: ProblemReport) -> [String] {
+        let (_, attachmentComments) = render(report)
+        let header = "**Seen again**\n\n\(report.summary)"
+        return [header] + attachmentComments
+    }
+
     // MARK: Sending
 
     enum SendError: LocalizedError {
@@ -115,7 +165,8 @@ enum ProblemReporter {
         }
     }
 
-    /// Sends a report and returns the new issue's web address. On a network failure the report
+    /// Sends a report and returns the issue's web address (either a new issue or an existing
+    /// open issue with the same signature/console message). On a network failure the report
     /// is queued (and the error still thrown), so it goes out later.
     static func send(_ report: ProblemReport) async throws -> URL {
         guard let token else { throw SendError.noToken }
@@ -131,7 +182,25 @@ enum ProblemReporter {
         }
     }
 
+    private static func findExistingIssue(_ report: ProblemReport, token: String) async throws -> (number: Int, url: URL)? {
+        guard let key = dedupeKey(forTitle: report.title) else { return nil }
+        let q = searchQuery(for: key)
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "+&=")
+        guard let encoded = q.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        let res = try await request("GET", "search/issues?q=\(encoded)&per_page=10", token: token)
+        let items = res["items"] as? [[String: Any]] ?? []
+        return matchingIssue(in: items, for: key)
+    }
+
     private static func post(_ report: ProblemReport, token: String) async throws -> URL {
+        if let existing = try? await findExistingIssue(report, token: token) {
+            for comment in renderSeenAgain(report) {
+                _ = try await request("POST", "repos/\(repository)/issues/\(existing.number)/comments",
+                                      token: token, json: ["body": comment])
+            }
+            return existing.url
+        }
         let (body, comments) = render(report)
         let issue = try await request("POST", "repos/\(repository)/issues", token: token,
                                       json: ["title": String(report.title.prefix(250)), "body": body])
@@ -144,14 +213,16 @@ enum ProblemReporter {
         return html
     }
 
-    private static func request(_ method: String, _ path: String, token: String, json: [String: Any]) async throws -> [String: Any] {
+    private static func request(_ method: String, _ path: String, token: String, json: [String: Any]? = nil) async throws -> [String: Any] {
         var req = URLRequest(url: URL(string: "https://api.github.com/\(path)")!)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: json)
+        if let json {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: json)
+        }
         req.timeoutInterval = 30
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw SendError.badResponse }
