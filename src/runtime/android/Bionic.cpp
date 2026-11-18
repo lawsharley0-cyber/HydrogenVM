@@ -16,8 +16,12 @@
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
 #include "runtime/libc/Format.hpp"
+#include "runtime/libc/Network.hpp"
 #include "core/cpu/Engine.hpp"
+#include <array>
 #include <cerrno>
+#include <limits>
+#include <sys/socket.h>
 #include <cmath>
 #include <chrono>
 #include <condition_variable>
@@ -84,6 +88,7 @@ uint32_t b_errno(Ctx& x) {
     }
     return cell;
 }
+int takeLinuxErrno(Ctx& x) { return x.mem.read<int32_t>(b_errno(x)); }
 // Set errno to a Linux value (from a bionic function here).
 void setLinuxErrno(Ctx& x, int e) {
     x.mem.write<uint32_t>(darwinErrnoAddr(x), 0);
@@ -255,7 +260,7 @@ int32_t b_fcntl(Ctx& x, int32_t fd, int32_t cmd, VarArgs va) {
         return (d & 3) | (d & 4 ? 0x800 : 0) | (d & 8 ? 0x400 : 0);
     }
     if (cmd == 4) return int32_t(callIos(x, "_fcntl", {uint32_t(fd), 4u, (arg & 0x800 ? 4u : 0u) | (arg & 0x400 ? 8u : 0u)}));
-    return int32_t(callIos(x, "_fcntl", {uint32_t(fd), uint32_t(cmd), arg}));
+    return androidFcntl(x, fd, cmd, arg);
 }
 
 // bionic (ARM) struct stat: the kernel's stat64, 104 bytes.
@@ -320,11 +325,122 @@ int32_t b_lseek(Ctx& x, int32_t fd, int32_t off, int32_t whence) {
 int32_t b_ftruncate(Ctx& x, int32_t fd, int32_t len) {
     return int32_t(callIos(x, "_ftruncate", {uint32_t(fd), 0u, uint32_t(len), len < 0 ? 0xFFFFFFFFu : 0u}));
 }
+uint32_t mapFile(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot, uint32_t flags, int32_t fd, int64_t off) {
+    const bool anonymous = flags & 0x20;
+    if (!len || len > UINT32_MAX - 4095 || (prot & ~7) || (flags & 3) == 0 || (flags & 3) == 3 ||
+        off < 0 || (off & 4095)) {
+        setLinuxErrno(x, 22);
+        return UINT32_MAX;
+    }
+    if (!anonymous) {
+        struct stat st{};
+        if (::fstat(fd, &st) < 0) return failHost<uint32_t>(x);
+        if (!S_ISREG(st.st_mode)) { setLinuxErrno(x, 19); return UINT32_MAX; }
+        if ((flags & 1) && (prot & Memory::kProtWrite)) { setLinuxErrno(x, 95); return UINT32_MAX; }
+        if ((::fcntl(fd, F_GETFL) & O_ACCMODE) == O_WRONLY) {
+            setLinuxErrno(x, 13);
+            return UINT32_MAX;
+        }
+    }
+    uint32_t d = flags & 0x13;      // MAP_SHARED / PRIVATE / FIXED
+    if (anonymous) d |= 0x1000;
+    if (flags & 0x4000) d |= 0x40;  // MAP_NORESERVE
+    const auto dest = uint32_t(callIos(x, "_mmap", {addr, len, uint32_t(prot), d, uint32_t(fd), 0,
+                                                  uint32_t(off), uint32_t(uint64_t(off) >> 32)}));
+    if (dest != UINT32_MAX && !anonymous)
+        x.mem.protect(dest, (len + 4095) & ~4095u, uint8_t(prot));
+    return dest;
+}
 uint32_t b_mmap(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot, uint32_t flags, int32_t fd, int32_t off) {
-    uint32_t d = flags & 0x13;                     // SHARED, PRIVATE, FIXED
-    if (flags & 0x20) d |= 0x1000;                 // MAP_ANONYMOUS
-    if (flags & 0x4000) d |= 0x40;                 // MAP_NORESERVE
-    return uint32_t(callIos(x, "_mmap", {addr, len, uint32_t(prot), d, uint32_t(fd), 0u, uint32_t(off), off < 0 ? 0xFFFFFFFFu : 0u}));
+    return mapFile(x, addr, len, prot, flags, fd, off);
+}
+uint32_t b_mmap64(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot, uint32_t flags, int32_t fd, int64_t off) {
+    return mapFile(x, addr, len, prot, flags, fd, off);
+}
+uint32_t b_mmap2(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot, uint32_t flags, int32_t fd, uint32_t pages) {
+    return mapFile(x, addr, len, prot, flags, fd, int64_t(pages) * 4096);
+}
+int32_t b_munmap(Ctx& x, GuestPtr addr, uint32_t length) {
+    if ((addr & 4095) || !length || uint64_t(addr) + length > (1ull << 32)) return linuxFailure(x, 22);
+    const uint32_t block = x.proc.heap().blockSize(addr);
+    // Restore heap backing rights before returning a complete file-mapped allocation.
+    if (block && ((uint64_t(length) + 4095) & ~4095ull) >= block) {
+        x.mem.protect(addr, block, Memory::kProtRW);
+        x.proc.heap().free(addr);
+    } else {
+        return int32_t(callIos(x, "_munmap", {addr, length}));
+    }
+    return 0;
+}
+
+int32_t b_pread64(Ctx& x, int32_t fd, GuestPtr out, uint32_t length, int64_t offset) {
+    if (!guestSpan(x, out, length, Memory::kProtWrite)) return linuxFailure(x, 14);
+    if (offset < 0 || length > INT32_MAX) return linuxFailure(x, 22);
+    return int32_t(callIos(x, "_pread", {uint32_t(fd), out, length, 0, uint32_t(offset),
+                                         uint32_t(uint64_t(offset) >> 32)}));
+}
+int32_t b_pwrite64(Ctx& x, int32_t fd, GuestPtr in, uint32_t length, int64_t offset) {
+    if (!guestSpan(x, in, length, Memory::kProtRead)) return linuxFailure(x, 14);
+    if (offset < 0 || length > INT32_MAX) return linuxFailure(x, 22);
+    return int32_t(callIos(x, "_pwrite", {uint32_t(fd), in, length, 0, uint32_t(offset),
+                                          uint32_t(uint64_t(offset) >> 32)}));
+}
+int32_t b_pread(Ctx& x, int32_t fd, GuestPtr out, uint32_t length, int32_t offset) {
+    return b_pread64(x, fd, out, length, offset);
+}
+int32_t b_pwrite(Ctx& x, int32_t fd, GuestPtr in, uint32_t length, int32_t offset) {
+    return b_pwrite64(x, fd, in, length, offset);
+}
+
+template<typename Offset>
+int32_t sendfileCopy(Ctx& x, int32_t output, int32_t input, GuestPtr pos, uint32_t size) {
+    if (pos && !guestSpan(x, pos, sizeof(Offset), Memory::kProtRW)) return linuxFailure(x, 14);
+    const auto flags = ::fcntl(output, F_GETFL);
+    if (flags < 0) return failHost<int32_t>(x);
+    if (flags & O_APPEND) return linuxFailure(x, 22);
+    off_t offset = pos ? off_t(x.mem.read<Offset>(pos)) : ::lseek(input, 0, SEEK_CUR);
+    if (offset < 0) return pos ? linuxFailure(x, 22) : failHost<int32_t>(x);
+    std::array<char, 16384> buffer;
+    uint32_t done = 0;
+    const uint32_t limit = std::min(size, 0x7ffff000u);
+    while (done < limit && !x.proc.stopping()) {
+        const uint32_t take = std::min<uint32_t>(limit - done, buffer.size());
+        if (offset > std::numeric_limits<Offset>::max() - take) {
+            if (!done) return linuxFailure(x, 75);
+            break;
+        }
+        const auto got = ::pread(input, buffer.data(), take, offset);
+        if (got <= 0) {
+            if (got < 0 && !done) return failHost<int32_t>(x);
+            break;
+        }
+        ssize_t written;
+        if (isNetworkSocket(x.proc, output) || isAndroidHostSocket(x.proc, output)) {
+#ifdef MSG_NOSIGNAL
+            written = ::send(output, buffer.data(), size_t(got), MSG_NOSIGNAL);
+#else
+            written = ::send(output, buffer.data(), size_t(got), 0);
+#endif
+        } else {
+            written = ::write(output, buffer.data(), size_t(got));
+        }
+        if (written <= 0) {
+            if (written < 0 && !done) return failHost<int32_t>(x);
+            break;
+        }
+        done += uint32_t(written);
+        offset += written;
+        if (written < got) break;
+    }
+    if (pos) x.mem.write<Offset>(pos, Offset(offset));
+    else if (done && ::lseek(input, offset, SEEK_SET) < 0) return failHost<int32_t>(x);
+    return int32_t(done);
+}
+int32_t b_sendfile(Ctx& x, int32_t out, int32_t in, GuestPtr pos, uint32_t size) {
+    return sendfileCopy<int32_t>(x, out, in, pos, size);
+}
+int32_t b_sendfile64(Ctx& x, int32_t out, int32_t in, GuestPtr pos, uint32_t size) {
+    return sendfileCopy<int64_t>(x, out, in, pos, size);
 }
 
 // bionic struct dirent: d_ino 8, d_off 8, d_reclen 2, d_type 1, d_name[256]: 280 bytes.
@@ -449,8 +565,6 @@ int32_t b_system(Ctx&, GuestPtr cmd) { return cmd ? -1 : 0; }   // no shell
 int32_t b_prctl(Ctx&, int32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 // No sockets yet: the address and addrinfo layouts differ from iOS's. Games that need the
 // network see it as unavailable.
-int32_t b_socket(Ctx& x, int32_t, int32_t, int32_t) { setLinuxErrno(x, 97); return -1; }   // EAFNOSUPPORT
-int32_t b_getaddrinfo(Ctx&, GuestPtr, GuestPtr, GuestPtr, GuestPtr res) { (void)res; return 8; }   // EAI_NONAME (bionic)
 
 // ARM EABI: __aeabi_atexit(object, destructor, dso) is __cxa_atexit with the first two swapped.
 int32_t b_aeabiAtexit(Ctx& x, GuestPtr obj, GuestPtr dtor, GuestPtr dso) {
@@ -671,6 +785,8 @@ void b_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t
 void registerBionic(Process& p) {
     registerSurfaceFunctions(p);
     registerBionicExtra(p);
+    registerAndroidNet(p);
+    registerAndroidEvents(p);
     registerLibAndroid(p);
     registerOpenSLES(p);
     registerLibdl(p);
@@ -726,7 +842,16 @@ void registerBionic(Process& p) {
     B(b_fstat, "fstat", "bionic struct stat");
     B(b_lseek, "lseek", "32-bit off_t");
     B(b_ftruncate, "ftruncate", "32-bit off_t");
-    B(b_mmap, "mmap", "Linux flags and 32-bit offset translated to the iOS mmap");
+    B(b_mmap, "mmap", "Linux file or anonymous mapping with a 32-bit offset");
+    B(b_mmap64, "mmap64", "Linux file or anonymous mapping with a 64-bit offset");
+    B(b_mmap2, "__mmap2", "Linux file or anonymous mapping with a page offset");
+    B(b_munmap, "munmap", "release Linux guest mapping");
+    B(b_pread, "pread", "positional read with ARM32 off_t");
+    B(b_pread64, "pread64", "positional read with ARM32 aligned off64_t");
+    B(b_pwrite, "pwrite", "positional write with ARM32 off_t");
+    B(b_pwrite64, "pwrite64", "positional write with ARM32 aligned off64_t");
+    B(b_sendfile, "sendfile", "transfer with ARM32 off_t");
+    B(b_sendfile64, "sendfile64", "transfer with ARM32 off64_t");
     B(b_opendir, "opendir", "iOS opendir with a bionic dirent buffer");
     B(b_readdir, "readdir", "bionic struct dirent");
     B(b_readdir_r, "readdir_r", "bionic struct dirent");
@@ -740,8 +865,6 @@ void registerBionic(Process& p) {
     BA(b_waitpid, "waitpid", "no child processes: ECHILD");
     BA(b_system, "system", "no shell");
     BA(b_prctl, "prctl", "accepted and ignored");
-    BA(b_socket, "socket", "no Android sockets yet: EAFNOSUPPORT");
-    BA(b_getaddrinfo, "getaddrinfo", "no Android sockets yet: EAI_NONAME");
     B(b_mutexattrInit, "pthread_mutexattr_init", "one-word bionic attribute");
     B(b_mutexattrDestroy, "pthread_mutexattr_destroy", "one-word bionic attribute");
     B(b_mutexattrSettype, "pthread_mutexattr_settype", "one-word bionic attribute");
