@@ -112,6 +112,12 @@ typedef const void* const* JNIEnv;
 #define JNI_FromReflectedMethod 7
 #define JNI_ToReflectedMethod 9
 #define JNI_ExceptionClear 17
+#define JNI_NewObjectA 30
+#define JNI_GetMethodID 33
+#define JNI_CallObjectMethodA 36
+#define JNI_CallBooleanMethodA 39
+#define JNI_CallIntMethodA 51
+#define JNI_CallVoidMethodA 63
 #define JNI_GetStaticMethodID 113
 #define JNI_CallStaticObjectMethodA 116
 #define JNI_NewStringUTF 167
