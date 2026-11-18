@@ -629,6 +629,36 @@ vfp_invalid_default_nan:
     bx      lr
     .ltorg
 
+@ TEST vfp_fldmx_writeback
+@ FLDMIAX/FSTMDBX (odd imm8 with doubles): two doubles move, and writeback covers the format
+@ word too (imm8 = 5 words = 20 bytes), per the ARM ARM FLDMX/FSTMX description.
+@ EXPECT r0=20 r1=0x11111111 r2=0x22222222 r3=0x33333333 r4=0x44444444 r5=20
+    .global vfp_fldmx_writeback
+vfp_fldmx_writeback:
+    push    {r6, r7, lr}
+    sub     sp, sp, #48
+    mov     r7, sp
+    ldr     r0, =0x11111111
+    str     r0, [r7]
+    ldr     r0, =0x22222222
+    str     r0, [r7, #4]
+    ldr     r0, =0x33333333
+    str     r0, [r7, #8]
+    ldr     r0, =0x44444444
+    str     r0, [r7, #12]
+    mov     r0, r7
+    .word   0xECB00B05              @ fldmiax r0!, {d0-d1}
+    sub     r0, r0, r7              @ 20
+    vmov    r1, r2, d0
+    vmov    r3, r4, d1
+    add     r6, r7, #48
+    .word   0xED260B05              @ fstmdbx r6!, {d0-d1}
+    add     r5, r7, #48
+    sub     r5, r5, r6              @ 20
+    add     sp, sp, #48
+    pop     {r6, r7, pc}
+    .ltorg
+
 @ TEST vfp_runfast_flush
 @ EXPECT r0=0x00000000 r1=0x80000000 r2=0x00000000 r3=0x40700000 r4=0x00000000 r6=0x7FC00000
     .global vfp_runfast_flush

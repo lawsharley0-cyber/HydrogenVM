@@ -427,7 +427,7 @@ HVM_H(H_VLdrStr) {
 // VLDM/VSTM: a = first word, imm = word count, b = rn, d: bit0 inc, bit2 wb (DB always writes back)
 template <bool LOAD>
 HVM_H(H_VLdmStm) {
-    const uint32_t base = c->r[op->b], bytes = 4 * op->imm;
+    const uint32_t base = c->r[op->b], bytes = 4 * (op->imm + op->c);   // c: FLDMX/FSTMX format word
     const bool inc = op->d & 1;
     const uint32_t addr = inc ? base : base - bytes;
     if constexpr (LOAD) {

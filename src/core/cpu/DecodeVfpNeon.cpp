@@ -170,9 +170,11 @@ R vfpLoadStore(BlockBuilder& bb, uint32_t insn) {
     }
     if (P == U || rn == 15) return undefined(bb, insn);
     uint32_t words = imm8;
-    if (dp && (words & 1)) words -= 1;                            // FLDMX/FSTMX: ignore the format word
+    // FLDMX/FSTMX (odd imm8 with doubles): the last word is a format word that is not transferred,
+    // but the address range and writeback still cover all imm8 words. c carries that extra word.
+    if (dp && (words & 1)) words -= 1;
     if (!words) return undefined(bb, insn);
-    bb.emit(L ? &H_VLdmStm<true> : &H_VLdmStm<false>, first, rn, 0, U | (W << 2), words);
+    bb.emit(L ? &H_VLdmStm<true> : &H_VLdmStm<false>, first, rn, imm8 - words, U | (W << 2), words);
     return R::Continue;
 }
 
