@@ -445,7 +445,7 @@ void s_noop(Ctx&) {}
 struct OpenFds {
     explicit OpenFds(Process&) {}
     std::mutex mu;
-    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; };
+    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; std::string path; bool inBundle = false; };
     std::unordered_map<int32_t, FdTrack> tracks;
 };
 
@@ -500,9 +500,21 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
         assetReadAhead(fd, hp, flags, st);
     }
     const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
+    std::string replayPath;
+    bool inBundle = false;
+    if (x.proc.session().detailsActive()) {
+        const auto& bundle = x.proc.bundlePath();
+        const auto& home = x.proc.homePath();
+        inBundle = !bundle.empty() && (hp == bundle || hp.starts_with(bundle + "/"));
+        // Phone and bench installs have different UUIDs. Use the same logical path on both.
+        if (inBundle) replayPath = "@bundle" + hp.substr(bundle.size());
+        else if (!home.empty() && (hp == home || hp.starts_with(home + "/")))
+            replayPath = "@home" + hp.substr(home.size());
+        else replayPath = x.proc.absoluteGuestPath(gp);
+    }
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
-    ofs.tracks[fd] = {h, 0};
+    ofs.tracks[fd] = {h, 0, std::move(replayPath), inBundle};
     return fd;
 }
 // POSIX shared memory: Unity's Mono runtime opens a shared-handle segment at startup (Subway
@@ -563,9 +575,42 @@ void waitUntilReadable(Ctx& x, int fd) {
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
+    std::optional<std::string> trackedPath;
+    bool trackedInBundle = false;
+    uint64_t trackedOff = 0;
+    if (x.proc.session().detailsActive()) {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) {
+            trackedPath = it->second.path;
+            trackedInBundle = it->second.inBundle;
+            const off_t cur = ::lseek(fd, 0, SEEK_CUR);
+            trackedOff = cur >= 0 ? uint64_t(cur) : uint64_t(it->second.bytesRead);
+        }
+    }
+    if (trackedPath && !trackedInBundle && x.proc.session().replayingDetails()) {
+        if (auto rec = x.proc.session().replayFileRead(*trackedPath, trackedOff, n)) {
+            const size_t got = rec->size();
+            if (got > 0) x.mem.copyIn(buf, rec->data(), got);
+            ::lseek(fd, off_t(got), SEEK_CUR);
+            auto& ofs = x.proc.service<OpenFds>();
+            std::lock_guard<std::mutex> lk(ofs.mu);
+            auto it = ofs.tracks.find(fd);
+            if (it != ofs.tracks.end()) {
+                it->second.bytesRead += int64_t(got);
+                x.proc.updateFileRead(it->second.fileHandle, it->second.bytesRead);
+            }
+            return int32_t(got);
+        }
+    }
     waitUntilReadable(x, fd);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     if (r > 0) {
+        if (trackedPath && x.proc.session().recordingDetails()) {
+            x.proc.session().recordFileRead(*trackedPath, trackedOff, x.mem.host(buf), size_t(r), trackedInBundle,
+                                              x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+        }
         auto& ofs = x.proc.service<OpenFds>();
         std::lock_guard<std::mutex> lk(ofs.mu);
         auto it = ofs.tracks.find(fd);
