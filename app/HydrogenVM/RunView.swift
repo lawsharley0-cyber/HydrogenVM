@@ -377,7 +377,7 @@ final class RunModel {
         let bundleID = app.info.bundleIdentifier
         append("[hvm] safe-mode retry: relaunching with fallback \(fallback)", .info)
         Task.detached { [weak self] in
-            _ = HVMEngine.waitForGuestArenaRelease(2.0)
+            _ = HVMEngine.wait(forGuestArenaRelease: 2.0)
             await MainActor.run {
                 guard let self else { return }
                 Self.setCompatFallback(fallback, for: bundleID)
