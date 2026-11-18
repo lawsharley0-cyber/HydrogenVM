@@ -279,9 +279,25 @@ int32_t r_rand(Ctx& x) {
     s.next = uint32_t(v);
     return int32_t(uint32_t(v) % (uint32_t(0x7FFFFFFF) + 1));
 }
-void r_srand(Ctx& x, uint32_t seed) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.next = seed; }
+void r_srand(Ctx& x, uint32_t seed) {
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayRngSeed("srand")) seed = uint32_t(*v);
+    } else if (session.recordingDetails()) {
+        session.recordRngSeed("srand", seed, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.next = seed;
+}
 int32_t r_random(Ctx& x) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); return int32_t(s.random() & 0x7FFFFFFF); }
-void r_srandom(Ctx& x, uint32_t seed) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.random.seed(seed); }
+void r_srandom(Ctx& x, uint32_t seed) {
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayRngSeed("srandom")) seed = uint32_t(*v);
+    } else if (session.recordingDetails()) {
+        session.recordRngSeed("srandom", seed, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.random.seed(seed);
+}
 uint32_t r_arc4random(Ctx& x) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); return uint32_t(s.arc()); }
 uint32_t r_arc4random_uniform(Ctx& x, uint32_t upper) {
     if (upper < 2) return 0;
