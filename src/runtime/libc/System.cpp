@@ -855,6 +855,18 @@ int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t len) {
     return 0;
 }
 int32_t m_ok3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
+// mprotect(2): the guest permissions of whole 4 KB pages. GuestArena pushes them into host page
+// protection where a host page can express them, so later loads and stores are checked by the MMU.
+int32_t m_mprotect(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot) {
+    if ((addr & 4095u) || (prot & ~7)) { setErrno(x, EINVAL); return -1; }
+    if (!len) return 0;
+    const uint64_t end = (uint64_t(addr) + len + 4095u) & ~uint64_t(4095u);
+    if (end > (1ull << 32) || end > Memory::GuestArena::kHleBase) { setErrno(x, ENOMEM); return -1; }
+    for (uint64_t page = addr; page < end; page += 4096)
+        if (!x.mem.isMapped(uint32_t(page))) { setErrno(x, ENOMEM); return -1; }
+    x.mem.protect(addr, uint32_t(end - addr), uint8_t(prot));
+    return 0;
+}
 int32_t m_ok2(Ctx&, GuestPtr, uint32_t) { return 0; }
 
 // --------------------------------------------------------------- signals ---
@@ -1341,8 +1353,7 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
     p.def<&m_mmap>("_mmap");
     p.def<&m_munmap>("_munmap");
-    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub,
-        "Returns success without changing guest or host page protections");
+    p.def<&m_mprotect>("_mprotect");
     supportDef<&m_ok3>(p, "_madvise", SupportStatus::Stub,
         "Returns success without applying a memory advice policy");
     supportDef<&m_ok3>(p, "_msync", SupportStatus::Stub,

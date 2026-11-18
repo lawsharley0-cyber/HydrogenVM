@@ -364,6 +364,11 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"runtimeMemorySamples\": " << proc.memorySamplesJson() << ",\n";
+            // Guest page permissions in host protection (I6): host pages host code had to lift back to
+            // read/write, and 16 KB host pages whose guest pages disagree.
+            f << "  \"pageProtection\": {\"enabled\": " << (proc.mem().hostProtectionEnabled() ? "true" : "false")
+              << ", \"liftedHostPages\": " << proc.mem().liftedHostPages()
+              << ", \"splitHostPages\": " << proc.mem().splitHostPages() << "},\n";
             f << "  \"threadLiveness\": " << proc.threadLivenessJson() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
