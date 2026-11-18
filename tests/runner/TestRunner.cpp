@@ -11716,6 +11716,7 @@ int runFullSubsystemTests() {
             "    \"blocksDecoded\": 0,\n"
             "    \"frames\": 0,\n"
             "    \"framesPresented\": 0,\n"
+            "    \"gameSwaps\": 0,\n"
             "    \"avgFrameMs\": 0,\n"
             "    \"avgCompositeMs\": 0,\n"
             "    \"presentWaitMs\": 0,\n"
