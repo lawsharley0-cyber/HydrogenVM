@@ -260,6 +260,7 @@ int runHostFaultChild(int fd, bool stress, bool afterUnwind);
 int runThreadProgressTests();
 int runGuestCallBoundaryTests();
 int runMsgSendTests(const std::function<void(bool, const char*)>& check);
+int runPageProtectionTests(const std::function<void(bool, const char*)>& check);
 int runSuspendTests();
 int runNSStringSearchTests();
 int runLegacyGlyphTests();
@@ -270,6 +271,7 @@ int runThreadLifetimeTests();
 int runThreadLifetimeChild();
 namespace Hydrogen { namespace Runtime { bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c); } }
 int runArenaPoolTests();
+int runCompatProfileTests();
 
 namespace {
 
@@ -14209,11 +14211,13 @@ int runFullSubsystemTests() {
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
     runMsgSendTests([&](bool ok, const char* what) { check(ok, what); });
+    runPageProtectionTests([&](bool ok, const char* what) { check(ok, what); });
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
     check(runNSStringSearchTests() == 0, "bounded character-set search contract");
     check(runLegacyGlyphTests() == 0, "legacy CGContext glyph outlines and ABI");
     check(runPositionalFormatTests() == 0, "positional formatting arguments and ABI");
     check(runLegacyAnimationTests() == 0, "UIKit animation, window and timer-pool lifetime");
+    check(runCompatProfileTests()==0,"documented compatibility profiles preserve existing predicates and defaults");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

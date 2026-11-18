@@ -9,6 +9,7 @@
 #include "loader/AppBundle.hpp"
 #include "loader/Apk.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "AudioOutput.hpp"
 #include "EntryTrace.hpp"
@@ -71,6 +72,8 @@ int hvmRunMain(int argc, char** argv) {
     int launches = 1;         // run the app this many times in one host process (like reopening it in the iOS app)
     struct LifeEvent { bool background; double at; };
     std::vector<LifeEvent> lifeEvents;
+    bool safeModeRetry = false;
+    std::string forceCrashWithout;
     std::string screenshot, reportPath, frameFile, inputFile;
     int audioFd = -1;
     std::string photoLibraryImage, documentImport;
@@ -81,6 +84,8 @@ int hvmRunMain(int argc, char** argv) {
     double sendAt = -1;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--run-for") && i + 1 < argc) { runFor = std::atof(argv[++i]); continue; }
+        if (!std::strcmp(argv[i], "--safe-mode-retry")) { safeModeRetry = true; continue; }
+        if (!std::strcmp(argv[i], "--force-crash-without") && i + 1 < argc) { forceCrashWithout = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc) { screenshot = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--tap") && i + 1 < argc) {
             Gesture g{};
@@ -360,10 +365,18 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"exitStatus\": " << status << ",\n";
             f << "  \"stillRunning\": " << (timedStop ? "true" : "false") << ",\n";   // reached --run-for without failing
             f << "  \"crashed\": " << (proc.crashed() ? "true" : "false") << ",\n";
+            f << "  \"safeModeFallback\": " << (cfg.safeModeFallback.empty() ? "null" : ("\"" + jsonEscape(cfg.safeModeFallback) + "\"")) << ",\n";
+            if (!cfg.safeModeFallback.empty())
+                f << "  \"launchedWithFallback\": \"launched with fallback " << jsonEscape(cfg.safeModeFallback) << "\",\n";
             f << "  \"crashReport\": \"" << jsonEscape(proc.crashReport()) << "\",\n";
             f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"runtimeMemorySamples\": " << proc.memorySamplesJson() << ",\n";
+            // Guest page permissions in host protection (I6): host pages host code had to lift back to
+            // read/write, and 16 KB host pages whose guest pages disagree.
+            f << "  \"pageProtection\": {\"enabled\": " << (proc.mem().hostProtectionEnabled() ? "true" : "false")
+              << ", \"liftedHostPages\": " << proc.mem().liftedHostPages()
+              << ", \"splitHostPages\": " << proc.mem().splitHostPages() << "},\n";
             f << "  \"threadLiveness\": " << proc.threadLivenessJson() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
@@ -554,7 +567,35 @@ int hvmRunMain(int argc, char** argv) {
                 r.send(c, target, name.c_str());
             });
         });
-        const int r = proc.run();
+        bool forcedCrash = false;
+        std::string forcedCrashReason;
+        if (!forceCrashWithout.empty()) {
+            const auto* fb = Runtime::Compat::findFallback(forceCrashWithout);
+            if (!fb) {
+                std::fprintf(stderr, "unknown fallback id for --force-crash-without: %s\n", forceCrashWithout.c_str());
+                return 2;
+            }
+            bool active = false;
+            switch (fb->fallback) {
+                case Runtime::Compat::Fallback::Gles1Emulation: active = cfg.gles1Emulate; break;
+                case Runtime::Compat::Fallback::FrameRateCap: active = !cfg.unlockFrameRate; break;
+                case Runtime::Compat::Fallback::InternetOff: active = !cfg.internetAccess; break;
+                case Runtime::Compat::Fallback::ReducedTextureResolution: active = (cfg.maxTextureSize > 0 && cfg.maxTextureSize <= 1024); break;
+                case Runtime::Compat::Fallback::ExtraMemoryHeadroom: active = (cfg.safeModeFallback == fb->id); break;
+            }
+            if (!active) {
+                forcedCrash = true;
+                switch (fb->fallback) {
+                    case Runtime::Compat::Fallback::Gles1Emulation: forcedCrashReason = "OpenGL ES fixed-function shader error 0x0502"; break;
+                    case Runtime::Compat::Fallback::FrameRateCap: forcedCrashReason = "CADisplayLink timer stall at 60 fps"; break;
+                    case Runtime::Compat::Fallback::InternetOff: forcedCrashReason = "NSURLConnection TLS handshake failed"; break;
+                    case Runtime::Compat::Fallback::ReducedTextureResolution: forcedCrashReason = "glTexImage2D GL_OUT_OF_MEMORY 0x0505"; break;
+                    case Runtime::Compat::Fallback::ExtraMemoryHeadroom: forcedCrashReason = "guest memory budget exceeded (oom)"; break;
+                }
+                proc.log(Runtime::LogLevel::Error, forcedCrashReason);
+            }
+        }
+        const int r = forcedCrash ? 70 : proc.run();
         done = true;
         driver.join();
         if (sender.joinable()) sender.join();
@@ -571,7 +612,7 @@ int hvmRunMain(int argc, char** argv) {
         }
         // A timed stop can itself fail (for example the save watchdog). Preserve
         // that failure instead of claiming a successful --run-for observation.
-        const int status = proc.crashed() ? 70 : timedStop ? 0 : r;
+        const int status = (proc.crashed() || forcedCrash) ? 70 : timedStop ? 0 : r;
         if (timedStop && !quiet) std::fprintf(stderr, "[hvm] still running after %.0f s (stopped by --run-for)\n", runFor);
         // A run that called missing or approximated APIs is not a clean pass, whatever its exit status says.
         if (proc.tainted())
@@ -581,12 +622,28 @@ int hvmRunMain(int argc, char** argv) {
         writeReport(status);
         earlierLaunches.absorb(proc.missingApis());
         earlierDefaulted.absorb(proc.defaultedApis());
+        if (safeModeRetry && (proc.crashed() || forcedCrash) && cfg.safeModeFallback.empty()) {
+            const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
+            if (elapsed <= 180.0) {
+                std::string sigText = proc.crashReport() + "\n" + forcedCrashReason;
+                for (const auto& e : errors) sigText += "\n" + e.first;
+                if (auto fb = Runtime::Compat::chooseFallback(sigText, cfg)) {
+                    Runtime::Compat::applyFallback(cfg, *fb);
+                    std::fprintf(stderr, "[hvm] safe-mode retry: relaunching with fallback %s\n", cfg.safeModeFallback.c_str());
+                    return -99; // sentinel: retry once
+                }
+            }
+        }
         return status;
     };
     int status = 0;
     for (int launch = 1; launch <= launches; ++launch) {
         timedStop = false;
         status = runOnce(launch);
+        if (status == -99) {
+            timedStop = false;
+            status = runOnce(launch);
+        }
         if (status != 0) break;
     }
     return status;
