@@ -370,7 +370,7 @@ void newObject(Ctx& x, int mode) {
     JObject* c = j.get(cls);
     const jobject obj = j.newObject(c ? c->cls : "java/lang/Object");
     j.invoke(x, mid, obj, args, true);
-    ret(x, obj);
+    ret(x, Dex::pendingException(x.proc) ? 0 : obj);
 }
 
 uint64_t fieldGet(Jni& j, jobject obj, uint32_t fid, bool isStatic) {
@@ -637,15 +637,23 @@ Jni& jni(Process& p) {
                 ret(x, !o ? 0 : o->elem == 'L' ? o->refs.size() : o->data.size() / elemSize(o->elem));
             });
             set(172, "NewObjectArray", [](Ctx& x) {
-                const jobject a = J(x).newArray('L', arg(x, 1));
-                if (JObject* o = J(x).get(a)) for (auto& r : o->refs) r = arg(x, 3);
+                auto& j = J(x);
+                std::lock_guard lock(j.mu);
+                const auto* component = j.get(arg(x, 2));
+                const std::string name = component ? component->cls : "java/lang/Object";
+                const jobject a = j.newArray('L', arg(x, 1));
+                auto* o = j.get(a);
+                o->cls = name.starts_with('[') ? "[" + name : "[L" + name + ";";
+                std::fill(o->refs.begin(), o->refs.end(), arg(x, 3));
                 ret(x, a);
             });
             set(173, "GetObjectArrayElement", [](Ctx& x) {
+                std::lock_guard lock(J(x).mu);
                 JObject* o = J(x).get(arg(x, 1));
                 ret(x, o && arg(x, 2) < o->refs.size() ? o->refs[arg(x, 2)] : 0);
             });
             set(174, "SetObjectArrayElement", [](Ctx& x) {
+                std::lock_guard lock(J(x).mu);
                 JObject* o = J(x).get(arg(x, 1));
                 if (o && arg(x, 2) < o->refs.size()) o->refs[arg(x, 2)] = arg(x, 3);
                 ret(x, 0);

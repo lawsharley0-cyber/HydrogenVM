@@ -20,6 +20,12 @@ struct JavaException {
     uint32_t reference = 0;
 };
 
+// JNI and the interpreter use the same backing once an array crosses the boundary.
+struct ArrayBacking {
+    std::function<Value(uint32_t)> read;
+    std::function<void(uint32_t, Value)> write;
+};
+
 class Heap {
 public:
     virtual ~Heap() = default;
@@ -32,6 +38,7 @@ public:
     virtual uint32_t length(uint32_t reference) const = 0;
     virtual Value element(uint32_t reference, int32_t index) const = 0;
     virtual void setElement(uint32_t reference, int32_t index, Value value) = 0;
+    virtual void bindArray(uint32_t reference, std::shared_ptr<ArrayBacking> backing, bool copyElements) = 0;
     virtual void enter(uint32_t reference) = 0;
     virtual void leave(uint32_t reference) = 0;
     virtual bool assignable(std::u16string_view from, std::u16string_view to) const = 0;
@@ -51,6 +58,7 @@ public:
     uint32_t length(uint32_t reference) const override;
     Value element(uint32_t reference, int32_t index) const override;
     void setElement(uint32_t reference, int32_t index, Value value) override;
+    void bindArray(uint32_t reference, std::shared_ptr<ArrayBacking> backing, bool copyElements) override;
     void enter(uint32_t reference) override;
     void leave(uint32_t reference) override;
     bool assignable(std::u16string_view from, std::u16string_view to) const override;

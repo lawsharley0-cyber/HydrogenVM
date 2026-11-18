@@ -15,6 +15,7 @@ struct Object {
     std::u16string type;
     std::u16string text;
     std::vector<Value> elements;
+    std::shared_ptr<ArrayBacking> backing;
     std::mutex mutex;
     std::condition_variable available;
     std::thread::id owner;
@@ -129,8 +130,13 @@ uint32_t Arena::length(uint32_t reference) const {
 Value Arena::element(uint32_t reference, int32_t index) const {
     auto& array = storage_->get(reference);
     bounds(array, index);
-    std::lock_guard lock(array.mutex);
-    return array.elements[index];
+    std::shared_ptr<ArrayBacking> backing;
+    {
+        std::lock_guard lock(array.mutex);
+        backing = array.backing;
+        if (!backing) return array.elements[index];
+    }
+    return backing->read(uint32_t(index));
 }
 
 void Arena::setElement(uint32_t reference, int32_t index, Value value) {
@@ -148,8 +154,26 @@ void Arena::setElement(uint32_t reference, int32_t index, Value value) {
                 throw JavaException{u"Ljava/lang/ArrayStoreException;"};
             break;
     }
+    std::shared_ptr<ArrayBacking> backing;
+    {
+        std::lock_guard lock(array.mutex);
+        backing = array.backing;
+        if (!backing) {
+            array.elements[index] = value;
+            return;
+        }
+    }
+    backing->write(uint32_t(index), value);
+}
+
+void Arena::bindArray(uint32_t reference, std::shared_ptr<ArrayBacking> backing, bool copyElements) {
+    auto& array = storage_->get(reference);
+    expectArray(array);
     std::lock_guard lock(array.mutex);
-    array.elements[index] = value;
+    if (array.backing) throw FormatError("array already has shared backing");
+    if (copyElements)
+        for (uint32_t i = 0; i < array.elements.size(); ++i) backing->write(i, array.elements[i]);
+    array.backing = std::move(backing);
 }
 
 void Arena::enter(uint32_t reference) {
