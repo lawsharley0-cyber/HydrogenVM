@@ -5,6 +5,13 @@ from pathlib import Path
 
 # Worst first. A game "got worse" when it moves to an earlier entry.
 STATUSES = ["load-fail", "crash", "hang", "no-picture", "runs"]
+COMPAT_STATUS = {
+    "runs": "Boots",
+    "no-picture": "No picture",
+    "hang": "Hangs",
+    "crash": "Crashes",
+    "load-fail": "Crashes",
+}
 SCREENSHOT_THRESHOLD = 0.25     # mean per-pixel difference (0..1) that counts as "looks different"
 
 
@@ -33,7 +40,9 @@ def classify(report: dict, exit_code, log_tail: str) -> dict:
     else:
         status = "runs"
         detail = ""
-    return {"status": status, "detail": detail, "frames": frames, "sound": sound,
+    return {"status": status, "compatStatus": COMPAT_STATUS[status],
+            "engine": str(report.get("engine") or ""),
+            "detail": detail, "frames": frames, "sound": sound,
             "firstFrameMs": round(float(perf.get("timeToFirstFrameMs") or 0)),
             "missingApis": missing, "defaultedApis": defaulted}
 

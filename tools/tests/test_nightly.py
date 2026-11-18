@@ -65,5 +65,38 @@ class CompareTests(unittest.TestCase):
         self.assertIn("1 runs", compare.summary_markdown(s))
 
 
+class MultiFolderAndSchemaTests(unittest.TestCase):
+    def test_compat_status_and_engine(self):
+        r = compare.classify({**RUNNING, "engine": "Unity (Mono)"}, 0, "")
+        self.assertEqual(r["compatStatus"], "Boots")
+        self.assertEqual(r["engine"], "Unity (Mono)")
+        self.assertEqual(compare.classify({**RUNNING, "crashed": True}, 0, "")["compatStatus"], "Crashes")
+        self.assertEqual(compare.classify(RUNNING, None, "")["compatStatus"], "Hangs")
+        self.assertEqual(compare.classify({"perf": {"framesPresented": 0}}, 0, "")["compatStatus"], "No picture")
+
+    def test_find_all_games_keeps_names_unique_across_folders(self):
+        import tempfile
+        import nightly  # noqa: E402
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ipa = root / "IPA"
+            apk = root / "APK"
+            ipa.mkdir()
+            apk.mkdir()
+            (ipa / "MegaJump.ipa").write_bytes(b"ipa")
+            (ipa / "Shared.ipa").write_bytes(b"ipa")
+            (ipa / "Skipped.ipa").write_bytes(b"ipa")
+            (ipa / "Skipped.skip").write_text("")
+            (apk / "DeadSpace.apk").write_bytes(b"apk")
+            (apk / "Shared.ipa").write_bytes(b"dup")
+
+            found = nightly.find_all_games([ipa, apk])
+            names = [name for _, name, _ in found]
+            stems = [stem for _, _, stem in found]
+            self.assertEqual(names, ["MegaJump.ipa", "IPA/Shared.ipa", "DeadSpace.apk", "APK/Shared.ipa"])
+            self.assertEqual(len(set(names)), 4)
+            self.assertEqual(len(set(stems)), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
