@@ -3786,6 +3786,51 @@ int runFullSubsystemTests() {
         call2("_CFRelease", data, 0);
     }
     {
+        // Report #530 (Crossy Road): GameAnalytics signs requests with -[NSData base64Encoding].
+        // Expected strings are the RFC 4648 section 10 test vectors.
+        auto& sr = ObjC::rt(proc);
+        auto enc = [&](const char* text, uint32_t opts) {
+            const uint32_t d = Foundation::makeData(cx, text, uint32_t(std::strlen(text)), true);
+            const ObjC::id s = ObjC::id(opts == 0xFFFFFFFFu ? sr.send(cpu, d, "base64Encoding")
+                                                            : sr.send(cpu, d, "base64EncodedStringWithOptions:", {opts}));
+            return s ? Foundation::utf8(cx, s) : std::string("(nil)");
+        };
+        auto dec = [&](const char* text, uint32_t opts) {
+            const ObjC::id str = Foundation::makeString(cx, std::string(text), true);
+            const ObjC::id cls = ObjC::id(sr.getClass("NSData"));
+            const ObjC::id d = ObjC::id(sr.send(cpu, ObjC::id(sr.send(cpu, cls, sr.selAlloc)), "initWithBase64EncodedString:options:", {str, opts}));
+            if (!d) return std::string("(nil)");
+            const auto b = Foundation::dataBytes(cx, d);
+            return std::string(b.begin(), b.end());
+        };
+        std::string long57(57, 'a');
+        const std::string wrapped = enc(long57.c_str(), 1);   // 76 characters, so one CRLF after 64
+        check(enc("", 0) == "" && enc("f", 0) == "Zg==" && enc("fo", 0) == "Zm8=" && enc("foo", 0) == "Zm9v" &&
+              enc("foobar", 0xFFFFFFFFu) == "Zm9vYmFy" && wrapped.size() == 78 && wrapped.substr(64, 2) == "\r\n" &&
+              dec("Zm9vYmE=", 0) == "fooba" && dec("Zm9v\r\nYmFy", 0) == "(nil)" && dec("Zm9v\r\nYmFy", 1) == "foobar" &&
+              dec("Zm9v=YmFy", 0) == "(nil)",
+              "NSData base64 encodes RFC 4648 vectors, wraps 64-column lines with CRLF and rejects bad input unless told to ignore it");
+    }
+    {
+        // Report #545: NSCountedSet keeps one member per distinct object and a count for each.
+        auto& sr = ObjC::rt(proc);
+        const ObjC::id cls = ObjC::id(sr.getClass("NSCountedSet"));
+        const ObjC::id a = Foundation::makeString(cx, std::string("a"), true), b = Foundation::makeString(cx, std::string("b"), true);
+        const ObjC::id a2 = Foundation::makeString(cx, std::string("a"), true);
+        const ObjC::id set = cls ? ObjC::id(sr.send(cpu, ObjC::id(sr.send(cpu, cls, sr.selAlloc)), "init")) : 0;
+        auto count = [&](ObjC::id o) { return uint32_t(sr.send(cpu, set, "countForObject:", {o})); };
+        bool ok = set != 0;
+        if (ok) {
+            sr.send(cpu, set, "addObject:", {a}); sr.send(cpu, set, "addObject:", {a2}); sr.send(cpu, set, "addObject:", {b});
+            ok = uint32_t(sr.send(cpu, set, "count")) == 2 && count(a) == 2 && count(b) == 1;
+            sr.send(cpu, set, "removeObject:", {a});
+            ok = ok && count(a) == 1 && uint32_t(sr.send(cpu, set, "count")) == 2;
+            sr.send(cpu, set, "removeObject:", {a2});
+            ok = ok && count(a) == 0 && uint32_t(sr.send(cpu, set, "count")) == 1 && uint8_t(sr.send(cpu, set, "isKindOfClass:", {ObjC::id(sr.getClass("NSMutableSet"))}));
+        }
+        check(ok, "NSCountedSet counts repeated equal objects, removes one occurrence at a time and is an NSMutableSet");
+    }
+    {
         // Issue #310: CoreData option and store-type constants are exported data
         // symbols whose value is an NSString equal to the documented string.
         // An unexported constant binds as NULL and becomes a nil dictionary key.

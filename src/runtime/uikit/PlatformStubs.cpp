@@ -634,6 +634,13 @@ int32_t aq_stop(Ctx& x, uint32_t qid, bool immediate) {
     return 0;
 }
 int32_t aq_flush(Ctx&, uint32_t) { return 0; }
+// The mixer pulls enqueued buffers when it plays them, so there is nothing to decode ahead of Start.
+// Reports no frames prepared, which callers treat as "priming done".
+int32_t aq_prime(Ctx& x, uint32_t qid, uint32_t, GuestPtr outPrepared) {
+    if (!ATS(x).queues.count(qid)) return -50;   // kAudio_ParamError
+    if (outPrepared) x.mem.write<uint32_t>(outPrepared, 0);
+    return 0;
+}
 int32_t aq_reset(Ctx& x, uint32_t qid) {
     if (!ATS(x).queues.count(qid)) return 0;
     auto& q = ATS(x).queues[qid];
@@ -3026,6 +3033,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     supportDef<&aq_stop>(p, "_AudioQueueStop", SupportStatus::Approx,
                          "Stops at once, or after what is queued has played when not immediate; an offline queue drops its queued audio. An immediate stop does not hand buffers back");
     p.def<&aq_flush>("_AudioQueueFlush");
+    supportDef<&aq_prime>(p, "_AudioQueuePrime", SupportStatus::Approx, "nothing is decoded ahead; reports zero frames prepared");
     supportDef<&aq_reset>(p, "_AudioQueueReset", SupportStatus::Approx,
                           "Drops queued audio (mixer voice, recorder or offline queue); buffers are not handed back");
     supportDef<&aq_dispose>(p, "_AudioQueueDispose", SupportStatus::Real, "Stops the queue and frees its buffers, their packet descriptions and its voice");

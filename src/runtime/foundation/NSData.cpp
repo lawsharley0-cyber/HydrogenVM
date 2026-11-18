@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <vector>
+#include <optional>
 #include <sys/stat.h>
 #include <cerrno>
 
@@ -121,6 +122,62 @@ id di_initWithContentsOfURL(Ctx& x, id self, SEL s, id url) {
     }
     const id path = id(rt(x).send(x.cpu, url, "path"));
     return di_initWithContentsOfFile(x, self, s, path);
+}
+// Base64 (RFC 4648). Encoding options: 1 = 64-character lines, 2 = 76-character lines, 16 = CR, 32 = LF
+// (a line length with neither ending flag means CRLF). Decoding: option 1 skips characters outside the
+// alphabet; without it any such character makes the input invalid, as on iOS.
+std::string base64Encode(const std::vector<uint8_t>& in, uint32_t opts) {
+    static const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string raw;
+    for (size_t i = 0; i < in.size(); i += 3) {
+        const uint32_t n = uint32_t(in[i]) << 16 | (i + 1 < in.size() ? uint32_t(in[i+1]) << 8 : 0) | (i + 2 < in.size() ? in[i+2] : 0);
+        raw += a[n >> 18 & 63]; raw += a[n >> 12 & 63];
+        raw += i + 1 < in.size() ? a[n >> 6 & 63] : '=';
+        raw += i + 2 < in.size() ? a[n & 63] : '=';
+    }
+    const size_t line = opts & 1 ? 64 : opts & 2 ? 76 : 0;
+    if (!line) return raw;
+    std::string eol = std::string(opts & 16 ? "\r" : "") + (opts & 32 ? "\n" : "");
+    if (eol.empty()) eol = "\r\n";
+    std::string out;
+    for (size_t i = 0; i < raw.size(); i += line) { if (i) out += eol; out += raw.substr(i, line); }
+    return out;
+}
+std::optional<std::vector<uint8_t>> base64Decode(const std::string& in, uint32_t opts) {
+    std::vector<uint8_t> out;
+    uint32_t acc = 0; int bits = 0, pad = 0;
+    for (const char c : in) {
+        int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52 :
+                c == '+' ? 62 : c == '/' ? 63 : -1;
+        if (c == '=') { ++pad; continue; }
+        if (v < 0) { if (opts & 1) continue; return std::nullopt; }
+        if (pad) return std::nullopt;   // data after padding
+        acc = acc << 6 | uint32_t(v); bits += 6;
+        if (bits >= 8) { bits -= 8; out.push_back(uint8_t(acc >> bits)); }
+    }
+    if (pad > 2 || bits >= 6) return std::nullopt;   // a lone trailing character cannot encode a byte
+    return out;
+}
+id d_base64String(Ctx& x, id self, SEL, uint32_t opts) { return makeString(x, base64Encode(bytesOf(x, self), opts)); }
+id d_base64Encoding(Ctx& x, id self, SEL) { return makeString(x, base64Encode(bytesOf(x, self), 0)); }
+id d_base64Data(Ctx& x, id self, SEL, uint32_t opts) {
+    const std::string s = base64Encode(bytesOf(x, self), opts);
+    return makeData(x, s.data(), uint32_t(s.size()));
+}
+id initFromBase64(Ctx& x, id self, const std::string& text, uint32_t opts) {
+    if (auto bytes = base64Decode(text, opts)) { assign(x, self, bytes->data(), uint32_t(bytes->size())); return self; }
+    rt(x).release(x.cpu, self);
+    return 0;
+}
+id di_initWithBase64String(Ctx& x, id self, SEL, id str, uint32_t opts) {
+    if (!str) { rt(x).release(x.cpu, self); return 0; }
+    return initFromBase64(x, self, utf8(x, str), opts);
+}
+id di_initWithBase64Encoding(Ctx& x, id self, SEL s, id str) { return di_initWithBase64String(x, self, s, str, 1); }
+id di_initWithBase64Data(Ctx& x, id self, SEL, id data, uint32_t opts) {
+    if (!data) { rt(x).release(x.cpu, self); return 0; }
+    const auto b = bytesOf(x, data);
+    return initFromBase64(x, self, std::string(b.begin(), b.end()), opts);
 }
 template <typename F, typename... A> id construct(Ctx& x, id cls, F init, A... a) {
     id o = d_allocWithZone(x, cls, 0, 0);
@@ -277,6 +334,9 @@ void registerData(Process& p, ObjC::Runtime& r) {
       .m<&d_isEqualToData>("isEqualToData:", "c@:@").m<&d_isEqualToData>("isEqual:", "c@:@").m<&d_hash>("hash", "I@:")
       .m<&d_writeToFile>("writeToFile:atomically:").m<&d_writeToFileOpts>("writeToFile:options:error:").m<&d_writeToURL>("writeToURL:atomically:")
       .m<&d_description>("description")
+      .m<&d_base64String>("base64EncodedStringWithOptions:").m<&d_base64Encoding>("base64Encoding")
+      .m<&d_base64Data>("base64EncodedDataWithOptions:").m<&di_initWithBase64String>("initWithBase64EncodedString:options:")
+      .m<&di_initWithBase64Encoding>("initWithBase64Encoding:").m<&di_initWithBase64Data>("initWithBase64EncodedData:options:")
       .m<&d_copyWithZone>("copyWithZone:").m<&d_mutableCopyWithZone>("mutableCopyWithZone:").m<&d_copy>("copy").m<&d_mutableCopy>("mutableCopy");
     nmd.cm<&dc_dataWithCapacity>("dataWithCapacity:").cm<&dc_dataWithLength>("dataWithLength:")
        .m<&di_initWithCapacity>("initWithCapacity:").m<&di_initWithLength>("initWithLength:")
