@@ -1,4 +1,5 @@
 #include "AppBundle.hpp"
+#include "AndroidEngine.hpp"
 #include "ElfLoader.hpp"
 #include "MachO.hpp"
 #include "Zip.hpp"
@@ -79,6 +80,17 @@ AppInfo readBundle(const std::string& appPath) {
     if (const std::string lib = p.getString("HydrogenVMAndroidLibrary"); !lib.empty()) {
         // An imported Android app (Apk.cpp): its native library must be 32-bit ARM.
         info.androidLibrary = (fs::path(appPath) / lib).string();
+        info.engine = p.getString("HydrogenVMAndroidEngine");
+        info.engineSupport = p.getString("HydrogenVMAndroidEngineSupport");
+        if (info.engine.empty()) {
+            // Imported before engines were recorded: the library names alone.
+            std::vector<std::string> names;
+            std::error_code lec;
+            for (const auto& e : fs::directory_iterator(fs::path(info.androidLibrary).parent_path(), lec))
+                names.push_back(e.path().filename().string());
+            const AndroidEngine guess = detectAndroidEngine(names, "");
+            if (guess.name != "Java + native") { info.engine = guess.name; info.engineSupport = guess.support; }
+        }
         std::ifstream in(info.androidLibrary, std::ios::binary);
         unsigned char h[20] = {};
         in.read(reinterpret_cast<char*>(h), sizeof h);

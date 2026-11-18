@@ -488,7 +488,7 @@ Jni& jni(Process& p) {
                 const jobject m = j.newObject("java/lang/reflect/Method");
                 const jobject c = j.classFor(mi.cls);
                 std::lock_guard<std::recursive_mutex> lk(j.mu);
-                if (JObject* o = j.get(m)) { o->str = mi.name; o->host = mi.sig; o->fields["hvm.declaring"] = c; }
+                if (JObject* o = j.get(m)) { o->str = mi.name; o->host = mi.sig; o->fields["hvm.declaring"] = c; o->fields["hvm.static"] = mi.isStatic ? 1 : 0; }
                 ret(x, m);
             });
             // Direct byte buffers: a guest address and a capacity.

@@ -60,6 +60,10 @@ public:
     // Mapped address space / host backing, not physically resident bytes.
     struct Stats { uint64_t mappedBytes = 0, committedHostBytes = 0; };
     Stats stats() const;
+    // A ceiling on committed host memory (bench phone mode: the iPhone closes an app that uses
+    // too much). Committing past it throws, ending the run with a clear message. 0: none.
+    void setCommitBudget(uint64_t bytes) noexcept { budget_ = bytes; }
+    uint64_t committedBytes() const noexcept { return committed_bytes_; }
 
     // Commit [addr, addr+size) with the given guest permissions. Safe to call on
     // ranges that overlap already-committed memory; existing contents are kept.
@@ -116,6 +120,8 @@ private:
     size_t               host_page_ = 4096;
     std::vector<uint8_t> prot_;           // per guest page
     std::vector<uint8_t> host_committed_; // per host page
+    uint64_t budget_ = 0;
+    uint64_t committed_bytes_ = 0;
     mutable std::mutex   mu_;
 };
 

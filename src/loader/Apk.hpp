@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "AndroidEngine.hpp"
+
 namespace Hydrogen::Loader {
 
 struct ApkManifest {

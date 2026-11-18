@@ -11653,6 +11653,45 @@ int runFullSubsystemTests() {
         check(ok, "Path mapping keeps '/' when the app passes paths with a trailing slash, and accepts /private/var spellings");
     }
 
+    // Phone mode (hvm run --phone): what the iPhone does where Linux differs. A Linux host's /proc
+    // and /sys never reach the game; lookups ignore case like APFS (and only then); the arena
+    // stops at the memory budget. (Bugs this catches: Dead Space #504 stale links, Alto #507 /proc.)
+    {
+        std::error_code ec;
+        const std::string root = "/tmp/hvm_phone_mode_" + std::to_string(getpid());
+        std::filesystem::remove_all(root, ec);
+        std::filesystem::create_directories(root + "/Game.app/Data/Textures", ec);
+        { std::ofstream(root + "/Game.app/Data/Textures/Hero.PNG") << "x"; }
+        ProcessConfig c;
+        c.homePath = root;
+        c.bundlePath = root + "/Game.app";
+        c.phoneMode = true;
+        Process pp(c);
+        const std::string gb = pp.guestBundlePath();
+        bool ok = pp.hostPath(gb + "/data/textures/hero.png") == root + "/Game.app/Data/Textures/Hero.PNG";
+        ok &= pp.hostPath(gb + "/Data/Textures/Hero.PNG") == root + "/Game.app/Data/Textures/Hero.PNG";
+        ok &= !std::filesystem::exists(pp.hostPath(gb + "/data/missing.png"), ec);
+        ok &= !std::filesystem::exists(pp.hostPath("/proc/self/maps"), ec);
+        ok &= !std::filesystem::exists(pp.hostPath("/proc/cpuinfo"), ec);
+        ok &= !std::filesystem::exists(pp.hostPath("/sys/devices/system/cpu"), ec);
+        ProcessConfig plain;
+        plain.homePath = root;
+        plain.bundlePath = root + "/Game.app";
+        Process lp(plain);
+        ok &= lp.hostPath(lp.guestBundlePath() + "/data/textures/hero.png") == root + "/Game.app/data/textures/hero.png";
+        check(ok, "Phone mode: no host /proc or /sys, case-insensitive lookups only in phone mode");
+
+        Memory::GuestArena arena;
+        arena.setCommitBudget(1u << 20);
+        bool threw = false;
+        arena.map(0x10000000u, 512u << 10);
+        try { arena.map(0x20000000u, 1u << 20); } catch (const std::runtime_error& e) {
+            threw = std::string(e.what()).find("memory budget") != std::string::npos;
+        }
+        check(threw && arena.committedBytes() <= (1u << 20), "Phone mode: committing past the memory budget ends the run with a clear message");
+        std::filesystem::remove_all(root, ec);
+    }
+
     // Regressions: pthread_from_mach_thread_np, mmap MAP_FIXED, and formatGuest with flags after width
     {
         ProcessConfig cfg;

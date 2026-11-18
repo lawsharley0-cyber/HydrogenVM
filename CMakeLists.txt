@@ -26,6 +26,7 @@ add_library(hvm_core STATIC
   src/loader/Apk.cpp
   src/loader/Plist.cpp
   src/loader/AppBundle.cpp
+  src/loader/AndroidEngine.cpp
   src/selftest/SelfTest.cpp
   ${HVM_RUNTIME_SOURCES}
 )

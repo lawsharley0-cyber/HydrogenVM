@@ -15,6 +15,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <unistd.h>
+#include <random>
 #include <filesystem>
 #include "runtime/libc/TlsBridge.hpp"
 #include "runtime/libc/HttpClient.hpp"
@@ -57,6 +59,8 @@ std::string jsonList(const std::vector<std::string>& v) {
 int hvmRunMain(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "usage: hvm run <app|ipa> [--home DIR] [--keep-going] [--trace] [-- args]\n"); return 2; }
     std::string target = argv[1], home;
+    bool phone = false;
+    int phoneMemoryMB = 1536;
     Runtime::ProcessConfig cfg;
     bool quiet = false;
     double runFor = 0;
@@ -145,6 +149,8 @@ int hvmRunMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--loopback-network")) cfg.loopbackNetwork = true;
         else if (!std::strcmp(argv[i], "--offline-clash")) cfg.offlineClash = true;
         else if (!std::strcmp(argv[i], "--internet")) cfg.internetAccess = true;
+        else if (!std::strcmp(argv[i], "--phone")) phone = true;
+        else if (!std::strcmp(argv[i], "--phone-memory") && i + 1 < argc) { phone = true; phoneMemoryMB = std::max(64, std::atoi(argv[++i])); }
         else if (!std::strcmp(argv[i], "--unlock-fps")) cfg.unlockFrameRate = true;
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--guest-libs")) cfg.guestLibs = true;
@@ -167,6 +173,34 @@ int hvmRunMain(int argc, char** argv) {
     if (!inputFile.empty() && (launches != 1 || !fs::is_regular_file(inputFile))) {
         std::fprintf(stderr, "--input-file requires an existing regular file and a single launch\n");
         return 2;
+    }
+    if (phone) {
+        // Phone mode: act like the iPhone where a Linux host differs (see ProcessConfig::phoneMode).
+        cfg.phoneMode = true;
+        cfg.hostPageSize = 16384;
+        cfg.memoryBudgetBytes = uint64_t(phoneMemoryMB) << 20;
+        ::setenv("HVM_GL1_EMULATE", "1", 1);   // the GLES1-over-ES2 path newer iPhones need
+        // iOS can move an app's data container to a new path (reinstalls, updates): reach the
+        // home through a fresh alias each run and drop the old ones, so anything that stored an
+        // absolute path from an earlier run points nowhere, as it would on the phone.
+        const fs::path real = fs::weakly_canonical(home.empty() ? fs::temp_directory_path() / "hvm-apps" : fs::path(home));
+        std::error_code ec;
+        fs::create_directories(real, ec);
+        const fs::path aliases = fs::temp_directory_path() / "hvm-phone-containers";
+        fs::create_directories(aliases, ec);
+        for (const auto& e : fs::directory_iterator(aliases, ec)) {
+            std::error_code rc;
+            if (fs::is_symlink(e.symlink_status(rc)) && fs::read_symlink(e.path(), rc) == real) fs::remove(e.path(), rc);
+        }
+        char id[40];
+        std::snprintf(id, sizeof id, "%08X-%04X-%08X", unsigned(std::random_device{}()), unsigned(::getpid() & 0xFFFF),
+                      unsigned(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const fs::path alias = aliases / id;
+        fs::create_directory_symlink(real, alias, ec);
+        if (ec) { std::fprintf(stderr, "--phone: can't make the container alias (%s)\n", ec.message().c_str()); return 2; }
+        home = alias.string();
+        std::fprintf(stderr, "phone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, "
+                             "%d MB memory, container %s\n", phoneMemoryMB, home.c_str());
     }
     if (target.size() > 4 && target.compare(target.size() - 4, 4, ".ipa") == 0) {
         const std::string root = home.empty() ? (fs::temp_directory_path() / "hvm-apps").string() : home;

@@ -187,10 +187,14 @@ void GuestArena::commitHostPages(uint64_t first, uint64_t last) {
         while (j + 1 <= last && !host_committed_[j + 1]) ++j;
         void* want = base_ + i * host_page_;
         size_t len = size_t((j - i + 1) * host_page_);
+        if (budget_ && committed_bytes_ + len > budget_)
+            throw std::runtime_error("HydrogenVM: the game went over the phone's memory budget (" +
+                                     std::to_string(budget_ >> 20) + " MB); iOS would close it here");
         void* r = mmap(want, len, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
         if (r == MAP_FAILED) throw std::runtime_error("HydrogenVM: failed to commit guest memory");
         for (uint64_t k = i; k <= j; ++k) host_committed_[k] = 1;
+        committed_bytes_ += len;
         i = j + 1;
     }
 }
@@ -200,6 +204,7 @@ void GuestArena::releaseHostPage(uint64_t idx) {
     mmap(base_ + idx * host_page_, host_page_, PROT_NONE,
          MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_NORESERVE, -1, 0);
     host_committed_[idx] = 0;
+    committed_bytes_ -= host_page_;
 }
 
 void GuestArena::map(uint32_t addr, uint32_t size, uint8_t prot) {

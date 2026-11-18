@@ -233,6 +233,7 @@ final class RunModel {
                     fields["report"] = crash
                     fields["bundleId"] = self.app.info.bundleIdentifier
                     fields["memorySamples"] = self.memorySamples
+                    if fields["logs"] == nil { fields["logs"] = self.log.suffix(3000).map(\.text) }
                     do {
                         self.savedCrash = try CrashReport.save(fields, app: self.app.info.bundleIdentifier)
                         CrashReport.clearPending()
@@ -337,6 +338,19 @@ final class RunModel {
         url.queryItems = [URLQueryItem(name: "title", value: String(title.prefix(150))),
                           URLQueryItem(name: "body", value: body)]
         return url.url!
+    }
+
+    /// The console's problems and the whole log, as a one-tap report.
+    func consoleProblemReport() -> ProblemReport {
+        let report = ConsoleReport(lines: log.map { ($0.text, $0.level) })
+        var summary = "**App:** \(app.title) \(app.info.version) (`\(app.info.bundleIdentifier)`) · \(app.info.isAndroid ? "Android" : "iOS")\n"
+        summary += ProblemReporter.deviceLine + " · renderer \(session?.useGPU == false ? "software" : "GPU")"
+        summary += " · \(fps) fps · p95 frame \(String(format: "%.1f", frameTimeP95)) ms\n\n"
+        summary += report.markdown(limit: 20_000)
+        return ProblemReport(title: "[console] \(app.info.bundleIdentifier): \(report.headline ?? "problem report")",
+                             summary: summary,
+                             parts: [.init(name: "problems.md", text: report.markdown(limit: 400_000), language: "markdown"),
+                                     .init(name: "log.txt", text: logText)])
     }
 
     private func sampleMemory() {
@@ -594,7 +608,8 @@ struct RunView: View {
             if showLog {
                 VStack {
                     Spacer()
-                    LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() })
+                    LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() },
+                             problemReport: { model.consoleProblemReport() })
                         .frame(height: 220)
                 }
             }
@@ -986,17 +1001,39 @@ struct LogPanel: View {
     let lines: [RunModel.LogLine]
     let copyText: () -> String
     var issueURL: (() -> URL)? = nil
+    /// With a GitHub token saved, "Report" sends this in one tap instead of opening a web form.
+    var problemReport: (@MainActor () -> ProblemReport)? = nil
     @Environment(\.openURL) private var openURL
+    @State private var reportStatus: String?
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 Text("Log").font(.caption.weight(.semibold))
                 Spacer()
+                if let reportStatus {
+                    Text(reportStatus).font(.caption2).lineLimit(1)
+                }
                 if let issueURL {
-                    Button("Report on GitHub", systemImage: "exclamationmark.bubble") { openURL(issueURL()) }
+                    Button("Report on GitHub", systemImage: "exclamationmark.bubble") {
+                        if let problemReport, ProblemReporter.hasToken {
+                            let report = problemReport()
+                            reportStatus = "Sending…"
+                            Task {
+                                do {
+                                    let url = try await ProblemReporter.send(report)
+                                    reportStatus = "Sent"
+                                    openURL(url)
+                                } catch {
+                                    reportStatus = error is ProblemReporter.SendError ? "Not sent" : "Saved, sends later"
+                                }
+                            }
+                        } else {
+                            openURL(issueURL())
+                        }
+                    }
                         .font(.caption)
-                        .accessibilityHint("Opens a GitHub issue with the errors from this session")
+                        .accessibilityHint("Sends this session's problems and log to GitHub as an issue")
                 }
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = copyText() }
                     .labelStyle(.iconOnly).font(.caption)
