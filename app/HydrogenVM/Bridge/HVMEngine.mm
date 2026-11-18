@@ -523,6 +523,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if ((self = [super init])) {
         _bundlePath = [bundlePath copy];
         _homePath = [homePath copy];
+        _recordingPath = [[homePath stringByAppendingPathComponent:@"Library/HydrogenVM/last-session.hvmrec"] copy];
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
@@ -563,10 +564,22 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 
     core->logFile = openRunLog(bundle, playSession);
 
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *recDir = [_homePath stringByAppendingPathComponent:@"Library/HydrogenVM"];
+    [fm createDirectoryAtPath:recDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *lastRec = [recDir stringByAppendingPathComponent:@"last-session.hvmrec"];
+    NSString *prevRec = [recDir stringByAppendingPathComponent:@"previous-session.hvmrec"];
+    if ([fm fileExistsAtPath:lastRec]) {
+        [fm removeItemAtPath:prevRec error:nil];
+        [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
+    }
+    const std::string recordPath = lastRec.UTF8String;
+
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
+        cfg.recordPath = recordPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;

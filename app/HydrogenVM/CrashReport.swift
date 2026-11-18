@@ -11,6 +11,7 @@ struct CrashReport: Identifiable {
     let summary: String
     let signature: String
     let app: String
+    var recordingPath: String? = nil
 
     static var directory: URL {
         URL.documentsDirectory.appending(path: "HydrogenVM/crashes", directoryHint: .isDirectory)
@@ -69,8 +70,17 @@ struct CrashReport: Identifiable {
         let name = app.map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "_" }
         let file = directory.appending(path: "\(date)-\(String(name))-\(UUID().uuidString).json")
         try data.write(to: file, options: .atomic)
+        // The next launch rotates last-session.hvmrec, so keep this crash's recording next to its report.
+        var recording: String? = nil
+        if let source = fields["recordingPath"] as? String, FileManager.default.fileExists(atPath: source) {
+            let copy = file.deletingPathExtension().appendingPathExtension("hvmrec")
+            if (try? FileManager.default.copyItem(atPath: source, toPath: copy.path(percentEncoded: false))) != nil {
+                recording = copy.path(percentEncoded: false)
+            }
+        }
         return CrashReport(json: String(decoding: data, as: UTF8.self), file: file,
-                           summary: fields["summary"] as? String ?? "The previous game session ended unexpectedly. Share this report to help diagnose it.", signature: signature, app: app)
+                           summary: fields["summary"] as? String ?? "The previous game session ended unexpectedly. Share this report to help diagnose it.", signature: signature, app: app,
+                           recordingPath: recording)
     }
 
     static var deviceModel: String {
@@ -136,9 +146,17 @@ struct CrashReportView: View {
                 Text(report.summary)
                 Text("Report \(report.signature)").font(.caption.monospaced())
                 SendReportButton(make: {
-                    ProblemReport(title: "[\(report.signature)] \(report.app): \(report.summary.prefix(90))",
-                                  summary: "\(report.summary)\n\n**App:** `\(report.app)` · \(ProblemReporter.deviceLine) · **Report:** `\(report.signature)`",
-                                  parts: [.init(name: "report.json", text: report.json, language: "json")])
+                    var summary = "\(report.summary)\n\n**App:** `\(report.app)` · \(ProblemReporter.deviceLine) · **Report:** `\(report.signature)`"
+                    var parts: [ProblemReport.Part] = [.init(name: "report.json", text: report.json, language: "json")]
+                    if let path = report.recordingPath,
+                       let recording = try? String(contentsOfFile: path, encoding: .utf8),
+                       !recording.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        summary += "\n\n**Replay on bench:** `hvm run <game> --phone --gpu --replay session.hvmrec`"
+                        parts.append(.init(name: "session.hvmrec", text: recording))
+                    }
+                    return ProblemReport(title: "[\(report.signature)] \(report.app): \(report.summary.prefix(90))",
+                                         summary: summary,
+                                         parts: parts)
                 }, fallback: report.issueURL)
                 Button("Copy report", systemImage: "doc.on.doc") { UIPasteboard.general.string = report.json }
                 ShareLink(item: report.file) { Label("Share", systemImage: "square.and.arrow.up") }
