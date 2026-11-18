@@ -68,7 +68,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | Symbol | Imported By | Status | HydrogenVM Source | Notes |
 |---|---|---|---|---|
 | `___cxa_atexit` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:536` | Handler `p_cxa_atexit` |
-| `___error` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1250` | Handler `s_error` |
+| `___error` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1262` | Handler `s_error` |
 | `___mb_cur_max` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:595` | Guest data symbol |
 | `___stderrp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:553` | Guest global data cell |
 | `___stdinp` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:553` | Guest global data cell |
@@ -82,10 +82,10 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_catgets` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_catopen` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_clock_gettime` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:147` | Handler `t_clock_gettime` |
-| `_close` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1311` | Handler `f_close` |
-| `_dladdr` | `libgcc_s.1.dylib`, `libc++abi.dylib` | `present` | `src/runtime/libc/System.cpp:1305` | Handler `d_dladdr` |
+| `_close` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1323` | Handler `f_close` |
+| `_dladdr` | `libgcc_s.1.dylib`, `libc++abi.dylib` | `present` | `src/runtime/libc/System.cpp:1317` | Handler `d_dladdr` |
 | `_duplocale` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:668` | `SupportStatus::Approx` — one locale (C/en_US); distinct handles |
-| `_dyld_register_func_for_add_image` | `libc++abi.dylib` | `missing` | `src/runtime/libc/System.cpp:1296` | Registered only under `__dyld_register_func_for_add_image` (2 leading underscores); single-underscore alias `_dyld_register_func_for_add_image` is missing (S5 scope) |
+| `_dyld_register_func_for_add_image` | `libc++abi.dylib` | `missing` | `src/runtime/libc/System.cpp:1308` | Registered only under `__dyld_register_func_for_add_image` (2 leading underscores); single-underscore alias `_dyld_register_func_for_add_image` is missing (S5 scope) |
 | `_fflush` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:601` | Handler `f_fflush` |
 | `_fgetc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:587` | Handler `f_fgetc` |
 | `_fprintf` | `libc++abi.dylib` | `present` | `src/runtime/libc/Stdio.cpp:560` | Handler `f_fprintf` |
@@ -126,7 +126,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_isxdigit_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_localeconv` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Posix.cpp:320` | Handler `p_localeconv` |
 | `_localeconv_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_lseek` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1316` | Handler `f_lseek` |
+| `_lseek` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1328` | Handler `f_lseek` |
 | `_mach_absolute_time` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:142` | Handler `t_mach_absolute_time` |
 | `_mach_timebase_info` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:143` | Handler `t_mach_timebase_info` |
 | `_malloc` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:447` | Handler `m_malloc` |
@@ -142,7 +142,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_memset` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:604` | Handler `s_memset` |
 | `_nanosleep` | `libc++.1.dylib` | `present` | `src/runtime/libc/Time.cpp:146` | Handler `t_nanosleep` |
 | `_newlocale` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:667` | `SupportStatus::Approx` — one locale (C/en_US); distinct handles |
-| `_open` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1308` | Handler `f_open` |
+| `_open` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1320` | Handler `f_open` |
 | `_poll` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Net.cpp:1076` | Handler `n_poll` |
 | `_posix_memalign` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:453` | Handler `m_posix_memalign` |
 | `_pthread_cond_broadcast` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:673` | `SupportStatus::Approx` — Wakes all current waiters and always reports success; waits poll for cancellation and stop |
@@ -169,7 +169,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_pthread_self` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:708` | Handler `t_self` |
 | `_pthread_setspecific` | `libgcc_s.1.dylib`, `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:689` | Handler `k_set` |
 | `_putc` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:576` | Handler `f_fputc` |
-| `_read` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1312` | Handler `f_read` |
+| `_read` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1324` | Handler `f_read` |
 | `_realloc` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdlib.cpp:449` | Handler `m_realloc` |
 | `_sched_yield` | `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Pthread.cpp:718` | Handler `sched_yield_` |
 | `_setlocale` | `libstdc++.6.dylib`, `libc++.1.dylib` | `stubbed-dishonestly` | `src/runtime/libc/Posix.cpp:319` | Handler `p_setlocale` returns fixed `"C"` string regardless of requested category/locale |
@@ -178,7 +178,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_sprintf` | `libstdc++.6.dylib` | `present` | `src/runtime/libc/Stdio.cpp:562` | Handler `f_sprintf` |
 | `_sscanf` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/Stdio.cpp:608` | Handler `f_sscanf` |
 | `_sscanf_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_stat` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1326` | Handler `f_stat` |
+| `_stat` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1338` | Handler `f_stat` |
 | `_strchr` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:634` | Handler `s_strchr` |
 | `_strcmp` | `libstdc++.6.dylib`, `libc++abi.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:616` | Handler `s_strcmp` |
 | `_strcoll` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:620` | Handler `s_strcoll` |
@@ -204,7 +204,7 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_strtoull_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
 | `_strxfrm` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:698` | Handler `s_strxfrm` |
 | `_strxfrm_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
-| `_sysconf` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1285` | Handler `s_sysconf` |
+| `_sysconf` | `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1297` | Handler `s_sysconf` |
 | `_tolower_l` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:673` | Handler `c_tolower_l` |
 | `_toupper_l` | `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:672` | Handler `c_toupper_l` |
 | `_towlower_l` | `libc++.1.dylib` | `missing` | `—` | Not registered in HydrogenVM symbol tables |
@@ -235,4 +235,4 @@ Every `libSystem.B.dylib` import required by `libgcc_s.1.dylib` is classified in
 | `_wmemcpy` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:685` | Handler `w_wmemcpy` |
 | `_wmemmove` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:686` | Handler `w_wmemcpy` |
 | `_wmemset` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/String.cpp:687` | Handler `w_wmemset` |
-| `_write` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1313` | Handler `f_write` |
+| `_write` | `libstdc++.6.dylib`, `libc++.1.dylib` | `present` | `src/runtime/libc/System.cpp:1325` | Handler `f_write` |
