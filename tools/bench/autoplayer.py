@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import plistlib
 import random
 import struct
 import subprocess
@@ -71,10 +72,28 @@ def choose(frame, step, rng):
     return [[(0.5, 0.5)], [(0.85, 0.85)], [(0.5, 0.76)]][step % 5]
 
 
-def gesture(stream, frame, points):
+def android_game(path):
+    if path.suffix.lower() in {'.apk', '.apks', '.apkm', '.xapk'}:
+        return True
+    plist = path / 'Info.plist'
+    if not plist.is_file():
+        return False
+    with plist.open('rb') as handle:
+        info = plistlib.load(handle)
+    return isinstance(info, dict) and bool(info.get('HydrogenVMAndroidLibrary'))
+
+
+def gesture(stream, frame, points, *, android=False):
     def send(phase, p):
         x, y = p
-        stream.write(f'touch {phase} {x * frame.width / frame.scale:.3f} {y * frame.height / frame.scale:.3f}\n')
+        if android and frame.width > frame.height:
+            # The raw Android landscape surface is the inverse of the input handler's portrait rotation.
+            px = (1 - y) * frame.height / frame.scale
+            py = x * frame.width / frame.scale
+        else:
+            px = x * frame.width / frame.scale
+            py = y * frame.height / frame.scale
+        stream.write(f'touch {phase} {px:.3f} {py:.3f}\n')
         stream.flush()
     start, end = points[0], points[-1]
     send(0, start)
@@ -93,6 +112,7 @@ def load_report(path):
 
 
 def run(args):
+    android = android_game(args.game)
     out = args.out.resolve()
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
     command = [str(args.hvm.resolve()), 'run', str(args.game.resolve()), '--phone', '--gpu',
@@ -125,7 +145,7 @@ def run(args):
                     journal.write(json.dumps({'step': steps, 'points': points, 'image': thumb.name,
                                               'frameHash': hashlib.sha256(frame.thumb).hexdigest()}) + '\n')
                     journal.flush()
-                    gesture(inputs, frame, points)
+                    gesture(inputs, frame, points, android=android)
                     steps += 1
                     next_input = time.monotonic() + args.interval
                 time.sleep(0.1)
