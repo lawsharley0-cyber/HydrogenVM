@@ -45,6 +45,14 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.lfull.HydrogenVM.import.*</string>
+	</array>
 	<!-- Home Screen game icons open hydrogenvm://run/<bundle id> (see GameLink). -->
 	<key>NSUserActivityTypes</key>
 	<array>
@@ -85,6 +93,16 @@
 				<string>com.android.package-archive</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Android OBB Expansion</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.android.obb-archive</string>
+			</array>
+		</dict>
 	</array>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
@@ -123,6 +141,23 @@
 				<key>public.mime-type</key>
 				<array>
 					<string>application/vnd.android.package-archive</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.android.obb-archive</string>
+			<key>UTTypeDescription</key>
+			<string>Android OBB Expansion</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>obb</string>
 				</array>
 			</dict>
 		</dict>

@@ -1,7 +1,117 @@
+import BackgroundTasks
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 extension HVMAppInfo: @unchecked Sendable {}
+
+/// Tracks one active archive import (`.ipa`, `.apk`, or `.obb`) for the library progress banner.
+struct ImportProgressItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let fileName: String
+    let totalBytes: Int64
+    var completedBytes: Int64
+    var phase: String
+    var backgroundContinued: Bool
+
+    var fractionCompleted: Double {
+        guard totalBytes > 0 else { return 0 }
+        return min(max(Double(completedBytes) / Double(totalBytes), 0), 1)
+    }
+}
+
+/// Coordinates iOS 26 `BGContinuedProcessingTask` registration and execution for large imports (> ~200 MB),
+/// falling back cleanly to `UIApplication.beginBackgroundTask` when unavailable or on older iOS.
+@MainActor
+final class BackgroundImportCoordinator {
+    static let shared = BackgroundImportCoordinator()
+    static let largeImportThresholdBytes: Int64 = 200 * 1024 * 1024
+    static let taskIdentifierPrefix = "com.lfull.HydrogenVM.import."
+
+    private var pendingHandlers: [String: @Sendable (Progress) async -> Bool] = [:]
+
+    /// Starts a background-protected import. For archives >= ~200 MB on iOS 26+, requests a
+    /// `BGContinuedProcessingTaskRequest` so iOS shows system background progress and keeps running
+    /// across app switches; falls back to `beginBackgroundTask` if submission fails or for smaller files.
+    func runImport(
+        id: String,
+        title: String,
+        subtitle: String,
+        totalBytes: Int64,
+        onProgress: @escaping @MainActor (Int64, String, Bool) -> Void,
+        work: @escaping @Sendable (@escaping @Sendable (Int64, String) -> Void) async -> Bool
+    ) {
+        let wantsContinued = totalBytes >= Self.largeImportThresholdBytes
+        if wantsContinued, #available(iOS 26.0, *) {
+            let identifier = "\(Self.taskIdentifierPrefix)\(id)"
+            let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { [weak self] task in
+                guard let continued = task as? BGContinuedProcessingTask else {
+                    task.setTaskCompleted(success: false)
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    guard let self, let handler = self.pendingHandlers.removeValue(forKey: identifier) else {
+                        continued.setTaskCompleted(success: false)
+                        return
+                    }
+                    continued.progress.totalUnitCount = max(1, totalBytes)
+                    var cancelled = false
+                    continued.expirationHandler = {
+                        cancelled = true
+                    }
+                    let ok = await handler(continued.progress)
+                    continued.setTaskCompleted(success: ok && !cancelled)
+                }
+            }
+
+            if registered {
+                pendingHandlers[identifier] = { sysProgress in
+                    await work { bytes, phase in
+                        sysProgress.completedUnitCount = min(sysProgress.totalUnitCount, max(0, bytes))
+                        Task { @MainActor in
+                            onProgress(bytes, phase, true)
+                        }
+                    }
+                }
+                let request = BGContinuedProcessingTaskRequest(
+                    identifier: identifier,
+                    title: title,
+                    subtitle: subtitle
+                )
+                request.strategy = .queue
+                do {
+                    try BGTaskScheduler.shared.submit(request)
+                    onProgress(0, "Continuing in background…", true)
+                    return
+                } catch {
+                    pendingHandlers.removeValue(forKey: identifier)
+                }
+            }
+        }
+
+        // Fallback path: standard foreground/background-task continuation.
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "Import \(title)") {
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
+        }
+        Task.detached {
+            _ = await work { bytes, phase in
+                Task { @MainActor in
+                    onProgress(bytes, phase, false)
+                }
+            }
+            await MainActor.run {
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+            }
+        }
+    }
+}
 
 /// Installed apps live in Documents/Apps/<bundle id>/<Name>.app, with the
 /// app's sandbox (Documents/, Library/, tmp/) beside the bundle. Any .ipa
@@ -24,6 +134,7 @@ struct InstalledApp: Identifiable, Hashable, Sendable {
 final class LibraryStore {
     private(set) var apps: [InstalledApp] = []
     private(set) var importing: [String] = []
+    private(set) var importItems: [ImportProgressItem] = []
     var lastError: String?
 
     static var appsDir: URL { URL.documentsDirectory.appending(path: "Apps", directoryHint: .isDirectory) }
@@ -33,11 +144,11 @@ final class LibraryStore {
     func refresh() {
         let fm = FileManager.default
         try? fm.createDirectory(at: Self.appsDir, withIntermediateDirectories: true)
-        // Pick up .ipa files dropped into Documents (or the old Documents/Library).
+        // Pick up .ipa, .apk, and .obb files dropped into Documents (or the old Documents/Library).
         let dropped = [URL.documentsDirectory, URL.documentsDirectory.appending(path: "Library")]
             .flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
-            .filter { ["ipa", "apk"].contains($0.pathExtension.lowercased()) }
-        for ipa in dropped { importIPA(at: ipa, removeAfter: true) }
+            .filter { ["ipa", "apk", "obb"].contains($0.pathExtension.lowercased()) }
+        for archive in dropped { importIPA(at: archive, removeAfter: true) }
         reloadList()
     }
 
@@ -55,29 +166,102 @@ final class LibraryStore {
         HydrogenShortcuts.updateAppShortcutParameters()
     }
 
-    /// Copies (if needed) and extracts an .ipa (or an Android .apk) off the main thread.
-    func importIPA(at url: URL, removeAfter: Bool = false) {
-        if url.pathExtension.lowercased() == "apk" { importAPK(at: url, removeAfter: removeAfter); return }
-        let name = url.lastPathComponent
+    private func beginProgress(id: String, name: String, totalBytes: Int64) {
         importing.append(name)
+        importItems.append(ImportProgressItem(
+            id: id,
+            fileName: name,
+            totalBytes: max(1, totalBytes),
+            completedBytes: 0,
+            phase: "Staging \(name)…",
+            backgroundContinued: totalBytes >= BackgroundImportCoordinator.largeImportThresholdBytes
+        ))
+    }
+
+    private func updateProgress(id: String, completedBytes: Int64, phase: String, backgroundContinued: Bool) {
+        guard let idx = importItems.firstIndex(where: { $0.id == id }) else { return }
+        importItems[idx].completedBytes = min(importItems[idx].totalBytes, max(0, completedBytes))
+        importItems[idx].phase = phase
+        importItems[idx].backgroundContinued = backgroundContinued || importItems[idx].backgroundContinued
+    }
+
+    private func endProgress(id: String, name: String, failure: String?) {
+        importing.removeAll { $0 == name }
+        importItems.removeAll { $0.id == id }
+        if let failure { lastError = "\(name): \(failure)" }
+        reloadList()
+    }
+
+    /// Copies a file in 4 MB chunks while reporting byte progress.
+    nonisolated private static func copyWithProgress(
+        from source: URL,
+        to destination: URL,
+        baseBytes: Int64 = 0,
+        phase: String,
+        report: @Sendable (Int64, String) -> Void
+    ) throws -> Int64 {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path(percentEncoded: false)) {
+            try fm.removeItem(at: destination)
+        }
+        let input = try FileHandle(forReadingFrom: source)
+        defer { try? input.close() }
+        fm.createFile(atPath: destination.path(percentEncoded: false), contents: nil)
+        let output = try FileHandle(forWritingTo: destination)
+        defer { try? output.close() }
+
+        let chunkSize = 4 * 1024 * 1024
+        var copied: Int64 = 0
+        while true {
+            let chunk = try input.read(upToCount: chunkSize) ?? Data()
+            if chunk.isEmpty { break }
+            try output.write(contentsOf: chunk)
+            copied += Int64(chunk.count)
+            report(baseBytes + copied, phase)
+        }
+        return copied
+    }
+
+    /// Copies (if needed) and extracts an .ipa, Android .apk, or Android .obb expansion file off the main thread.
+    /// Archives over ~200 MB use `BGContinuedProcessingTask` on iOS 26+.
+    func importIPA(at url: URL, removeAfter: Bool = false) {
+        let ext = url.pathExtension.lowercased()
+        if ext == "apk" { importAPK(at: url, removeAfter: removeAfter); return }
+        if ext == "obb" { importOBB(at: url, removeAfter: removeAfter); return }
+
+        let name = url.lastPathComponent
+        let jobID = UUID().uuidString.lowercased()
         let scoped = url.startAccessingSecurityScopedResource()
+        let fileSize = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         // Security-scoped URLs only live while we hold access, so stage a copy first.
-        let staged = URL.temporaryDirectory.appending(path: UUID().uuidString + ".ipa")
+        let staged = URL.temporaryDirectory.appending(path: jobID + ".ipa")
+        beginProgress(id: jobID, name: name, totalBytes: max(1, fileSize * 2))
         do {
             try FileManager.default.copyItem(at: url, to: staged)
         } catch {
             if scoped { url.stopAccessingSecurityScopedResource() }
-            importing.removeAll { $0 == name }
-            lastError = "\(name): \(error.localizedDescription)"
+            endProgress(id: jobID, name: name, failure: error.localizedDescription)
             return
         }
         if scoped { url.stopAccessingSecurityScopedResource() }
         if removeAfter { try? FileManager.default.removeItem(at: url) }
+
         let root = Self.appsDir.path(percentEncoded: false)
-        Task.detached {
+        let stagedSize = max(1, fileSize)
+        BackgroundImportCoordinator.shared.runImport(
+            id: jobID,
+            title: "Importing \(name)",
+            subtitle: "Extracting iOS app archive",
+            totalBytes: stagedSize,
+            onProgress: { [weak self] bytes, phase, bg in
+                self?.updateProgress(id: jobID, completedBytes: bytes, phase: phase, backgroundContinued: bg)
+            }
+        ) { report in
             var message: String?
             do {
+                report(stagedSize / 3, "Extracting \(name)…")
                 let info = try HVMEngine.importIPA(staged.path(percentEncoded: false), intoDirectory: root)
+                report((stagedSize * 2) / 3, "Archiving \(info.displayName.isEmpty ? name : info.displayName)…")
                 // @AppStorage defaults to on but writes nothing until toggled, so absent means on.
                 let keepIpa = UserDefaults.standard.object(forKey: "keepIpaForReinstall") as? Bool ?? true
                 if keepIpa {
@@ -87,43 +271,54 @@ final class LibraryStore {
                         let ipaDir = appSupport.appendingPathComponent("HydrogenVM/IPAs/\(bundleId)", isDirectory: true)
                         try FileManager.default.createDirectory(at: ipaDir, withIntermediateDirectories: true)
                         let targetIPA = ipaDir.appendingPathComponent("\(sha256).ipa")
-                        // Replace if exists (e.g. reinstall over same version)
-                        try? FileManager.default.removeItem(at: targetIPA)
-                        try FileManager.default.copyItem(at: staged, to: targetIPA)
+                        _ = try Self.copyWithProgress(from: staged, to: targetIPA, baseBytes: (stagedSize * 2) / 3, phase: "Saving reinstall copy…", report: report)
                     }
                 }
+                report(stagedSize, "Finished \(name)")
+            } catch {
+                message = (error as NSError).localizedDescription
             }
-            catch { message = (error as NSError).localizedDescription }
             try? FileManager.default.removeItem(at: staged)
             let failure = message
             await MainActor.run {
-                self.importing.removeAll { $0 == name }
-                if let failure { self.lastError = "\(name): \(failure)" }
-                self.reloadList()
+                self.endProgress(id: jobID, name: name, failure: failure)
             }
+            return failure == nil
         }
     }
 
     /// Copies and extracts an Android .apk off the main thread.
     func importAPK(at url: URL, removeAfter: Bool = false) {
         let name = url.lastPathComponent
-        importing.append(name)
+        let jobID = UUID().uuidString.lowercased()
         let scoped = url.startAccessingSecurityScopedResource()
-        let staged = URL.temporaryDirectory.appending(path: UUID().uuidString + ".apk")
+        let fileSize = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        let staged = URL.temporaryDirectory.appending(path: jobID + ".apk")
+        beginProgress(id: jobID, name: name, totalBytes: max(1, fileSize))
         do {
             try FileManager.default.copyItem(at: url, to: staged)
         } catch {
             if scoped { url.stopAccessingSecurityScopedResource() }
-            importing.removeAll { $0 == name }
-            lastError = "\(name): \(error.localizedDescription)"
+            endProgress(id: jobID, name: name, failure: error.localizedDescription)
             return
         }
         if scoped { url.stopAccessingSecurityScopedResource() }
         if removeAfter { try? FileManager.default.removeItem(at: url) }
+
         let root = Self.appsDir.path(percentEncoded: false)
-        Task.detached {
+        let stagedSize = max(1, fileSize)
+        BackgroundImportCoordinator.shared.runImport(
+            id: jobID,
+            title: "Importing \(name)",
+            subtitle: "Extracting Android package",
+            totalBytes: stagedSize,
+            onProgress: { [weak self] bytes, phase, bg in
+                self?.updateProgress(id: jobID, completedBytes: bytes, phase: phase, backgroundContinued: bg)
+            }
+        ) { report in
             var message: String?
             do {
+                report(stagedSize / 3, "Extracting \(name)…")
                 let info = try HVMEngine.importAPK(staged.path(percentEncoded: false), intoDirectory: root)
                 // Kept like an .ipa, so Reinstall and Verify work for Android games too.
                 let keep = UserDefaults.standard.object(forKey: "keepIpaForReinstall") as? Bool ?? true
@@ -134,18 +329,103 @@ final class LibraryStore {
                     for old in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
                         try? FileManager.default.removeItem(at: old)
                     }
-                    try FileManager.default.copyItem(at: staged, to: dir.appendingPathComponent("\(sha256).apk"))
+                    _ = try Self.copyWithProgress(
+                        from: staged,
+                        to: dir.appendingPathComponent("\(sha256).apk"),
+                        baseBytes: (stagedSize * 2) / 3,
+                        phase: "Saving reinstall copy…",
+                        report: report
+                    )
                 }
+                report(stagedSize, "Finished \(name)")
+            } catch {
+                message = (error as NSError).localizedDescription
             }
-            catch { message = (error as NSError).localizedDescription }
             try? FileManager.default.removeItem(at: staged)
             let failure = message
             await MainActor.run {
-                self.importing.removeAll { $0 == name }
-                if let failure { self.lastError = "\(name): \(failure)" }
-                self.reloadList()
+                self.endProgress(id: jobID, name: name, failure: failure)
             }
+            return failure == nil
         }
+    }
+
+    /// Imports an Android `.obb` expansion file (`main.<ver>.<pkg>.obb` or `patch.<ver>.<pkg>.obb`)
+    /// into the matching game's `Library/Caches/sdcard/Android/obb/<pkg>/` directory.
+    func importOBB(at url: URL, removeAfter: Bool = false) {
+        let name = url.lastPathComponent
+        let jobID = UUID().uuidString.lowercased()
+        let scoped = url.startAccessingSecurityScopedResource()
+        let fileSize = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        let staged = URL.temporaryDirectory.appending(path: jobID + "-" + name)
+        beginProgress(id: jobID, name: name, totalBytes: max(1, fileSize))
+        do {
+            try FileManager.default.copyItem(at: url, to: staged)
+        } catch {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            endProgress(id: jobID, name: name, failure: error.localizedDescription)
+            return
+        }
+        if scoped { url.stopAccessingSecurityScopedResource() }
+        if removeAfter { try? FileManager.default.removeItem(at: url) }
+
+        let packageID = Self.parseOBBPackageIdentifier(from: name)
+            ?? apps.first(where: \.info.isAndroid)?.info.bundleIdentifier
+        guard let packageID else {
+            try? FileManager.default.removeItem(at: staged)
+            endProgress(id: jobID, name: name, failure: "Install the Android game (.apk) first or name the file main.<version>.<package>.obb.")
+            return
+        }
+
+        let obbDir = Self.appsDir
+            .appending(path: packageID, directoryHint: .isDirectory)
+            .appending(path: "Library/Caches/sdcard/Android/obb/\(packageID)", directoryHint: .isDirectory)
+        let targetOBB = obbDir.appending(path: name)
+        let stagedSize = max(1, fileSize)
+
+        BackgroundImportCoordinator.shared.runImport(
+            id: jobID,
+            title: "Importing \(name)",
+            subtitle: "Copying OBB expansion data for \(packageID)",
+            totalBytes: stagedSize,
+            onProgress: { [weak self] bytes, phase, bg in
+                self?.updateProgress(id: jobID, completedBytes: bytes, phase: phase, backgroundContinued: bg)
+            }
+        ) { report in
+            var message: String?
+            do {
+                try FileManager.default.createDirectory(at: obbDir, withIntermediateDirectories: true)
+                _ = try Self.copyWithProgress(
+                    from: staged,
+                    to: targetOBB,
+                    baseBytes: 0,
+                    phase: "Copying \(name)…",
+                    report: report
+                )
+            } catch {
+                message = (error as NSError).localizedDescription
+            }
+            try? FileManager.default.removeItem(at: staged)
+            let failure = message
+            await MainActor.run {
+                self.endProgress(id: jobID, name: name, failure: failure)
+            }
+            return failure == nil
+        }
+    }
+
+    /// Extracts `<package>` from standard OBB filenames (`main.123.com.example.game.obb` or `patch.123.com.example.game.obb`).
+    nonisolated static func parseOBBPackageIdentifier(from fileName: String) -> String? {
+        let lower = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard lower.lowercased().hasSuffix(".obb") else { return nil }
+        let stem = String(lower.dropLast(4))
+        let parts = stem.split(separator: ".")
+        if parts.count >= 4,
+           ["main", "patch"].contains(parts[0].lowercased()),
+           parts[1].allSatisfy(\.isNumber) {
+            return parts.dropFirst(2).joined(separator: ".")
+        }
+        return nil
     }
 
     func delete(_ app: InstalledApp) {
@@ -161,6 +441,65 @@ final class LibraryStore {
         for sub in ["Documents", "Library", "tmp"] {
             try? FileManager.default.removeItem(at: app.homeURL.appending(path: sub))
         }
+    }
+}
+
+/// Adaptive Gloss banner displayed at the top of the library while archives (especially large >200 MB
+/// `.ipa` / `.apk` / `.obb` packages) are importing in the foreground or via `BGContinuedProcessingTask`.
+struct ImportProgressBanner: View {
+    let items: [ImportProgressItem]
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    var body: some View {
+        GlossCard {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 { GlossRule() }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(item.fileName)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Gloss.ink)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            if item.backgroundContinued {
+                                Text("Background")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Gloss.link)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Gloss.link.opacity(0.14), in: Capsule())
+                            }
+                            Text("\(Int((item.fractionCompleted * 100).rounded()))%")
+                                .font(.system(size: 12, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Gloss.inkSoft)
+                        }
+                        ProgressView(value: item.fractionCompleted)
+                            .tint(Gloss.link)
+                        HStack {
+                            Text(item.phase)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Gloss.inkSoft)
+                                .lineLimit(1)
+                            Spacer()
+                            if item.totalBytes > 1 {
+                                Text("\(Self.formatBytes(item.completedBytes)) / \(Self.formatBytes(item.totalBytes))")
+                                    .font(.system(size: 11).monospacedDigit())
+                                    .foregroundStyle(Gloss.inkSoft)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+            }
+        }
+        .accessibilityIdentifier("library-import-progress-banner")
     }
 }
 
@@ -218,7 +557,7 @@ struct LibraryView: View {
                     ContentUnavailableView {
                         Label("No apps yet", systemImage: "shippingbox")
                     } description: {
-                        Text("Import a decrypted 32-bit .ipa (iOS 3–10), or an Android .apk with 32-bit ARM code. You can also drop them into HydrogenVM's folder in the Files app.")
+                        Text("Import a decrypted 32-bit .ipa (iOS 3–10), or an Android .apk / .obb with 32-bit ARM code. You can also drop them into HydrogenVM's folder in the Files app.")
                     } actions: {
                         Button("Import a game") { pickingFile = true }
                             .buttonStyle(GlossButtonStyle(kind: .blue, height: 44))
@@ -227,62 +566,62 @@ struct LibraryView: View {
                     .foregroundStyle(Gloss.ink)
                     }
                 } else {
-                    List {
-                        Section {
-                            Picker("Platform", selection: $platform) {
-                                Text("iPhone").tag(0)
-                                Text("Android").tag(1)
-                            }
-                            .pickerStyle(.segmented)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+                    VStack(spacing: 0) {
+                        if !store.importItems.isEmpty {
+                            ImportProgressBanner(items: store.importItems)
+                                .padding(.top, 10)
+                                .padding(.bottom, 4)
                         }
-                        if platform == 1 && !store.apps.contains(where: \.info.isAndroid) {
+                        List {
                             Section {
-                                Text("Import an Android .apk with 32-bit ARM native code (lib/armeabi or armeabi-v7a). Android support is new: games built on EA's Blast engine (Dead Space) and Unity run so far.")
-                                    .font(.subheadline).foregroundStyle(Gloss.inkSoft)
+                                Picker("Platform", selection: $platform) {
+                                    Text("iPhone").tag(0)
+                                    Text("Android").tag(1)
+                                }
+                                .pickerStyle(.segmented)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                             }
-                        }
-                        if !store.importing.isEmpty {
-                            Section("Importing") {
-                                ForEach(store.importing, id: \.self) { name in
-                                    HStack { ProgressView(); Text(name).padding(.leading, 8) }
+                            if platform == 1 && !store.apps.contains(where: \.info.isAndroid) {
+                                Section {
+                                    Text("Import an Android .apk with 32-bit ARM native code (lib/armeabi or armeabi-v7a) and optional .obb expansion archives. Android support is new: games built on EA's Blast engine (Dead Space) and Unity run so far.")
+                                        .font(.subheadline).foregroundStyle(Gloss.inkSoft)
                                 }
                             }
-                        }
-                        if !store.apps.filter({ $0.info.isAndroid == (platform == 1) }).isEmpty {
-                        Section {
-                            ForEach(store.apps.filter { $0.info.isAndroid == (platform == 1) }) { app in
-                                LibraryAppRow(app: app) {
-                                    if app.info.runnable { running = app }
-                                } details: {
-                                    showing = app
-                                } browse: {
-                                    browsing = app
-                                } reset: {
-                                    store.resetData(app)
-                                } delete: {
-                                    store.delete(app)
-                                } reinstall: { url in
-                                    store.importIPA(at: url)
+                            if !store.apps.filter({ $0.info.isAndroid == (platform == 1) }).isEmpty {
+                            Section {
+                                ForEach(store.apps.filter { $0.info.isAndroid == (platform == 1) }) { app in
+                                    LibraryAppRow(app: app) {
+                                        if app.info.runnable { running = app }
+                                    } details: {
+                                        showing = app
+                                    } browse: {
+                                        browsing = app
+                                    } reset: {
+                                        store.resetData(app)
+                                    } delete: {
+                                        store.delete(app)
+                                    } reinstall: { url in
+                                        store.importIPA(at: url)
+                                    }
+                                    .listRowBackground(Gloss.card)
                                 }
-                                .listRowBackground(Gloss.card)
+                                .onDelete { idx in
+                                    let shown = store.apps.filter { $0.info.isAndroid == (platform == 1) }
+                                    idx.map { shown[$0] }.forEach(store.delete)
+                                }
+                            } header: {
+                                Text("Your games")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Gloss.sectionInk)
+                                    .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
+                                    .textCase(nil)
                             }
-                            .onDelete { idx in
-                                let shown = store.apps.filter { $0.info.isAndroid == (platform == 1) }
-                                idx.map { shown[$0] }.forEach(store.delete)
                             }
-                        } header: {
-                            Text("Your games")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Gloss.sectionInk)
-                                .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
-                                .textCase(nil)
                         }
-                        }
+                        .listStyle(.insetGrouped)
+                        .scrollContentBackground(.hidden)
                     }
-                    .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
                     .background(LinenBackground())
                     .refreshable { store.refresh() }
                 }
@@ -327,11 +666,13 @@ struct LibraryView: View {
             }
             .fileImporter(isPresented: $pickingFile,
                           allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip,
-                                                UTType(filenameExtension: "apk") ?? .zip, .zip],
+                                                UTType(filenameExtension: "apk") ?? .zip,
+                                                UTType(filenameExtension: "obb") ?? .data,
+                                                .zip, .data],
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { urls.forEach { store.importIPA(at: $0) } }
             }
-            .onOpenURL { url in if ["ipa", "apk"].contains(url.pathExtension.lowercased()) { store.importIPA(at: url) } }
+            .onOpenURL { url in if ["ipa", "apk", "obb"].contains(url.pathExtension.lowercased()) { store.importIPA(at: url) } }
             .alert("Import failed", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }

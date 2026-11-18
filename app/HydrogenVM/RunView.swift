@@ -40,8 +40,16 @@ final class RunModel {
     var inputEnabled: Bool { running && (hasPicture || movie != nil) && !closing && activity.acceptsInput }
     @ObservationIgnored private var activityTimer: Timer?
     @ObservationIgnored private var activeTouches: [Int: CGPoint] = [:]
+    var controllerLayout: VirtualControllerLayout {
+        didSet {
+            controllerLayout.save(bundleID: app.info.bundleIdentifier)
+            syncVirtualController()
+        }
+    }
+    @ObservationIgnored private var virtualController: VirtualControllerCoordinator?
 
     private func cancelActiveTouches() {
+        virtualController?.releaseAllInputs()
         for (finger, point) in activeTouches {
             session?.touch(.cancelled, x: Float(point.x), y: Float(point.y), finger: UInt(finger))
         }
@@ -53,6 +61,7 @@ final class RunModel {
         cancelActiveTouches()
         activity.userPaused.toggle()
         reconcileActivity()
+        syncVirtualController()
     }
 
     private func reconcileActivity() {
@@ -65,6 +74,7 @@ final class RunModel {
         case nil: break
         }
         if inputEnabled && !motion.isAccelerometerActive { startSensors() }
+        syncVirtualController()
     }
 
     var crashReport: String?
@@ -88,7 +98,10 @@ final class RunModel {
     @ObservationIgnored private var lastPresented: UInt64 = 0
     @ObservationIgnored private var fpsTimer: Timer?
 
-    init(app: InstalledApp) { self.app = app }
+    init(app: InstalledApp) {
+        self.app = app
+        self.controllerLayout = VirtualControllerLayout.load(bundleID: app.info.bundleIdentifier)
+    }
 
     /// CI hook: HVM_AUTORUN=<bundle id> launches that app at startup (see LibraryView);
     /// in that mode the guest log is mirrored to stdout and HVM_AUTOTAP="x,y@t;x,y@t"
@@ -194,6 +207,7 @@ final class RunModel {
                 self.frameCount += 1
                 self.scheduleAutoTaps()
                 if let size = self.session?.screenSize, size != self.screenSize { self.screenSize = size }
+                self.syncVirtualController()
             }
         }
         s.onGLLayer = { [weak self] layer in
@@ -216,6 +230,7 @@ final class RunModel {
                 self.running = false
                 self.closing = false
                 self.cancelActiveTouches()
+                self.virtualController?.disconnect()
                 self.stopSensors()
                 self.activityTimer?.invalidate()
                 self.fpsTimer?.invalidate()
@@ -258,6 +273,7 @@ final class RunModel {
         activity.hostBackgrounded = UIApplication.shared.applicationState == .background
         s.outputVolume = Float(volume)
         s.start()
+        syncVirtualController()
         activityTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.reconcileActivity() }
         }
@@ -313,6 +329,27 @@ final class RunModel {
         // GPU-presented games send no software frames, so the guest screen (in points, what
         // touches are mapped to: 768x1024 for an iPad-only game) is picked up here too.
         if s.screenSize.width > 0, s.screenSize != screenSize { screenSize = s.screenSize }
+        syncVirtualController()
+    }
+
+    func syncVirtualController(effectiveOrientation: GuestOrientation? = nil) {
+        if virtualController == nil {
+            let coordinator = VirtualControllerCoordinator(layout: controllerLayout)
+            coordinator.onTouch = { [weak self] phase, point, finger in
+                self?.touch(phase, at: point, finger: finger)
+            }
+            coordinator.onTilt = { [weak self] ax, ay, az in
+                self?.session?.setAccelerationX(ax, y: ay, z: az)
+            }
+            virtualController = coordinator
+        }
+        virtualController?.syncState(
+            enabled: running && !closing && controllerLayout.enabled,
+            layout: controllerLayout,
+            guestSize: screenSize,
+            orientation: effectiveOrientation ?? orientation,
+            inputEnabled: inputEnabled
+        )
     }
 
     /// A GitHub issue for this session, built from the console: only the lines that
@@ -375,6 +412,7 @@ final class RunModel {
     func stop() {
         guard running, !closing else { return }
         cancelActiveTouches()
+        virtualController?.disconnect()
         userStopped = true
         closing = true
         session?.stopGracefully()
@@ -383,6 +421,8 @@ final class RunModel {
 
     func teardown() {
         stop()
+        virtualController?.disconnect()
+        virtualController = nil
         memoryTimer?.invalidate()
         fpsTimer?.invalidate()
         fpsTimer = nil
@@ -487,6 +527,8 @@ final class RunModel {
             guard let a = data?.acceleration else { return }
             MainActor.assumeIsolated {
                 guard let self, self.inputEnabled else { return }
+                // When the virtual controller thumbstick is actively driving tilt, do not overwrite it with device gravity.
+                if self.virtualController?.isDrivingTilt == true { return }
                 let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
                 let host = GuestOrientation(rawValue: scene?.effectiveGeometry.interfaceOrientation.rawValue ?? 1) ?? .portrait
@@ -510,6 +552,7 @@ struct RunView: View {
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
+    @State private var editingControllerTargets = false
     @State private var overrideOrientation: GuestOrientation?
     /// Display mode for this game; the global default lives in the library's Options menu.
     @AppStorage private var scaleSetting: String?
@@ -562,18 +605,36 @@ struct RunView: View {
 
             // Viewport & Game Canvas
             GeometryReader { geo in
+                let focusPoint = PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position
+                let playerGeo = PlayerGeometry(
+                    container: geo.size,
+                    guest: model.screenSize,
+                    pixels: model.screenSize,
+                    orientation: effectiveOrientation,
+                    mode: effectiveScaleMode,
+                    displayScale: UIScreen.main.scale,
+                    focus: focusPoint
+                )
                 ZStack {
                     EmulatorScreen(image: model.frame, glLayer: model.glLayer, guestSize: model.screenSize,
                                    orientation: effectiveOrientation,
                                    mode: effectiveScaleMode,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
-                                   inputEnabled: model.inputEnabled,
+                                   inputEnabled: model.inputEnabled && !editingControllerTargets,
                                    onOverlayGesture: showDebugOverlay ? nil : {
                                        overlay.summon()
                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { hudExpanded = true }
                                    },
-                                   focus: PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position) { phase, point, finger in
+                                   focus: focusPoint) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
+                    }
+                    if editingControllerTargets {
+                        VirtualControllerTargetEditorOverlay(
+                            layout: $model.controllerLayout,
+                            viewportRect: playerGeo.rect
+                        ) {
+                            editingControllerTargets = false
+                        }
                     }
                     if model.closing {
                         VStack(spacing: 12) {
@@ -652,8 +713,12 @@ struct RunView: View {
         .onAppear {
             OrientationLock.shared.lock(hostMask(for: effectiveOrientation), preferring: effectiveOrientation.mask)
             model.start(keepGoing: keepGoing)
+            model.syncVirtualController(effectiveOrientation: effectiveOrientation)
         }
-        .onChange(of: effectiveOrientation) { _, orientation in OrientationLock.shared.lock(hostMask(for: orientation), preferring: orientation.mask) }
+        .onChange(of: effectiveOrientation) { _, orientation in
+            OrientationLock.shared.lock(hostMask(for: orientation), preferring: orientation.mask)
+            model.syncVirtualController(effectiveOrientation: orientation)
+        }
         .onChange(of: model.finished) { _, done in
             if done {
                 OrientationLock.shared.lock(.all)
@@ -871,6 +936,37 @@ struct RunView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+
+                        Toggle(isOn: $model.controllerLayout.enabled) {
+                            Text("On-screen controller")
+                                .font(.caption)
+                        }
+                        .accessibilityIdentifier("player-virtual-controller")
+
+                        if model.controllerLayout.enabled {
+                            Picker("Stick Mode", selection: $model.controllerLayout.thumbstickMode) {
+                                ForEach(VirtualThumbstickMode.allCases) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("player-virtual-controller-mode")
+
+                            Button {
+                                editingControllerTargets.toggle()
+                                if editingControllerTargets {
+                                    hudExpanded = false
+                                    overlay.minimize()
+                                }
+                            } label: {
+                                Label(editingControllerTargets ? "Finish Editing Targets" : "Adjust Button Targets on Screen",
+                                      systemImage: "hand.draw")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityIdentifier("player-virtual-controller-targets")
+                        }
 
                         Toggle(isOn: Binding(get: { !softwareRenderer }, set: { softwareRenderer = !$0 })) {
                             Text("GPU rendering for this game (next launch)")
