@@ -849,6 +849,7 @@ void noteLayerPresented(Ctx& x, id layer) {
 void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height);
 
 bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
+    x.proc.perf().gameSwaps++;
     (void)target;
     if (HostGL::isHostContext(x.proc, self)) {
         uint32_t layer = 0;

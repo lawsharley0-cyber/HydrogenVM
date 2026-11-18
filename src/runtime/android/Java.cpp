@@ -243,9 +243,8 @@ void registerJavaPlatform(Jni& j) {
     j.method("android/view/InputEvent", "getSource", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0x1002); });
 
     // java.util.UUID: random (version 4) ids, as strings.
-    j.method("java/util/UUID", "randomUUID", "()Ljava/util/UUID;", [](Jni& j, Ctx&, jobject, const auto&) {
-        static std::mt19937_64 rng{std::random_device{}()};
-        const uint64_t a = rng(), b = rng();
+    j.method("java/util/UUID", "randomUUID", "()Ljava/util/UUID;", [](Jni& j, Ctx& x, jobject, const auto&) {
+        const uint64_t a = x.proc.entropy(), b = x.proc.entropy();
         char buf[40];
         std::snprintf(buf, sizeof buf, "%08x-%04x-4%03x-%04x-%012llx", uint32_t(a >> 32), uint32_t(a >> 16) & 0xFFFF,
                       uint32_t(a) & 0xFFF, uint32_t((b >> 48) & 0x3FFF) | 0x8000, (unsigned long long)(b & 0xFFFFFFFFFFFFull));

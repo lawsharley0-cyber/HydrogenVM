@@ -246,11 +246,11 @@ uint32_t c_bsearch(Ctx& x, GuestPtr key, GuestPtr base, uint32_t n, uint32_t siz
 // ---------------------------------------------------------------- random ---
 
 struct RandState {
-    explicit RandState(Process&) {}
+    explicit RandState(Process& p) : arc(uint32_t(p.entropy())) {}
     std::mutex mu;
     uint32_t next = 1;            // rand()
     std::mt19937 random{1};       // random()
-    std::mt19937 arc{std::random_device{}()};
+    std::mt19937 arc;              // arc4random: seeded from the session (runtime/Session.hpp)
     double drand = 0;
 };
 // Darwin/FreeBSD rand(): Park–Miller "minimal standard" generator.
@@ -492,7 +492,7 @@ void registerLibcStdlib(Process& p) {
     p.def<&r_random>("_random");
     p.def<&r_srandom>("_srandom");
     // srandomdev(): seed random() from the host's entropy.
-    p.def<+[](Ctx& x) { r_srandom(x, std::random_device{}()); }>("_srandomdev");
+    p.def<+[](Ctx& x) { r_srandom(x, uint32_t(x.proc.entropy())); }>("_srandomdev");
     p.def<&r_arc4random>("_arc4random");
     p.def<&r_arc4random_uniform>("_arc4random_uniform");
     p.def<&r_arc4random_buf>("_arc4random_buf");

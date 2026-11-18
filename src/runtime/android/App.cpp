@@ -910,7 +910,10 @@ int runActivity(Process& p, CPU::Cpu& c) {
             }
         }
         driver->frame(x);
-        if (!driver->ownsGl()) present(p, c, g, s);
+        if (!driver->ownsGl()) {
+            p.perf().gameSwaps++;   // engines that swap themselves count in eglSwapBuffers
+            present(p, c, g, s);
+        }
         if (driver->wantsExit(x)) {
             p.log(LogLevel::Info, "Android: the game asked to exit");
             break;

@@ -1,6 +1,7 @@
 // HydrogenVM — one emulated iOS process: guest memory, CPU engine, loaded
 // image, host-implemented system libraries, guest threads, logging.
 #pragma once
+#include "runtime/Session.hpp"
 #include <deque>
 #include "Abi.hpp"
 #include "FrameHistogram.hpp"
@@ -92,6 +93,9 @@ struct ProcessConfig {
     // first errors with the call that raised them (glErrorLog). The guest still sees each
     // error from its own glGetError. Costs a driver round trip per call: for test runs.
     bool glTrace = false;
+    // Session recording (runtime/Session.hpp): write the seed, start time and every input to
+    // recordPath, or replay a recording from replayPath. At most one of the two.
+    std::string recordPath, replayPath;
     // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
 };
 
@@ -224,6 +228,9 @@ public:
     struct Perf {
         std::atomic<uint64_t> frames{0};          // frame hooks run (60 Hz main run loop)
         std::atomic<uint64_t> framesPresented{0}; // frames that changed and were composited
+        // Every frame the game finished and handed over (eglSwapBuffers, presentRenderbuffer),
+        // shown or not: how far the game has got, for session replay (runtime/Session.hpp).
+        std::atomic<uint64_t> gameSwaps{0};
         std::atomic<uint64_t> offscreenPresents{0}; // GL frames presented to a layer the screen doesn't show
         // glTrace only: GL errors raised, draw calls, and presented frames that drew nothing.
         std::atomic<uint64_t> glErrors{0}, glDraws{0}, glPresents{0}, glEmptyPresents{0}, glLastFrameDraws{0};
@@ -493,8 +500,24 @@ public:
     std::string backtrace(const CPU::Cpu& c, int maxFrames = 24) const;
 
     // ---- host input (any thread); UIKit installs the handler
-    void injectTouch(TouchPhase phase, float x, float y, uint32_t fingerId) { if (touchHandler_) touchHandler_(phase, x, y, fingerId); }
-    void setAcceleration(float x, float y, float z) { if (accelHandler_) accelHandler_(x, y, z); }
+    void injectTouch(TouchPhase phase, float x, float y, uint32_t fingerId) {
+        if (!touchHandler_) return;
+        noteInput(SessionEvent::input(SessionEvent::Kind::Touch, int(phase), fingerId, x, y));
+        touchHandler_(phase, x, y, fingerId);
+    }
+    void setAcceleration(float x, float y, float z) {
+        if (!accelHandler_) return;
+        noteInput(SessionEvent::input(SessionEvent::Kind::Accel, 0, 0, x, y, z));
+        accelHandler_(x, y, z);
+    }
+    bool acceptsTouches() const { return bool(touchHandler_); }
+    // Session recording and replay (runtime/Session.hpp): the seed every random source draws
+    // from and the wall clock the guest sees go through here.
+    Session& session() { return session_; }
+    uint64_t entropy() { return session_.entropy(); }
+    int64_t wallNowNs() const { return session_.wallNowNs(); }
+    // Stamps an input event with the time and frame count and records it (when recording).
+    void noteInput(SessionEvent e);
     void setTouchHandler(std::function<void(TouchPhase, float, float, uint32_t)> h) { touchHandler_ = std::move(h); }
     void setAccelerationHandler(std::function<void(float, float, float)> h) { accelHandler_ = std::move(h); }
     // Screen actually used by the app (UIKit picks 3.5" vs 4" from the bundle).
@@ -620,6 +643,7 @@ private:
     uint64_t nextFileHandle_ = 0;
     void captureCrash(const CPU::Cpu& c, const std::string& kind, const std::string& detail);
 
+    Session session_;
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
     std::function<void(float, float, float)> accelHandler_;
 
