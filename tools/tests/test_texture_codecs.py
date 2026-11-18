@@ -1,4 +1,4 @@
-"""Run synthetic codec vectors with python3 src/runtime/graphics/TextureCodecs.test.py."""
+"""Compare the Android CPU texture decoders against synthetic reference vectors."""
 import json
 import os
 from pathlib import Path
@@ -35,8 +35,8 @@ int main(int argc, char** argv) {
 
 class TextureCodecsTest(unittest.TestCase):
     def test_reference_pixels(self):
-        fixtures = Path(__file__).with_name("TextureCodecs.fixtures.json")
-        src = fixtures.resolve().parents[2]
+        src = Path(__file__).resolve().parents[2] / "src"
+        fixtures = src / "runtime/graphics/TextureCodecs.fixtures.json"
         cases = json.loads(fixtures.read_text())["cases"]
         with tempfile.TemporaryDirectory() as tmp:
             driver = Path(tmp) / "decode.cpp"

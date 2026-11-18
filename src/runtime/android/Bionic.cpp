@@ -16,9 +16,13 @@
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
 #include "runtime/libc/Format.hpp"
+#include "runtime/gl/HostGL.hpp"
+#include "runtime/graphics/TextureCodecs.hpp"
 #include "runtime/libc/Network.hpp"
 #include "core/cpu/Engine.hpp"
+#include <algorithm>
 #include <array>
+#include <string_view>
 #include <cerrno>
 #include <limits>
 #include <sys/socket.h>
@@ -723,48 +727,136 @@ void defineErrnoReturning(Process& p, const char* name) {
     });
 }
 
-// Compressed textures. ETC1 (what Android games ship) is decoded to RGB here, since Apple's
-// GPUs and desktop drivers don't take it; other formats go to the driver as they are.
-void traceFormat(Ctx& x, uint32_t fmt, int32_t w, int32_t h) {
+// Android compressed texture upload and CPU fallback.
+void traceFormat(Ctx& x, uint32_t fmt, int32_t w, int32_t h, const char* path = "forwarded") {
     static const bool on = [] { const char* e = std::getenv("HVM_JNI_TRACE"); return e && *e && *e != '0'; }();
     if (!on) return;
     static std::mutex mu;
-    static std::set<uint32_t> seen;
+    static std::set<std::pair<uint32_t, std::string_view>> seen;
     std::lock_guard<std::mutex> lk(mu);
-    if (seen.insert(fmt).second) x.proc.logf(LogLevel::Info, "GL compressed format 0x%04x (%dx%d)", fmt, w, h);
+    if (seen.emplace(fmt, path).second) x.proc.logf(LogLevel::Info, "GL compressed format 0x%04x (%dx%d) [%s]", fmt, w, h, path);
 }
-// Uploads decoded ETC1 as GL_RGB / GL_UNSIGNED_BYTE through `call` (glTexImage2D or
-// glTexSubImage2D), with a byte-aligned unpack row for the duration.
+// Stage tightly packed decoded pixels for the normal GL entry point.
+template <typename F> void uploadDecoded(Ctx& x, const void* pixels, size_t bytes, F call, bool unpackSubimage = false) {
+    const uint32_t buf = x.proc.heap().alloc(uint32_t(bytes));
+    if (!buf) throw std::runtime_error("Android texture upload: out of guest memory");
+    x.mem.copyIn(buf, pixels, bytes);
+    static const char key = 0;
+    uint32_t& cell = x.proc.threadSlot(&key);
+    if (!cell) cell = x.proc.allocStatic(16);
+    // UNPACK_ALIGNMENT, ROW_LENGTH, SKIP_ROWS, SKIP_PIXELS.
+    constexpr uint32_t pnames[] = {0x0CF5, 0x0CF2, 0x0CF3, 0x0CF4};
+    const size_t count = unpackSubimage ? std::size(pnames) : 1;
+    uint32_t saved[std::size(pnames)]{};
+    for (size_t i = 0; i < count; ++i) {
+        x.mem.write<uint32_t>(cell, i == 0 ? 4 : 0);
+        callIos(x, "_glGetIntegerv", {pnames[i], cell});
+        saved[i] = x.mem.read<uint32_t>(cell);
+        callIos(x, "_glPixelStorei", {pnames[i], i == 0 ? 1u : 0u});
+    }
+    call(buf);
+    for (size_t i = 0; i < count; ++i) callIos(x, "_glPixelStorei", {pnames[i], saved[i]});
+    x.proc.heap().free(buf);
+}
 template <typename F> void uploadEtc1(Ctx& x, int32_t w, int32_t h, int32_t size, GuestPtr data, F call) {
     if (w <= 0 || h <= 0 || !data || size_t(size) < etc1Size(w, h)) {
         call(GuestPtr(0));
         return;
     }
     const auto rgb = decodeEtc1(x.mem.host(data), w, h);
-    const uint32_t buf = x.proc.heap().alloc(uint32_t(rgb.size()));
-    if (!buf) throw std::runtime_error("ETC1: out of guest memory");
-    x.mem.copyIn(buf, rgb.data(), rgb.size());
-    static const char key = 0;
-    uint32_t& cell = x.proc.threadSlot(&key);
-    if (!cell) cell = x.proc.allocStatic(16);
-    callIos(x, "_glGetIntegerv", {0x0CF5 /*UNPACK_ALIGNMENT*/, cell});
-    const uint32_t savedAlign = x.mem.read<uint32_t>(cell);
-    callIos(x, "_glPixelStorei", {0x0CF5, 1});
-    call(buf);
-    callIos(x, "_glPixelStorei", {0x0CF5, savedAlign ? savedAlign : 4});
-    x.proc.heap().free(buf);
+    uploadDecoded(x, rgb.data(), rgb.size(), call);
 }
+
 void b_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t fmt, int32_t w, int32_t h, int32_t border,
                               int32_t size, GuestPtr data) {
-    traceFormat(x, fmt, w, h);
     if (fmt == kGlEtc1Rgb8) {
+        traceFormat(x, fmt, w, h, "ETC1 CPU");
         uploadEtc1(x, w, h, size, data, [&](GuestPtr pixels) {
             callIos(x, "_glTexImage2D", {target, uint32_t(level), 0x1907 /*RGB*/, uint32_t(w), uint32_t(h), uint32_t(border),
                                           0x1907, 0x1401 /*UNSIGNED_BYTE*/, pixels});
         });
         return;
     }
-    callIos(x, "_glCompressedTexImage2D", {target, uint32_t(level), fmt, uint32_t(w), uint32_t(h), uint32_t(border), uint32_t(size), data});
+    const bool known = Graphics::compressedTextureSize(fmt, 1, 1).has_value();
+    const auto host = known ? HostGL::compressedTextureSupport(x, fmt) : std::nullopt;
+    if (!known || (host && host->native)) {
+        traceFormat(x, fmt, w, h, known ? "native" : "forwarded");
+        callIos(x, "_glCompressedTexImage2D", {target, uint32_t(level), fmt, uint32_t(w), uint32_t(h),
+                                               uint32_t(border), uint32_t(size), data});
+        return;
+    }
+
+    constexpr uint32_t rgba = 0x1908, unsignedByte = 0x1401, floating = 0x1406;
+    auto upload = [&](uint32_t type, GuestPtr pixels) {
+        callIos(x, "_glTexImage2D", {target, uint32_t(level), rgba, uint32_t(w), uint32_t(h),
+                                     uint32_t(border), rgba, type, pixels});
+    };
+    static const char limitKey = 0;
+    uint32_t& limit = x.proc.threadSlot(&limitKey);
+    if (!limit) limit = x.proc.allocStatic(4);
+    x.mem.write<uint32_t>(limit, 0);
+    callIos(x, "_glGetIntegerv", {0x0D33 /*GL_MAX_TEXTURE_SIZE*/, limit});
+    const int maxSize = x.mem.read<int32_t>(limit);
+    if (host && host->pixelUnpackBuffer) {
+        x.mem.write<uint32_t>(limit, 0);
+        callIos(x, "_glGetIntegerv", {0x88EF /*GL_PIXEL_UNPACK_BUFFER_BINDING*/, limit});
+        if (x.mem.read<uint32_t>(limit)) {
+            x.proc.reportDefaulted("Android CPU compressed texture upload from an unpack buffer");
+            return;
+        }
+    }
+    const auto expected = Graphics::compressedTextureSize(fmt, w, h);
+    if (level < 0 || border || !expected || w > maxSize || h > maxSize || size < 0 ||
+        *expected != size_t(size) || (data && !guestSpan(x, data, uint32_t(size), Memory::kProtRead))) {
+        x.proc.log(LogLevel::Warning, "Android compressed texture upload rejected invalid dimensions or data");
+        return;
+    }
+    traceFormat(x, fmt, w, h, "CPU fallback");
+    const bool eac = fmt >= 0x9270 && fmt <= 0x9273;
+    if (!data) {
+        upload(eac && host.has_value() ? floating : unsignedByte, 0);
+        return;
+    }
+    auto decoded = Graphics::decodeCompressedTexture(fmt, w, h, {x.mem.host(data), *expected});
+    if (!decoded) return;
+    if (eac) {
+        // ES2 float RGBA also works on drivers that do not expose red/green texture formats.
+        const size_t texels = size_t(w) * h;
+        const size_t channels = decoded->components;
+        if (host) {
+            std::vector<float> pixels(texels * 4, 0.0f);
+            for (size_t i = 0; i < texels; ++i) {
+                std::copy_n(decoded->redGreen.data() + i * channels, channels, pixels.data() + i * 4);
+                pixels[i * 4 + 3] = 1.0f;
+            }
+            uploadDecoded(x, pixels.data(), pixels.size() * sizeof(float), [&](GuestPtr p) { upload(floating, p); },
+                          host->unpackSubimage);
+            return;
+        }
+        // The software renderer samples RGBA8 only.
+        if (fmt == 0x9271 || fmt == 0x9273) x.proc.reportDefaulted("signed EAC sampled as RGBA8 in software GL");
+        decoded->rgba.resize(texels * 4);
+        for (size_t i = 0; i < texels; ++i) {
+            for (size_t c = 0; c < channels; ++c)
+                decoded->rgba[i * 4 + c] = uint8_t(std::lround(std::clamp(decoded->redGreen[i * channels + c], 0.0f, 1.0f) * 255));
+            decoded->rgba[i * 4 + 3] = 255;
+        }
+    } else if (decoded->srgb) {
+        // Convert color to linear before the fallback texture is filtered. Alpha is already linear.
+        static const auto linear = [] {
+            std::array<uint8_t, 256> table{};
+            for (size_t i = 0; i < table.size(); ++i) {
+                const float s = float(i) / 255;
+                const float l = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+                table[i] = uint8_t(std::lround(l * 255));
+            }
+            return table;
+        }();
+        for (size_t i = 0; i < decoded->rgba.size(); i += 4)
+            for (size_t c = 0; c < 3; ++c) decoded->rgba[i + c] = linear[decoded->rgba[i + c]];
+    }
+    uploadDecoded(x, decoded->rgba.data(), decoded->rgba.size(), [&](GuestPtr p) { upload(unsignedByte, p); },
+                  host && host->unpackSubimage);
 }
 void b_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t w, int32_t h,
                                  uint32_t fmt, int32_t size, GuestPtr data) {

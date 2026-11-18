@@ -19,11 +19,13 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace Hydrogen::Runtime {
 class Process;
+struct Ctx;
 namespace ObjC { class Runtime; }
 }
 
@@ -128,6 +130,15 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup);
 
 // A guest thread is ending: release a retired worker context it still has current.
 void threadExit(Process& p);
+
+struct CompressedTextureSupport {
+    bool native;
+    bool unpackSubimage;
+    bool pixelUnpackBuffer;
+};
+
+// Exact format and unpack capabilities of the current driver. Empty for software GL.
+std::optional<CompressedTextureSupport> compressedTextureSupport(Ctx& x, uint32_t format);
 
 // Registers the forwarded `_gl*` symbols (overriding the software ones).
 void registerFunctions(Process& p);
