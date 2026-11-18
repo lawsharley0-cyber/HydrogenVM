@@ -132,6 +132,20 @@ struct InstalledApp: Identifiable, Hashable, Sendable {
 @Observable
 @MainActor
 final class LibraryStore {
+    /// Android packages imported through the .apk path (plain or split archives).
+    nonisolated static let androidPackageExtensions: Set<String> = ["apk", "xapk", "apks", "apkm"]
+    /// Every file kind the library imports.
+    nonisolated static let importExtensions: Set<String> = androidPackageExtensions.union(["ipa", "obb"])
+    /// The file picker's types, built once (a long literal of `UTType(...) ?? .zip` here was too slow
+    /// for the Swift type checker).
+    nonisolated static let importContentTypes: [UTType] = {
+        var types: [UTType] = []
+        for ext in ["ipa", "apk", "xapk", "apks", "apkm"] { types.append(UTType(filenameExtension: ext) ?? .zip) }
+        types.append(UTType(filenameExtension: "obb") ?? .data)
+        types.append(.zip)
+        types.append(.data)
+        return types
+    }()
     private(set) var apps: [InstalledApp] = []
     private(set) var importing: [String] = []
     private(set) var importItems: [ImportProgressItem] = []
@@ -147,7 +161,7 @@ final class LibraryStore {
         // Pick up .ipa, .apk, and .obb files dropped into Documents (or the old Documents/Library).
         let dropped = [URL.documentsDirectory, URL.documentsDirectory.appending(path: "Library")]
             .flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
-            .filter { ["ipa", "apk", "obb"].contains($0.pathExtension.lowercased()) }
+            .filter { Self.importExtensions.contains($0.pathExtension.lowercased()) }
         for archive in dropped { importIPA(at: archive, removeAfter: true) }
         reloadList()
     }
@@ -226,7 +240,9 @@ final class LibraryStore {
     /// Archives over ~200 MB use `BGContinuedProcessingTask` on iOS 26+.
     func importIPA(at url: URL, removeAfter: Bool = false) {
         let ext = url.pathExtension.lowercased()
-        if ext == "apk" { importAPK(at: url, removeAfter: removeAfter); return }
+        // Split archives (.xapk/.apks/.apkm) hold a base .apk plus splits; the loader tells them
+        // apart from a plain .apk by their contents, so they take the same path.
+        if Self.androidPackageExtensions.contains(ext) { importAPK(at: url, removeAfter: removeAfter); return }
         if ext == "obb" { importOBB(at: url, removeAfter: removeAfter); return }
 
         let name = url.lastPathComponent
@@ -665,14 +681,11 @@ struct LibraryView: View {
                 }
             }
             .fileImporter(isPresented: $pickingFile,
-                          allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip,
-                                                UTType(filenameExtension: "apk") ?? .zip,
-                                                UTType(filenameExtension: "obb") ?? .data,
-                                                .zip, .data],
+                          allowedContentTypes: LibraryStore.importContentTypes,
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { urls.forEach { store.importIPA(at: $0) } }
             }
-            .onOpenURL { url in if ["ipa", "apk", "obb"].contains(url.pathExtension.lowercased()) { store.importIPA(at: url) } }
+            .onOpenURL { url in if LibraryStore.importExtensions.contains(url.pathExtension.lowercased()) { store.importIPA(at: url) } }
             .alert("Import failed", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }

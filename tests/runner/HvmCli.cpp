@@ -332,7 +332,13 @@ int main(int argc, char** argv) {
     }
     try {
         if (!std::strcmp(argv[1], "--dump-support") || !std::strcmp(argv[1], "dump-support")) { dumpSupport(); return 0; }
-        if (!std::strcmp(argv[1], "import") && argc >= 4) { printInfo(Loader::importIpa(argv[2], argv[3])); return 0; }
+        if (!std::strcmp(argv[1], "import") && argc >= 4) {
+            std::string ext = std::filesystem::path(argv[2]).extension().string();
+            for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+            const bool isAndroid = ext == ".apk" || ext == ".xapk" || ext == ".apks" || ext == ".apkm" || ext == ".obb";
+            printInfo(isAndroid ? Loader::importApk(argv[2], argv[3]) : Loader::importIpa(argv[2], argv[3]));
+            return 0;
+        }
         if (!std::strcmp(argv[1], "info") && argc == 5 && !std::strcmp(argv[2], "--linking") && !std::strcmp(argv[4], "--json")) { linkingInfo(argv[3]); return 0; }
         if (!std::strcmp(argv[1], "info") && argc >= 3) { printInfo(Loader::readBundle(argv[2])); return 0; }
         if (!std::strcmp(argv[1], "run")) return hvmRunMain(argc - 1, argv + 1);
