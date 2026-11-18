@@ -54,5 +54,17 @@ int runMsgSendTests(const std::function<void(bool, const char*)>& check) {
     // A host-implemented method reached through the cache: -[NSObject self] returns the receiver.
     const ObjC::SEL selfSel = rt.sel("self");
     ck(send(a, selfSel) == a && send(a, selfSel) == a, "a host IMP reached through the cache returns its result");
+    auto* ring = cpu.call_ring.load();
+    const uint64_t before = ring->total();
+    send(a, ping);
+    send(a, ping);
+    send(0, ping);
+    send(a, selfSel);
+    const uint32_t sendIndex = p.engine().hleIndex(msgSend);
+    unsigned sendCount = 0;
+    for (const auto& entry : ring->last(size_t(ring->total() - before))) {
+        if (entry.kind == Diag::CallKind::Hle && entry.id == sendIndex) ++sendCount;
+    }
+    ck(sendCount == 4, "crash and replay history include each guest, nil and host method send");
     return failures;
 }

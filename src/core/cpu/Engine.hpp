@@ -47,7 +47,7 @@ struct FaultSnapshot {
 class Engine {
 public:
     using HleFn = std::function<void(Cpu&)>;
-    using FastHleFn = bool (*)(Cpu& c, void* ctx);
+    using FastHleFn = bool (*)(Cpu& c, void* ctx, uint32_t& target);
 
     explicit Engine(Memory::GuestArena& mem);
     ~Engine();
@@ -61,12 +61,24 @@ public:
     uint32_t registerHle(std::string name, HleFn fn);
     // A fast path for a host function, tried by the HLE op before the full call. It runs inside guest
     // code (no thread-state bookkeeping, no suspension point), so it must be short, must not block or
-    // call guest code, and returns false to fall back to the full call. objc_msgSend uses it for
+    // call guest code, and returns false to fall back to the full call. On success, target is an
+    // IMP to dispatch or zero to return to the caller. objc_msgSend uses it for
     // cached (class, selector) -> IMP hits. Set it before guest code runs.
     void setFastHle(uint32_t index, FastHleFn fn, void* ctx) { hle_[index].fast = fn; hle_[index].fastCtx = ctx; }
     bool tryFastHle(Cpu& c, uint32_t index) {
         const HleEntry& h = hle_[index];
-        return h.fast && h.fast(c, h.fastCtx);
+        if (!h.fast) return false;
+        auto* ring = c.call_ring.load(std::memory_order_relaxed);
+        if (!ring || c.async_pending.load(std::memory_order_acquire)) return false;
+        uint32_t target = 0;
+        if (!h.fast(c, h.fastCtx, target)) return false;
+        // A cached send is still a host entry in crash reports and replay checkpoints.
+        ring->push(Diag::CallKind::Hle, index);
+        if (target) {
+            if (isHleAddress(target)) callHle(&c, hleIndex(target));
+            else hleJump(c, target);
+        }
+        return true;
     }
     // Read-only basic-block entry probes for local diagnostics. Configure before
     // decoding/running any code; cached links must not be changed under runners.

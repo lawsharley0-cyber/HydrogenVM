@@ -79,8 +79,8 @@ struct FastSend {
 struct SendCache {
     // 2-way set associative: 2048 sets x 2 ways. A fill goes to the empty or least recently filled way.
     static constexpr uint32_t kSets = 2048;   // power of two
-    struct Entry { uint32_t cls = 0, sel = 0, imp = 0, hle = 0; };   // hle: index + 1 for a host IMP
-    const FastSend* owner = nullptr;
+    struct Entry { uint32_t cls = 0, sel = 0, imp = 0; };
+    uint64_t owner = 0;
     uint64_t gen = 0;
     Entry e[kSets][2];
     uint8_t next[kSets] = {};
@@ -100,27 +100,26 @@ struct SendCache {
         w[next[i]] = x;
         next[i] ^= 1;
     }
-    void sync(const FastSend* o, uint64_t g) {
-        if (owner == o && gen == g) return;
+    void sync(uint64_t processId, uint64_t g) {
+        if (owner == processId && gen == g) return;
         std::memset(e, 0, sizeof e);
         std::memset(next, 0, sizeof next);
-        owner = o;
+        owner = processId;
         gen = g;
     }
 };
 thread_local SendCache t_send;
 
-bool fastMsgSend(CPU::Cpu& c, void* ctx) {
+bool fastMsgSend(CPU::Cpu& c, void* ctx, uint32_t& target) {
     auto* st = static_cast<FastSend*>(ctx);
     const uint32_t self = c.r[0];
     if (!self) { c.r[0] = c.r[1] = 0; return true; }   // a message to nil returns 0
     const uint32_t cls = st->proc.mem().read<uint32_t>(self);
     SendCache& sc = t_send;
-    sc.sync(st, st->runtime->cacheGeneration());
+    sc.sync(st->proc.identity(), st->runtime->cacheGeneration());
     const SendCache::Entry* e = sc.find(cls, c.r[1]);
     if (!e) return false;
-    if (e->hle) st->proc.engine().callHle(&c, e->hle - 1);
-    else CPU::Engine::hleJump(c, e->imp);
+    target = e->imp;
     return true;
 }
 
@@ -131,9 +130,8 @@ void fillSendCache(Ctx& x, Class cls, SEL s, IMP imp) {
     const uint64_t gen = r.cacheGeneration();
     if (!imp || !r.sendReady(cls) || r.lookup(cls, s) != imp) return;
     SendCache& sc = t_send;
-    sc.sync(&st, gen);
-    auto& e = x.proc.engine();
-    sc.put({cls, s, imp, e.isHleAddress(imp) ? e.hleIndex(imp) + 1 : 0});
+    sc.sync(x.proc.identity(), gen);
+    sc.put({cls, s, imp});
 }
 
 void msgSend(Ctx& x) {
