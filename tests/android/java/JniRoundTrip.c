@@ -82,6 +82,10 @@ EXPORT int hvm_test_main(JNIEnv* env, void* vm) {
     void* order = getMethod(env, collections, "orderCheck", "()I");
     test("Collections reverse and swap update the ArrayList order",
          order && call(env, collections, order, 0) == 1 && !exceptionCheck(env));
+    exceptionClear(env);
+    void* set = getMethod(env, collections, "setCheck", "()I");
+    test("Set accepts null, rejects duplicate insertion, and removes membership",
+         set && call(env, collections, set, 0) == 1 && !exceptionCheck(env));
     say("done: JNI round-trip\n");
     return failures;
 }

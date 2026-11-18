@@ -72,7 +72,8 @@ std::optional<Value> arrays(Heap& heap, std::u16string_view name, std::u16string
 
 bool CoreCollections::hasClass(std::u16string_view type) {
     return type == u"Ljava/util/Arrays;" || type == u"Ljava/util/ArrayList;" ||
-           type == u"Ljava/util/HashMap;" || type == u"Ljava/util/Collections;";
+           type == u"Ljava/util/HashMap;" || type == u"Ljava/util/HashSet;" ||
+           type == u"Ljava/util/Collections;";
 }
 
 std::optional<Value> CoreCollections::mapMethod(Heap& heap, std::u16string_view name,
@@ -116,6 +117,39 @@ std::optional<Value> CoreCollections::mapMethod(Heap& heap, std::u16string_view 
     return ref(previous);
 }
 
+std::optional<Value> CoreCollections::setMethod(Heap& heap, std::u16string_view name,
+                                                std::u16string_view sig, std::span<const Value> args) {
+    const auto id = reference(args.front());
+    std::lock_guard lock(mutex_);
+    if (name == u"<init>" && (sig == u"()V" || sig == u"(I)V")) {
+        if (sig == u"(I)V" && integer(args[1]) < 0)
+            throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
+        sets_.try_emplace(id);
+        return Value{ValueKind::Void};
+    }
+    const auto set = sets_.find(id);
+    if (set == sets_.end()) throw FormatError("HashSet used before its constructor");
+    auto& entries = set->second;
+    if (name == u"size" && sig == u"()I") return word(uint32_t(entries.size()));
+    if (name == u"isEmpty" && sig == u"()Z") return word(entries.empty());
+    if (name == u"clear" && sig == u"()V") {
+        entries.clear();
+        return Value{ValueKind::Void};
+    }
+    if (sig != u"(Ljava/lang/Object;)Z" ||
+        (name != u"contains" && name != u"add" && name != u"remove")) return {};
+    const auto value = reference(args[1]);
+    const auto it = std::find_if(entries.begin(), entries.end(),
+                                 [&](uint32_t entry) { return equal(heap, value, entry); });
+    const bool present = it != entries.end();
+    if (name == u"add") {
+        if (!present) entries.push_back(value);
+        return word(!present);
+    }
+    if (name == u"remove" && present) entries.erase(it);
+    return word(present);
+}
+
 std::optional<Value> CoreCollections::listAlgorithm(Heap& heap, std::u16string_view name,
                                                     std::u16string_view sig, std::span<const Value> args) {
     const bool reverse = name == u"reverse" && sig == u"(Ljava/util/List;)V";
@@ -145,8 +179,11 @@ std::optional<Value> CoreCollections::invoke(Heap& heap, std::u16string_view typ
         return type == u"Ljava/util/Arrays;" ? arrays(heap, name, sig, args) : std::nullopt;
     if (args.empty()) return {};
     const auto list = reference(args.front());
-    if (list && heap.typeOf(list) == u"Ljava/util/HashMap;") return mapMethod(heap, name, sig, args);
-    if (!list || heap.typeOf(list) != u"Ljava/util/ArrayList;") return {};
+    if (!list) return {};
+    const auto receiverType = heap.typeOf(list);
+    if (receiverType == u"Ljava/util/HashMap;") return mapMethod(heap, name, sig, args);
+    if (receiverType == u"Ljava/util/HashSet;") return setMethod(heap, name, sig, args);
+    if (receiverType != u"Ljava/util/ArrayList;") return {};
     std::lock_guard lock(mutex_);
     if (name == u"<init>" && (sig == u"()V" || sig == u"(I)V")) {
         if (sig == u"(I)V" && (args.size() != 2 || integer(args[1]) < 0))

@@ -160,3 +160,36 @@ return v4
 const/4 v4, -1
 return v4
 .end method
+
+.method setCheck()I 9
+.registers 4
+.outs 2
+new-instance v0, Ljava/util/HashSet;
+invoke-direct Ljava/util/HashSet;-><init>()V, v0
+const/4 v1, 0
+invoke-interface Ljava/util/Set;->add(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-eqz v3, :fail
+invoke-interface Ljava/util/Set;->add(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-nez v3, :fail
+invoke-interface Ljava/util/Set;->contains(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-eqz v3, :fail
+const-string v2, item
+invoke-interface Ljava/util/Set;->add(Ljava/lang/Object;)Z, v0, v2
+move-result v3
+if-eqz v3, :fail
+invoke-interface Ljava/util/Set;->remove(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-eqz v3, :fail
+invoke-interface Ljava/util/Set;->contains(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-nez v3, :fail
+invoke-interface Ljava/util/Set;->size()I, v0
+move-result v3
+return v3
+:fail
+const/4 v3, -1
+return v3
+.end method
