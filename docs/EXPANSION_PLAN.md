@@ -206,6 +206,24 @@ placeholders.
 - **Done when:** a recorded phone session that crashes after minutes of play crashes at the
   same point on replay.
 
+**Using the C1 implementation.** On the phone, press and hold the game in the Library, choose
+**Record detailed replay**, then **Record and play**. Reproduce the crash. The crash sheet's
+**Share private replay (includes game data)** exports the detailed trace, which can contain saved
+game data and network replies. The GitHub report carries an input-only companion. Normal launches
+keep the lightweight input recording. For a session that exits normally the detailed recording is
+in the game's `Library/HydrogenVM/last-session.hvmrec.private`.
+
+Replay the same game version with a copy of the starting save and the same renderer and settings:
+
+```sh
+build/hvm run Game.ipa --phone --gpu --home ./replay-home --replay session.private.hvmrec --report replay.json
+```
+
+Check the crash signature and guest fault location against the phone report. Compare
+`replayMatchedCheckpoints` with `replayRecordedCheckpoints`; zero recorded checkpoints means
+there was no frame comparison. The current checkpoints sample UIKit software compositions.
+Host GPU rendering, unrecorded I/O and host thread scheduling can still diverge.
+
 ### C2. Auto-player bot (1–2 weeks)
 - **What:** a bench harness that plays: screenshot → decide → tap or drag → repeat.
   - Level 1: a random "monkey" with menu heuristics (tap text-like regions, the screen center,
