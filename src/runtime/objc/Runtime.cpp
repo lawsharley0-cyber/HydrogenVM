@@ -346,6 +346,14 @@ void Runtime::initializeClass(CPU::Cpu& c, Class cls) {
     ci->initState.store(2, std::memory_order_release);
 }
 
+bool Runtime::sendReady(Class cls) const {
+    const ClassInfo* ci = info(cls);
+    if (!ci) return false;
+    const Class instCls = ci->isMeta ? ci->instanceClass : cls;
+    const ClassInfo* ii = instCls ? info(instCls) : nullptr;
+    return ii && ii->initState.load(std::memory_order_acquire) == 2;
+}
+
 IMP Runtime::lookupForSend(Class cls, SEL s) {
     ClassInfo* ci = info(cls);
     if (ci) {

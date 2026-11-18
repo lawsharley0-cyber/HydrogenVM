@@ -259,6 +259,7 @@ int runHostFaultTests();
 int runHostFaultChild(int fd, bool stress, bool afterUnwind);
 int runThreadProgressTests();
 int runGuestCallBoundaryTests();
+int runMsgSendTests(const std::function<void(bool, const char*)>& check);
 int runSuspendTests();
 int runNSStringSearchTests();
 int runLegacyGlyphTests();
@@ -14207,6 +14208,7 @@ int runFullSubsystemTests() {
     check(runHostFaultTests() == 0, "host-fault bundle contains complete thread, arena, HLE and log evidence");
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
+    runMsgSendTests([&](bool ok, const char* what) { check(ok, what); });
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
     check(runNSStringSearchTests() == 0, "bounded character-set search contract");
     check(runLegacyGlyphTests() == 0, "legacy CGContext glyph outlines and ABI");

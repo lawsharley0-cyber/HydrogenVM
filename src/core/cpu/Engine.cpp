@@ -13,6 +13,7 @@ namespace Hydrogen::CPU {
 
 Block* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
 void   hvmCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
+bool   hvmFastHle(Cpu* c, uint32_t index)  { return c->engine->tryFastHle(*c, index); }
 void   hvmObserveEntry(Cpu* c, uint32_t address) { c->engine->notifyEntry(*c, address); }
 
 #ifdef HVM_PROFILE_PAIRS
