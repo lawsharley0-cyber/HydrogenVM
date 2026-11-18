@@ -47,6 +47,7 @@ struct FaultSnapshot {
 class Engine {
 public:
     using HleFn = std::function<void(Cpu&)>;
+    using FastHleFn = bool (*)(Cpu& c, void* ctx, uint32_t& target);
 
     explicit Engine(Memory::GuestArena& mem);
     ~Engine();
@@ -58,6 +59,27 @@ public:
     // `fn` may call hleJump() to continue somewhere other than LR, set
     // `cpu.exit` to stop, or throw (reported as Exit::HostError).
     uint32_t registerHle(std::string name, HleFn fn);
+    // A fast path for a host function, tried by the HLE op before the full call. It runs inside guest
+    // code (no thread-state bookkeeping, no suspension point), so it must be short, must not block or
+    // call guest code, and returns false to fall back to the full call. On success, target is an
+    // IMP to dispatch or zero to return to the caller. objc_msgSend uses it for
+    // cached (class, selector) -> IMP hits. Set it before guest code runs.
+    void setFastHle(uint32_t index, FastHleFn fn, void* ctx) { hle_[index].fast = fn; hle_[index].fastCtx = ctx; }
+    bool tryFastHle(Cpu& c, uint32_t index) {
+        const HleEntry& h = hle_[index];
+        if (!h.fast) return false;
+        auto* ring = c.call_ring.load(std::memory_order_relaxed);
+        if (!ring || c.async_pending.load(std::memory_order_acquire)) return false;
+        uint32_t target = 0;
+        if (!h.fast(c, h.fastCtx, target)) return false;
+        // A cached send is still a host entry in crash reports and replay checkpoints.
+        ring->push(Diag::CallKind::Hle, index);
+        if (target) {
+            if (isHleAddress(target)) callHle(&c, hleIndex(target));
+            else hleJump(c, target);
+        }
+        return true;
+    }
     // Read-only basic-block entry probes for local diagnostics. Configure before
     // decoding/running any code; cached links must not be changed under runners.
     using EntryObserver = std::function<void(uint32_t, const Cpu&)>;
@@ -194,7 +216,7 @@ private:
     std::atomic<uint64_t> gen_{0};       // bumped by flushCache; invalidates per-Cpu caches
     mutable std::mutex mu_;
 
-    struct HleEntry { std::string name; HleFn fn; };
+    struct HleEntry { std::string name; HleFn fn; FastHleFn fast = nullptr; void* fastCtx = nullptr; };
     std::vector<HleEntry> hle_;          // fixed capacity, never reallocated
     std::atomic<uint32_t> hleCount_{0};
     uint32_t returnStub_ = 0;            // LR used by callGuest
