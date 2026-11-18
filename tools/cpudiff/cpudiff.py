@@ -315,6 +315,9 @@ def main() -> int:
                     help="mnemonics with accepted differences; only others fail the run")
     ap.add_argument("--out", default=str(ROOT / "build" / "cpudiff-report.json"))
     ap.add_argument("--batch", type=int, default=5000)
+    ap.add_argument("--fail-on", choices=["new", "crash"], default="new",
+                    help="new: any mismatch not in --known fails; crash: only cases where HydrogenVM stopped "
+                         "unexpectedly (host-level problems) fail, mismatches are reported")
     args = ap.parse_args()
 
     try:
@@ -375,6 +378,10 @@ def main() -> int:
         for asm, n in unimplemented.most_common(15):
             print(f"  {n:5d}  {asm}")
     print(f"report: {args.out}")
+    stopped = sum(1 for v in by_mnemonic.values() for m in v if m["diffs"] and m["diffs"][0].startswith("hvm stopped: other"))
+    if args.fail_on == "crash":
+        print(f"{stopped} case(s) where HydrogenVM stopped unexpectedly")
+        return 1 if stopped else 0
     return 1 if new else 0
 
 
