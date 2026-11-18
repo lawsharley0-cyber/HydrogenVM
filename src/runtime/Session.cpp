@@ -113,21 +113,25 @@ std::string Session::format(const SessionEvent& e) {
     char b[160];
     switch (e.kind) {
         case SessionEvent::Kind::Touch:
-            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 " touch %d %.2f %.2f %u", e.ms, e.frames, e.phase, e.x, e.y, e.finger);
+            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 "/%" PRIu64 " touch %d %.2f %.2f %u", e.ms, e.swaps, e.hooks, e.phase, e.x, e.y, e.finger);
             break;
         case SessionEvent::Kind::Accel:
-            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 " accel %.4f %.4f %.4f", e.ms, e.frames, e.x, e.y, e.z);
+            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 "/%" PRIu64 " accel %.4f %.4f %.4f", e.ms, e.swaps, e.hooks, e.x, e.y, e.z);
             break;
         default:
-            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 " %s", e.ms, e.frames, kindName(e.kind));
+            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 "/%" PRIu64 " %s", e.ms, e.swaps, e.hooks, kindName(e.kind));
     }
     return b;
 }
 
 bool Session::parse(const std::string& line, SessionEvent& e) {
     std::istringstream in(line);
-    std::string kind;
-    if (!(in >> e.ms >> e.frames >> kind)) return false;
+    std::string kind, frames;
+    if (!(in >> e.ms >> frames >> kind)) return false;
+    const auto slash = frames.find('/');
+    if (slash == std::string::npos) return false;
+    try { e.swaps = std::stoull(frames.substr(0, slash)); e.hooks = std::stoull(frames.substr(slash + 1)); }
+    catch (...) { return false; }
     if (kind == "touch") { e.kind = SessionEvent::Kind::Touch; return bool(in >> e.phase >> e.x >> e.y >> e.finger); }
     if (kind == "accel") { e.kind = SessionEvent::Kind::Accel; return bool(in >> e.x >> e.y >> e.z); }
     if (kind == "background") { e.kind = SessionEvent::Kind::Background; return true; }

@@ -11907,6 +11907,55 @@ int runFullSubsystemTests() {
         std::filesystem::remove_all(root, ec);
     }
 
+    // Session recording (runtime/Session.hpp): a recording replays with the same seed, so every
+    // random source gives the same values; the guest's clock shows the recorded date; input lines
+    // round-trip; a broken file is refused with a readable reason.
+    {
+        const std::string rec = "/tmp/hvm_session_" + std::to_string(getpid()) + ".hvmrec";
+        uint64_t recorded[3];
+        {
+            Session s;
+            s.startRecording(rec, "Test.app");
+            for (auto& v : recorded) v = s.entropy();
+            SessionEvent t = SessionEvent::input(SessionEvent::Kind::Touch, 3, 2, 120.5f, 284.25f);
+            t.ms = 1234; t.swaps = 56; t.hooks = 78;
+            s.note(t);
+            SessionEvent b = SessionEvent::input(SessionEvent::Kind::Background);
+            b.ms = 2000; b.swaps = 60; b.hooks = 90;
+            s.note(b);
+        }
+        // Make the recorded start time a day ago, as if replaying yesterday's session.
+        std::string text;
+        { std::ifstream in(rec); std::stringstream ss; ss << in.rdbuf(); text = ss.str(); }
+        const auto w = text.find("wall="), we = text.find(' ', w);
+        const int64_t dayAgo = guestWallNowNs() - 86'400'000'000'000LL;
+        text = text.substr(0, w) + "wall=" + std::to_string(dayAgo) + text.substr(we);
+        { std::ofstream(rec) << text; }
+        bool ok;
+        {
+            Session r;
+            r.startReplay(rec);
+            ok = r.mode() == Session::Mode::Replay && r.app() == "Test.app" && r.events().size() == 2;
+            for (const auto v : recorded) ok &= r.entropy() == v;
+            const auto& e = r.events();
+            ok &= e.size() == 2 && e[0].kind == SessionEvent::Kind::Touch && e[0].phase == 3 && e[0].finger == 2 &&
+                  e[0].x == 120.5f && e[0].y == 284.25f && e[0].ms == 1234 && e[0].swaps == 56 && e[0].hooks == 78 &&
+                  e[1].kind == SessionEvent::Kind::Background && e[1].swaps == 60;
+            const int64_t shift = guestWallNowNs() - dayAgo;
+            ok &= shift >= 0 && shift < 5'000'000'000LL;   // the guest sees (about) the recorded time
+        }
+        const int64_t after = guestWallNowNs() - std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        ok &= after > -1'000'000'000LL && after < 1'000'000'000LL;   // and the real time once replay ends
+        { std::ofstream(rec) << "HVMREC 1 seed=1 wall=0 app=x\n10 nonsense touch\n"; }
+        bool refused = false;
+        try { Session bad; bad.startReplay(rec); } catch (const std::runtime_error& e) {
+            refused = std::string(e.what()).find("line 2") != std::string::npos;
+        }
+        check(ok && refused, "Session: replay repeats the recorded random values, date and input; bad files are refused");
+        std::remove(rec.c_str());
+    }
+
     // Regressions: pthread_from_mach_thread_np, mmap MAP_FIXED, and formatGuest with flags after width
     {
         ProcessConfig cfg;

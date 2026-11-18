@@ -362,6 +362,7 @@ uint32_t e_makeCurrent(Ctx& x, uint32_t, uint32_t draw, uint32_t read, uint32_t 
     return ok();
 }
 uint32_t e_swapBuffers(Ctx& x, uint32_t, uint32_t surface) {
+    x.proc.perf().gameSwaps++;
     GlSurface* g = nullptr;
     {
         auto& e = E(x);

@@ -479,6 +479,27 @@ Bionic, EGL, OpenSL ES and AAssetManager are in `src/runtime/android/`).
 - **Agreed anti-patterns (its #12):** no whole-binary superset translation, no models in the
   instruction or frame loop.
 
+### I7. From Argon's blueprint v2 (2026-11-17): verified against the code
+- **Doing first — floating-point fast path (its #1):** confirmed. iOS threads start in RunFast
+  (`Process.cpp`, `fpscr = 0x03000000`), so every VFP/NEON op takes the "unlikely" flush path and
+  classifies operands with `std::fpclassify`. Make the RunFast path the fast one (branchless
+  exponent test), then consider VCMP+VMRS+branch fusion. Checked by `vfp_neon.S`, the float C
+  tests and cpudiff; kept only if VFP-heavy benchmarks gain at least 25%.
+- **Next, measured first:** objc_msgSend inline caching in the call op (its #2); qsort/bsearch
+  without a host round trip per comparison (its #6, confirmed in `Stdlib.cpp`); streaming music
+  instead of decoding whole tracks up front (its #8: confirmed full-track decode, ~42 MB per 4-minute
+  stereo track; but AAC already decodes through the host, so only streaming and Vorbis are new).
+- **Corpus-driven:** offline paths for dead ad/social SDKs (its #7) only where the nightly corpus
+  or a report shows a game stuck on one, using each SDK's documented "offline/declined" path.
+- **Phone app (Phase E):** GCVirtualController for on-screen controls, BGContinuedProcessingTask for
+  large imports, IOSurface for UIKit-only frames (its #10). GL games already present on the GPU.
+- **Into I4's design:** register promotion to locals and hot/cold layout from replay traces (its #9).
+- **Not taken — already exists:** 64-bit argument alignment for Android (its #3: `ArgReader::dword`
+  already aligns under `align64Args()` for Android processes); ARM EHABI table lookup (its #5:
+  `dl_unwind_find_exidx` and `__gnu_Unwind_Find_exidx` are implemented from `PT_ARM_EXIDX`).
+- **Not taken — wrong target:** 4-wide software shaders (its #4). On the iPhone, GL games run on the
+  GPU through EAGL (`HVMEngine.mm`); the software rasterizer is the bench fallback.
+
 ## Order and timeline
 
 | Weeks | Main track | In parallel |

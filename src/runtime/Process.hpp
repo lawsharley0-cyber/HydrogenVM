@@ -228,6 +228,9 @@ public:
     struct Perf {
         std::atomic<uint64_t> frames{0};          // frame hooks run (60 Hz main run loop)
         std::atomic<uint64_t> framesPresented{0}; // frames that changed and were composited
+        // Every frame the game finished and handed over (eglSwapBuffers, presentRenderbuffer),
+        // shown or not: how far the game has got, for session replay (runtime/Session.hpp).
+        std::atomic<uint64_t> gameSwaps{0};
         std::atomic<uint64_t> offscreenPresents{0}; // GL frames presented to a layer the screen doesn't show
         // glTrace only: GL errors raised, draw calls, and presented frames that drew nothing.
         std::atomic<uint64_t> glErrors{0}, glDraws{0}, glPresents{0}, glEmptyPresents{0}, glLastFrameDraws{0};
@@ -499,12 +502,12 @@ public:
     // ---- host input (any thread); UIKit installs the handler
     void injectTouch(TouchPhase phase, float x, float y, uint32_t fingerId) {
         if (!touchHandler_) return;
-        noteInput({0, 0, SessionEvent::Kind::Touch, int(phase), fingerId, x, y, 0});
+        noteInput(SessionEvent::input(SessionEvent::Kind::Touch, int(phase), fingerId, x, y));
         touchHandler_(phase, x, y, fingerId);
     }
     void setAcceleration(float x, float y, float z) {
         if (!accelHandler_) return;
-        noteInput({0, 0, SessionEvent::Kind::Accel, 0, 0, x, y, z});
+        noteInput(SessionEvent::input(SessionEvent::Kind::Accel, 0, 0, x, y, z));
         accelHandler_(x, y, z);
     }
     bool acceptsTouches() const { return bool(touchHandler_); }
