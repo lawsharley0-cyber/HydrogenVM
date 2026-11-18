@@ -17,6 +17,7 @@ Needs `pip install unicorn` (CI installs it); the HydrogenVM side is build/hvm_c
 import argparse
 import json
 import random
+import re
 import shutil
 import struct
 import subprocess
@@ -277,6 +278,27 @@ def disassemble(case) -> str:
     return "; ".join(l.strip() for l in out.splitlines() if l.strip() and not l.strip().startswith("."))
 
 
+def not_comparable(asm: str) -> str:
+    """Why a differing case can't be compared, or "". ARM leaves these UNPREDICTABLE or they
+    read memory the two emulators lay out differently; they are counted, not reported."""
+    if not asm:
+        return ""
+    if "^" in asm:
+        return "LDM/STM with ^ (user-bank registers / exception return; privileged)"
+    if re.search(r"\[pc\b", asm):
+        return "PC-relative load or store (reads neighbouring test slots, laid out differently)"
+    if re.search(r"\bpc\b", asm):
+        return "PC as an operand (UNPREDICTABLE for most instructions)"
+    for ins in asm.split(";"):
+        m = re.match(r"\s*(ldr|str)(d|ex|exd|b|h|sb|sh)?\w*\s+(r\d+|sp|lr)(?:,\s*(r\d+|sp|lr))?,\s*\[(r\d+|sp)\]?.*?(!|\],\s*#|\],\s*-?r)", ins)
+        if m and m.group(5) in (m.group(3), m.group(4)):
+            return "load/store writing back into its own base register (UNPREDICTABLE)"
+        m = re.match(r"\s*(ldm|stm)\w*\s+(r\d+|sp)!,\s*\{([^}]*)\}", ins)
+        if m and re.search(r"\b%s\b" % m.group(2), m.group(3)):
+            return "LDM/STM with writeback and the base in the list (UNPREDICTABLE)"
+    return ""
+
+
 def mnemonic(asm: str) -> str:
     return asm.split(";")[0].split()[0] if asm.strip() else "?"
 
@@ -322,6 +344,10 @@ def main() -> int:
             diffs = [f"hvm stopped: {h['status']}"] if h["status"] != "ok" else differences(h, u)
             if diffs:
                 asm = disassemble(case)
+                why = not_comparable(asm)
+                if why:
+                    skipped[why] += 1
+                    continue
                 mismatches.append({"thumb": case["thumb"], "code": case["code"].hex(), "asm": asm,
                                    "mnemonic": mnemonic(asm), "state": case["state"], "diffs": diffs})
 
