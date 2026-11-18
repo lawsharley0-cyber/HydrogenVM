@@ -1,6 +1,7 @@
 // HydrogenVM — <string.h>, <strings.h>, <ctype.h>, <wchar.h> basics.
 // Operates directly on guest memory through the arena's host mapping.
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -185,6 +186,26 @@ uint32_t runeType(uint32_t c) {
 int32_t c_maskrune(Ctx&, int32_t c, uint32_t mask) {
     return c >= 0 ? int32_t(runeType(uint32_t(c)) & mask) : 0;
 }
+// xlocale (Crossy Road #532): HydrogenVM has one locale, the C/en_US one every *_l function
+// already uses. newlocale/duplocale hand out distinct handles (freed by freelocale); uselocale
+// keeps each thread's current handle, starting at LC_GLOBAL_LOCALE ((locale_t)-1).
+constexpr uint32_t kGlobalLocale = 0xFFFFFFFFu;
+uint32_t loc_new(Ctx& x, int32_t, GuestPtr, uint32_t base) {
+    if (base && base != kGlobalLocale) return base;   // newlocale modifies and returns base
+    const uint32_t h = x.proc.heap().alloc(16);
+    if (h) x.mem.write<uint32_t>(h, 0x4C4F4341u);     // "LOCA": a valid handle
+    return h;
+}
+uint32_t loc_dup(Ctx& x, uint32_t) { return loc_new(x, 0, 0, 0); }
+int32_t loc_free(Ctx& x, uint32_t h) { if (h && h != kGlobalLocale) x.proc.heap().free(h); return 0; }
+uint32_t loc_use(Ctx& x, uint32_t h) {
+    static const char key = 0;
+    uint32_t& cur = x.proc.threadSlot(&key);
+    const uint32_t prev = cur ? cur : kGlobalLocale;
+    if (h) cur = h;
+    return prev;
+}
+uint32_t loc_query(Ctx& x, int32_t, uint32_t) { return x.proc.internCString("C"); }
 int32_t c_toupper_l(Ctx& x, int32_t c, uint32_t) { return c_toupper(x, c); }
 int32_t c_tolower_l(Ctx& x, int32_t c, uint32_t) { return c_tolower(x, c); }
 
@@ -643,6 +664,11 @@ void registerLibcString(Process& p) {
     p.def<&c_tolower>("_tolower");
     p.def<&c_toupper>("___toupper");
     p.def<&c_tolower>("___tolower");
+    supportDef<&loc_new>(p, "_newlocale", SupportStatus::Approx, "one locale (C/en_US); distinct handles");
+    supportDef<&loc_dup>(p, "_duplocale", SupportStatus::Approx, "one locale (C/en_US); distinct handles");
+    supportDef<&loc_free>(p, "_freelocale", SupportStatus::Real, "frees the handle");
+    supportDef<&loc_use>(p, "_uselocale", SupportStatus::Real, "per-thread current locale, LC_GLOBAL_LOCALE first");
+    supportDef<&loc_query>(p, "_querylocale", SupportStatus::Approx, "one locale: \"C\"");
     p.def<&c_toupper_l>("_toupper_l");
     p.def<&c_tolower_l>("_tolower_l");
     p.def<&c_maskrune>("___maskrune");

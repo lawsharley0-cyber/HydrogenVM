@@ -1047,6 +1047,10 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:");
     supportMethod(p, rl, "NSRunLoop", "runMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); },
                   SupportStatus::Approx, "Runs one emulated mode iteration until the supplied date; host event and source model is approximate", "c@:@@");
+    // Unity drains touch input each frame with acceptInputForMode:beforeDate:[NSDate distantPast]. It is
+    // one runMode:beforeDate: pass without the result; timers due in that pass also fire here.
+    supportMethod(p, rl, "NSRunLoop", "acceptInputForMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); x.cpu.r[0] = 0; },
+                  SupportStatus::Approx, "One emulated mode iteration until the supplied date; due timers may also fire", "v@:@@");
     rl.m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);
