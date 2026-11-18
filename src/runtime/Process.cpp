@@ -154,7 +154,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     else if (!cfg_.recordPath.empty()) {
         std::string app = cfg_.bundlePath;
         if (const auto slash = app.find_last_of('/'); slash != std::string::npos) app = app.substr(slash + 1);
-        session_.startRecording(cfg_.recordPath, app);
+        session_.startRecording(cfg_.recordPath, app, cfg_.detailedRecording, cfg_.inputRecordingPath);
     }
     if (cfg_.gles1Emulate) ::setenv("HVM_GL1_EMULATE", "1", 1);
     mem_ = std::make_unique<Memory::GuestArena>(cfg_.hostPageSize);
@@ -346,7 +346,7 @@ uint64_t Process::sessionHooks() const {
 }
 void Process::recordFrameCheckpoint(uint64_t frameHash) {
     const auto mode = session_.mode();
-    if (mode == Session::Mode::Off) return;
+    if (!session_.detailsActive()) return;
     const uint64_t frame = sessionHooks() + sessionSwaps();
     uint64_t callTotal = 0;
     uint64_t callHash = 14695981039346656037ull;
@@ -369,7 +369,7 @@ void Process::recordFrameCheckpoint(uint64_t frameHash) {
     }
 }
 void Process::recordFrameCheckpoint(const uint8_t* rgba, int w, int h) {
-    if (session_.mode() == Session::Mode::Off || !rgba || w <= 0 || h <= 0) return;
+    if (!session_.detailsActive() || !rgba || w <= 0 || h <= 0) return;
     const uint64_t frameHash = Session::fnv1a64(rgba, size_t(w) * size_t(h) * 4);
     recordFrameCheckpoint(frameHash);
 }

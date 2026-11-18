@@ -96,6 +96,8 @@ struct ProcessConfig {
     // Session recording (runtime/Session.hpp): write the seed, start time and every input to
     // recordPath, or replay a recording from replayPath. At most one of the two.
     std::string recordPath, replayPath;
+    std::string inputRecordingPath; // Optional input-only companion for public reports.
+    bool detailedRecording = true; // CLI --record requests a detailed trace; the phone opts in per launch.
     // Safe-mode retry (C3): per-game fallback overrides and active fallback identifier.
     bool gles1Emulate = false;
     uint32_t maxTextureSize = 0;       // 0: default (4096)

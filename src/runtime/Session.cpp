@@ -113,6 +113,7 @@ uint64_t Session::fnv1a64(const void* data, size_t len) {
 int64_t guestWallNowNs() { return hostWallNs() + g_wallOffsetNs.load(std::memory_order_relaxed); }
 
 Session::~Session() {
+    if (inputsOut_) std::fclose(inputsOut_);
     if (out_) std::fclose(out_);
     if (mode_ == Mode::Replay) g_wallOffsetNs = 0;
 }
@@ -124,15 +125,24 @@ void Session::seedOnce() {
     seeded_ = true;
 }
 
-void Session::startRecording(const std::string& path, const std::string& app) {
+void Session::startRecording(const std::string& path, const std::string& app, bool detailed, const std::string& inputPath) {
     out_ = std::fopen(path.c_str(), "w");
     if (!out_) throw std::runtime_error("can't write the session recording " + path);
     seedOnce();
     app_ = app;
-    version_ = 2;
+    version_ = detailed ? 2 : 1;
     mode_ = Mode::Record;
-    std::fprintf(out_, "HVMREC 2 seed=%016" PRIx64 " wall=%" PRId64 " app=%s\n", seed_, hostWallNs(), app.c_str());
-    std::fflush(out_);
+    const auto wall = hostWallNs();
+    auto writeHeader = [&](std::FILE* stream, int version) {
+        std::fprintf(stream, "HVMREC %d seed=%016" PRIx64 " wall=%" PRId64 " app=%s\n", version, seed_, wall, app.c_str());
+        std::fflush(stream);
+    };
+    writeHeader(out_, version_);
+    if (!inputPath.empty()) {
+        inputsOut_ = std::fopen(inputPath.c_str(), "w");
+        if (!inputsOut_) throw std::runtime_error("can't write the input recording " + inputPath);
+        writeHeader(inputsOut_, 1);
+    }
 }
 
 void Session::startReplay(const std::string& path) {
@@ -159,14 +169,12 @@ void Session::startReplay(const std::string& path) {
     }
     if (!haveSeed) throw std::runtime_error(path + ": the recording has no seed");
     seeded_ = true;
-    if (wall) g_wallOffsetNs = wall - hostWallNs();
     int n = 1;
     while (std::getline(in, line)) {
         ++n;
         if (line.empty()) continue;
         SessionEvent e;
         if (!parse(line, e)) throw std::runtime_error(path + ": line " + std::to_string(n) + " isn't an input event");
-        allEvents_.push_back(e);
         if (SessionEvent::isInputKind(e.kind)) {
             events_.push_back(e);
         } else {
@@ -181,6 +189,7 @@ void Session::startReplay(const std::string& path) {
             }
         }
     }
+    if (wall) g_wallOffsetNs = wall - hostWallNs();
     mode_ = Mode::Replay;
 }
 
@@ -195,16 +204,21 @@ uint64_t Session::entropy() {
 int64_t Session::wallNowNs() const { return guestWallNowNs(); }
 
 void Session::note(const SessionEvent& e) {
-    if (mode_ != Mode::Record) return;
+    if (mode_ != Mode::Record || (version_ < 2 && !SessionEvent::isInputKind(e.kind))) return;
     std::lock_guard<std::mutex> lk(mu_);
     if (!out_) return;
     const std::string line = format(e);
+    if (inputsOut_ && SessionEvent::isInputKind(e.kind)) {
+        std::fputs(line.c_str(), inputsOut_);
+        std::fputc('\n', inputsOut_);
+        std::fflush(inputsOut_);
+    }
     std::fputs(line.c_str(), out_);
     std::fputc('\n', out_);
     std::fflush(out_);   // a crash right after still leaves the input that led to it
 }
 
-void Session::recordClockRead(const std::string& clockKind, uint64_t valueNs, uint64_t ms, uint64_t swaps, uint64_t hooks) {
+void Session::recordClockRead(const char* clockKind, uint64_t valueNs, uint64_t ms, uint64_t swaps, uint64_t hooks) {
     if (mode_ != Mode::Record) return;
     SessionEvent e;
     e.ms = ms; e.swaps = swaps; e.hooks = hooks;
@@ -214,7 +228,7 @@ void Session::recordClockRead(const std::string& clockKind, uint64_t valueNs, ui
     note(e);
 }
 
-std::optional<uint64_t> Session::replayClockRead(const std::string& clockKind) {
+std::optional<uint64_t> Session::replayClockRead(const char* clockKind) {
     if (mode_ != Mode::Replay) return std::nullopt;
     std::lock_guard<std::mutex> lk(mu_);
     for (size_t i = clockCursor_; i < clockEvents_.size(); ++i) {
@@ -258,8 +272,14 @@ std::optional<std::vector<uint8_t>> Session::replayFileRead(const std::string& p
             continue;
         }
         if (ev.label == path && ev.aux == offset && !ev.inBundle && !ev.bytes.empty()) {
-            std::vector<uint8_t> out = ev.bytes;
-            if (out.size() > maxLen) out.resize(maxLen);
+            if (maxLen < ev.bytes.size()) {
+                const auto end = ev.bytes.begin() + maxLen;
+                std::vector<uint8_t> prefix(ev.bytes.begin(), end);
+                ev.bytes.erase(ev.bytes.begin(), end);
+                ev.aux += maxLen;
+                return prefix;
+            }
+            std::vector<uint8_t> out = std::move(ev.bytes);
             ev.label.clear();
             if (i == fileCursor_) ++fileCursor_;
             return out;
@@ -268,7 +288,7 @@ std::optional<std::vector<uint8_t>> Session::replayFileRead(const std::string& p
     return std::nullopt;
 }
 
-void Session::recordRngSeed(const std::string& fn, uint64_t seed, uint64_t ms, uint64_t swaps, uint64_t hooks) {
+void Session::recordRngSeed(const char* fn, uint64_t seed, uint64_t ms, uint64_t swaps, uint64_t hooks) {
     if (mode_ != Mode::Record) return;
     SessionEvent e;
     e.ms = ms; e.swaps = swaps; e.hooks = hooks;
@@ -278,7 +298,7 @@ void Session::recordRngSeed(const std::string& fn, uint64_t seed, uint64_t ms, u
     note(e);
 }
 
-std::optional<uint64_t> Session::replayRngSeed(const std::string& fn) {
+std::optional<uint64_t> Session::replayRngSeed(const char* fn) {
     if (mode_ != Mode::Replay) return std::nullopt;
     std::lock_guard<std::mutex> lk(mu_);
     for (size_t i = rngCursor_; i < rngEvents_.size(); ++i) {
@@ -308,14 +328,26 @@ void Session::recordNetAnswer(const void* data, size_t len, uint64_t ms, uint64_
     note(e);
 }
 
-std::optional<std::vector<uint8_t>> Session::replayNetAnswer() {
+std::optional<std::vector<uint8_t>> Session::replayNetAnswer(size_t maxLen) {
     if (mode_ != Mode::Replay) return std::nullopt;
     std::lock_guard<std::mutex> lk(mu_);
     if (netCursor_ >= netEvents_.size()) return std::nullopt;
-    return netEvents_[netCursor_++].bytes;
+    const auto& data = netEvents_[netCursor_].bytes;
+    if (data.empty()) { // Only a hash was recorded for this read.
+        ++netCursor_;
+        return std::nullopt;
+    }
+    const size_t count = std::min(maxLen, data.size() - netOffset_);
+    std::vector<uint8_t> result(data.begin() + netOffset_, data.begin() + netOffset_ + count);
+    netOffset_ += count;
+    if (netOffset_ == data.size()) {
+        ++netCursor_;
+        netOffset_ = 0;
+    }
+    return result;
 }
 
-void Session::recordSchedPoint(uint32_t tid, const std::string& op, uint64_t addr, uint64_t ms, uint64_t swaps, uint64_t hooks) {
+void Session::recordSchedPoint(uint32_t tid, const char* op, uint64_t addr, uint64_t ms, uint64_t swaps, uint64_t hooks) {
     if (mode_ != Mode::Record) return;
     SessionEvent e;
     e.ms = ms; e.swaps = swaps; e.hooks = hooks;
@@ -327,7 +359,7 @@ void Session::recordSchedPoint(uint32_t tid, const std::string& op, uint64_t add
     note(e);
 }
 
-void Session::waitSchedTurn(uint32_t tid, const std::string& op, uint64_t addr) {
+void Session::waitSchedTurn(uint32_t tid, const char* op, uint64_t addr) {
     if (mode_ != Mode::Replay) return;
     std::unique_lock<std::mutex> lk(mu_);
     if (schedCursor_ >= schedEvents_.size()) return;
@@ -373,20 +405,23 @@ void Session::recordCheckpoint(uint64_t frame, uint64_t frameHash, uint64_t call
 bool Session::checkCheckpoint(uint64_t frame, uint64_t frameHash, uint64_t callRingTotal, uint64_t callRingHash) {
     if (mode_ != Mode::Replay) return true;
     std::lock_guard<std::mutex> lk(mu_);
-    while (checkpointCursor_ < checkpointEvents_.size() && checkpointEvents_[checkpointCursor_].aux2 < frame) {
-        ++checkpointCursor_;
-    }
     if (checkpointCursor_ >= checkpointEvents_.size()) return true;
     const auto& rec = checkpointEvents_[checkpointCursor_];
-    if (rec.aux2 != frame) return true;
+    if (frame < rec.aux2) return true;
     ++checkpointCursor_;
-    const bool match = (rec.value == frameHash && rec.seq == callRingTotal && rec.aux == callRingHash);
+    const bool match = (frame == rec.aux2 && rec.value == frameHash && rec.seq == callRingTotal && rec.aux == callRingHash);
+    if (match) ++matchedCheckpoints_;
     if (!match && !firstDivergence_) {
         firstDivergence_ = DivergenceInfo{
-            frame, rec.value, frameHash, rec.seq, callRingTotal, rec.aux, callRingHash
+            rec.aux2, rec.value, frameHash, rec.seq, callRingTotal, rec.aux, callRingHash
         };
     }
     return match;
+}
+
+size_t Session::matchedCheckpointCount() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return matchedCheckpoints_;
 }
 
 std::optional<DivergenceInfo> Session::firstDivergence() const {
@@ -429,9 +464,9 @@ std::string Session::format(const SessionEvent& e) {
                           e.ms, e.swaps, e.hooks, escapeToken(e.label).c_str(), e.value);
             return b;
         case SessionEvent::Kind::FileRead: {
-            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 "/%" PRIu64 " fileread %" PRIu64 " %" PRIu64 " %" PRIu64 " %016" PRIx64 " %d %s",
-                          e.ms, e.swaps, e.hooks, e.seq, e.aux, e.aux2, e.hash, e.inBundle ? 1 : 0, escapeToken(e.label).c_str());
-            std::string out(b);
+            std::snprintf(b, sizeof b, "%" PRIu64 " %" PRIu64 "/%" PRIu64 " fileread %" PRIu64 " %" PRIu64 " %" PRIu64 " %016" PRIx64 " %d ",
+                          e.ms, e.swaps, e.hooks, e.seq, e.aux, e.aux2, e.hash, e.inBundle ? 1 : 0);
+            std::string out = b + escapeToken(e.label);
             if (!e.inBundle && !e.bytes.empty()) {
                 out += ' ';
                 out += toHex(e.bytes.data(), e.bytes.size());

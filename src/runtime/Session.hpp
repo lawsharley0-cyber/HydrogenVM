@@ -97,16 +97,17 @@ public:
 
     // Recording: a fresh seed and the current time. Throws std::runtime_error if the file can't
     // be written.
-    void startRecording(const std::string& path, const std::string& app);
+    void startRecording(const std::string& path, const std::string& app, bool detailed = true, const std::string& inputPath = {});
     // Replay: reads the file (HVMREC 1 or 2). Throws std::runtime_error with a readable message on a bad file.
     void startReplay(const std::string& path);
 
     Mode mode() const { return mode_; }
+    bool recordingDetails() const { return mode_ == Mode::Record && version_ >= 2; }
+    bool replayingDetails() const { return mode_ == Mode::Replay && version_ >= 2; }
+    bool detailsActive() const { return mode_ != Mode::Off && version_ >= 2; }
     int version() const { return version_; }
     // Input events (Touch, Accel, Background, Foreground) delivered by SessionReplayer.
     const std::vector<SessionEvent>& events() const { return events_; }
-    // All parsed events (including HVMREC 2 records).
-    const std::vector<SessionEvent>& allEvents() const { return allEvents_; }
     const std::string& app() const { return app_; }
 
     // Every random value the runtime hands the guest comes from here: a deterministic stream
@@ -119,23 +120,23 @@ public:
     void note(const SessionEvent& e);   // while recording; thread-safe
 
     // HVMREC 2 record/replay helpers (thread-safe).
-    void recordClockRead(const std::string& clockKind, uint64_t valueNs, uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
-    std::optional<uint64_t> replayClockRead(const std::string& clockKind);
+    void recordClockRead(const char* clockKind, uint64_t valueNs, uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
+    std::optional<uint64_t> replayClockRead(const char* clockKind);
 
     void recordFileRead(const std::string& path, uint64_t offset, const void* data, size_t len, bool inBundle,
                         uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
     // Returns recorded bytes if an outside-bundle read matches (path, offset) during replay.
     std::optional<std::vector<uint8_t>> replayFileRead(const std::string& path, uint64_t offset, size_t maxLen);
 
-    void recordRngSeed(const std::string& fn, uint64_t seed, uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
-    std::optional<uint64_t> replayRngSeed(const std::string& fn);
+    void recordRngSeed(const char* fn, uint64_t seed, uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
+    std::optional<uint64_t> replayRngSeed(const char* fn);
 
     void recordNetAnswer(const void* data, size_t len, uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
-    std::optional<std::vector<uint8_t>> replayNetAnswer();
+    std::optional<std::vector<uint8_t>> replayNetAnswer(size_t maxLen);
 
-    void recordSchedPoint(uint32_t tid, const std::string& op, uint64_t addr, uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
+    void recordSchedPoint(uint32_t tid, const char* op, uint64_t addr, uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
     // Enforce recorded lock/wait ordering where possible (bounded wait so diverged replays don't deadlock).
-    void waitSchedTurn(uint32_t tid, const std::string& op, uint64_t addr);
+    void waitSchedTurn(uint32_t tid, const char* op, uint64_t addr);
 
     void recordCheckpoint(uint64_t frame, uint64_t frameHash, uint64_t callRingTotal, uint64_t callRingHash,
                           uint64_t ms = 0, uint64_t swaps = 0, uint64_t hooks = 0);
@@ -143,6 +144,8 @@ public:
     bool checkCheckpoint(uint64_t frame, uint64_t frameHash, uint64_t callRingTotal, uint64_t callRingHash);
     std::optional<DivergenceInfo> firstDivergence() const;
     std::string formatDivergence() const;
+    size_t recordedCheckpointCount() const { return checkpointEvents_.size(); }
+    size_t matchedCheckpointCount() const;
 
     static uint64_t fnv1a64(const void* data, size_t len);
     static std::string format(const SessionEvent& e);
@@ -157,7 +160,6 @@ private:
     std::atomic<uint64_t> nextSeq_{1};
     std::string app_;
     std::vector<SessionEvent> events_;
-    std::vector<SessionEvent> allEvents_;
 
     // Replay cursors
     std::vector<SessionEvent> clockEvents_;
@@ -168,15 +170,18 @@ private:
     size_t rngCursor_ = 0;
     std::vector<SessionEvent> netEvents_;
     size_t netCursor_ = 0;
+    size_t netOffset_ = 0;
     std::vector<SessionEvent> schedEvents_;
     size_t schedCursor_ = 0;
     std::vector<SessionEvent> checkpointEvents_;
     size_t checkpointCursor_ = 0;
+    size_t matchedCheckpoints_ = 0;
     std::optional<DivergenceInfo> firstDivergence_;
 
     mutable std::mutex mu_;
     std::condition_variable schedCv_;
     std::FILE* out_ = nullptr;
+    std::FILE* inputsOut_ = nullptr; // Optional input-only companion for public phone reports.
     void seedOnce();
 public:
     ~Session();

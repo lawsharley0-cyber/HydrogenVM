@@ -12074,7 +12074,8 @@ int runFullSubsystemTests() {
         const uint8_t netData[] = {0x4f, 0x4b, 0x21};
         {
             Session s;
-            s.startRecording(rec2, "V2Test.app");
+            s.startRecording(rec2, "V2Test.app", true, rec2 + ".inputs");
+            s.note(SessionEvent::input(SessionEvent::Kind::Touch, 1, 0, 12, 34));
             s.recordClockRead("mach_absolute", 123456789ULL, 10, 1, 2);
             s.recordFileRead("/var/mobile/App.app/asset.bin", 0, extData, sizeof(extData), true, 12, 1, 2);
             s.recordFileRead("/var/mobile/Documents/save.dat", 64, extData, sizeof(extData), false, 15, 2, 3);
@@ -12088,19 +12089,21 @@ int runFullSubsystemTests() {
         {
             Session r;
             r.startReplay(rec2);
-            ok = r.version() == 2 && r.allEvents().size() == 8;
+            ok = r.version() == 2 && r.replayingDetails();
             auto clk = r.replayClockRead("mach_absolute");
             ok &= clk && *clk == 123456789ULL;
             // Bundle file read has no bytes stored; external file read replays exact bytes.
             ok &= !r.replayFileRead("/var/mobile/App.app/asset.bin", 0, 16).has_value();
-            auto fbytes = r.replayFileRead("/var/mobile/Documents/save.dat", 64, 16);
-            ok &= fbytes && fbytes->size() == sizeof(extData) &&
-                  std::memcmp(fbytes->data(), extData, sizeof(extData)) == 0;
+            auto fprefix = r.replayFileRead("/var/mobile/Documents/save.dat", 64, 2);
+            auto fsuffix = r.replayFileRead("/var/mobile/Documents/save.dat", 66, 16);
+            ok &= fprefix && *fprefix == std::vector<uint8_t>{'H', 'V'} &&
+                  fsuffix && *fsuffix == std::vector<uint8_t>{'M', '2'};
             auto seed = r.replayRngSeed("srand");
             ok &= seed && *seed == 0xdeadbeefULL;
-            auto nbytes = r.replayNetAnswer();
-            ok &= nbytes && nbytes->size() == sizeof(netData) &&
-                  std::memcmp(nbytes->data(), netData, sizeof(netData)) == 0;
+            auto prefix = r.replayNetAnswer(1);
+            auto suffix = r.replayNetAnswer(16);
+            ok &= prefix && *prefix == std::vector<uint8_t>{'O'} &&
+                  suffix && *suffix == std::vector<uint8_t>{'K', '!'};
             r.waitSchedTurn(2, "mutex_lock", 0x10004000ULL);
             // Frame 1 matches, frame 2 diverges.
             ok &= r.checkCheckpoint(1, 0x1111222233334444ULL, 10, 0xaaaabbbbccccddddULL);
@@ -12110,6 +12113,24 @@ int runFullSubsystemTests() {
             ok &= div.has_value() && div->frame == 2 &&
                   r.formatDivergence().find("frame 2") != std::string::npos;
         }
+        {
+            Session inputs;
+            inputs.startReplay(rec2 + ".inputs");
+            std::ifstream publicFile(rec2 + ".inputs");
+            std::string line;
+            unsigned lines = 0;
+            while (std::getline(publicFile, line)) ++lines;
+            ok &= inputs.version() == 1 && !inputs.detailsActive() && inputs.events().size() == 1 &&
+                  inputs.events()[0].x == 12 && lines == 2;
+        }
+        {
+            Session skipped;
+            skipped.startReplay(rec2);
+            ok &= !skipped.checkCheckpoint(2, 0x5555666677778888ULL, 20, 0x123456789abcdef0ULL);
+            ok &= skipped.firstDivergence() && skipped.firstDivergence()->frame == 1;
+            ok &= skipped.matchedCheckpointCount() == 0 && skipped.recordedCheckpointCount() == 2;
+        }
+        std::remove((rec2 + ".inputs").c_str());
         check(ok, "Session: HVMREC 2 round-trips clock, file, RNG, net, sched, and detects first diverging frame");
         std::remove(rec2.c_str());
     }

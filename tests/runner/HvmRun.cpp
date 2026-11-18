@@ -366,6 +366,8 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"stillRunning\": " << (timedStop ? "true" : "false") << ",\n";   // reached --run-for without failing
             f << "  \"crashed\": " << (proc.crashed() ? "true" : "false") << ",\n";
             f << "  \"replayDiverged\": " << (proc.session().firstDivergence() ? "true" : "false") << ",\n";
+            f << "  \"replayMatchedCheckpoints\": " << proc.session().matchedCheckpointCount() << ",\n";
+            f << "  \"replayRecordedCheckpoints\": " << proc.session().recordedCheckpointCount() << ",\n";
             if (const auto div = proc.session().firstDivergence()) {
                 f << "  \"replayDivergenceFrame\": " << div->frame << ",\n";
                 f << "  \"replayDivergence\": \"" << jsonEscape(proc.session().formatDivergence()) << "\",\n";

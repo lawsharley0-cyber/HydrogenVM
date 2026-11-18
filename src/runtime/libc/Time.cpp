@@ -53,9 +53,13 @@ int32_t t_gettimeofday(Ctx& x, GuestPtr tv, GuestPtr tz) {
 }
 uint32_t t_clock(Ctx&) { return uint32_t(std::clock() * (1000000.0 / CLOCKS_PER_SEC)); }
 uint64_t t_mach_absolute_time(Ctx& x) {
-    if (auto v = x.proc.session().replayClockRead("mach_absolute")) return *v;
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayClockRead("mach_absolute")) return *v;
+    }
     const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
-    x.proc.session().recordClockRead("mach_absolute", now, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    if (session.recordingDetails())
+        session.recordClockRead("mach_absolute", now, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
     return now;
 }
 int32_t t_mach_timebase_info(Ctx& x, GuestPtr info) {
@@ -79,13 +83,16 @@ int32_t t_clock_gettime(Ctx& x, uint32_t clk, GuestPtr ts) {
         const int64_t now = x.proc.wallNowNs();
         v.tv_sec = time_t(now / 1000000000);
         v.tv_nsec = long(now % 1000000000);
-    } else if (auto rec = x.proc.session().replayClockRead("monotonic")) {
+    } else if (auto rec = x.proc.session().replayingDetails()
+                              ? x.proc.session().replayClockRead("monotonic") : std::nullopt) {
         v.tv_sec = time_t(*rec / 1000000000ULL);
         v.tv_nsec = long(*rec % 1000000000ULL);
     } else {
         ::clock_gettime(CLOCK_MONOTONIC, &v);
-        const uint64_t ns = uint64_t(v.tv_sec) * 1000000000ULL + uint64_t(v.tv_nsec);
-        x.proc.session().recordClockRead("monotonic", ns, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+        if (x.proc.session().recordingDetails()) {
+            const uint64_t ns = uint64_t(v.tv_sec) * 1000000000ULL + uint64_t(v.tv_nsec);
+            x.proc.session().recordClockRead("monotonic", ns, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+        }
     }
     x.mem.write<int32_t>(ts, int32_t(v.tv_sec));
     x.mem.write<int32_t>(ts + 4, int32_t(v.tv_nsec));
