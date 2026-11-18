@@ -22,6 +22,7 @@ namespace Hydrogen::CPU {
 // Implemented by the Engine.
 Block* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
 void   hvmCallHle(Cpu* c, uint32_t index);
+bool   hvmFastHle(Cpu* c, uint32_t index);   // Engine::tryFastHle
 void   hvmObserveEntry(Cpu* c, uint32_t address);
 
 #define HVM_H(name) inline HVM_HOT_ABI void name(Cpu* c, const Op* op, uint8_t* m)
@@ -387,7 +388,7 @@ HVM_H(H_FetchFault) {
 HVM_H(H_Hle) {
     c->r[kPC] = op->pc;
     c->r[kTmp3] = c->r[kLR];
-    hvmCallHle(c, op->imm);
+    if (!hvmFastHle(c, op->imm)) hvmCallHle(c, op->imm);
     if (c->exit != Exit::None) return;
     HVM_NEXT();
 }

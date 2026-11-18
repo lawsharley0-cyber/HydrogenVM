@@ -159,7 +159,7 @@ final class RunModel {
         session?.movieFinished(requestId)
     }
 
-    func start(keepGoing: Bool) {
+    func start(keepGoing: Bool, detailedRecording: Bool = false) {
         guard session == nil else { return }
         lastKeepGoing = keepGoing
         sessionStartTime = Date()
@@ -168,6 +168,7 @@ final class RunModel {
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
         s.keepGoing = keepGoing
         s.playSession = true
+        s.detailedRecording = detailedRecording
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
@@ -725,6 +726,7 @@ final class RunModel {
 struct RunView: View {
     let app: InstalledApp
     let keepGoing: Bool
+    let detailedRecording: Bool
     @State private var model: RunModel
     @State private var showLog = false
     @State private var hudExpanded = false
@@ -748,7 +750,8 @@ struct RunView: View {
     @AppStorage private var unlockFrameRate: Bool
     @Environment(\.dismiss) private var dismiss
 
-    init(app: InstalledApp, keepGoing: Bool) {
+    init(app: InstalledApp, keepGoing: Bool, detailedRecording: Bool = false) {
+        self.detailedRecording = detailedRecording
         self.app = app
         self.keepGoing = keepGoing
         _model = State(initialValue: RunModel(app: app))
@@ -893,7 +896,7 @@ struct RunView: View {
         .defersSystemGestures(on: .all)
         .onAppear {
             OrientationLock.shared.lock(hostMask(for: effectiveOrientation), preferring: effectiveOrientation.mask)
-            model.start(keepGoing: keepGoing)
+            model.start(keepGoing: keepGoing, detailedRecording: detailedRecording)
             model.syncVirtualController(effectiveOrientation: effectiveOrientation)
         }
         .onChange(of: effectiveOrientation) { _, orientation in
