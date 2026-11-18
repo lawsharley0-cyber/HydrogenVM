@@ -220,6 +220,7 @@ def main() -> int:
         app = build_bundle(work)
         na_app = build_bundle(work, NA_SRC, NA_LIB, "NativeActivityTest.app", "NativeActivity")
         java = ROOT / "tests/android/java"
+        shutil.copyfile(java / "native-driver.dex", na_app / "classes.dex")
         bridge_app = build_bundle(work, java / "JniRoundTrip.c", LIB, "JniRoundTrip.app")
         shutil.copyfile(java / "jni.dex", bridge_app / "classes.dex")
         runs = [
