@@ -96,6 +96,10 @@ struct ProcessConfig {
     // Session recording (runtime/Session.hpp): write the seed, start time and every input to
     // recordPath, or replay a recording from replayPath. At most one of the two.
     std::string recordPath, replayPath;
+    // Safe-mode retry (C3): per-game fallback overrides and active fallback identifier.
+    bool gles1Emulate = false;
+    uint32_t maxTextureSize = 0;       // 0: default (4096)
+    std::string safeModeFallback;
     // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
 };
 

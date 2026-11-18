@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — BSD sockets, name resolution and network interfaces.
 //
 // By default HydrogenVM runs apps offline (reachability reports no network), so
@@ -80,7 +81,7 @@ bool span(Ctx& x, GuestPtr ptr, uint32_t n, uint8_t prot) {
         if ((x.mem.protAt(uint32_t(a)) & prot) != prot) return false;
     return true;
 }
-bool internet(Ctx& x) { return x.proc.config().internetAccess; }
+bool internet(Ctx& x) { return Compat::internetAccess(x.proc); }
 void tellInternetOnce(Ctx& x) {
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) x.proc.logf(LogLevel::Info, "Internet: allowed for this game (its \"Allow internet\" switch is on)");

@@ -121,6 +121,21 @@ constexpr std::array<std::array<Handler, kNumHot>, kNumHot> pairTable(std::index
 } // namespace detail
 inline constexpr auto kPairTable = detail::pairTable(std::make_index_sequence<kNumHot>{});
 
+// For fault reports: when `pair` is a fused H_Pair handler, which of its two ops can touch memory
+// (bit 0: the first, bit 1: the second). -1 when `pair` is not a pair handler.
+inline int pairMemoryParts(Handler pair) {
+    auto isMem = [](size_t i) {
+        const Handler h = kHotOps[i].h;
+        return h == &H_Mem<kMemW, true, kAmOffset, false> || h == &H_Mem<kMemW, false, kAmOffset, false> ||
+               h == &H_Mem<kMemB, true, kAmOffset, false> || h == &H_Mem<kMemB, false, kAmOffset, false> ||
+               h == &H_Mem<kMemH, true, kAmOffset, false> || h == &H_Mem<kMemW, true, kAmOffset, true>;
+    };
+    for (size_t a = 0; a < kNumHot; ++a)
+        for (size_t b = 0; b < kNumHot; ++b)
+            if (kPairTable[a][b] == pair) return int(isMem(a)) | (int(isMem(b)) << 1);
+    return -1;
+}
+
 inline int hotIndex(Handler h) {
     for (size_t i = 0; i < kNumHot; ++i) if (kHotOps[i].h == h) return int(i);
     return -1;
