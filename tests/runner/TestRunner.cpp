@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <chrono>
 #include <mutex>
 #include <cstdio>
@@ -8457,6 +8458,220 @@ int runFullSubsystemTests() {
         check(playOk && std::abs(dur - 0.1) < 0.005 && apFrames >= 4405 && apFrames <= 4410,
               "AVAudioPlayer WAV decoding, duration calculation, and mixer output");
         r.send(cpu, player, "stop");
+
+        // Host-driven Android ABI test. The fixture is opened through the same
+        // guest OpenSL vtables a native APK uses, then rendered by the mixer.
+        {
+            const std::string uriHome = proc.homePath() + "/opensl-uri";
+            std::filesystem::create_directories(uriHome);
+            ProcessConfig androidConfig;
+            androidConfig.bundlePath = androidConfig.homePath = uriHome;
+            androidConfig.androidLib = uriHome + "/libopensl-fixture.so";
+            androidConfig.phoneMode = true;
+            Process android(androidConfig);
+            auto& acpu = android.mainThread().cpu;
+            auto& mem = android.mem();
+            auto& mixer = android.mixer();
+            mem.map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+            acpu.r[CPU::kSP] = 0xBF000000u - 256;
+
+            // OpenSL ES 1.0.1 header constants and guest 32-bit interface layout.
+            const auto address = [&](const char* name) { return android.lookupSymbol(name).value(); };
+            const auto iid = [&](const char* name) { return mem.read<uint32_t>(address(name)); };
+            const auto invoke = [&](uint32_t itf, uint32_t method, std::initializer_list<uint32_t> args) {
+                return uint32_t(android.callGuest(acpu, mem.read<uint32_t>(mem.read<uint32_t>(itf) + 4 * method), args));
+            };
+            const uint32_t out = android.heap().allocZeroed(16);
+            const uint32_t loc = android.heap().allocZeroed(8);
+            const uint32_t mime = android.heap().allocZeroed(12);
+            const uint32_t src = android.heap().allocZeroed(8);
+            const uint32_t sinkLoc = android.heap().allocZeroed(8);
+            const uint32_t sink = android.heap().allocZeroed(8);
+            const uint32_t requested = android.heap().allocZeroed(8);
+            const uint32_t uriBytes = android.heap().allocZeroed(2048);
+            mem.write<uint32_t>(loc, 1);  // SL_DATALOCATOR_URI
+            mem.write<uint32_t>(loc + 4, uriBytes);
+            mem.write<uint32_t>(mime, 1);  // SL_DATAFORMAT_MIME
+            mem.write<uint32_t>(mime + 8, 1);  // SL_CONTAINERTYPE_UNSPECIFIED
+            mem.write<uint32_t>(src, loc);
+            mem.write<uint32_t>(src + 4, mime);
+            mem.write<uint32_t>(sink, sinkLoc);
+            mem.write<uint32_t>(sinkLoc, 4);  // SL_DATALOCATOR_OUTPUTMIX
+            mem.write<uint32_t>(requested, iid("android:SL_IID_SEEK"));
+            mem.write<uint32_t>(requested + 4, 1);
+            auto getInterface = [&](uint32_t object, const char* name) -> uint32_t {
+                return invoke(object, 3, {object, iid(name), out}) == 0 ? mem.read<uint32_t>(out) : 0;
+            };
+            auto createPlayer = [&](uint32_t engine, const std::string& uri) {
+                mem.copyIn(uriBytes, uri.c_str(), uri.size() + 1);
+                return invoke(engine, 2, {engine, out, src, sink, 1, requested, requested + 4});
+            };
+            bool setup = android.callGuest(acpu, address("android:slCreateEngine"), {out, 0, 0, 0, 0, 0}) == 0;
+            const uint32_t engineObject = mem.read<uint32_t>(out);
+            setup = setup && invoke(engineObject, 0, {engineObject, 0}) == 0;
+            const uint32_t engine = setup ? getInterface(engineObject, "android:SL_IID_ENGINE") : 0;
+            setup = engine && invoke(engine, 7, {engine, out, 0, 0, 0}) == 0;
+            const uint32_t outputMix = setup ? mem.read<uint32_t>(out) : 0;
+            setup = setup && invoke(outputMix, 0, {outputMix, 0}) == 0;
+            mem.write<uint32_t>(sinkLoc + 4, outputMix);
+            check(setup, "OpenSL local URI tests create an Android engine and output mix");
+
+            if (setup) {
+                check(createPlayer(engine, "https://example.invalid/music.ogg") == 10 &&
+                      createPlayer(engine, "file:///etc/passwd") == 10 &&
+                      createPlayer(engine, "file:///bad%00path") == 10,
+                      "OpenSL URI player rejects remote, out-of-sandbox and invalid paths");
+                using AudioReference = std::array<int16_t, 512 * 2>;
+                const auto matchesPcm = [](const AudioReference& reference, const std::array<float, 512>& left,
+                                           const std::array<float, 512>& right) {
+                    int maxError = 0;
+                    for (size_t i = 0; i < left.size(); ++i) {
+                        maxError = std::max({maxError,
+                            std::abs(int(std::lround(left[i] * 32768)) - reference[2 * i]),
+                            std::abs(int(std::lround(right[i] * 32768)) - reference[2 * i + 1])});
+                    }
+                    if (maxError > 12) std::printf("    peak difference from FFmpeg at seek: %d PCM counts\n", maxError);
+                    return maxError <= 12;
+                };
+                const auto testTrack = [&](const std::string& file, unsigned duration, unsigned target,
+                                           const AudioReference* reference) {
+                    const auto path = std::filesystem::path(uriHome) / file;
+                    const std::string local = android.guestPath(path.string());
+                    std::string uri = "file://localhost";
+                    for (char c : local) {
+                        if (c == ' ') uri += "%20";
+                        else uri += c;
+                    }
+#if defined(__linux__)
+                    // Reset the process RSS high-water mark just before the URI is opened.
+                    if (reference) { std::ofstream reset("/proc/self/clear_refs"); reset << 5; }
+                    rusage before{};
+                    getrusage(RUSAGE_SELF, &before);
+#endif
+                    if (createPlayer(engine, uri) != 0) return false;
+                    const uint32_t object = mem.read<uint32_t>(out);
+                    const bool realized = invoke(object, 0, {object, 0}) == 0;
+                    const uint32_t play = realized ? getInterface(object, "android:SL_IID_PLAY") : 0;
+                    const uint32_t seek = realized ? getInterface(object, "android:SL_IID_SEEK") : 0;
+                    bool ok = play && seek;
+                    if (ok) {
+                        const auto position = [&]() {
+                            return invoke(play, 3, {play, out}) ? 0xFFFFFFFFu : mem.read<uint32_t>(out);
+                        };
+                        ok &= invoke(play, 2, {play, out}) == 0;
+                        const uint32_t reported = mem.read<uint32_t>(out);
+                        ok &= std::abs(int64_t(reported) - duration) <= (reference ? 60 : 0);
+                        ok &= invoke(seek, 0, {seek, target, 0}) == 2;  // invalid seek mode
+                        ok &= invoke(seek, 0, {seek, target, 2}) == 0 && position() == target;
+                        ok &= invoke(play, 0, {play, 3}) == 0;
+                        std::array<float, 512> left{}, right{};
+                        const auto renderEnergy = [&]() {
+                            mixer.render(left.data(), right.data(), left.size());
+                            double energy = 0;
+                            for (const float sample : left) energy += double(sample) * sample;
+                            return energy;
+                        };
+                        ok &= renderEnergy() > 0.1 && position() == target + 12;  // round(512/44100 s)
+                        if (reference) ok &= matchesPcm(*reference, left, right);
+                        ok &= invoke(play, 0, {play, 2}) == 0;
+                        ok &= renderEnergy() == 0 && position() == target + 12;
+                        ok &= invoke(seek, 1, {seek, 1, 0, 0xFFFFFFFFu}) == 0;
+                        ok &= invoke(seek, 2, {seek, out, out + 4, out + 8}) == 0 &&
+                              mem.read<uint32_t>(out) == 1 && mem.read<uint32_t>(out + 4) == 0 &&
+                              mem.read<uint32_t>(out + 8) == 0xFFFFFFFFu;
+                        ok &= invoke(seek, 0, {seek, reported - 5, 1}) == 0;
+                        ok &= invoke(play, 0, {play, 3}) == 0;
+                        renderEnergy();
+                        ok &= position() < 20;  // crosses the end and wraps to the start
+                        ok &= invoke(seek, 1, {seek, 0, 0, 0xFFFFFFFFu}) == 0;
+                        ok &= invoke(play, 0, {play, 1}) == 0 && position() == 0;
+                        ok &= invoke(play, 0, {play, 3}) == 0;
+                        // A seek never changes the player's sample rate or clock.
+                        for (uint32_t elapsed = 0; elapsed < reported + 20; elapsed += 11)
+                            renderEnergy();
+                        ok &= invoke(play, 1, {play, out}) == 0 && mem.read<uint32_t>(out) == 2;
+                        ok &= std::abs(int64_t(position()) - reported) <= 1;
+                        ok &= invoke(seek, 0, {seek, target, 2}) == 0 && renderEnergy() == 0 && position() == target;
+                        ok &= invoke(play, 0, {play, 3}) == 0 && renderEnergy() > 0.1;
+                    }
+#if defined(__linux__)
+                    if (reference) {
+                        rusage after{};
+                        getrusage(RUSAGE_SELF, &after);
+                        const long extra = after.ru_maxrss - before.ru_maxrss;
+                        std::printf("    OpenSL %s peak extra RSS: %ld KiB\n", file.c_str(), extra);
+                        ok &= extra >= 0 && extra < 4096;
+                    }
+#endif
+                    invoke(object, 6, {object});
+                    return ok;
+                };
+
+                const auto testIOS = [&](const std::string& file, const AudioReference& reference) {
+                    ProcessConfig iosConfig;
+                    iosConfig.bundlePath = iosConfig.homePath = uriHome;
+                    iosConfig.phoneMode = true;
+                    Process ios(iosConfig);
+                    auto& icpu = ios.mainThread().cpu;
+                    ios.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+                    icpu.r[CPU::kSP] = 0xBF000000u - 256;
+                    Ctx context{ios, icpu, ios.mem()};
+                    auto& objc = ObjC::rt(ios);
+                    const uint32_t pool = objc.poolPush();
+                    const auto path = Foundation::makeString(context, uriHome + "/" + file);
+                    const auto url = uint32_t(objc.send(icpu, objc.getClass("NSURL"), "fileURLWithPath:", {path}));
+                    const auto allocated = uint32_t(objc.send(icpu, objc.getClass("AVAudioPlayer"), "alloc"));
+                    const auto player = uint32_t(objc.send(icpu, allocated, "initWithContentsOfURL:error:", {url, 0}));
+                    const auto duration = std::bit_cast<double>(objc.send(icpu, player, "duration"));
+                    const uint64_t seek = std::bit_cast<uint64_t>(121.0);
+                    objc.send(icpu, player, "setCurrentTime:", {uint32_t(seek), uint32_t(seek >> 32)});
+                    const bool playing = objc.send(icpu, player, "play") & 255;
+                    std::array<float, 512> left{}, right{};
+                    ios.mixer().render(left.data(), right.data(), left.size());
+                    const bool ok = playing && std::abs(duration - 240) < 0.06 && matchesPcm(reference, left, right);
+                    objc.send(icpu, player, "stop");
+                    objc.release(icpu, player);
+                    objc.poolPop(icpu, pool);
+                    return ok;
+                };
+
+                {
+                    std::ofstream shortPcm(uriHome + "/short tone.wav", std::ios::binary);
+                    shortPcm.write(reinterpret_cast<const char*>(wav.data()), wav.size());
+                }
+                check(testTrack("short tone.wav", 100, 30, nullptr),
+                      "OpenSL file URI decodes, seeks and loops a short WAV");
+                if (std::system("command -v ffmpeg >/dev/null 2>&1") == 0) {
+                    const std::string ffmpeg = "ffmpeg -nostdin -v error -f lavfi -i "
+                        "'aevalsrc=0.16*sin(2*PI*(311*t+0.125*t*t))|0.12*sin(2*PI*(571*t+0.125*t*t)):s=44100:d=240' -y ";
+                    for (const auto& [extension, codec] : std::array<std::pair<const char*, const char*>, 2>{{
+                        {"mp3", "-c:a libmp3lame -b:a 128k -write_xing 0 -id3v2_version 0"},
+                        {"ogg", "-c:a libvorbis -q:a 4"},
+                    }}) {
+                        const std::string file = std::string("long tone.") + extension;
+                        const std::string input = "'" + uriHome + "/" + file + "'";
+                        const std::string pcmPath = uriHome + "/reference.pcm";
+                        const bool generated = std::system((ffmpeg + codec + " " + input).c_str()) == 0;
+                        // FFmpeg decodes from the start before trimming to the target sample.
+                        const std::string decode = "ffmpeg -nostdin -v error -i " + input +
+                            " -af atrim=start_sample=5336100:end_sample=5336612 -f s16le -y '" + pcmPath + "'";
+                        const bool decoded = generated && std::system(decode.c_str()) == 0;
+                        AudioReference reference{};
+                        std::ifstream pcm(pcmPath, std::ios::binary);
+                        const bool haveReference = decoded &&
+                            bool(pcm.read(reinterpret_cast<char*>(reference.data()), sizeof reference));
+                        const std::string openSLLabel = std::string("OpenSL URI plays, seeks and loops four-minute ") + extension;
+                        const std::string avLabel = std::string("AVAudioPlayer seek PCM agrees with FFmpeg for ") + extension;
+                        check(haveReference && testTrack(file, 240000, 121000, &reference), openSLLabel.c_str());
+                        check(haveReference && testIOS(file, reference), avLabel.c_str());
+                    }
+                } else {
+                    std::printf("  skip OpenSL MP3/Ogg generated fixtures (ffmpeg unavailable)\n");
+                }
+                invoke(outputMix, 6, {outputMix});
+                invoke(engineObject, 6, {engineObject});
+            }
+        }
 
         // OpenAL test
         auto callAL = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint64_t {
