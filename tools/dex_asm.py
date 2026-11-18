@@ -209,7 +209,25 @@ BRANCHES = {"if-eqz": 0x38, "if-nez": 0x39, "if-ltz": 0x3a, "if-gez": 0x3b,
             "if-gtz": 0x3c, "if-lez": 0x3d}
 
 
-TYPE_OPS = {"check-cast": 0x1f, "instance-of": 0x20, "new-array": 0x23}
+TYPE_OPS = {"const-class": 0x1c, "check-cast": 0x1f, "instance-of": 0x20,
+            "new-instance": 0x22, "new-array": 0x23}
+FIELD_OPS = {"iget": 0x52, "iget-wide": 0x53, "iget-object": 0x54,
+             "iput": 0x59, "iput-wide": 0x5a, "iput-object": 0x5b,
+             "sget": 0x60, "sget-wide": 0x61, "sget-object": 0x62,
+             "sput": 0x67, "sput-wide": 0x68, "sput-object": 0x69}
+INVOCATIONS = {"invoke-virtual": 0x6e, "invoke-super": 0x6f, "invoke-direct": 0x70,
+               "invoke-static": 0x71, "invoke-interface": 0x72}
+
+
+def member_reference(text, method):
+    owner, member = text.split("->", 1)
+    require(owner.startswith("L") and re.fullmatch(TYPE, owner), "invalid member owner")
+    if method:
+        name, proto = prototype(member)
+        return owner, name, proto
+    name, typ = member.split(":", 1)
+    require(name and re.fullmatch(TYPE, typ), "invalid field reference")
+    return owner, name, typ
 
 
 def width(op, args):
@@ -220,15 +238,17 @@ def width(op, args):
         return 1 + CONSTS[op][1]
     if op == "fill-array-data":
         return 3
-    if op in TYPE_OPS:
+    if op in TYPE_OPS or op in FIELD_OPS:
         return 2
+    if op in INVOCATIONS or op == "filled-new-array":
+        return 3
     if op in THREE or op in BRANCHES or op in ("goto/16", "const-string"):
         return 2
     require(op in ONE or op in TWO or op in ("return-void", "nop", "const/4", "goto"), f"unknown opcode: {op}")
     return 1
 
 
-def instruction(op, args, pc, labels, strings, types, registers):
+def instruction(op, args, pc, labels, strings, types, fields, methods, registers):
     def reg(text, max_value):
         require(re.fullmatch(r"v[0-9]+", text), f"expected v-register: {text}")
         value = int(text[1:])
@@ -266,7 +286,7 @@ def instruction(op, args, pc, labels, strings, types, registers):
         require(alias in strings and strings[alias] < 65536, "unknown or oversized string alias")
         return [0x1a | reg(dest, 255) << 8, strings[alias]]
     if op in TYPE_OPS:
-        if op == "check-cast":
+        if op in ("check-cast", "const-class", "new-instance"):
             dest, typ = args
             regs = reg(dest, 255)
         else:
@@ -274,6 +294,22 @@ def instruction(op, args, pc, labels, strings, types, registers):
             regs = reg(dest, 15) | reg(source, 15) << 4
         require(typ in types, "invalid type operand")
         return [TYPE_OPS[op] | regs << 8, types[typ]]
+    if op in FIELD_OPS:
+        if op.startswith("s"):
+            value, name = args
+            regs = reg(value, 255)
+        else:
+            value, receiver, name = args
+            regs = reg(value, 15) | reg(receiver, 15) << 4
+        return [FIELD_OPS[op] | regs << 8, fields[member_reference(name, False)]]
+    if op in INVOCATIONS or op == "filled-new-array":
+        name, *regs_text = args
+        require(len(regs_text) <= 5, "invoke accepts at most five register words")
+        registers_4 = [reg(v, 15) for v in regs_text] + [0] * (5 - len(regs_text))
+        word = sum(v << (4 * i) for i, v in enumerate(registers_4[:4]))
+        opcode = INVOCATIONS.get(op, 0x24)
+        index = methods[member_reference(name, True)] if op in INVOCATIONS else types[name]
+        return [opcode | registers_4[4] << 8 | len(regs_text) << 12, index, word]
     if op == "fill-array-data":
         dest, label = args
         delta = offset(label, 32)
@@ -291,7 +327,7 @@ def instruction(op, args, pc, labels, strings, types, registers):
     return [0x0e if op == "return-void" else 0]
 
 
-def code_item(method, strings, types):
+def code_item(method, strings, types, fields, methods):
     require(method.registers is not None and method.incoming <= method.registers,
             f"missing or invalid register count for {method.name}")
     labels, instructions = {}, []
@@ -306,7 +342,7 @@ def code_item(method, strings, types):
     require(pc > 0, "empty code item")
     words = []
     for pos, op, args in instructions:
-        words.extend(instruction(op, args, pos, labels, strings, types, method.registers))
+        words.extend(instruction(op, args, pos, labels, strings, types, fields, methods, method.registers))
     groups = {}
     for exception, start, end, target in method.catches:
         positions = [labels.get(label, -1) for label in (start, end, target)]
@@ -384,6 +420,7 @@ def assemble(text):
     classes, aliases = parse(text)
     classes = ordered_classes(classes)
     types, protos, fields, methods, strings = set(), set(), [], [], set(aliases.values())
+    field_refs, method_refs = set(), set()
     for cls in classes:
         types.update(t for t in (cls.type, cls.parent, *cls.interfaces) if t)
         if cls.source is not None:
@@ -401,9 +438,25 @@ def assemble(text):
                 if op in TYPE_OPS:
                     require(args and re.fullmatch(TYPE, args[-1]), "invalid type operand")
                     types.add(args[-1])
+                elif op in FIELD_OPS:
+                    owner, name, typ = member_reference(args[-1], False)
+                    field_refs.add((owner, name, typ))
+                    types.update((owner, typ))
+                    strings.add(name)
+                elif op in INVOCATIONS:
+                    owner, name, proto = member_reference(args[0], True)
+                    method_refs.add((owner, name, proto))
+                    protos.add(proto)
+                    types.update((owner, proto[0], *proto[1]))
+                    strings.update((name, shorty(proto)))
+                elif op == "filled-new-array":
+                    require(args and args[0].startswith("[") and re.fullmatch(TYPE, args[0]), "invalid array type")
+                    types.add(args[0])
             strings.update((m.name, shorty(m.proto)))
     require(len(set(fields)) == len(fields) and len(set(methods)) == len(methods), "duplicate member")
-    require(len(types) <= 65535 and len(protos) <= 65535, "type or prototype table too large")
+    fields = list(set(fields) | field_refs)
+    methods = list(set(methods) | method_refs)
+    require(max(len(types), len(protos), len(fields), len(methods)) <= 65535, "DEX ID table too large")
     strings = sorted(strings | types, key=utf16)
     string_ids = {text: i for i, text in enumerate(strings)}
     alias_ids = {alias: string_ids[text] for alias, text in aliases.items()}
@@ -476,7 +529,7 @@ def assemble(text):
         code_offsets[method_ids[(cls.type, method.name, method.proto)]] = len(image)
         resolved = Method(method.name, method.proto, method.flags, method.registers, method.outgoing,
                           method.lines, [(type_ids[t] if t != "*" else t, a, b, h) for t,a,b,h in method.catches])
-        image.extend(code_item(resolved, alias_ids, type_ids))
+        image.extend(code_item(resolved, alias_ids, type_ids, field_ids, method_ids))
     require(all(not (m.lines or m.catches or m.registers is not None)
                 for c in classes for m in c.methods if m.flags & 0x500), "code on native or abstract method")
 
