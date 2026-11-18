@@ -553,11 +553,13 @@ int32_t p_ok4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 void p_libcInit(Ctx&, GuestPtr, GuestPtr, GuestPtr, GuestPtr) {}
 int32_t p_getentropy(Ctx& x, GuestPtr buf, uint32_t len) {
     if (!buf || len > 256) { setLinuxErrno(x, 5); return -1; }   // EIO
-    static std::mutex mu;
-    static std::mt19937_64 rng{std::random_device{}()};
-    std::lock_guard<std::mutex> lk(mu);
+    // From the session's entropy (runtime/Session.hpp), so a replay sees the same bytes.
     uint8_t* dst = x.mem.host(buf);
-    for (uint32_t i = 0; i < len; ++i) dst[i] = uint8_t(rng() >> ((i & 7) * 8));
+    uint64_t word = 0;
+    for (uint32_t i = 0; i < len; ++i) {
+        if ((i & 7) == 0) word = x.proc.entropy();
+        dst[i] = uint8_t(word >> ((i & 7) * 8));
+    }
     if (len > 0 && dst[0] == 0) dst[0] = 1;
     return 0;
 }
@@ -718,7 +720,7 @@ void registerBionicExtra(Process& p) {
     A(p_ok4, "__register_atfork", "no fork: accepted");
     A(p_ok3, "__cxa_thread_atexit_impl", "accepted");
     A(p_libcInit, "__libc_init", "executable entry stub");
-    R(p_getentropy, "getentropy", "host random bytes up to 256, EIO above");
+    R(p_getentropy, "getentropy", "session entropy up to 256 bytes, EIO above");
     A(p_eperm, "ptrace", "not traced: EPERM");
     A(p_eacces, "execve", "no child processes: EACCES");
     A(p_eacces, "execvp", "no child processes: EACCES");
