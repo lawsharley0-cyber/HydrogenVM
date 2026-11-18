@@ -233,6 +233,9 @@ def run_unicorn(cases, halt: int):
         if uc.reg_read(A.UC_ARM_REG_PC) != end:
             out.append({"status": "skip", "why": "left the sequence"})
             continue
+        if uc.reg_read(A.UC_ARM_REG_LR) != halt:        # the sequence ends with bx lr
+            out.append({"status": "skip", "why": "wrote lr"})
+            continue
         cpsr = uc.reg_read(A.UC_ARM_REG_CPSR)
         out.append({"status": "ok", "r": [uc.reg_read(A.UC_ARM_REG_R0 + i) for i in range(13)] + [uc.reg_read(A.UC_ARM_REG_SP)],
                     "nzcv": cpsr >> 28, "q": (cpsr >> 27) & 1, "ge": (cpsr >> 16) & 0xF,
