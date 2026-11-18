@@ -21,7 +21,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "tests" / "android" / "testlab.c"
+NA_SRC = ROOT / "tests" / "android" / "native_activity_test.c"
 LIB = "libhvmtestlab.so"
+NA_LIB = "libhvmnativeactivity.so"
 CLANG_FLAGS = ["--target=armv7a-linux-androideabi19", "-march=armv7-a", "-mfloat-abi=softfp", "-marm",
                "-O1", "-fPIC", "-shared", "-nostdlib", "-fuse-ld=lld", "-ffreestanding",
                "-fno-builtin", "-fno-stack-protector", "-Wl,-soname," + LIB]
@@ -33,7 +35,7 @@ PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 \t<key>CFBundleName</key><string>Android Test Lab</string>
 \t<key>CFBundleExecutable</key><string>lib/armeabi-v7a/{lib}</string>
 \t<key>HydrogenVMAndroidLibrary</key><string>lib/armeabi-v7a/{lib}</string>
-\t<key>HydrogenVMAndroidEngine</key><string>Test Lab</string>
+\t<key>HydrogenVMAndroidEngine</key><string>{engine}</string>
 \t<key>HydrogenVMAndroidEngineSupport</key><string>driver</string>
 \t<key>MinimumOSVersion</key><string>Android</string>
 </dict>
@@ -50,13 +52,14 @@ def find_clang() -> str:
     raise SystemExit("[android-testlab] clang not found")
 
 
-def build_bundle(work: Path) -> Path:
-    app = work / "AndroidTestLab.app"
+def build_bundle(work: Path, src: Path = SRC, lib: str = LIB, name: str = "AndroidTestLab.app", engine: str = "Test Lab") -> Path:
+    app = work / name
     libdir = app / "lib" / "armeabi-v7a"
     libdir.mkdir(parents=True, exist_ok=True)
-    cmd = [find_clang(), *CLANG_FLAGS, "-I", str(SRC.parent), str(SRC), "-o", str(libdir / LIB)]
+    flags = [f if not f.startswith("-Wl,-soname,") else f"-Wl,-soname,{lib}" for f in CLANG_FLAGS]
+    cmd = [find_clang(), *flags, "-I", str(src.parent), str(src), "-o", str(libdir / lib)]
     subprocess.run(cmd, check=True)
-    (app / "Info.plist").write_text(PLIST.format(lib=LIB))
+    (app / "Info.plist").write_text(PLIST.format(lib=lib, engine=engine))
     return app
 
 
@@ -69,10 +72,12 @@ def parse(output: str) -> list:
     return cases
 
 
-def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int) -> dict:
+def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int, extra_args: list[str] | None = None, mode_suffix: str = "") -> dict:
     cmd = [hvm, "run", str(app), "--gpu", "--home", str(home)]
     if phone:
         cmd.append("--phone")
+    if extra_args:
+        cmd.extend(extra_args)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         out, code = proc.stdout + proc.stderr, proc.returncode
@@ -81,7 +86,8 @@ def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int) -> dict
         code = None
     cases = parse(out)
     finished = "done:" in out
-    return {"mode": "phone" if phone else "desktop", "exitCode": code, "finished": finished,
+    mode = ("phone" if phone else "desktop") + mode_suffix
+    return {"mode": mode, "exitCode": code, "finished": finished,
             "cases": cases, "log": out[-20000:]}
 
 
@@ -101,11 +107,17 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         app = build_bundle(work)
+        na_app = build_bundle(work, NA_SRC, NA_LIB, "NativeActivityTest.app", "NativeActivity")
         runs = []
         for phone in ([False, True] if args.phone else [False]):
             home = work / ("home-phone" if phone else "home")
             home.mkdir()
             runs.append(run_once(args.hvm, app, home, phone, args.timeout))
+            na_home = work / ("na-home-phone" if phone else "na-home")
+            na_home.mkdir()
+            runs.append(run_once(args.hvm, na_app, na_home, phone, args.timeout,
+                                 extra_args=["--tap", "100,100@0.5", "--for", "5s"],
+                                 mode_suffix=" (NativeActivity)"))
 
     (out / "report.json").write_text(json.dumps({"runs": runs}, indent=2))
     broken = failed = 0

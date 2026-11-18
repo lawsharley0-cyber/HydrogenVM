@@ -38,5 +38,7 @@ void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id,
 int sendSignalToTid(Process& p, CPU::Cpu& self, uint32_t tid, int sig);
 // The screen's ANativeWindow, for drivers that hand one to the game (Egl.cpp).
 uint32_t screenNativeWindow(Process& p);
+// The AAssetManager* handle for NativeActivity (LibAndroid.cpp).
+uint32_t assetManagerHandle(Process& p);
 
 } // namespace Hydrogen::Runtime::Android
