@@ -64,6 +64,63 @@ int runCompatProfileTests() {
     for(const auto& entry:Compat::profiles())
         documented &= *entry.id && *entry.match && *entry.effect && *entry.evidence && *entry.verify;
     check(documented,"every profile records detection, effect, evidence and verification");
+
+    // C3 safe-mode fallback selection from crash signatures.
+    {
+        ProcessConfig base;
+        base.internetAccess = true;
+        base.unlockFrameRate = true;
+        check(Compat::chooseFallback("NSURLConnection TLS handshake failed", base) == Compat::Fallback::InternetOff,
+              "network crash signature chooses internet-off when internet is enabled");
+        check(Compat::chooseFallback("CADisplayLink timer stall at 60 fps", base) == Compat::Fallback::FrameRateCap,
+              "display-link/fps crash signature chooses frame-rate-cap when unlockFrameRate is enabled");
+        check(Compat::chooseFallback("glTexImage2D GL_OUT_OF_MEMORY 0x0505", base) == Compat::Fallback::ReducedTextureResolution,
+              "texture OOM signature chooses reduced-texture-resolution");
+        check(Compat::chooseFallback("guest memory budget exceeded (oom)", base) == Compat::Fallback::ExtraMemoryHeadroom,
+              "memory budget signature chooses extra-memory-headroom");
+        check(Compat::chooseFallback("OpenGL ES fixed-function shader error 0x0502", base) == Compat::Fallback::Gles1Emulation,
+              "GLES shader signature chooses gles1-emulation");
+
+        // When internet/unlockFrameRate are already off, those fallbacks are skipped.
+        ProcessConfig off;
+        check(Compat::chooseFallback("NSURLConnection TLS handshake failed", off) != Compat::Fallback::InternetOff,
+              "internet-off is not chosen when internetAccess is already false");
+        check(Compat::chooseFallback("CADisplayLink timer stall", off) != Compat::Fallback::FrameRateCap,
+              "frame-rate-cap is not chosen when unlockFrameRate is already false");
+
+        // Tried fallbacks are skipped.
+        const Compat::Fallback tried[] = {Compat::Fallback::ReducedTextureResolution};
+        check(Compat::chooseFallback("glTexImage2D texture error", base, tried) != Compat::Fallback::ReducedTextureResolution,
+              "already-tried fallback is skipped");
+
+        // applyFallback sets the expected ProcessConfig fields and logs on initialize.
+        ProcessConfig appliedCfg;
+        appliedCfg.homePath = (root / "fallback").string();
+        appliedCfg.internetAccess = true;
+        appliedCfg.unlockFrameRate = true;
+        std::string fallbackLog;
+        appliedCfg.log = [&](LogLevel, const std::string& line) {
+            if (line.find("launched with fallback ") != std::string::npos) fallbackLog = line;
+        };
+        Compat::applyFallback(appliedCfg, Compat::Fallback::FrameRateCap);
+        check(!appliedCfg.unlockFrameRate && appliedCfg.safeModeFallback == "frame-rate-cap",
+              "applyFallback(FrameRateCap) disables unlockFrameRate and records id");
+        {
+            Process p(appliedCfg);
+            Compat::initialize(p);
+            check(fallbackLog.find("launched with fallback frame-rate-cap") != std::string::npos,
+                  "initialize logs launched with fallback <id>");
+        }
+        Compat::applyFallback(appliedCfg, Compat::Fallback::ReducedTextureResolution);
+        check(appliedCfg.maxTextureSize == 1024, "applyFallback(ReducedTextureResolution) caps maxTextureSize");
+        Compat::applyFallback(appliedCfg, Compat::Fallback::Gles1Emulation);
+        check(appliedCfg.gles1Emulate, "applyFallback(Gles1Emulation) enables gles1Emulate");
+        Compat::applyFallback(appliedCfg, Compat::Fallback::InternetOff);
+        check(!appliedCfg.internetAccess, "applyFallback(InternetOff) disables internetAccess");
+        Compat::applyFallback(appliedCfg, Compat::Fallback::ExtraMemoryHeadroom);
+        check(appliedCfg.memoryBudgetBytes >= (2048ULL << 20), "applyFallback(ExtraMemoryHeadroom) increases memory budget");
+    }
+
     std::filesystem::remove_all(root);
     std::printf("compatibility profiles: %d passed, %d failed\n",passed,failed);
     return failed;

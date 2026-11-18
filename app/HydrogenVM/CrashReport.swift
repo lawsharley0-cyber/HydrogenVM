@@ -12,6 +12,7 @@ struct CrashReport: Identifiable {
     let signature: String
     let app: String
     var recordingPath: String? = nil
+    var safeModeFallback: String? = nil
 
     static var directory: URL {
         URL.documentsDirectory.appending(path: "HydrogenVM/crashes", directoryHint: .isDirectory)
@@ -147,6 +148,9 @@ struct CrashReportView: View {
                 Text("Report \(report.signature)").font(.caption.monospaced())
                 SendReportButton(make: {
                     var summary = "\(report.summary)\n\n**App:** `\(report.app)` · \(ProblemReporter.deviceLine) · **Report:** `\(report.signature)`"
+                    if let fb = report.safeModeFallback, !fb.isEmpty {
+                        summary += "\n**Compatibility:** launched with fallback \(fb)"
+                    }
                     var parts: [ProblemReport.Part] = [.init(name: "report.json", text: report.json, language: "json")]
                     if let path = report.recordingPath,
                        let recording = try? String(contentsOfFile: path, encoding: .utf8),

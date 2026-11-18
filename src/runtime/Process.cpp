@@ -156,6 +156,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
         if (const auto slash = app.find_last_of('/'); slash != std::string::npos) app = app.substr(slash + 1);
         session_.startRecording(cfg_.recordPath, app);
     }
+    if (cfg_.gles1Emulate) ::setenv("HVM_GL1_EMULATE", "1", 1);
     mem_ = std::make_unique<Memory::GuestArena>(cfg_.hostPageSize);
     if (cfg_.memoryBudgetBytes) mem_->setCommitBudget(cfg_.memoryBudgetBytes);
     engine_ = std::make_unique<CPU::Engine>(*mem_);
