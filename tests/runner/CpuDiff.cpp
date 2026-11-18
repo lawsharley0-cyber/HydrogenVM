@@ -58,6 +58,9 @@ int main() {
         else { for (uint8_t b : {0x1E, 0xFF, 0x2F, 0xE1}) bytes.push_back(b); }                  // bx lr
         const uint32_t at = kCode + slot++ * kSlot;   // slot i holds case i, as on the Python side
         if (bytes.size() > kSlot || at >= kCode + kCodeSize) { std::printf("other:too-long\n"); continue; }
+        // An earlier case may have branched forward into this slot and decoded what was there
+        // then: drop that before writing, as cacheflush does for a game.
+        if (engine.hasBlocksIn(at, kSlot)) engine.retireRange(at, kSlot);
         for (size_t i = 0; i < bytes.size(); ++i) mem.write<uint8_t>(at + uint32_t(i), bytes[i]);
         for (uint32_t i = 0; i < kWindowSize; ++i) mem.write<uint8_t>(kWindow + i, pattern(i));
 
