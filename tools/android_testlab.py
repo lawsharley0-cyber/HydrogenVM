@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -91,6 +92,28 @@ def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int, extra_a
             "cases": cases, "log": out[-20000:]}
 
 
+def run_java_check(work: Path, timeout: int, source: str, label: str) -> dict:
+    """Run a host-side DEX check with the same C++ sources as the runtime."""
+    fixtures = ROOT / "tests/android/java"
+    executable = work / source
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+    try:
+        build = subprocess.run(
+            [*compiler, "-std=c++20", "-O2", "-pthread", "-I", str(ROOT / "src"),
+             str(fixtures / (source + ".cpp")), str(ROOT / "src/runtime/android/dex/DexFile.cpp"),
+             str(ROOT / "src/runtime/android/dex/Interpreter.cpp"), str(ROOT / "src/runtime/android/dex/Heap.cpp"),
+             str(ROOT / "src/runtime/android/dex/Machine.cpp"),
+             "-o", str(executable)], capture_output=True, text=True, timeout=timeout,
+        )
+        run = subprocess.run([str(executable), str(fixtures)], capture_output=True, text=True,
+                             timeout=timeout) if build.returncode == 0 else build
+        output, code = run.stdout + run.stderr, run.returncode
+    except (OSError, subprocess.TimeoutExpired) as err:
+        output, code = str(err), None
+    return {"mode": f"java ({label}, host)", "group": "java", "exitCode": code, "finished": "done:" in output,
+            "cases": parse(output), "log": output[-20000:]}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--hvm", default=str(ROOT / "build" / "hvm"))
@@ -108,7 +131,11 @@ def main() -> int:
         work = Path(tmp)
         app = build_bundle(work)
         na_app = build_bundle(work, NA_SRC, NA_LIB, "NativeActivityTest.app", "NativeActivity")
-        runs = []
+        runs = [
+            run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
+            run_java_check(work, args.timeout, "DexExecution", "Dalvik execution"),
+            run_java_check(work, args.timeout, "DexLinkage", "Dalvik class linkage and threads"),
+        ]
         for phone in ([False, True] if args.phone else [False]):
             home = work / ("home-phone" if phone else "home")
             home.mkdir()
@@ -126,10 +153,13 @@ def main() -> int:
         for c in run["cases"]:
             print(f"  {'ok  ' if c['passed'] else 'FAIL'} {c['name']}" + (f" — {c['detail']}" if c["detail"] else ""))
         failed += sum(not c["passed"] for c in run["cases"])
-        if not run["finished"] or not run["cases"]:
+        bad_exit = run["exitCode"] not in (0, 1)
+        if not run["finished"] or not run["cases"] or (run.get("group") == "java" and bad_exit):
             broken += 1
             print(f"  run did not finish (exit {run['exitCode']}); last output:")
             print("    " + "\n    ".join(run["log"].splitlines()[-25:]))
+        elif bad_exit:
+            print(f"  process exited {run['exitCode']} after reporting completion")
     total = sum(len(r["cases"]) for r in runs)
     print(f"{total - failed}/{total} passed" + (", run broke" if broken else ""))
     return 2 if broken else (1 if failed else 0)

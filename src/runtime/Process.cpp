@@ -154,7 +154,7 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     else if (!cfg_.recordPath.empty()) {
         std::string app = cfg_.bundlePath;
         if (const auto slash = app.find_last_of('/'); slash != std::string::npos) app = app.substr(slash + 1);
-        session_.startRecording(cfg_.recordPath, app);
+        session_.startRecording(cfg_.recordPath, app, cfg_.detailedRecording, cfg_.inputRecordingPath);
     }
     if (cfg_.gles1Emulate) ::setenv("HVM_GL1_EMULATE", "1", 1);
     mem_ = std::make_unique<Memory::GuestArena>(cfg_.hostPageSize);
@@ -334,11 +334,50 @@ void Process::requestGracefulStop(double timeout) {
         }
     }).detach();
 }
+uint64_t Process::sessionMs() const {
+    return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - perf_.origin).count());
+}
+uint64_t Process::sessionSwaps() const {
+    return perf_.gameSwaps.load(std::memory_order_relaxed);
+}
+uint64_t Process::sessionHooks() const {
+    return perf_.frames.load(std::memory_order_relaxed);
+}
+void Process::recordFrameCheckpoint(uint64_t frameHash) {
+    const auto mode = session_.mode();
+    if (!session_.detailsActive()) return;
+    const uint64_t frame = sessionHooks() + sessionSwaps();
+    uint64_t callTotal = 0;
+    uint64_t callHash = 14695981039346656037ull;
+    if (const Diag::ThreadCallRing* ring = mainThread().cpu.call_ring.load(std::memory_order_acquire)) {
+        const auto snap = ring->snapshot(32);
+        callTotal = snap.total;
+        for (const auto& rec : snap.calls) {
+            const uint64_t packed = (uint64_t(rec.id) << 32) | uint32_t(rec.kind);
+            callHash ^= packed;
+            callHash *= 1099511628211ull;
+        }
+    }
+    if (mode == Session::Mode::Record) {
+        session_.recordCheckpoint(frame, frameHash, callTotal, callHash,
+                                  sessionMs(), sessionSwaps(), sessionHooks());
+    } else if (mode == Session::Mode::Replay) {
+        if (!session_.checkCheckpoint(frame, frameHash, callTotal, callHash)) {
+            log(LogLevel::Warning, session_.formatDivergence());
+        }
+    }
+}
+void Process::recordFrameCheckpoint(const uint8_t* rgba, int w, int h) {
+    if (!session_.detailsActive() || !rgba || w <= 0 || h <= 0) return;
+    const uint64_t frameHash = Session::fnv1a64(rgba, size_t(w) * size_t(h) * 4);
+    recordFrameCheckpoint(frameHash);
+}
 void Process::noteInput(SessionEvent e) {
     if (session_.mode() != Session::Mode::Record) return;
-    e.ms = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - perf_.origin).count());
-    e.swaps = perf_.gameSwaps.load(std::memory_order_relaxed);
-    e.hooks = perf_.frames.load(std::memory_order_relaxed);
+    e.ms = sessionMs();
+    e.swaps = sessionSwaps();
+    e.hooks = sessionHooks();
     session_.note(e);
 }
 
@@ -376,6 +415,7 @@ private:
                 case SessionEvent::Kind::Accel: p_.setAcceleration(e.x, e.y, e.z); break;
                 case SessionEvent::Kind::Background: p_.enterBackground(); break;
                 case SessionEvent::Kind::Foreground: p_.enterForeground(); break;
+                default: break;
             }
             ++delivered;
         }
