@@ -1,9 +1,9 @@
 #include "runtime/android/dex/DexFile.hpp"
+#include "runtime/android/dex/DexName.hpp"
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <charconv>
 #include <fstream>
 #include <map>
 #include <utility>
@@ -18,17 +18,6 @@ void check(bool valid, const char* message) {
 uint32_t deltaIndex(uint32_t previous, uint32_t delta, uint32_t count, uint32_t position) {
     check(previous < count && delta < count - previous && (!position || delta), "invalid member index delta");
     return previous + delta;
-}
-
-std::optional<uint32_t> dexOrdinal(std::string_view name) {
-    if (name == "classes.dex") return 1;
-    if (!name.starts_with("classes") || !name.ends_with(".dex")) return {};
-    name = name.substr(7, name.size() - 11);
-    if (name.empty() || name.front() == '0') return {};
-    uint32_t ordinal = 0;
-    const auto result = std::from_chars(name.data(), name.data() + name.size(), ordinal);
-    if (result.ec != std::errc{} || result.ptr != name.data() + name.size() || ordinal < 2) return {};
-    return ordinal;
 }
 
 } // namespace

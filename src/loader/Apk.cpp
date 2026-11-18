@@ -1,5 +1,7 @@
 #include "Apk.hpp"
 #include "Zip.hpp"
+#include "runtime/android/dex/DexName.hpp"
+#include <map>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -379,11 +381,39 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
         for (const auto& sp : splitPaths) if (sp != baseApkPath) addLibs(ZipReader(sp));
     }
     std::string dexText;
-    for (const auto& e : zip.entries())
-        if (e.name.rfind("classes", 0) == 0 && e.name.size() > 4 && e.name.compare(e.name.size() - 4, 4, ".dex") == 0 && e.size < (256u << 20)) {
-            const auto d = zip.read(e);
-            dexText.append(reinterpret_cast<const char*>(d.data()), d.size());
+    constexpr uint64_t dexLimit = 256u << 20;
+    uint64_t lastOrdinal = 0;
+    auto retainDex = [&](const ZipReader& archive, bool base) {
+        std::map<uint32_t, const ZipEntry*> ordered;
+        for (const auto& e : archive.entries()) {
+            const auto ordinal = Runtime::Android::Dex::dexOrdinal(e.name);
+            if (!ordinal || e.isSymlink()) continue;
+            if (!ordered.emplace(*ordinal, &e).second)
+                throw ZipError("Duplicate DEX archive entry: " + e.name);
         }
+        for (const auto& [ordinal, entry] : ordered) {
+            if (entry->size >= dexLimit || entry->compressedSize >= dexLimit ||
+                entry->size > dexLimit - dexText.size())
+                throw ZipError("APK bytecode exceeds the DEX import limit.");
+            const auto bytes = archive.read(*entry);
+            if (bytes.size() != entry->size) throw ZipError("Invalid DEX entry length.");
+            // Keep base names. Append each split in its own numeric class-path order.
+            lastOrdinal = base ? ordinal : lastOrdinal + 1;
+            if (lastOrdinal > UINT32_MAX) throw ZipError("DEX class-path index overflow.");
+            const auto name = lastOrdinal == 1 ? "classes.dex" : "classes" + std::to_string(lastOrdinal) + ".dex";
+            std::ofstream out(app / name, std::ios::binary);
+            if (!bytes.empty()) {
+                const auto* data = reinterpret_cast<const char*>(bytes.data());
+                out.write(data, std::streamsize(bytes.size()));
+                dexText.append(data, bytes.size());
+            }
+            out.close();
+            if (!out) throw ZipError("Could not write imported DEX: " + name);
+        }
+    };
+    retainDex(zip, true);
+    for (const auto& sp : splitPaths)
+        if (sp != baseApkPath) retainDex(ZipReader(sp), false);
     const AndroidEngine engine = detectAndroidEngine(libNames, dexText);
     dexText.clear();
     if (!tempSplitsDir.empty()) fs::remove_all(tempSplitsDir, ec);

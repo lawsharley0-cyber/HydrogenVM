@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,38 @@ def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int, extra_a
             "cases": cases, "log": out[-20000:]}
 
 
+def run_import_check(hvm: str, work: Path, timeout: int) -> dict:
+    fixtures = ROOT / "tests/android/java"
+    images = [(fixtures / name).read_bytes() for name in ("classes.dex", "classes2.dex", "jni.dex")]
+    base, feature = work / "base.apk", work / "feature.apk"
+    with zipfile.ZipFile(base, "w", zipfile.ZIP_DEFLATED) as apk:
+        apk.writestr("AndroidManifest.xml", bytes.fromhex("0300080008000000"))
+        apk.writestr("classes2.dex", images[1])
+        apk.writestr("classes.dex", images[0])
+        for invalid in ("nested/classes.dex", "classes01.dex", "classes1.dex", "classesExtra.dex"):
+            apk.writestr(invalid, b"ignored")
+    with zipfile.ZipFile(feature, "w", zipfile.ZIP_DEFLATED) as apk:
+        apk.writestr("classes.dex", images[2])
+    split = work / "split.apks"
+    with zipfile.ZipFile(split, "w") as archive:
+        archive.write(feature, feature.name)
+        archive.write(base, base.name)
+
+    cases = []
+    for source, expected in ((base, images[:2]), (split, images)):
+        destination = work / ("installed-" + source.stem)
+        run = subprocess.run([hvm, "import", str(source), str(destination)], capture_output=True,
+                             text=True, timeout=timeout)
+        bundles = list(destination.glob("*/*.app"))
+        actual = {str(p.relative_to(bundles[0])): p.read_bytes() for p in bundles[0].rglob("*.dex")} if len(bundles) == 1 else {}
+        wanted = dict(zip(("classes.dex", "classes2.dex", "classes3.dex"), expected))
+        passed = run.returncode == 0 and actual == wanted
+        cases.append({"name": f"import {source.suffix} preserves canonical DEX images in order",
+                      "passed": passed, "detail": "" if passed else run.stderr + repr(list(actual))})
+    return {"mode": "APK import", "group": "java", "exitCode": 0, "finished": True,
+            "cases": cases, "log": ""}
+
+
 def run_java_check(work: Path, timeout: int, source: str, label: str) -> dict:
     """Run a host-side DEX check with the same C++ sources as the runtime."""
     fixtures = ROOT / "tests/android/java"
@@ -135,6 +168,7 @@ def main() -> int:
         bridge_app = build_bundle(work, java / "JniRoundTrip.c", LIB, "JniRoundTrip.app")
         shutil.copyfile(java / "jni.dex", bridge_app / "classes.dex")
         runs = [
+            run_import_check(args.hvm, work, args.timeout),
             run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
             run_java_check(work, args.timeout, "DexExecution", "Dalvik execution"),
             run_java_check(work, args.timeout, "DexLinkage", "Dalvik class linkage and threads"),
