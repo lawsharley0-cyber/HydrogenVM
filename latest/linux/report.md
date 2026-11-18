@@ -1,44 +1,44 @@
-# HydrogenVM report — 54197e1
+# HydrogenVM report — a0aca1b
 
-2026-11-18T18:30:10+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-11-18T23:04:04+00:00 · Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz (x86_64, Linux 7.0.0-1017-azure)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 433.8s |
-| tools | 1 | 0 | 0 | 6.6s |
-| cpu | 15 | 0 | 0 | 0.7s |
-| ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 24.9s |
+| build | 1 | 0 | 0 | 391.2s |
+| tools | 1 | 0 | 0 | 6.1s |
+| cpu | 15 | 0 | 0 | 0.6s |
+| ios | 6 | 0 | 0 | 2.1s |
+| bench | 5 | 0 | 0 | 20.7s |
 
 ## Speed
 
-CoreMark **1694.0** iterations/s (567.3 guest MIPS)
+CoreMark **2046.9** iterations/s (685.3 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **117.6%** | 706 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **88.2%** | 706 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **70.6%** | 565 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **37.2%** | 484 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **142.1%** | 853 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **106.6%** | 853 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **85.3%** | 682 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **45.0%** | 585 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 464 MIPS, ctests_arm 489 MIPS, ftests_vfp_thumb_softfp 440 MIPS, ftests_neon_thumb 402 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 469 MIPS, ctests_arm 495 MIPS, ftests_vfp_thumb_softfp 413 MIPS, ftests_neon_thumb 493 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
 | CTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| CTestLegacy | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| ObjCTest | 0.07s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.67s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.04s | 61 | 0.41 ms | 7.12 ms | 0 |
+| ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
+| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.04s | 61 | 0.41 ms | 5.98 ms | 0 |
 
 ## Problems (52)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 37.2% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 45.0% of iPhone 5 single-core speed (goal: 100%)
 
 ### Warnings (51)
 
@@ -83,7 +83,7 @@ Raw interpreter speed (CPU test programs): ctests_thumb 464 MIPS, ctests_arm 489
 - **build / compiler**: src/runtime/libc/Posix.cpp:62:64: warning: unused variable 'KERN_ABORTED' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/objc/Runtime.cpp:101:10: warning: 'atomic_store<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 - **build / compiler**: src/runtime/objc/Runtime.cpp:10:46: warning: unused variable 'RO_HAS_CXX_STRUCTORS' [-Wunused-const-variable]
-- **build / compiler**: src/runtime/objc/Runtime.cpp:975:10: warning: 'atomic_store<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
+- **build / compiler**: src/runtime/objc/Runtime.cpp:983:10: warning: 'atomic_store<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:31:17: warning: unused variable 'kPi' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/CoreGraphics.cpp:39:6: warning: unused function 'obj_dealloc' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/PlatformStubs.cpp:2048:9: warning: unused function 'aug_ok3' [-Wunused-function]
@@ -92,5 +92,5 @@ Raw interpreter speed (CPU test programs): ctests_thumb 464 MIPS, ctests_arm 489
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIView.cpp:14:17: warning: unused variable 'kPi' [-Wunused-const-variable]
-- **build / compiler**: tests/runner/TestRunner.cpp:12969:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
+- **build / compiler**: tests/runner/TestRunner.cpp:13038:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 

@@ -1,6 +1,233 @@
 {
   "runs": [
     {
+      "mode": "java (DEX layout, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "class definitions and superclass",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "interface, abstract and virtual method metadata",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "static encoded values and MUTF-8 NUL and surrogate pair",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "field table references",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "wide argument register count and hand-encoded code words",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "const-string instruction points at the UTF-16 value",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "typed catch followed by catch-all in code-unit coordinates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "primary lookup opens only classes.dex",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "multidex lookup loads a shared image once",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "truncated DEX fails header extent check",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "malformed method fails only when its code is read",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "overflowing ULEB128 rejected",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok class definitions and superclass\nok interface, abstract and virtual method metadata\nok static encoded values and MUTF-8 NUL and surrogate pair\nok field table references\nok wide argument register count and hand-encoded code words\nok const-string instruction points at the UTF-16 value\nok typed catch followed by catch-all in code-unit coordinates\nok primary lookup opens only classes.dex\nok multidex lookup loads a shared image once\nok truncated DEX fails header extent check\nok malformed method fails only when its code is read\nok overflowing ULEB128 rejected\ndone: 0 failure(s)\n"
+    },
+    {
+      "mode": "java (Dalvik execution, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "int add wraps at 2^31",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "int MIN_VALUE divided by -1 wraps",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "long MIN_VALUE divided by -1 wraps across a register pair",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "integer divide by zero raises ArithmeticException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "float one divided by negative zero is negative infinity",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "double negative zero survives multiplication by three",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "cmpg treats NaN as greater",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "double to long saturates positive infinity and truncates negative fractions",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "nested catch-all cleanup runs once then rethrows to the typed handler",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "throwing null raises NullPointerException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "packed switch matches and falls through",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sparse switch matches a negative key and falls through",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "instruction limit bounds a nonterminating method",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "UTF-16 string constants preserve NUL and surrogate pairs and share identity",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "fill-array-data loads signed byte elements",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "new-array defaults all elements to zero",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "out-of-range index raises ArrayIndexOutOfBoundsException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "null array raises NullPointerException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "check-cast rejects String as int array",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "every array is an Object and null is not an instance",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "arena rejects a huge Java array with OutOfMemoryError",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "two interpreter frames serialize through a recursively entered monitor",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok int add wraps at 2^31\nok int MIN_VALUE divided by -1 wraps\nok long MIN_VALUE divided by -1 wraps across a register pair\nok integer divide by zero raises ArithmeticException\nok float one divided by negative zero is negative infinity\nok double negative zero survives multiplication by three\nok cmpg treats NaN as greater\nok double to long saturates positive infinity and truncates negative fractions\nok nested catch-all cleanup runs once then rethrows to the typed handler\nok throwing null raises NullPointerException\nok packed switch matches and falls through\nok sparse switch matches a negative key and falls through\nok instruction limit bounds a nonterminating method\nok UTF-16 string constants preserve NUL and surrogate pairs and share identity\nok fill-array-data loads signed byte elements\nok new-array defaults all elements to zero\nok out-of-range index raises ArrayIndexOutOfBoundsException\nok null array raises NullPointerException\nok check-cast rejects String as int array\nok every array is an Object and null is not an instance\nok arena rejects a huge Java array with OutOfMemoryError\nok two interpreter frames serialize through a recursively entered monitor\ndone: 0 failure(s)\n"
+    },
+    {
+      "mode": "java (Dalvik class linkage and threads, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "superclass initializer runs before subclass once across DEX images",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "interface dispatch finds subclass method and invoke-super uses the parent",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "virtual dispatch uses the vtable of the actual receiver",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "filled-new-array returns a reference through move-result-object",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "failed class initialization is reported and never rerun",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "two Java Thread.start calls contend on a class monitor and join",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok superclass initializer runs before subclass once across DEX images\nok interface dispatch finds subclass method and invoke-super uses the parent\nok virtual dispatch uses the vtable of the actual receiver\nok filled-new-array returns a reference through move-result-object\nok failed class initialization is reported and never rerun\nok two Java Thread.start calls contend on a class monitor and join\ndone: 0 failure(s)\n"
+    },
+    {
       "mode": "desktop",
       "exitCode": 0,
       "finished": true,
@@ -305,7 +532,7 @@
     },
     {
       "mode": "desktop (NativeActivity)",
-      "exitCode": null,
+      "exitCode": -11,
       "finished": true,
       "cases": [
         {
@@ -324,7 +551,7 @@
           "detail": ""
         }
       ],
-      "log": "ok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\n"
+      "log": "ok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\n[hvm] Android: libhvmnativeactivity.so (NativeActivity), surface 1136x640\n[hvm] GPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\n[hvm:warn] GPU: direct present unavailable; reading frames back\n\n=== HVM HOST FAULT DIAGNOSTICS ===\nSignal: SIGSEGV (Segmentation Fault)\nHost Fault Address (si_addr): 0x0000000000000000\nGuest Arena Base: 0x00007f6cece00000\nFault address outside registered guest arenas\n\n--- Guest Threads State ---\nRegisters sampled at block entry/HLE boundary; samples may differ in time.\nThread slot #0 generation=1: PC=0xffff0000 LR=0xffff0000 block_pc=0xffff0000 arena=0x00007f6cece00000 in_guest=false current_hle=0xffffffff (none)\nThread slot #1 generation=3: PC=0xffff0000 LR=0x04001cd8 block_pc=0xffff0000 arena=0x00007f6cece00000 in_guest=false current_hle=0xffffffff (none)\nUntracked CPUs (registry capacity 128): 0\n\n--- Recent Logs (last 200) ---\nGPU: OpenGL ES calls go to the host driver (EGL (Mesa))\nLoaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\nAndroid: libhvmnativeactivity.so (NativeActivity), surface 1136x640\nok \nNativeActivity callbacks\n\nGPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\nGPU: direct present unavailable; reading frames back\nok \nNativeActivity EGL draw\n\nok \nNativeActivity touch input\n\ndone: native_activity\nUnavailable log entries (concurrent publication): 0\n=== END HOST FAULT DIAGNOSTICS ===\n\n"
     },
     {
       "mode": "phone",
@@ -627,11 +854,11 @@
           "detail": ""
         }
       ],
-      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\nok sincosf(0) writes sin=0, cos=1\nok sincos(0) writes sin=0, cos=1\nok __strlen_chk returns string length\nok __strchr_chk finds first match\nok __strrchr_chk finds last match\nok __FD_SET_chk / __FD_ISSET_chk tracks fd bit\nok __open_2 + __read_chk reads file bytes\nok strtoimax parses signed 64-bit decimal\nok strtoumax parses unsigned 64-bit hex\nok scandir + alphasort lists directory entries in order\nok getentropy(32) fills buffer and >256 sets EIO\nok SL_IID_RECORD OpenSL ES symbol resolves\nok feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)\nok socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC\nok IPv4 loopback TCP and accept4 descriptor flags\nok MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN\nok offline IPv4 connect and sendto return ENETUNREACH\nok IPv6 loopback uses the 28-byte Linux sockaddr_in6\nok bionic numeric getaddrinfo places ai_addr after ai_canonname\nok AI_NUMERICHOST failure returns bionic EAI_NONAME (8)\nok bionic AI_NUMERICSERV value 8 rejects a named service\nok eventfd semaphore returns one per read and EAGAIN at zero\nok eventfd write updates poll readability\nok pipe2 descriptors inherit both requested flags\nok epoll ARM EABI payload and EPOLLONESHOT disable/rearm\nok timerfd one-shot awakens poll and reports one expiration\nok open Android scratch file for positional I/O\nok pread/pwrite and aligned 64-bit offsets preserve the descriptor position\nok MAP_PRIVATE writes are isolated and mmap offset selects a file page\nok ARM mmap2 takes a 4096-byte page index\nok sendfile updates its offset pointer while leaving input position unchanged\nok test WAV file created\nok MediaPlayer loads 100ms WAV, plays, and seeks\nok SoundPool loads, plays, stops, and unloads WAV\nok AAudio builder/stream opens, starts, writes 256 frames, and closes\ndone: 0 failure(s)\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/D1BA71FF-32A6-1F74C041\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 72 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
+      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\nok sincosf(0) writes sin=0, cos=1\nok sincos(0) writes sin=0, cos=1\nok __strlen_chk returns string length\nok __strchr_chk finds first match\nok __strrchr_chk finds last match\nok __FD_SET_chk / __FD_ISSET_chk tracks fd bit\nok __open_2 + __read_chk reads file bytes\nok strtoimax parses signed 64-bit decimal\nok strtoumax parses unsigned 64-bit hex\nok scandir + alphasort lists directory entries in order\nok getentropy(32) fills buffer and >256 sets EIO\nok SL_IID_RECORD OpenSL ES symbol resolves\nok feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)\nok socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC\nok IPv4 loopback TCP and accept4 descriptor flags\nok MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN\nok offline IPv4 connect and sendto return ENETUNREACH\nok IPv6 loopback uses the 28-byte Linux sockaddr_in6\nok bionic numeric getaddrinfo places ai_addr after ai_canonname\nok AI_NUMERICHOST failure returns bionic EAI_NONAME (8)\nok bionic AI_NUMERICSERV value 8 rejects a named service\nok eventfd semaphore returns one per read and EAGAIN at zero\nok eventfd write updates poll readability\nok pipe2 descriptors inherit both requested flags\nok epoll ARM EABI payload and EPOLLONESHOT disable/rearm\nok timerfd one-shot awakens poll and reports one expiration\nok open Android scratch file for positional I/O\nok pread/pwrite and aligned 64-bit offsets preserve the descriptor position\nok MAP_PRIVATE writes are isolated and mmap offset selects a file page\nok ARM mmap2 takes a 4096-byte page index\nok sendfile updates its offset pointer while leaving input position unchanged\nok test WAV file created\nok MediaPlayer loads 100ms WAV, plays, and seeks\nok SoundPool loads, plays, stops, and unloads WAV\nok AAudio builder/stream opens, starts, writes 256 frames, and closes\ndone: 0 failure(s)\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/FC81929D-329A-786FD0E4\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 72 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
     },
     {
       "mode": "phone (NativeActivity)",
-      "exitCode": null,
+      "exitCode": -11,
       "finished": true,
       "cases": [
         {
@@ -650,7 +877,7 @@
           "detail": ""
         }
       ],
-      "log": "ok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\n"
+      "log": "ok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/F2AC40CB-32A0-80D1E175\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\n[hvm] Android: libhvmnativeactivity.so (NativeActivity), surface 1136x640\n[hvm] GPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\n[hvm:warn] GPU: direct present unavailable; reading frames back\n\n=== HVM HOST FAULT DIAGNOSTICS ===\nSignal: SIGSEGV (Segmentation Fault)\nHost Fault Address (si_addr): 0x0000000000000000\nGuest Arena Base: 0x00007fa568800000\nFault address outside registered guest arenas\n\n--- Guest Threads State ---\nRegisters sampled at block entry/HLE boundary; samples may differ in time.\nThread slot #0 generation=1: PC=0xffff0000 LR=0xffff0000 block_pc=0xffff0000 arena=0x00007fa568800000 in_guest=false current_hle=0xffffffff (none)\nThread slot #1 generation=3: PC=0xffff0000 LR=0x04001cd8 block_pc=0xffff0000 arena=0x00007fa568800000 in_guest=false current_hle=0xffffffff (none)\nUntracked CPUs (registry capacity 128): 0\n\n--- Recent Logs (last 200) ---\nGPU: OpenGL ES calls go to the host driver (EGL (Mesa))\nLoaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\nAndroid: libhvmnativeactivity.so (NativeActivity), surface 1136x640\nok \nNativeActivity callbacks\n\nGPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\nGPU: direct present unavailable; reading frames back\nok \nNativeActivity EGL draw\n\nok \nNativeActivity touch input\n\ndone: native_activity\nUnavailable log entries (concurrent publication): 0\n=== END HOST FAULT DIAGNOSTICS ===\n\n"
     }
   ]
 }
