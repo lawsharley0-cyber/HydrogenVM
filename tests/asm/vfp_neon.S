@@ -555,6 +555,45 @@ t_neon_mix:
     .ltorg
 
     .arm
+@ VFP arithmetic honours FPSCR.RMode (ARM ARM: 0 RN, 1 RP, 2 RM, 3 RZ). 1 + 2^-30 is 1.0 to
+@ nearest but the next float up toward +inf; its negation goes to the next float down toward -inf;
+@ toward zero it is 1.0. sqrt(2) to nearest (0x3FB504F3) lies below the true value, so RP rounds up.
+@ TEST vfp_rounding_modes
+@ EXPECT r0=0x3F800000 r1=0x3F800001 r2=0xBF800001 r3=0x3F800000 r4=0x3FB504F4
+    .global vfp_rounding_modes
+vfp_rounding_modes:
+    ldr     r0, =0x3F800000
+    vmov    s0, r0                  @ 1.0
+    ldr     r0, =0x30800000
+    vmov    s1, r0                  @ 2^-30
+    vadd.f32 s2, s0, s1             @ RN -> 1.0
+    mov     r5, #0x00400000         @ RMode = RP
+    vmsr    fpscr, r5
+    vadd.f32 s3, s0, s1             @ -> 0x3F800001
+    vneg.f32 s6, s0
+    vneg.f32 s7, s1
+    mov     r5, #0x00800000         @ RMode = RM
+    vmsr    fpscr, r5
+    vadd.f32 s4, s6, s7             @ -(1 + 2^-30) -> 0xBF800001
+    mov     r5, #0x00C00000         @ RMode = RZ
+    vmsr    fpscr, r5
+    vadd.f32 s5, s0, s1             @ -> 1.0
+    mov     r5, #0x00400000         @ RP
+    vmsr    fpscr, r5
+    ldr     r0, =0x40000000
+    vmov    s8, r0                  @ 2.0
+    vsqrt.f32 s9, s8                @ -> 0x3FB504F4
+    mov     r5, #0
+    vmsr    fpscr, r5
+    vmov    r0, s2
+    vmov    r1, s3
+    vmov    r2, s4
+    vmov    r3, s5
+    vmov    r4, s9
+    bx      lr
+    .ltorg
+
+    .arm
 @ VFP in RunFast mode (FPSCR.FZ + FPSCR.DN), how every iOS thread starts: denormal inputs and
 @ results become a zero of the same sign, normal arithmetic is unchanged, NaN results are the
 @ default NaN. (ARM ARM: FPSCR.FZ flush-to-zero, FPSCR.DN default NaN.)

@@ -18,13 +18,15 @@
 #include <limits>
 #include <type_traits>
 
+#include <cfenv>
+
 #pragma clang fp contract(off)
 
 namespace Hydrogen::CPU {
 
 enum : uint32_t {
     kFpscrN = 1u << 31, kFpscrQC = 1u << 27, kFpscrDN = 1u << 25, kFpscrFZ = 1u << 24,
-    kFpscrRModeShift = 22,
+    kFpscrRModeShift = 22, kFpscrRMode = 3u << 22,
 };
 
 inline uint8_t* vregs(Cpu* c) { return reinterpret_cast<uint8_t*>(c->d); }
@@ -61,6 +63,23 @@ template <typename T> inline T defaultNaN() {
     else { uint64_t b = 0x7FF8000000000000ull; T f; std::memcpy(&f, &b, 8); return f; }
 }
 
+// VFP arithmetic in a rounding mode other than round-to-nearest (FPSCR.RMode: 0 RN, 1 RP, 2 RM,
+// 3 RZ). Games almost never change it, so the host's rounding mode is switched only for those
+// operations, inside a function the optimizer can't move floating-point work across.
+inline int hostRounding(uint32_t rmode) {
+    static const int kModes[4] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
+    return kModes[rmode & 3];
+}
+template <typename F>
+[[gnu::noinline]] auto withRounding(uint32_t rmode, F f) {
+#pragma STDC FENV_ACCESS ON
+    const int old = std::fegetround();
+    std::fesetround(hostRounding(rmode));
+    const auto r = f();
+    std::fesetround(old);
+    return r;
+}
+
 enum VfpOp3 : uint8_t { kVAdd, kVSub, kVMul, kVNMul, kVDiv, kVMla, kVMls, kVNMla, kVNMls, kVFma, kVFms, kVFNma, kVFNms };
 
 template <int OP, typename T>
@@ -85,9 +104,10 @@ template <int OP, bool DP>
 HVM_H(H_Vfp3) {
     using T = FpT<DP>;
     T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
-    if ((c->fpscr & (kFpscrFZ | kFpscrDN)) != 0) {
+    if ((c->fpscr & (kFpscrFZ | kFpscrDN | kFpscrRMode)) != 0) {
         if (c->fpscr & kFpscrFZ) { n = flushDenorm(n); mm = flushDenorm(mm); d = flushDenorm(d); }
-        T r = vfp3<OP>(n, mm, d);
+        const uint32_t rmode = (c->fpscr >> kFpscrRModeShift) & 3;
+        T r = rmode ? withRounding(rmode, [=] { return vfp3<OP>(n, mm, d); }) : vfp3<OP>(n, mm, d);
         if (c->fpscr & kFpscrFZ) r = flushDenorm(r);
         if ((c->fpscr & kFpscrDN) && std::isnan(r)) r = defaultNaN<T>();
         wrF<DP>(c, op->a, r);
@@ -119,7 +139,8 @@ HVM_H(H_Vfp2) {
     } else {
         T m = rdF<DP>(c, op->c);
         if (c->fpscr & kFpscrFZ) m = flushDenorm(m);
-        T r = std::sqrt(m);
+        const uint32_t rmode = (c->fpscr >> kFpscrRModeShift) & 3;
+        T r = rmode ? withRounding(rmode, [=] { return std::sqrt(m); }) : std::sqrt(m);
         if ((c->fpscr & kFpscrDN) && std::isnan(r)) r = defaultNaN<T>();
         wrF<DP>(c, op->a, r);
     }
