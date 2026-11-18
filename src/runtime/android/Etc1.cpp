@@ -16,7 +16,9 @@ inline uint8_t clamp255(int v) { return uint8_t(std::clamp(v, 0, 255)); }
 inline int extend4(int v) { return (v << 4) | v; }
 inline int extend5(int v) { return (v << 3) | (v >> 2); }
 
-void decodeBlock(const uint8_t* b, uint8_t out[4][4][3]) {
+} // namespace
+
+void decodeEtc1Block(const uint8_t* b, uint8_t (&out)[4][4][3]) {
     const uint32_t hi = uint32_t(b[0]) << 24 | uint32_t(b[1]) << 16 | uint32_t(b[2]) << 8 | b[3];
     const uint32_t lo = uint32_t(b[4]) << 24 | uint32_t(b[5]) << 16 | uint32_t(b[6]) << 8 | b[7];
     const bool diff = hi & 2, flip = hi & 1;
@@ -44,15 +46,13 @@ void decodeBlock(const uint8_t* b, uint8_t out[4][4][3]) {
         }
 }
 
-} // namespace
-
 std::vector<uint8_t> decodeEtc1(const uint8_t* data, int w, int h) {
     std::vector<uint8_t> rgb(size_t(std::max(w, 0)) * size_t(std::max(h, 0)) * 3);
     const int bw = (w + 3) / 4, bh = (h + 3) / 4;
     uint8_t px[4][4][3];
     for (int by = 0; by < bh; ++by)
         for (int bx = 0; bx < bw; ++bx) {
-            decodeBlock(data + (size_t(by) * size_t(bw) + size_t(bx)) * 8, px);
+            decodeEtc1Block(data + (size_t(by) * size_t(bw) + size_t(bx)) * 8, px);
             for (int y = 0; y < 4; ++y)
                 for (int x = 0; x < 4; ++x) {
                     const int X = bx * 4 + x, Y = by * 4 + y;
