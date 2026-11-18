@@ -20,6 +20,20 @@ uint32_t Mixer::play(Pcm pcm, int rate, const VoiceParams& p, double startSecond
     return id;
 }
 
+uint32_t Mixer::playSource(std::shared_ptr<AudioSource> source, const VoiceParams& p, double startSeconds) {
+    auto samples = std::make_unique<SourceWindow>();
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint32_t id = next_++;
+    Voice& v = voices_[id];
+    v.p = p;
+    v.source = std::move(source);
+    v.samples = std::move(samples);
+    if (v.source)
+        v.pos = std::clamp(std::max(0.0, startSeconds) * v.source->sampleRate(), 0.0, double(v.source->frames()));
+    v.done = !v.source || v.pos >= double(v.source->frames());
+    return id;
+}
+
 uint32_t Mixer::createStream(const VoiceParams& p) {
     std::lock_guard<std::mutex> lk(mu_);
     const uint32_t id = next_++;
@@ -78,6 +92,8 @@ void Mixer::stop(uint32_t voice) {
     if (it == voices_.end()) return;
     for (const Buffer& b : it->second.queue) it->second.processed.push_back(b.tag);
     it->second.queue.clear();
+    it->second.samples.reset();
+    it->second.source.reset();
     it->second.pos = 0;
     it->second.done = true;
 }
@@ -90,20 +106,31 @@ void Mixer::release(uint32_t voice) {
 bool Mixer::playing(uint32_t voice) const {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = voices_.find(voice);
-    return it != voices_.end() && !it->second.queue.empty() && !it->second.paused;
+    if (it == voices_.end() || it->second.paused) return false;
+    const Voice& v = it->second;
+    return v.source ? !v.done : !v.queue.empty();
 }
 
 double Mixer::positionSeconds(uint32_t voice) const {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = voices_.find(voice);
-    if (it == voices_.end() || it->second.queue.empty()) return 0;
-    return it->second.pos / double(it->second.queue.front().rate);
+    if (it == voices_.end()) return 0;
+    const Voice& v = it->second;
+    if (v.source) return v.pos / v.source->sampleRate();
+    return v.queue.empty() ? 0 : v.pos / v.queue.front().rate;
 }
 
 void Mixer::seekSeconds(uint32_t voice, double t) {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = voices_.find(voice);
-    if (it == voices_.end() || it->second.queue.empty()) return;
+    if (it == voices_.end() || !std::isfinite(t)) return;
+    Voice& v = it->second;
+    if (v.source) {
+        v.pos = std::clamp(t * v.source->sampleRate(), 0.0, double(v.source->frames()));
+        v.done = v.pos >= double(v.source->frames());
+        return;
+    }
+    if (v.queue.empty()) return;
     const Buffer& b = it->second.queue.front();
     const double frames = double(b.pcm->size() / 2);
     it->second.pos = std::clamp(t * double(b.rate), 0.0, std::max(0.0, frames - 1));
@@ -152,9 +179,11 @@ void Mixer::render(float* left, float* right, size_t frames) {
     float callPeak = 0;
     for (auto it = voices_.begin(); it != voices_.end();) {
         Voice& v = it->second;
-        if (v.paused || v.queue.empty()) { ++it; continue; }
+        const auto* source = v.source.get();
+        if (v.paused || (source ? v.done : v.queue.empty())) { ++it; continue; }
         const bool music = v.stream || v.p.loop ||
-                           double(v.queue.front().pcm->size() / 2) >= 8.0 * double(v.queue.front().rate);
+                           (source ? double(source->frames()) >= 8.0 * source->sampleRate() :
+                            double(v.queue.front().pcm->size() / 2) >= 8.0 * v.queue.front().rate);
         const float appGain = std::abs(v.p.gain);   // the app's volume, not the player's
         int16_t voicePeak = 0;
         const float g = v.p.gain * master_;
@@ -163,31 +192,49 @@ void Mixer::render(float* left, float* right, size_t frames) {
         const float gr = g * (pan < 0 ? 1.0f + pan : 1.0f) * kScale;
         const float pitch = std::clamp(v.p.pitch, 0.05f, 8.0f);
         size_t i = 0;
-        while (i < frames && !v.queue.empty()) {
-            const Buffer& b = v.queue.front();
-            const int16_t* s = b.pcm->data();
-            const size_t n = b.pcm->size() / 2;
-            const double step = double(b.rate) * pitch / double(kRate);
-            if (n == 0) { v.processed.push_back(b.tag); v.queue.pop_front(); v.pos = 0; continue; }
+        while (i < frames && (source ? !v.done : !v.queue.empty())) {
+            const Buffer* b = source ? nullptr : &v.queue.front();
+            const int rate = source ? source->sampleRate() : b->rate;
+            const size_t n = source ? size_t(source->frames()) : b->pcm->size() / 2;
+            const double step = double(rate) * pitch / double(kRate);
+            if (n == 0) {
+                if (source) v.done = true;
+                else { v.processed.push_back(b->tag); v.queue.pop_front(); }
+                v.pos = 0;
+                continue;
+            }
             for (; i < frames; ++i) {
                 if (v.pos >= double(n)) break;
                 const size_t i0 = size_t(v.pos);
                 const float t = float(v.pos - double(i0));
-                size_t i1 = i0 + 1;
-                const int16_t* s1 = s;   // where the interpolation neighbour lives
-                if (i1 >= n) {
-                    if (!v.stream && v.p.loop) i1 = 0;
-                    else if (v.queue.size() > 1 && v.queue[1].pcm && v.queue[1].pcm->size() >= 2) {
-                        s1 = v.queue[1].pcm->data();   // continue into the next queued buffer, not a repeat of this one's last frame
-                        i1 = 0;
-                    } else i1 = n - 1;
+                int16_t current[2], next[2];
+                if (source) {
+                    if (!v.samples->pair(*v.source, i0, current, next, v.p.loop)) {
+                        v.done = true;
+                        break;
+                    }
+                } else {
+                    const int16_t* s = b->pcm->data();
+                    const int16_t* following = s + (i0 + 1) * 2;
+                    if (i0 + 1 == n) {
+                        if (!v.stream && v.p.loop) following = s;
+                        else if (v.queue.size() > 1 && v.queue[1].pcm && v.queue[1].pcm->size() >= 2)
+                            following = v.queue[1].pcm->data();
+                        else following = s + i0 * 2;
+                    }
+                    current[0] = s[2 * i0];
+                    current[1] = s[2 * i0 + 1];
+                    next[0] = following[0];
+                    next[1] = following[1];
                 }
-                voicePeak = std::max<int16_t>(voicePeak, int16_t(std::min(32767, std::abs(int(s[i0 * 2])))));
-                left[i] += (float(s[i0 * 2]) * (1 - t) + float(s1[i1 * 2]) * t) * gl;
-                right[i] += (float(s[i0 * 2 + 1]) * (1 - t) + float(s1[i1 * 2 + 1]) * t) * gr;
+                voicePeak = std::max<int16_t>(voicePeak, int16_t(std::min(32767, std::abs(int(current[0])))));
+                const float mixedL = float(current[0]) * (1 - t) + float(next[0]) * t;
+                const float mixedR = float(current[1]) * (1 - t) + float(next[1]) * t;
+                left[i] += mixedL * gl;
+                right[i] += mixedR * gr;
                 // Reporting only: 10 ms RMS of the audible (post-gain) level, for onset checks.
-                const float audibleL = (float(s[i0 * 2]) * (1 - t) + float(s1[i1 * 2]) * t) * kScale * appGain;
-                const float audibleR = (float(s[i0 * 2 + 1]) * (1 - t) + float(s1[i1 * 2 + 1]) * t) * kScale * appGain;
+                const float audibleL = mixedL * kScale * appGain;
+                const float audibleR = mixedR * kScale * appGain;
                 v.onsetSumSq += double(audibleL) * double(audibleL) + double(audibleR) * double(audibleR);
                 v.onsetSamples++;
                 if (v.onsetSamples >= Voice::kOnsetWindow) {
@@ -215,8 +262,9 @@ void Mixer::render(float* left, float* right, size_t frames) {
             }
             if (v.pos >= double(n)) {
                 if (!v.stream && v.p.loop) { v.pos = std::fmod(v.pos, double(n)); continue; }
-                const double carry = (v.pos - double(n)) / double(b.rate);   // seconds into the next buffer
-                v.processed.push_back(b.tag);
+                if (source) { v.done = true; v.pos = double(n); break; }
+                const double carry = (v.pos - double(n)) / double(rate);   // seconds into the next buffer
+                v.processed.push_back(b->tag);
                 v.queue.pop_front();
                 v.pos = v.queue.empty() ? 0 : carry * double(v.queue.front().rate);
             }
@@ -230,7 +278,7 @@ void Mixer::render(float* left, float* right, size_t frames) {
             callPeak = std::max(callPeak, std::min(level, 1.0f));
             if (!v.heard) { v.heard = true; (music ? stats_.musicVoices : stats_.effectVoices)++; }
         }
-        if (v.queue.empty()) v.done = true;
+        if (!source && v.queue.empty()) v.done = true;
         if (v.done && v.autoRelease) it = voices_.erase(it);
         else ++it;
     }
