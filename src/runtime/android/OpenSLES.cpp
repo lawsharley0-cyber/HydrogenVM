@@ -37,7 +37,7 @@ constexpr uint32_t kLocatorUri = 0x1, kFormatMime = 0x1, kFormatPcm = 0x2;
 constexpr uint32_t kTimeUnknown = 0xFFFFFFFFu;
 constexpr uint32_t kSeekFast = 1, kSeekAccurate = 2;
 
-enum class Itf { Object, Engine, OutputMix, Play, BufferQueue, Volume, AndroidConfiguration, Seek, PrefetchStatus, Unknown };
+enum class Itf { Object, Engine, OutputMix, Play, BufferQueue, Volume, AndroidConfiguration, Seek, PrefetchStatus, Record, Unknown };
 
 struct Player {
     uint32_t voice = 0;
@@ -583,7 +583,7 @@ void registerOpenSLES(Process& p) {
         {"SL_IID_PLAY", Itf::Play}, {"SL_IID_BUFFERQUEUE", Itf::BufferQueue},
         {"SL_IID_ANDROIDSIMPLEBUFFERQUEUE", Itf::BufferQueue}, {"SL_IID_VOLUME", Itf::Volume},
         {"SL_IID_ANDROIDCONFIGURATION", Itf::AndroidConfiguration}, {"SL_IID_SEEK", Itf::Seek},
-        {"SL_IID_PREFETCHSTATUS", Itf::PrefetchStatus},
+        {"SL_IID_PREFETCHSTATUS", Itf::PrefetchStatus}, {"SL_IID_RECORD", Itf::Record},
     };
     uint32_t serial = 1;
     for (const auto& [name, kind] : ids) {

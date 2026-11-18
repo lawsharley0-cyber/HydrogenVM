@@ -37,12 +37,22 @@ struct sigaction_t {                     /* bionic ARM struct sigaction */
 #define MAP_FAILED ((void*)-1)
 #define O_RDONLY 0
 #define F_OK 0
+#define EIO 5
 #define EDEADLK 35
 #define ETIMEDOUT 110
 #define SYS_futex 240
 #define SYS_sched_setaffinity 241
 #define FUTEX_WAIT 0
 #define FUTEX_WAKE 1
+#define RTLD_DEFAULT ((void*)0xffffffffu)
+
+struct dirent_t {
+    unsigned long long d_ino;
+    long long d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[256];
+};
 
 int sigaction(int, const struct sigaction_t*, struct sigaction_t*);
 int raise(int);
@@ -69,6 +79,25 @@ ssize_t read(int, void*, size_t);
 ssize_t write(int, const void*, size_t);
 int close(int);
 int usleep(unsigned);
+void free(void*);
+void* dlsym(void*, const char*);
+void sincosf(float, float*, float*);
+void sincos(double, double*, double*);
+size_t __strlen_chk(const char*, size_t);
+char* __strchr_chk(const char*, int, size_t);
+char* __strrchr_chk(const char*, int, size_t);
+void __FD_SET_chk(int, void*, size_t);
+int __FD_ISSET_chk(int, const void*, size_t);
+int __open_2(const char*, int);
+ssize_t __read_chk(int, void*, size_t, size_t);
+long long strtoimax(const char*, char**, int);
+unsigned long long strtoumax(const char*, char**, int);
+int scandir(const char*, struct dirent_t***, int (*)(const struct dirent_t*),
+            int (*)(const struct dirent_t**, const struct dirent_t**));
+int alphasort(const struct dirent_t**, const struct dirent_t**);
+int getentropy(void*, size_t);
+int feholdexcept(unsigned*);
+int fesetenv(const unsigned*);
 int* __errno(void);
 #define errno (*__errno())
 
