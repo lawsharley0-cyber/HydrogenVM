@@ -1468,7 +1468,7 @@ int32_t eaf_read(Ctx& x, uint32_t id, GuestPtr ioFrames, GuestPtr abl) {
         const double sp = f.pos + double(done) * step;
         const size_t i0 = size_t(sp);
         if (i0 >= srcFrames) break;
-        const size_t i1 = std::min(i0 + 1, srcFrames - 1);
+        const uint64_t i1 = std::min<uint64_t>(i0 + 1, srcFrames - 1);
         const float t = float(sp - double(i0));
         float lr[2];
         int16_t current[2], next[2];
