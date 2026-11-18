@@ -13,6 +13,7 @@ namespace Hydrogen::Loader {
 struct ApkManifest {
     std::string package;
     std::string versionName;
+    std::string launcherActivity;   // fully qualified class name of the launcher target
     std::string label;          // literal text, or "" when it's a resource (see labelRes)
     uint32_t labelRes = 0;      // @string/... id of the application label
     uint32_t iconRes = 0;       // @drawable/... id of the application icon
