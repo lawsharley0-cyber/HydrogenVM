@@ -578,13 +578,21 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         [fm removeItemAtPath:prevRec error:nil];
         [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
     }
-    const std::string recordPath = lastRec.UTF8String;
+    NSString *privateRec = [lastRec stringByAppendingPathExtension:@"private"];
+    NSString *prevPrivate = [prevRec stringByAppendingPathExtension:@"private"];
+    [fm removeItemAtPath:prevPrivate error:nil];
+    if ([fm fileExistsAtPath:privateRec]) [fm moveItemAtPath:privateRec toPath:prevPrivate error:nil];
+    const bool detailedRecording = _detailedRecording;
+    const std::string recordPath = detailedRecording ? privateRec.UTF8String : lastRec.UTF8String;
+    const std::string inputPath = detailedRecording ? lastRec.UTF8String : "";
 
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
         cfg.recordPath = recordPath;
+        cfg.detailedRecording = detailedRecording;
+        cfg.inputRecordingPath = inputPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;

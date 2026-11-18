@@ -365,6 +365,13 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"exitStatus\": " << status << ",\n";
             f << "  \"stillRunning\": " << (timedStop ? "true" : "false") << ",\n";   // reached --run-for without failing
             f << "  \"crashed\": " << (proc.crashed() ? "true" : "false") << ",\n";
+            f << "  \"replayDiverged\": " << (proc.session().firstDivergence() ? "true" : "false") << ",\n";
+            f << "  \"replayMatchedCheckpoints\": " << proc.session().matchedCheckpointCount() << ",\n";
+            f << "  \"replayRecordedCheckpoints\": " << proc.session().recordedCheckpointCount() << ",\n";
+            if (const auto div = proc.session().firstDivergence()) {
+                f << "  \"replayDivergenceFrame\": " << div->frame << ",\n";
+                f << "  \"replayDivergence\": \"" << jsonEscape(proc.session().formatDivergence()) << "\",\n";
+            }
             f << "  \"safeModeFallback\": " << (cfg.safeModeFallback.empty() ? "null" : ("\"" + jsonEscape(cfg.safeModeFallback) + "\"")) << ",\n";
             if (!cfg.safeModeFallback.empty())
                 f << "  \"launchedWithFallback\": \"launched with fallback " << jsonEscape(cfg.safeModeFallback) << "\",\n";
