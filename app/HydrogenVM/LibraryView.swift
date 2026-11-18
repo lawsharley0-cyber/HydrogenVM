@@ -547,9 +547,11 @@ struct LibraryView: View {
     /// Default display mode for games that have no setting of their own (PlayerSettings).
     @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleMode = PlayerScaleMode.fit.rawValue
     @AppStorage("hvm.zombies") private var zombies = false
+    @AppStorage("player.safeModeAlwaysRetry") private var safeModeAlwaysRetry = false
     @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
     @State private var store = LibraryStore()
     @State private var pickingFile = false
+    @State private var detailedRecording = false
     @State private var running: InstalledApp?
     @State private var browsing: InstalledApp?
     /// The game whose page is open (tap a row); Play on the row or the page runs it.
@@ -609,6 +611,9 @@ struct LibraryView: View {
                                 ForEach(store.apps.filter { $0.info.isAndroid == (platform == 1) }) { app in
                                     LibraryAppRow(app: app) {
                                         if app.info.runnable { running = app }
+                                    } record: {
+                                        detailedRecording = true
+                                        running = app
                                     } details: {
                                         showing = app
                                     } browse: {
@@ -674,6 +679,7 @@ struct LibraryView: View {
                             }
                         }
                         Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
+                        Toggle("Always retry crashed games in Safe Mode", isOn: $safeModeAlwaysRetry)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -737,8 +743,8 @@ struct LibraryView: View {
                     }
                 }
             }
-            .fullScreenCover(item: $running) { app in
-                RunView(app: app, keepGoing: keepGoing)
+            .fullScreenCover(item: $running, onDismiss: { detailedRecording = false }) { app in
+                RunView(app: app, keepGoing: keepGoing, detailedRecording: detailedRecording)
                     .alert("Can't open that game", isPresented: Binding(get: { router.message != nil }, set: { if !$0 { router.message = nil } })) {
                         Button("OK") { router.message = nil }
                     } message: { Text(router.message ?? "") }
@@ -795,12 +801,14 @@ struct LibraryView: View {
 private struct LibraryAppRow: View {
     let app: InstalledApp
     let open: () -> Void
+    let record: () -> Void
     let details: () -> Void
     let browse: () -> Void
     let reset: () -> Void
     let delete: () -> Void
     let reinstall: (URL) -> Void
 
+    @State private var confirmRecording = false
     @State private var showingReinstallConfirm = false
     @State private var showingReinstallMissing = false
     @State private var pickingReinstallIPA = false
@@ -846,6 +854,9 @@ private struct LibraryAppRow: View {
                 .tint(.blue)
         }
         .contextMenu {
+            if app.info.runnable {
+                Button("Record detailed replay", systemImage: "record.circle") { confirmRecording = true }
+            }
             Button("Files", systemImage: "folder", action: browse)
             Button("Add to Home Screen", systemImage: "plus.app") { makingClip = true }
             Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
@@ -862,6 +873,12 @@ private struct LibraryAppRow: View {
             }
             Button("Reset App Data", systemImage: "arrow.counterclockwise", action: reset)
             Button("Delete", systemImage: "trash", role: .destructive, action: delete)
+        }
+        .confirmationDialog("Record this launch?", isPresented: $confirmRecording, titleVisibility: .visible) {
+            Button("Record and play", action: record)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The private replay can contain saves and network replies. GitHub reports include only the input recording.")
         }
         .confirmationDialog("Reinstall \(app.title)?", isPresented: $showingReinstallConfirm, titleVisibility: .visible) {
             Button("Reinstall", role: .destructive) {

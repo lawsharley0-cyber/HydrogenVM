@@ -10,6 +10,7 @@
 #include <mutex>
 #include "Foundation.hpp"
 #include "runtime/Support.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include <fstream>
 #include <iterator>
 
@@ -44,32 +45,8 @@ uint32_t scr_createPair(Ctx& x, uint32_t a, GuestPtr p, GuestPtr) { return scr_c
 bool scr_getFlags(Ctx& x, uint32_t ref, GuestPtr flags) {
     if (!ref) return false;
     if (flags) {
-        // Not reachable: nothing leaves the emulator, so this is the truth, and it is what an
-        // offline iPhone says. Saying "reachable" while every request fails left games waiting
-        // forever for downloads (Minion Rush polled for its content index for minutes instead
-        // of showing its "no Internet connection" message). Geometry Dash, the game the
-        // "reachable" answer was added for, starts the same either way.
-        // With the game's "Allow internet" switch on, the network is real: reachable (2).
-        //
-        // One exception offline: a Gameloft game whose downloaded content was restored (its
-        // content index Library/Caches/dlcs/mnhtn_index_ios exists, as the with-data IPAs
-        // carry it). Told "not reachable", Minion Rush 1.0.0 re-reads its whole content index
-        // every ~1.3 s to retry its update check: mnhtn_toc (837 KB of JSON) and the hash file
-        // (1.2 MB), a 450 ms stall each time on an iPhone, so play stutters every second.
-        // Told "reachable", it checks twice and stops (bench: 2 reads in 150 s instead of 59);
-        // its requests still fail at once, and it plays from the restored packs. Without the
-        // index, the honest answer stays, so it shows its "no Internet connection" message.
-        bool reachable = x.proc.config().internetAccess;
-        if (!reachable) {
-            static std::once_flag logged;
-            std::error_code ec;
-            reachable = std::filesystem::exists(x.proc.homePath() + "/Library/Caches/dlcs/mnhtn_index_ios", ec);
-            if (reachable)
-                std::call_once(logged, [&] {
-                    x.proc.logf(LogLevel::Info, "%s", "Network: reported as reachable (but offline) because this Gameloft game's "
-                                                      "downloaded content is restored; otherwise it re-reads its content index every second");
-                });
-        }
+        // Profile predicates preserve offline reachability compatibility without enabling sockets.
+        const bool reachable = Compat::internetAccess(x.proc) || Compat::restoredContentReachable(x.proc);
         x.mem.write<uint32_t>(flags, reachable ? 2u : 0u);
     }
     return true;

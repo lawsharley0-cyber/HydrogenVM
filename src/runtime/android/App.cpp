@@ -1415,6 +1415,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
     // The Android Test Lab (tests/android/): a library exporting hvm_test_main(JNIEnv*, JavaVM*)
     // runs its checks instead of an activity; the exit code is the number of failures.
     if (const auto test = lib.find("hvm_test_main")) {
+        j.interpretsDex.store(true, std::memory_order_relaxed);
         if (const auto onLoad = lib.find("JNI_OnLoad")) p.callGuest(c, *onLoad, {j.vm, 0});
         const uint32_t failures = uint32_t(p.callGuest(c, *test, {j.envFor(p), j.vm}));
         p.logf(LogLevel::Info, "Android Test Lab: %u failure(s)", failures);

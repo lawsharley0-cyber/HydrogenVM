@@ -45,6 +45,9 @@ jobs:
             # The runner's regional mirror has stalled for whole attempts (2026-11-18); try the
             # other one GitHub-hosted runners use instead of the same mirror again.
             if [ "$attempt" = 1 ]; then MIRROR=http://azure.archive.ubuntu.com/ubuntu; else MIRROR=http://archive.ubuntu.com/ubuntu; fi
+            # GitHub's images list mirrors in /etc/apt/apt-mirrors.txt (sources use mirror+file:);
+            # older ones name the mirror in the sources files. Point both at the new mirror.
+            if [ -f /etc/apt/apt-mirrors.txt ]; then echo "$MIRROR" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null; fi
             sudo sed -i -E "s#http://[a-zA-Z0-9.-]*archive\.ubuntu\.com/ubuntu/?#$MIRROR/#g" /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
           done
           dpkg -s clang cmake ninja-build >/dev/null

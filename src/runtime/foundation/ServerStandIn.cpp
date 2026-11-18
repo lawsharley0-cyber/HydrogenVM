@@ -14,6 +14,7 @@
 // For working out new replies, HVM_STANDIN_DIR=folder serves folder/<host>/<path> files
 // first (any host), so a reply can be tried without rebuilding.
 #include "Foundation.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
@@ -148,12 +149,6 @@ std::optional<std::string> grooveZero(Ctx& x, const UrlParts& u) {
     return std::nullopt;
 }
 
-struct StandIn { const char* host; const char* game; std::optional<std::string> (*reply)(Ctx&, const UrlParts&); };
-const StandIn kStandIns[] = {
-    {"gczero.com", "Groove Coaster Zero", &grooveZero},
-    {"staging.gczero.com", "Groove Coaster Zero", &grooveZero},
-};
-
 struct StandInLog { explicit StandInLog(Process&) {} std::mutex mu; std::set<std::string> told; };
 
 }  // namespace
@@ -176,19 +171,20 @@ std::optional<StandInReply> standInFetch(Ctx& x, const std::string& url, const s
             return r;
         }
     }
-    for (const StandIn& s : kStandIns) {
-        if (u.host != s.host) continue;
+    if (const auto* profile = Compat::serverProfile(u.host)) {
+        Compat::noteApplied(x.proc, profile->kind);
+        const std::string game = "Groove Coaster Zero";
         StandInReply r;
-        if (auto body = s.reply(x, u)) {
+        if (auto body = grooveZero(x, u)) {
             if (*body == kUnreachable) {
-                once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " is answered as unreachable (" + s.game +
+                once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " is answered as unreachable (" + game +
                                           " carries on without it)");
                 return std::nullopt;
             }
             r.body = std::move(*body);
             const bool php = u.path.size() >= 4 && u.path.compare(u.path.size() - 4, 4, ".php") == 0;
             if (!php) r.mime = "application/octet-stream";   // pak, zip
-            once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " answered by HydrogenVM (" + s.game +
+            once(u.host + u.path, "Stand-in server: " + method + " " + u.host + u.path + " answered by HydrogenVM (" + game +
                                       "'s server was shut down)");
         } else {
             r.body = xmlReply("<code>0</code>");

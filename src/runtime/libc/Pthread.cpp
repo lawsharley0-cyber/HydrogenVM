@@ -101,6 +101,11 @@ int lockMutex(Ctx& x, GuestMutex& m, bool tryOnly) {
     }
     if (m.owner && tryOnly) return D_EBUSY;
     if (m.owner) {
+        if (x.proc.session().replayingDetails()) {
+            lk.unlock(); // Other contenders must be able to consume their recorded turns.
+            x.proc.session().waitSchedTurn(me, "mutex_lock", m.addr);
+            lk.lock();
+        }
         BlockedScope blocked(x.proc, "pthread_mutex_lock", m.addr, m.owner);
         while (m.owner) {
             m.cv.wait_for(lk, 50ms);
@@ -111,6 +116,8 @@ int lockMutex(Ctx& x, GuestMutex& m, bool tryOnly) {
                 lk.lock();
             }
         }
+        if (x.proc.session().recordingDetails())
+            x.proc.session().recordSchedPoint(me, "mutex_lock", m.addr, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
     }
     m.owner = me;
     m.count = 1;

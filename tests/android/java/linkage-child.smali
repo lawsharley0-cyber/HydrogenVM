@@ -1,6 +1,7 @@
 .class Ltest/Child; 1
 .super Ltest/Base;
 .implements Ltest/Scorer;
+.implements Ljava/util/concurrent/Callable;
 .field seen:I 9
 .field extra:I 9 = 5
 
@@ -27,6 +28,29 @@ invoke-super Ltest/Base;->score(I)I, v2, v3
 move-result v0
 sget v1, Ltest/Child;->extra:I
 add-int v0, v0, v1
+return v0
+.end method
+
+.method hashCode()I 1
+.registers 2
+const/16 v0, 71
+return v0
+.end method
+
+.method call()Ljava/lang/Object; 1
+.registers 1
+return-object v0
+.end method
+
+.method platformDispatch()I 9
+.registers 1
+.outs 1
+new-instance v0, Ltest/Child;
+invoke-direct Ltest/Child;-><init>()V, v0
+invoke-interface Ljava/util/concurrent/Callable;->call()Ljava/lang/Object;, v0
+move-result-object v0
+invoke-virtual Ljava/lang/Object;->hashCode()I, v0
+move-result v0
 return v0
 .end method
 
