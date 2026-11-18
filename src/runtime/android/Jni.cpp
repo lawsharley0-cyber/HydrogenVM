@@ -239,7 +239,8 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
     }
     if (proxy) return invokeProxy(*this, x, self, m.name, m.sig, args);
     JValue interpreted = 0;
-    if (Dex::invokeFromJni(*this, x, m, self, args, objCls, nonvirtual, interpreted)) return interpreted;
+    if (interpretsDex.load(std::memory_order_relaxed) &&
+        Dex::invokeFromJni(*this, x, m, self, args, objCls, nonvirtual, interpreted)) return interpreted;
     // Then the platform classes every activity and view inherits from: a game's own activity
     // class (com/foo/GameActivity) calls getFilesDir, getAssets, ... of Context.
     static const std::string kContext = "android/content/Context", kActivity = "android/app/Activity",

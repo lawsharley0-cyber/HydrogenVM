@@ -155,10 +155,27 @@ static void* android_main(void* arg) {
     return 0;
 }
 
+typedef const void** TestJNI;
+
+__attribute__((visibility("default")))
+int Java_test_Driver_nativeAnswer(TestJNI* env, void* cls) {
+    (void)env;
+    (void)cls;
+    return 17;
+}
+
 __attribute__((visibility("default")))
 void ANativeActivity_onCreate(ANativeActivity* activity, void* savedState, size_t savedStateSize) {
     (void)savedState;
     (void)savedStateSize;
+    TestJNI* env = activity->env;
+    void* (*findClass)(TestJNI*, const char*) = (void*)(*env)[6];
+    void* (*methodId)(TestJNI*, void*, const char*, const char*) = (void*)(*env)[113];
+    int (*callInt)(TestJNI*, void*, void*, const void*) = (void*)(*env)[131];
+    void* cls = findClass(env, "test/Driver");
+    void* method = methodId(env, cls, "nativeAnswer", "()I");
+    check("NativeActivity retains native JNI dispatch with bundled DEX", callInt(env, cls, method, 0) == 17,
+          "bundled bytecode overrode the native driver");
     g_activity = activity;
     activity->callbacks->onStart = on_start;
     activity->callbacks->onResume = on_resume;
