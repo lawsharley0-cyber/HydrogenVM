@@ -180,6 +180,23 @@ int32_t b_logVprint(Ctx& x, int32_t prio, GuestPtr tag, GuestPtr fmt, VaList ap)
     androidLog(x, prio, tag, formatGuest(x.proc, x.proc.readCString(fmt), a));
     return 1;
 }
+void b_logAssert(Ctx& x, GuestPtr cond, GuestPtr tag, GuestPtr fmt, VarArgs va) {
+    const std::string c = cond ? x.proc.readCString(cond, 256) : std::string();
+    const std::string m = fmt ? formatGuest(x.proc, x.proc.readCString(fmt), va.args) : c;
+    androidLog(x, 7, tag, m);
+    throw std::runtime_error("android_log_assert: " + m);
+}
+void b_setAbortMessage(Ctx& x, GuestPtr msg) {
+    if (msg) x.proc.logf(LogLevel::Warning, "android_set_abort_message: %s", x.proc.readCString(msg, 512).c_str());
+}
+void b_openlog(Ctx&, GuestPtr, int32_t, int32_t) {}
+void b_closelog(Ctx&) {}
+void b_syslog(Ctx& x, int32_t prio, GuestPtr fmt, VarArgs va) {
+    if (!fmt) return;
+    std::string line = formatGuest(x.proc, x.proc.readCString(fmt), va.args);
+    if (line.empty() || line.back() != '\n') line.push_back('\n');
+    x.proc.log((prio & 7) <= 3 ? LogLevel::GuestStderr : LogLevel::GuestStdout, line);
+}
 
 // ---------------------------------------------------------------- atomics ---
 
@@ -225,6 +242,10 @@ int32_t b_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
     const uint32_t mode = (flags & 0x40) ? va.args.word() : 0;
     noteExternalPath(x.proc, x.proc.hostPath(x.proc.readCString(path)));
     return int32_t(callIos(x, "_open", {path, darwinOpenFlags(flags), mode}));
+}
+int32_t b_open2(Ctx& x, GuestPtr path, uint32_t flags) {
+    noteExternalPath(x.proc, x.proc.hostPath(x.proc.readCString(path)));
+    return int32_t(callIos(x, "_open", {path, darwinOpenFlags(flags), 0u}));
 }
 int32_t b_fcntl(Ctx& x, int32_t fd, int32_t cmd, VarArgs va) {
     const uint32_t arg = va.args.word();
@@ -358,6 +379,40 @@ int32_t b_closedir(Ctx& x, GuestPtr dir) {
     }
     if (buf) x.proc.heap().free(buf);
     return int32_t(callIos(x, "_closedir", {dir}));
+}
+int32_t b_alphasort(Ctx& x, GuestPtr a, GuestPtr b) {
+    const GuestPtr ea = a ? x.mem.read<uint32_t>(a) : 0;
+    const GuestPtr eb = b ? x.mem.read<uint32_t>(b) : 0;
+    return std::strcmp(ea ? x.proc.readCString(ea + 19, 256).c_str() : "",
+                       eb ? x.proc.readCString(eb + 19, 256).c_str() : "");
+}
+int32_t b_scandir(Ctx& x, GuestPtr path, GuestPtr namelistOut, GuestPtr filterFn, GuestPtr comparFn) {
+    const uint32_t dir = b_opendir(x, path);
+    if (!dir) return -1;
+    const uint32_t scratch = x.proc.heap().allocZeroed(280);
+    std::vector<uint32_t> entries;
+    while (nextEntry(x, dir, scratch)) {
+        if (filterFn && int32_t(x.proc.callGuest(x.cpu, filterFn, {scratch})) == 0) continue;
+        const uint32_t item = uint32_t(callIos(x, "_malloc", {280}));
+        if (!item) break;
+        std::memcpy(x.mem.host(item), x.mem.host(scratch), 280);
+        entries.push_back(item);
+    }
+    x.proc.heap().free(scratch);
+    b_closedir(x, dir);
+    if (comparFn && entries.size() > 1) {
+        const uint32_t pair = x.proc.heap().alloc(8);
+        std::sort(entries.begin(), entries.end(), [&](uint32_t a, uint32_t b) {
+            x.mem.write<uint32_t>(pair, a);
+            x.mem.write<uint32_t>(pair + 4, b);
+            return int32_t(x.proc.callGuest(x.cpu, comparFn, {pair, pair + 4})) < 0;
+        });
+        x.proc.heap().free(pair);
+    }
+    const uint32_t list = uint32_t(callIos(x, "_malloc", {uint32_t(std::max<size_t>(entries.size(), 1) * 4)}));
+    for (size_t i = 0; i < entries.size(); ++i) x.mem.write<uint32_t>(list + uint32_t(i) * 4, entries[i]);
+    if (namelistOut) x.mem.write<uint32_t>(namelistOut, list);
+    return int32_t(entries.size());
 }
 
 // ----------------------------------------------------------------- system ---
@@ -632,10 +687,14 @@ void registerBionic(Process& p) {
     {
         const uint32_t sF = p.defineDataBlock("android:__sF", kBionicFileSize * 3);
         registerStdioStreams(p, sF, kBionicFileSize);
+        p.mem().write<uint32_t>(p.defineDataBlock("android:stdin", 4), sF);
+        p.mem().write<uint32_t>(p.defineDataBlock("android:stdout", 4), sF + kBionicFileSize);
+        p.mem().write<uint32_t>(p.defineDataBlock("android:stderr", 4), sF + kBionicFileSize * 2);
     }
     defineCtype(p);
     p.mem().write<uint32_t>(p.defineDataBlock("android:__page_size", 4), 4096);
     p.defineDataBlock("android:__dso_handle", 4);
+    p.defineDataBlock("android:timezone", 4);
     {
         const uint32_t names = p.defineDataBlock("android:tzname", 8);
         p.mem().write<uint32_t>(names, p.internCString("UTC"));
@@ -650,12 +709,18 @@ void registerBionic(Process& p) {
     B(b_logWrite, "__android_log_write", "to the game log");
     B(b_logPrint, "__android_log_print", "formatted to the game log");
     B(b_logVprint, "__android_log_vprint", "formatted to the game log");
+    B(b_logAssert, "__android_log_assert", "logs the assertion and stops the game");
+    B(b_setAbortMessage, "android_set_abort_message", "logs the abort message");
+    BA(b_openlog, "openlog", "accepted; syslog writes to the game log");
+    BA(b_closelog, "closelog", "accepted; syslog writes to the game log");
+    B(b_syslog, "syslog", "formatted to the game log");
     B(b_atomicCmpxchg, "__atomic_cmpxchg", "host atomic compare-and-swap");
     B(b_atomicSwap, "__atomic_swap", "host atomic exchange");
     B(b_atomicInc, "__atomic_inc", "host atomic increment");
     B(b_atomicDec, "__atomic_dec", "host atomic decrement");
     B(b_findExidx, "__gnu_Unwind_Find_exidx", "the library's PT_ARM_EXIDX table");
     B(b_open, "open", "Linux open flags translated to the iOS open");
+    B(b_open2, "__open_2", "FORTIFY 2-argument open");
     B(b_fcntl, "fcntl", "Linux status flags translated to the iOS fcntl");
     B(b_stat, "stat", "bionic struct stat");
     B(b_lstat, "lstat", "bionic struct stat");
@@ -667,6 +732,8 @@ void registerBionic(Process& p) {
     B(b_readdir, "readdir", "bionic struct dirent");
     B(b_readdir_r, "readdir_r", "bionic struct dirent");
     B(b_closedir, "closedir", "iOS closedir");
+    B(b_alphasort, "alphasort", "bionic dirent name comparison");
+    B(b_scandir, "scandir", "directory scan into guest-allocated bionic dirents");
     BA(b_sysconf, "sysconf", "bionic names for page size, processors, memory and clock ticks; others EINVAL");
     B(b_clockGettime, "clock_gettime", "Linux clock ids translated");
     BA(b_noChildProcesses, "fork", "no child processes: EAGAIN");

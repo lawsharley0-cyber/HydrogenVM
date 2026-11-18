@@ -706,7 +706,7 @@ void registerJavaServices(Jni& j) {
             field(j, self, "value") = a[0];
             return JValue(0);
         });
-        j.method(cls, "valueOf", "(" + sig + ")L" + cls + ";", [cls](Jni& j, Ctx&, jobject, const auto& a) {
+        j.method(cls, "valueOf", "(" + sig + ")L" + cls + ";", [cls = cls](Jni& j, Ctx&, jobject, const auto& a) {
             const jobject b = j.newObject(cls);
             std::lock_guard<std::recursive_mutex> lk(j.mu);
             field(j, b, "value") = a[0];

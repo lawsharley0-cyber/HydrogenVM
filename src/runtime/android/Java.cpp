@@ -106,9 +106,19 @@ void registerJavaPlatform(Jni& j) {
         j.method(c, "getPackageName", "()Ljava/lang/String;", [&p](Jni& j, Ctx&, jobject, const auto&) {
             return JValue(j.newString(packageName(p)));
         });
-        j.method(c, "getPackageCodePath", "()Ljava/lang/String;", [&p](Jni& j, Ctx&, jobject, const auto&) {
-            return JValue(j.newString(p.guestPath(p.config().bundlePath) + "/base.apk"));
-        });
+        for (const char* m : {"getPackageCodePath", "getPackageResourcePath"})
+            j.method(c, m, "()Ljava/lang/String;", [&p](Jni& j, Ctx&, jobject, const auto&) {
+                const std::string host = p.config().bundlePath + "/base.apk";
+                std::error_code ec;
+                if (!fs::exists(host, ec)) {
+                    static constexpr uint8_t kEmptyZip[22] = {'P', 'K', 5, 6};
+                    if (std::FILE* f = std::fopen(host.c_str(), "wb")) {
+                        std::fwrite(kEmptyZip, 1, sizeof kEmptyZip, f);
+                        std::fclose(f);
+                    }
+                }
+                return JValue(j.newString(p.guestPath(p.config().bundlePath) + "/base.apk"));
+            });
         j.method(c, "getClassLoader", "()Ljava/lang/ClassLoader;", [](Jni& j, Ctx&, jobject, const auto&) {
             return JValue(j.classFor("java/lang/ClassLoader"));
         });
@@ -122,11 +132,16 @@ void registerJavaPlatform(Jni& j) {
             return JValue(jobject(j.staticFields["hvm.assets"]));
         });
     }
+    const jobject mounted = j.newString("mounted"), mountedRo = j.newString("mounted_ro");
+    if (JObject* o = j.get(mounted)) o->permanent = true;
+    if (JObject* o = j.get(mountedRo)) o->permanent = true;
+    j.staticFields["android/os/Environment.MEDIA_MOUNTED"] = mounted;
+    j.staticFields["android/os/Environment.MEDIA_MOUNTED_READ_ONLY"] = mountedRo;
     j.method("android/os/Environment", "getExternalStorageDirectory", "()Ljava/io/File;", [&p](Jni& j, Ctx&, jobject, const auto&) {
         return JValue(newFile(j, ensureDir(p, sdcard(p))));
     });
-    j.method("android/os/Environment", "getExternalStorageState", "()Ljava/lang/String;", [](Jni& j, Ctx&, jobject, const auto&) {
-        return JValue(j.newString("mounted"));
+    j.method("android/os/Environment", "getExternalStorageState", "()Ljava/lang/String;", [mounted](Jni&, Ctx&, jobject, const auto&) {
+        return JValue(mounted);
     });
 
     // java.io.File

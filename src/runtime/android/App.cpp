@@ -190,7 +190,7 @@ void registerJavaClasses(Jni& j) {
         o.fields["hvm.length"] = uint64_t(fs::file_size(path));
         return JValue(j.add(std::move(o)));
     });
-    j.method(kAM, "list", "(Ljava/lang/String;)[Ljava/lang/String;", [](Jni& j, Ctx& x, jobject, const auto& a) {
+    auto listAssets = [](Jni& j, Ctx& x, jobject, const std::vector<JValue>& a) {
         std::vector<std::string> names;
         std::error_code ec;
         for (auto& e : fs::directory_iterator(assetsDir(x.proc) + "/" + j.string(jobject(a[0])), ec))
@@ -201,7 +201,12 @@ void registerJavaClasses(Jni& j) {
             if (JObject* o = j.get(arr)) o->refs[i] = s;
         }
         return JValue(arr);
-    });
+    };
+    j.method(kAM, "list", "(Ljava/lang/String;)[Ljava/lang/String;", listAssets);
+    j.method(kAct, "listDir", "(Ljava/lang/String;)[Ljava/lang/String;", listAssets);
+    j.method("android/app/Activity", "listDir", "(Ljava/lang/String;)[Ljava/lang/String;", listAssets);
+    j.method(kAct, "externalPermitted", "()Z", [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });
+    j.method("android/app/Activity", "externalPermitted", "()Z", [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });
     const std::string kAFD = "android/content/res/AssetFileDescriptor";
     j.method(kAFD, "getFileDescriptor", "()Ljava/io/FileDescriptor;", [](Jni& j, Ctx&, jobject self, const auto&) {
         JObject* o = j.get(self);
@@ -420,6 +425,65 @@ void registerJavaClasses(Jni& j) {
         j.callNative(x, "com/ea/EAAudioCore/AndroidEAAudioCore", "Release", cls, {});
         return JValue(0);
     });
+
+    // SDL2 / SDL3 Java activity and audio manager callbacks.
+    const std::string kSdlAct = "org/libsdl/app/SDLActivity", kSdlAud = "org/libsdl/app/SDLAudioManager";
+    for (const char* sig : {"()Landroid/content/Context;", "()Landroid/app/Activity;"})
+        j.method(kSdlAct, "getContext", sig, [activity](Jni&, Ctx&, jobject, const auto&) { return JValue(activity); });
+    j.method(kSdlAct, "getNativeSurface", "()Landroid/view/Surface;", [](Jni& j, Ctx&, jobject, const auto&) {
+        auto& s = j.staticFields["hvm.sdl.surface"];
+        if (!s) {
+            const jobject surf = j.newObject("android/view/Surface");
+            if (JObject* o = j.get(surf)) o->permanent = true;
+            s = surf;
+        }
+        return JValue(s);
+    });
+    j.method(kSdlAct, "getDisplayDPI", "()Landroid/util/DisplayMetrics;", [](Jni& j, Ctx&, jobject, const auto&) {
+        const jobject dm = j.newObject("android/util/DisplayMetrics");
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(dm)) {
+            o->fields["xdpi"] = jfloat(160.0f);
+            o->fields["ydpi"] = jfloat(160.0f);
+            o->fields["density"] = jfloat(1.0f);
+            o->fields["scaledDensity"] = jfloat(1.0f);
+            o->fields["densityDpi"] = 160;
+        }
+        return JValue(dm);
+    });
+    for (const auto& [name, sig] : std::vector<std::pair<std::string, std::string>>{
+             {"getManifestEnvironmentVariables", "()Z"},
+             {"setActivityTitle", "(Ljava/lang/String;)Z"},
+             {"sendMessage", "(II)Z"},
+             {"createCustomCursor", "([IIIII)I"},
+             {"setCustomCursor", "(I)Z"},
+             {"setSystemCursor", "(I)Z"}})
+        j.method(kSdlAct, name, sig, [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });
+    j.method(kSdlAct, "getPreferredLocales", "()Ljava/lang/String;", [](Jni& j, Ctx&, jobject, const auto&) {
+        return JValue(j.newString("en_US"));
+    });
+    j.method(kSdlAct, "requestPermission", "(Ljava/lang/String;I)V", [](Jni& j, Ctx& x, jobject cls, const auto& a) {
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativePermissionResult", cls, {a.size() > 1 ? uint32_t(a[1]) : 0u, 1u});
+        return JValue(0);
+    });
+    j.method(kSdlAud, "audioOpen", "(IIII)[I", [](Jni& j, Ctx&, jobject, const auto& a) {
+        const jobject arr = j.newArray('I', 4);
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(arr); o && o->data.size() >= 16) {
+            uint32_t* w = reinterpret_cast<uint32_t*>(o->data.data());
+            w[0] = a.size() > 0 && a[0] ? uint32_t(a[0]) : 44100u;
+            w[1] = a.size() > 1 ? uint32_t(a[1]) : 1u;
+            w[2] = a.size() > 2 && a[2] ? uint32_t(a[2]) : 2u;
+            w[3] = a.size() > 3 && a[3] ? uint32_t(a[3]) : 1024u;
+        }
+        return JValue(arr);
+    });
+    for (const char* sig : {"(IZII)[I", "(IIII)[I"})
+        j.method(kSdlAud, "captureOpen", sig, [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    for (const char* cls : {"org/libsdl/app/SDLActivity", "org/libsdl/app/SDLAudioManager",
+                            "org/libsdl/app/SDLControllerManager", "org/libsdl/app/SDLInputConnection",
+                            "org/libsdl/app/HIDDeviceManager", "org/libsdl/app/SDL"})
+        j.quietClasses.insert(cls);
 }
 
 // ------------------------------------------------------------- the activity ---
@@ -801,11 +865,214 @@ struct UnityDriver final : Driver {
     void resume(Ctx& x) override { call(x, "nativeResume"); call(x, "nativeFocusChanged", {1}); }
 };
 
+// Liquid Wars OS (com.xenris.liquidwarsos): GLSurfaceView renderer in libnativeinterface.so.
+struct LiquidWarsDriver final : Driver {
+    Jni& j;
+    jobject cls = 0;
+    int width = 0, height = 0;
+    explicit LiquidWarsDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "LiquidWars"; }
+    static bool matches(const Library& l) {
+        return l.find("Java_com_xenris_liquidwarsos_NativeInterface_onDrawFrame").has_value();
+    }
+    void create(Ctx& x) override {
+        cls = j.classFor("com/xenris/liquidwarsos/NativeInterface");
+        j.callNative(x, "com/xenris/liquidwarsos/NativeInterface", "init", cls, {uint32_t(j.staticFields["hvm.assets"])});
+        j.callNative(x, "com/xenris/liquidwarsos/NativeInterface", "createGame", cls, {0, 0, 1, 100});
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        width = s.width;
+        height = s.height;
+        j.callNative(x, "com/xenris/liquidwarsos/NativeInterface", "onSurfaceCreated", cls, {});
+        j.callNative(x, "com/xenris/liquidwarsos/NativeInterface", "onSurfaceChanged", cls, {uint32_t(s.width), uint32_t(s.height)});
+    }
+    void frame(Ctx& x) override {
+        j.callNative(x, "com/xenris/liquidwarsos/NativeInterface", "stepDots", cls, {});
+        j.callNative(x, "com/xenris/liquidwarsos/NativeInterface", "onDrawFrame", cls, {});
+    }
+    void touch(Ctx& x, TouchPhase, float px, float py, uint32_t, uint32_t) override {
+        if (width <= 0 || height <= 0) return;
+        const int gx = int(px * 640.0f / float(width));
+        const int gy = int((float(height) - py) * 480.0f / float(height));
+        j.callNative(x, "com/xenris/liquidwarsos/NativeInterface", "setPlayerPosition", cls, {0, uint32_t(gx), uint32_t(gy)});
+    }
+};
+
+// SDL2 and SDL3 (org.libsdl.app.SDLActivity): SDL creates its own EGL context on the window
+// surface and runs SDL_main on its own thread.
+struct SdlDriver final : Driver {
+    Jni& j;
+    jobject actCls = 0;
+    float width = 0, height = 0;
+    bool sdl3 = false;
+    std::atomic<bool> exited{false};
+    explicit SdlDriver(Jni& jni) : j(jni) {}
+    const char* name() const override { return sdl3 ? "SDL3" : "SDL2"; }
+    bool ownsGl() const override { return true; }
+    static bool matches(const Library& l) {
+        for (const auto& lib : l.libs)
+            if (lib->name == "libSDL2.so" || lib->name == "libSDL3.so") return true;
+        return false;
+    }
+    void create(Ctx& x) override {
+        actCls = j.classFor("org/libsdl/app/SDLActivity");
+        for (const auto& lib : x.proc.service<Library>().libs)
+            if (lib->name == "libSDL3.so") sdl3 = true;
+        linkExternalFiles(x.proc, fs::path(x.proc.homePath()) / "Library/files");
+        linkExternalData(x.proc, externalRoot(x.proc));
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        width = float(s.width);
+        height = float(s.height);
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeSetupJNI", actCls, {});
+        j.callNative(x, "org/libsdl/app/SDLAudioManager", "nativeSetupJNI", j.classFor("org/libsdl/app/SDLAudioManager"), {});
+        j.callNative(x, "org/libsdl/app/SDLControllerManager", "nativeSetupJNI", j.classFor("org/libsdl/app/SDLControllerManager"), {});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeInitMainThread", actCls, {});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeAddTouch", actCls, {0, j.newString("touch")});
+        bool resSdl3 = sdl3;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (j.registeredNatives.count("org/libsdl/app/SDLActivity.nativeSetScreenResolution(IIIIFF)V")) resSdl3 = true;
+        }
+        if (resSdl3)
+            j.callNative(x, "org/libsdl/app/SDLActivity", "nativeSetScreenResolution", actCls,
+                         {uint32_t(s.width), uint32_t(s.height), uint32_t(s.width), uint32_t(s.height),
+                          uint32_t(jfloat(1.0f)), uint32_t(jfloat(60.0f))});
+        else
+            j.callNative(x, "org/libsdl/app/SDLActivity", "nativeSetScreenResolution", actCls,
+                         {uint32_t(s.width), uint32_t(s.height), uint32_t(s.width), uint32_t(s.height),
+                          1, uint32_t(jfloat(60.0f))});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "onNativeResize", actCls, {});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "onNativeSurfaceCreated", actCls, {});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "onNativeSurfaceChanged", actCls, {});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeResume", actCls, {});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeFocusChanged", actCls, {1});
+
+        std::string mainLib = "libmain.so";
+        for (const auto& lib : x.proc.service<Library>().libs)
+            if (lib->so.image.symbols.count("SDL_main")) { mainLib = lib->name; break; }
+        const uint32_t entry = x.proc.registerHostFunction("__hvm_sdl_main", [this, mainLib](Ctx& tx) {
+            const jobject args = j.newArray('L', 0);
+            if (JObject* o = j.get(args)) o->permanent = true;
+            j.callNative(tx, "org/libsdl/app/SDLActivity", "nativeRunMain", actCls,
+                         {j.newString(mainLib), j.newString("SDL_main"), args});
+            exited.store(true);
+        });
+        x.proc.startThread(entry, 0, 2u << 20, true);
+    }
+    void frame(Ctx&) override {}
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t) override {
+        const uint32_t action = ph == TouchPhase::Began ? 0 : ph == TouchPhase::Moved ? 2 : ph == TouchPhase::Cancelled ? 3 : 1;
+        const float nx = width > 0 ? px / width : 0.5f, ny = height > 0 ? py / height : 0.5f;
+        j.callNative(x, "org/libsdl/app/SDLActivity", "onNativeTouch", actCls,
+                     {0, id, action, uint32_t(jfloat(nx)), uint32_t(jfloat(ny)), uint32_t(jfloat(1.0f))});
+    }
+    void pause(Ctx& x) override {
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeFocusChanged", actCls, {0});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativePause", actCls, {});
+    }
+    void resume(Ctx& x) override {
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeResume", actCls, {});
+        j.callNative(x, "org/libsdl/app/SDLActivity", "nativeFocusChanged", actCls, {1});
+    }
+    bool wantsExit(Ctx&) override { return exited.load(); }
+};
+
+// Pelya's commandergenius SDL 1.2 port (libsdl-1.2.so + libsdl_main.so): DemoRenderer.nativeInit
+// runs SDL_main on the GL thread and calls DemoRenderer.swapBuffers()I to present each frame.
+struct Sdl12Driver final : Driver {
+    Jni& j;
+    std::string pkg;
+    jobject renderer = 0, audio = 0, view = 0;
+    bool ran = false, exited = false;
+    explicit Sdl12Driver(Jni& jni) : j(jni) {}
+    const char* name() const override { return "SDL 1.2"; }
+    static std::string findPkg(const Library& l) {
+        const std::string pre = "Java_", suf = "_DemoRenderer_nativeInit";
+        for (const auto& lib : l.libs)
+            for (const auto& [sym, _] : lib->so.image.symbols)
+                if (sym.rfind(pre, 0) == 0 && sym.size() > pre.size() + suf.size() &&
+                    sym.compare(sym.size() - suf.size(), suf.size(), suf) == 0) {
+                    std::string p = sym.substr(pre.size(), sym.size() - pre.size() - suf.size());
+                    for (char& c : p) if (c == '_') c = '/';
+                    return p;
+                }
+        return {};
+    }
+    static bool matches(const Library& l) { return !findPkg(l).empty(); }
+    void create(Ctx& x) override {
+        pkg = findPkg(x.proc.service<Library>());
+        const fs::path files = fs::path(x.proc.homePath()) / "Library/files";
+        std::error_code ec;
+        fs::create_directories(files, ec);
+        linkExternalFiles(x.proc, files);
+        for (auto& e : fs::directory_iterator(assetsDir(x.proc), ec)) {
+            if (e.path().extension() != ".zip") continue;
+            try {
+                Loader::ZipReader zip(e.path().string());
+                zip.extract("", files.string(), true);
+            } catch (const std::exception&) {}
+        }
+        const std::string rCls = pkg + "/DemoRenderer", aCls = pkg + "/AudioThread", vCls = pkg + "/DemoGLSurfaceView";
+        for (const std::string& c : {rCls, aCls, vCls, pkg + "/MainActivity", pkg + "/Settings"}) j.quietClasses.insert(c);
+        j.method(rCls, "swapBuffers", "()I", [](Jni&, Ctx& tx, jobject, const auto&) {
+            if (GlSurface* g = currentSurface()) present(tx.proc, tx.cpu, *g, surfaceFor(tx.proc));
+            return JValue(tx.proc.stopping() ? 0 : 1);
+        });
+        j.method(aCls, "initAudio", "(IIII)I", [](Jni& jni, Ctx&, jobject, const auto& a) {
+            const uint32_t sz = a.size() > 3 && a[3] ? uint32_t(a[3]) : 4096u;
+            const jobject buf = jni.newArray('B', sz);
+            if (JObject* o = jni.get(buf)) o->permanent = true;
+            jni.staticFields["hvm.sdl12.audiobuf"] = buf;
+            return JValue(sz);
+        });
+        j.method(aCls, "getBuffer", "()[B", [](Jni& jni, Ctx&, jobject, const auto&) {
+            auto& buf = jni.staticFields["hvm.sdl12.audiobuf"];
+            if (!buf) {
+                const jobject b = jni.newArray('B', 4096);
+                if (JObject* o = jni.get(b)) o->permanent = true;
+                buf = b;
+            }
+            return JValue(buf);
+        });
+        for (const char* m : {"fillBuffer", "initAudioThread", "deinitAudio", "pauseAudioPlayback", "resumeAudioPlayback"})
+            j.method(aCls, m, "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(1); });
+    }
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        renderer = j.newObject(pkg + "/DemoRenderer");
+        if (JObject* o = j.get(renderer)) o->permanent = true;
+        audio = j.newObject(pkg + "/AudioThread");
+        if (JObject* o = j.get(audio)) o->permanent = true;
+        view = j.newObject(pkg + "/DemoGLSurfaceView");
+        if (JObject* o = j.get(view)) o->permanent = true;
+        j.callNative(x, pkg + "/AudioThread", "nativeAudioInitJavaCallbacks", audio, {});
+        j.callNative(x, pkg + "/DemoRenderer", "nativeInitJavaCallbacks", renderer, {});
+        j.callNative(x, pkg + "/Settings", "nativeInitKeymap", j.classFor(pkg + "/Settings"), {});
+        j.callNative(x, pkg + "/DemoRenderer", "nativeResize", renderer, {uint32_t(s.width), uint32_t(s.height), 0});
+    }
+    void frame(Ctx& x) override {
+        if (ran) return;
+        ran = true;
+        const std::string dataDir = x.proc.guestPath((fs::path(x.proc.homePath()) / "Library/files").string());
+        j.callNative(x, pkg + "/DemoRenderer", "nativeInit", renderer, {j.newString(dataDir), j.newString("sdl"), 0, 0});
+        exited = true;
+    }
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t) override {
+        const uint32_t action = ph == TouchPhase::Began ? 0 : ph == TouchPhase::Moved ? 2 : 1;
+        j.callNative(x, pkg + "/DemoGLSurfaceView", "nativeMotionEvent", view,
+                     {uint32_t(int(px)), uint32_t(int(py)), action, id, 1000, 1000});
+    }
+    bool wantsExit(Ctx&) override { return exited; }
+};
+
 std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
     const auto& lib = p.service<Library>();
     if (EaBlastDriver::matches(lib)) return std::make_unique<EaBlastDriver>(j);
     if (UbisoftUafDriver::matches(lib)) return std::make_unique<UbisoftUafDriver>(j);
     if (UnityDriver::matches(lib)) return std::make_unique<UnityDriver>(j);
+    if (LiquidWarsDriver::matches(lib)) return std::make_unique<LiquidWarsDriver>(j);
+    if (SdlDriver::matches(lib)) return std::make_unique<SdlDriver>(j);
+    if (Sdl12Driver::matches(lib)) return std::make_unique<Sdl12Driver>(j);
     return nullptr;
 }
 

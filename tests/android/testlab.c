@@ -224,6 +224,88 @@ static void test_jni(JNIEnv* env) {
     check("direct buffer keeps its capacity", cap == (long long)sizeof buffer, "capacity", (long)cap);
 }
 
+/* ----------------------------------------------------------- bionic & NDK --- */
+
+static int streq(const char* a, const char* b) {
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+static void test_bionic_gaps(void) {
+    float sf = -1.0f, cf = -1.0f;
+    sincosf(0.0f, &sf, &cf);
+    check("sincosf(0) writes sin=0, cos=1", sf == 0.0f && cf == 1.0f, "cos*100", (long)(cf * 100.0f));
+
+    double sd = -1.0, cd = -1.0;
+    sincos(0.0, &sd, &cd);
+    check("sincos(0) writes sin=0, cos=1", sd == 0.0 && cd == 1.0, "cos*100", (long)(cd * 100.0));
+
+    const char* hello = "hello";
+    check("__strlen_chk returns string length", __strlen_chk(hello, 16) == 5, "len", (long)__strlen_chk(hello, 16));
+    check("__strchr_chk finds first match", __strchr_chk(hello, 'l', 16) == hello + 2, "offset",
+          (long)(__strchr_chk(hello, 'l', 16) - hello));
+    check("__strrchr_chk finds last match", __strrchr_chk(hello, 'l', 16) == hello + 3, "offset",
+          (long)(__strrchr_chk(hello, 'l', 16) - hello));
+
+    unsigned long fdset[32];
+    for (int i = 0; i < 32; i++) fdset[i] = 0;
+    __FD_SET_chk(5, fdset, sizeof fdset);
+    check("__FD_SET_chk / __FD_ISSET_chk tracks fd bit",
+          __FD_ISSET_chk(5, fdset, sizeof fdset) != 0 && __FD_ISSET_chk(4, fdset, sizeof fdset) == 0,
+          "isset(5)", __FD_ISSET_chk(5, fdset, sizeof fdset));
+
+    const int fd = __open_2("/proc/cpuinfo", O_RDONLY);
+    char buf[64];
+    const ssize_t nr = fd >= 0 ? __read_chk(fd, buf, 32, sizeof buf) : -1;
+    if (fd >= 0) close(fd);
+    check("__open_2 + __read_chk reads file bytes", nr > 0, "bytes", nr);
+
+    char* end = 0;
+    const long long imax = strtoimax("-1234567890123", &end, 10);
+    check("strtoimax parses signed 64-bit decimal", imax == -1234567890123LL && end && *end == 0, "low", (long)imax);
+    const unsigned long long umax = strtoumax("0xffffffff00000001", &end, 16);
+    check("strtoumax parses unsigned 64-bit hex", umax == 0xffffffff00000001ULL && end && *end == 0, "low", (long)umax);
+
+    struct dirent_t** namelist = 0;
+    const int count = scandir(".", &namelist, 0, alphasort);
+    int dot_idx = -1, dotdot_idx = -1, sorted = 1;
+    for (int i = 0; i < count && namelist; i++) {
+        if (namelist[i]) {
+            if (streq(namelist[i]->d_name, ".")) dot_idx = i;
+            if (streq(namelist[i]->d_name, "..")) dotdot_idx = i;
+            if (i > 0 && namelist[i - 1] && alphasort((const struct dirent_t**)&namelist[i - 1],
+                                                      (const struct dirent_t**)&namelist[i]) > 0)
+                sorted = 0;
+        }
+    }
+    for (int i = 0; i < count && namelist; i++) if (namelist[i]) free(namelist[i]);
+    if (namelist) free(namelist);
+    check("scandir + alphasort lists directory entries in order",
+          count >= 2 && dot_idx >= 0 && dotdot_idx > dot_idx && sorted, "count", count);
+
+    unsigned char rnd[32];
+    for (int i = 0; i < 32; i++) rnd[i] = 0;
+    const int ge_ok = getentropy(rnd, sizeof rnd);
+    int nonzero = 0;
+    for (int i = 0; i < 32; i++) if (rnd[i] != 0) nonzero++;
+    errno = 0;
+    const int ge_big = getentropy(rnd, 257);
+    const int ge_err = errno;
+    check("getentropy(32) fills buffer and >256 sets EIO",
+          ge_ok == 0 && nonzero > 0 && ge_big == -1 && ge_err == EIO, "errno", ge_err);
+
+    void* sl_rec = dlsym(RTLD_DEFAULT, "SL_IID_RECORD");
+    check("SL_IID_RECORD OpenSL ES symbol resolves", sl_rec != 0, "ptr", (long)sl_rec);
+
+    struct { unsigned env; unsigned canary[3]; } fenv_frame = {0, {0xDEADBEEFu, 0xCAFEBABEu, 0x12345678u}};
+    const int fh = feholdexcept(&fenv_frame.env);
+    const int fs = fesetenv((const unsigned*)-1);
+    check("feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)",
+          fh == 0 && fs == 0 && fenv_frame.canary[0] == 0xDEADBEEFu &&
+              fenv_frame.canary[1] == 0xCAFEBABEu && fenv_frame.canary[2] == 0x12345678u,
+          "canary0", (long)fenv_frame.canary[0]);
+}
+
 /* ------------------------------------------------------------------- main --- */
 
 int hvm_test_main(JNIEnv* env, void* vm) {
@@ -238,6 +320,7 @@ int hvm_test_main(JNIEnv* env, void* vm) {
     test_proc();
     test_code_rewrite();
     test_jni(env);
+    test_bionic_gaps();
     say("done: "); num(failures); say(" failure(s)\n");
     return failures;
 }
