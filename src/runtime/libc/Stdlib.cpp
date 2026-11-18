@@ -3,6 +3,7 @@
 #include <mutex>
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -245,12 +246,25 @@ uint32_t c_bsearch(Ctx& x, GuestPtr key, GuestPtr base, uint32_t n, uint32_t siz
 
 // ---------------------------------------------------------------- random ---
 
+struct IoPolicy {
+    explicit IoPolicy(Process&) {}
+    std::atomic<int32_t> policy[3] = {0, 0, 0};   // process, thread (one value: no per-thread I/O), darwin bg
+};
+int32_t io_setPolicy(Ctx& x, int32_t type, int32_t scope, int32_t policy) {
+    if (type != 0 || scope < 0 || scope > 2 || policy < 0 || policy > 5) { setErrno(x, EINVAL); return -1; }
+    x.proc.service<IoPolicy>().policy[scope] = policy;
+    return 0;
+}
+int32_t io_getPolicy(Ctx& x, int32_t type, int32_t scope) {
+    if (type != 0 || scope < 0 || scope > 2) { setErrno(x, EINVAL); return -1; }
+    return x.proc.service<IoPolicy>().policy[scope];
+}
 struct RandState {
-    explicit RandState(Process&) {}
+    explicit RandState(Process& p) : arc(uint32_t(p.entropy())) {}
     std::mutex mu;
     uint32_t next = 1;            // rand()
     std::mt19937 random{1};       // random()
-    std::mt19937 arc{std::random_device{}()};
+    std::mt19937 arc;              // arc4random: seeded from the session (runtime/Session.hpp)
     double drand = 0;
 };
 // Darwin/FreeBSD rand(): Park–Miller "minimal standard" generator.
@@ -265,9 +279,25 @@ int32_t r_rand(Ctx& x) {
     s.next = uint32_t(v);
     return int32_t(uint32_t(v) % (uint32_t(0x7FFFFFFF) + 1));
 }
-void r_srand(Ctx& x, uint32_t seed) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.next = seed; }
+void r_srand(Ctx& x, uint32_t seed) {
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayRngSeed("srand")) seed = uint32_t(*v);
+    } else if (session.recordingDetails()) {
+        session.recordRngSeed("srand", seed, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.next = seed;
+}
 int32_t r_random(Ctx& x) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); return int32_t(s.random() & 0x7FFFFFFF); }
-void r_srandom(Ctx& x, uint32_t seed) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.random.seed(seed); }
+void r_srandom(Ctx& x, uint32_t seed) {
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayRngSeed("srandom")) seed = uint32_t(*v);
+    } else if (session.recordingDetails()) {
+        session.recordRngSeed("srandom", seed, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.random.seed(seed);
+}
 uint32_t r_arc4random(Ctx& x) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); return uint32_t(s.arc()); }
 uint32_t r_arc4random_uniform(Ctx& x, uint32_t upper) {
     if (upper < 2) return 0;
@@ -492,8 +522,12 @@ void registerLibcStdlib(Process& p) {
     p.def<&r_random>("_random");
     p.def<&r_srandom>("_srandom");
     // srandomdev(): seed random() from the host's entropy.
-    p.def<+[](Ctx& x) { r_srandom(x, std::random_device{}()); }>("_srandomdev");
+    p.def<+[](Ctx& x) { r_srandom(x, uint32_t(x.proc.entropy())); }>("_srandomdev");
     p.def<&r_arc4random>("_arc4random");
+    // setiopolicy_np(iotype, scope, policy) (Crossy Road #532): the host schedules I/O; the policy
+    // is remembered so getiopolicy_np reads it back. IOPOL_TYPE_DISK = 0; IOPOL_DEFAULT = 0.
+    p.def<&io_setPolicy>("_setiopolicy_np");
+    p.def<&io_getPolicy>("_getiopolicy_np");
     p.def<&r_arc4random_uniform>("_arc4random_uniform");
     p.def<&r_arc4random_buf>("_arc4random_buf");
     p.def<&r_drand48>("_drand48");

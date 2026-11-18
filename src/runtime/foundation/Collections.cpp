@@ -17,14 +17,19 @@ struct DictData : ObjC::HostObject {
     bool copyStringKeys = false;   // created with kCFCopyStringDictionaryKeyCallBacks
     uint32_t mutationCell = 0;
 };
-struct SetData : ObjC::HostObject { std::vector<id> items; bool isMutable = false; uint32_t mutationCell = 0; };
+struct SetData : ObjC::HostObject {
+    std::vector<id> items; bool isMutable = false; uint32_t mutationCell = 0;
+    // NSCountedSet only: occurrences per stored element. A member with no entry counts once, so the
+    // generic NSMutableSet paths (minusSet:, intersectSet:) stay correct without knowing about counts.
+    std::vector<std::pair<id, uint32_t>> counts;
+};
 struct EnumData : ObjC::HostObject { std::vector<id> items; size_t pos = 0; id owner = 0; };
 
 struct Colls {
     explicit Colls(Process&) {}
     Class nsArray = 0, nsMutableArray = 0, arrayI = 0, arrayM = 0;
     Class nsDict = 0, nsMutableDict = 0, dictI = 0, dictM = 0;
-    Class nsSet = 0, nsMutableSet = 0, setI = 0, setM = 0;
+    Class nsSet = 0, nsMutableSet = 0, setI = 0, setM = 0, countedSet = 0;
     Class enumerator = 0;
     uint32_t constMutationCell = 0;
 };
@@ -714,6 +719,21 @@ void d_enumerateKeysAndObjects(Ctx& x, id self, SEL, id block) {
     }
     x.proc.heap().free(stop);
 }
+// Dictionaries are unordered: NSEnumerationReverse changes nothing and NSEnumerationConcurrent may run serially.
+void d_enumerateKeysAndObjectsOpts(Ctx& x, id self, SEL s, uint32_t, id block) { d_enumerateKeysAndObjects(x, self, s, block); }
+id d_keysOfEntriesPassingTest(Ctx& x, id self, SEL, id block) {
+    if (!block) throw ObjC::ObjCError("*** -[NSDictionary keysOfEntriesPassingTest:]: block cannot be nil");
+    const uint32_t stop = x.proc.heap().allocZeroed(4);
+    const uint32_t invoke = x.mem.read<uint32_t>(block + 12);
+    std::vector<id> keys;
+    for (auto& [k, v] : entriesOf(x, self)) {
+        if (uint32_t(x.proc.callGuest(x.cpu, invoke, {block, k, v, stop})) & 0xFF) keys.push_back(k);
+        if (x.mem.read<uint8_t>(stop)) break;
+    }
+    x.proc.heap().free(stop);
+    return makeSet(x, keys);
+}
+id d_keysOfEntriesWithOptions(Ctx& x, id self, SEL s, uint32_t, id block) { return d_keysOfEntriesPassingTest(x, self, s, block); }
 bool d_isEqualToDictionary(Ctx& x, id self, SEL, id o) {
     if (o == self) return true;
     if (!o || !isDict(x, o)) return false;
@@ -800,6 +820,15 @@ void setAdd(Ctx& x, SetData& d, id o) {
 id s_allocWithZone(Ctx& x, id self, SEL, uint32_t) {
     if (self == C(x).nsSet || self == C(x).setI) return newSet(x, false);
     if (self == C(x).nsMutableSet || self == C(x).setM) return newSet(x, true);
+    bool counted = false;
+    for (Class k = self; k && !counted; k = rt(x).superclass(k)) counted = k == C(x).countedSet;
+    if (counted) {
+        const id s = rt(x).createInstance(self);
+        auto d = std::make_unique<SetData>();
+        d->isMutable = true;
+        rt(x).setHost(s, std::move(d));
+        return s;
+    }
     return rt(x).createInstance(self);
 }
 id s_alloc(Ctx& x, id self, SEL s) { return s_allocWithZone(x, self, s, 0); }
@@ -836,6 +865,8 @@ void st_enumerateUsingBlock(Ctx& x, id self, SEL, id block) {
     for (id o : itemsOf(x, self)) { callBlock(x, block, {o, stop}); if (x.mem.read<uint8_t>(stop)) break; }
     x.proc.heap().free(stop);
 }
+// Sets are unordered, so NSEnumerationReverse changes nothing; NSEnumerationConcurrent may run serially.
+void st_enumerateWithOptions(Ctx& x, id self, SEL s, uint32_t, id block) { st_enumerateUsingBlock(x, self, s, block); }
 void st_makeObjectsPerform(Ctx& x, id self, SEL, SEL s) { for (id o : itemsOf(x, self)) rt(x).send(x.cpu, o, s); }
 bool st_isEqualToSet(Ctx& x, id self, SEL, id o) {
     SetData *a = sd(x, self), *b = o ? sd(x, o) : nullptr;
@@ -869,6 +900,50 @@ void sm_intersectSet(Ctx& x, id self, SEL s, id other) {
     SetData* o = sd(x, other);
     auto items = d.items;
     for (id e : items) if (!o || !setContains(x, *o, e)) sm_removeObject(x, self, s, e);
+}
+id storedMember(Ctx& x, SetData& d, id o) { for (id e : d.items) if (objectsEqual(x, e, o)) return e; return 0; }
+uint32_t* countSlot(SetData& d, id stored) {
+    for (auto& [e, n] : d.counts) if (e == stored) return &n;
+    return nullptr;
+}
+void cs_addObject(Ctx& x, id self, SEL, id o) {
+    auto& d = smut(x, self);
+    if (const id e = o ? storedMember(x, d, o) : 0) {
+        if (uint32_t* n = countSlot(d, e)) ++*n; else d.counts.push_back({e, 2});
+        return;
+    }
+    setAdd(x, d, o);
+    const id e = d.items.back();
+    if (uint32_t* n = countSlot(d, e)) *n = 1;   // a stale entry from an element removed by a generic path
+}
+void cs_removeObject(Ctx& x, id self, SEL s, id o) {
+    auto& d = smut(x, self);
+    const id e = o ? storedMember(x, d, o) : 0;
+    if (!e) return;
+    if (uint32_t* n = countSlot(d, e); n && *n > 1) { --*n; return; }
+    std::erase_if(d.counts, [&](const auto& c) { return c.first == e; });
+    sm_removeObject(x, self, s, o);
+}
+uint32_t cs_countForObject(Ctx& x, id self, SEL, id o) {
+    SetData* d = sd(x, self);
+    const id e = d && o ? storedMember(x, *d, o) : 0;
+    if (!e) return 0;
+    const uint32_t* n = countSlot(*d, e);
+    return n ? *n : 1;
+}
+void cs_removeAllObjects(Ctx& x, id self, SEL s) { smut(x, self).counts.clear(); sm_removeAllObjects(x, self, s); }
+void cs_addObjectsFromArray(Ctx& x, id self, SEL s, id a) { for (id o : itemsOf(x, a)) cs_addObject(x, self, s, o); }
+id cs_initWithArray(Ctx& x, id self, SEL s, id a) { cs_addObjectsFromArray(x, self, s, a); return self; }
+id cs_initWithSet(Ctx& x, id self, SEL s, id other) {
+    // Copying another counted set keeps its counts.
+    for (id o : itemsOf(x, other)) {
+        const uint32_t n = sd(x, other) && rt(x).isKindOf(other, C(x).countedSet) ? cs_countForObject(x, other, s, o) : 1;
+        for (uint32_t i = 0; i < n; ++i) cs_addObject(x, self, s, o);
+    }
+    return self;
+}
+id cs_copyWithZone(Ctx& x, id self, SEL s, uint32_t) {
+    return cs_initWithSet(x, s_allocWithZone(x, C(x).countedSet, s, 0), s, self);
 }
 void set_dealloc(Ctx& x, id self, SEL) {
     if (SetData* d = sd(x, self)) {
@@ -1262,7 +1337,8 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&d_valueForKey>("valueForKey:").m<&d_allKeys>("allKeys").m<&d_allValues>("allValues")
       .m<&d_allKeysForObject>("allKeysForObject:").m<&d_keyEnumerator>("keyEnumerator").m<&d_objectEnumerator>("objectEnumerator")
       .m<&d_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
-      .m<&d_enumerateKeysAndObjects>("enumerateKeysAndObjectsUsingBlock:")
+      .m<&d_enumerateKeysAndObjects>("enumerateKeysAndObjectsUsingBlock:").m<&d_enumerateKeysAndObjectsOpts>("enumerateKeysAndObjectsWithOptions:usingBlock:")
+      .m<&d_keysOfEntriesPassingTest>("keysOfEntriesPassingTest:").m<&d_keysOfEntriesWithOptions>("keysOfEntriesWithOptions:passingTest:")
       .m<&d_isEqualToDictionary>("isEqualToDictionary:", "c@:@").m<&d_isEqualToDictionary>("isEqual:", "c@:@").m<&d_hash>("hash", "I@:")
       .m<&d_copyWithZone>("copyWithZone:").m<&d_mutableCopyWithZone>("mutableCopyWithZone:").m<&d_copy>("copy").m<&d_mutableCopy>("mutableCopy")
       .m<&d_writeToFile>("writeToFile:atomically:").m<&d_writeToURL>("writeToURL:atomically:").m<&d_keysSortedByValueUsingSelector>("keysSortedByValueUsingSelector:")
@@ -1289,7 +1365,7 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&st_count>("count", "I@:").m<&st_anyObject>("anyObject").m<&st_allObjects>("allObjects")
       .m<&st_containsObject>("containsObject:", "c@:@").m<&st_member>("member:").m<&st_objectEnumerator>("objectEnumerator")
       .m<&st_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
-      .m<&st_enumerateUsingBlock>("enumerateObjectsUsingBlock:").m<&st_makeObjectsPerform>("makeObjectsPerformSelector:", "v@::")
+      .m<&st_enumerateUsingBlock>("enumerateObjectsUsingBlock:").m<&st_enumerateWithOptions>("enumerateObjectsWithOptions:usingBlock:").m<&st_makeObjectsPerform>("makeObjectsPerformSelector:", "v@::")
       .m<&st_isEqualToSet>("isEqualToSet:", "c@:@").m<&st_isEqualToSet>("isEqual:", "c@:@").m<&st_intersectsSet>("intersectsSet:", "c@:@")
       .m<&st_setByAddingObject>("setByAddingObject:")
       .m<&st_copyWithZone>("copyWithZone:").m<&st_mutableCopyWithZone>("mutableCopyWithZone:").m<&st_copy>("copy").m<&st_mutableCopy>("mutableCopy")
@@ -1300,6 +1376,14 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
        .m<&sm_minusSet>("minusSet:").m<&sm_intersectSet>("intersectSet:");
     si.m<&set_dealloc>("dealloc", "v@:");
     sm.m<&set_dealloc>("dealloc", "v@:");
+    ObjC::ClassBuilder cs = r.defineClass("NSCountedSet", "NSMutableSet");
+    c.countedSet = cs.cls();
+    cs.m<&cs_addObject>("addObject:", "v@:@").m<&cs_removeObject>("removeObject:", "v@:@")
+      .m<&cs_countForObject>("countForObject:", "I@:@").m<&cs_removeAllObjects>("removeAllObjects", "v@:")
+      .m<&cs_addObjectsFromArray>("addObjectsFromArray:").m<&cs_addObjectsFromArray>("unionSet:")
+      .m<&cs_initWithArray>("initWithArray:").m<&cs_initWithSet>("initWithSet:")
+      .m<&cs_copyWithZone>("copyWithZone:").m<&cs_copyWithZone>("mutableCopyWithZone:")
+      .m<&set_dealloc>("dealloc", "v@:");
 
     ObjC::ClassBuilder nos = r.defineClass("NSOrderedSet", "NSObject");
     ObjC::ClassBuilder nmos = r.defineClass("NSMutableOrderedSet", "NSOrderedSet");

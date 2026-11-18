@@ -20,6 +20,9 @@ struct AppInfo {
     bool encrypted = false;
     bool runnable = false;         // 32-bit ARM, not encrypted
     std::string problem;           // why it can't run, for the UI
+    std::string androidLibrary;    // an Android app (Apk.hpp): its native library, else ""
+    std::string engine;            // Android: the game engine ("Unity (Mono)", "Cocos2d-x", ...), "" if unknown
+    std::string engineSupport;     // Android: "driver" (HydrogenVM plays it), "planned" or "none"
     size_t restoredDataFiles = 0;  // importIpa: files put in the app's home from the IPA's Container/
     Plist::ValuePtr infoPlist;
 };

@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — BSD sockets, name resolution and network interfaces.
 //
 // By default HydrogenVM runs apps offline (reachability reports no network), so
@@ -80,7 +81,7 @@ bool span(Ctx& x, GuestPtr ptr, uint32_t n, uint8_t prot) {
         if ((x.mem.protAt(uint32_t(a)) & prot) != prot) return false;
     return true;
 }
-bool internet(Ctx& x) { return x.proc.config().internetAccess; }
+bool internet(Ctx& x) { return Compat::internetAccess(x.proc); }
 void tellInternetOnce(Ctx& x) {
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) x.proc.logf(LogLevel::Info, "Internet: allowed for this game (its \"Allow internet\" switch is on)");
@@ -603,6 +604,31 @@ uint32_t n_gethostbyname(Ctx& x, GuestPtr namePtr) {
 uint32_t n_nullHost3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
 // Interfaces a phone has: lo0 and en0 (Wi-Fi). Apps read en0's MAC address
 // through sysctl(NET_RT_IFLIST) (System.cpp) and fail when en0 is missing.
+// link_ntoa(const struct sockaddr_dl*) (Goat Simulator #536): BSD's text form of a link-level
+// address, "name:a.b.c..." with each byte in hex without a leading zero, in a static buffer.
+// struct sockaddr_dl: len, family, index(2), type, nlen, alen, slen, data[12] (name then address).
+uint32_t n_linkNtoa(Ctx& x, GuestPtr sdl) {
+    static const char kBuf = 0;
+    uint32_t& buf = x.proc.processSlot(&kBuf);
+    if (!buf) buf = x.proc.allocStatic(64);
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    if (sdl) {
+        const uint8_t nlen = x.mem.read<uint8_t>(sdl + 5), alen = x.mem.read<uint8_t>(sdl + 6);
+        for (uint32_t i = 0; i < nlen && out.size() < 40; ++i) out += char(x.mem.read<uint8_t>(sdl + 8 + i));
+        if (nlen && alen) out += ':';
+        for (uint32_t i = 0; i < alen && out.size() < 60; ++i) {
+            if (i) out += '.';
+            const uint8_t b = x.mem.read<uint8_t>(sdl + 8 + nlen + i);
+            if (b > 0xf) out += hex[b >> 4];
+            out += hex[b & 0xf];
+        }
+    }
+    out.resize(std::min<size_t>(out.size(), 63));
+    for (size_t i = 0; i < out.size(); ++i) x.mem.write<uint8_t>(buf + uint32_t(i), uint8_t(out[i]));
+    x.mem.write<uint8_t>(buf + uint32_t(out.size()), 0);
+    return buf;
+}
 uint32_t n_ifNameToIndex(Ctx& x, GuestPtr name) {
     if (!name) return 0;
     const std::string n = x.proc.readCString(name);
@@ -1002,7 +1028,21 @@ bool networkInterfaceIoctl(Ctx& x, unsigned int req, unsigned int arg, int& resu
     }
     return false;
 }
-int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
+int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) {
+    if (x.proc.session().replayingDetails() && internet(x)) {
+        if (count > INT32_MAX || !span(x, buffer, count, Memory::kProtWrite)) return failWith(x, 14);
+        if (auto rec = x.proc.session().replayNetAnswer(count)) {
+            if (!rec->empty()) x.mem.copyIn(buffer, rec->data(), rec->size());
+            return int(rec->size());
+        }
+    }
+    const int r = n_recv(x, fd, buffer, count, 0);
+    if (x.proc.session().recordingDetails() && r > 0 && internet(x)) {
+        x.proc.session().recordNetAnswer(x.mem.host(buffer), size_t(r),
+                                           x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    return r;
+}
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
     {
@@ -1039,6 +1079,7 @@ void registerLibcNet(Process& p) {
     supportDef<&n_gethostbyname>(p, "_gethostbyname", SupportStatus::Real, "IPv4 resolver; names other than numeric/localhost resolve only when the game is allowed online");
     p.def<&n_nullHost3>("_gethostbyaddr");
     p.def<&n_ifNameToIndex>("_if_nametoindex");
+    p.def<&n_linkNtoa>("_link_ntoa");
     p.def<&n_inetAddr>("_inet_addr");
     p.def<&n_inetAton>("_inet_aton");
     p.def<&n_inetNtoa>("_inet_ntoa");

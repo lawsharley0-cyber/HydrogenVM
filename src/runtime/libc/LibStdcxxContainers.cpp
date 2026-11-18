@@ -1192,6 +1192,9 @@ void registerLibStdcxxContainers(Process& p) {
     p.mem().write<uint32_t>(vtLg + 12, fnLgD0);
     p.mem().write<uint32_t>(vtLg + 16, fnLgWhat);
 
+    // std::bad_alloc::bad_alloc(): an exception object is its vtable pointer (Kindle #539).
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.mem.write<uint32_t>(self, x.proc.lookupSymbol("__ZTVSt9bad_alloc").value_or(0) + 8); return self; }>("__ZNSt9bad_allocC1Ev");
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.mem.write<uint32_t>(self, x.proc.lookupSymbol("__ZTVSt9bad_alloc").value_or(0) + 8); return self; }>("__ZNSt9bad_allocC2Ev");
     const uint32_t fnBadAllocD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD1Ev");
     p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD2Ev");
     const uint32_t fnBadAllocD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt9bad_allocD0Ev");

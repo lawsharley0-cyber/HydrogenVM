@@ -56,7 +56,14 @@ public:
         mem_ += 4;
         return v;
     }
-    uint64_t dword() { const uint64_t lo = word(); return lo | (uint64_t(word()) << 32); }
+    uint64_t dword() {
+        // AAPCS (Android): a 64-bit argument starts at an even register or an 8-byte stack slot,
+        // in a call and in a va_list alike. iOS packs them.
+        if (align64Args()) { if (c_) slot_ = (slot_ + 1) & ~1u; else mem_ = (mem_ + 7) & ~7u; }
+        const uint64_t lo = word(); return lo | (uint64_t(word()) << 32);
+    }
+    // Set for an Android process (one guest ABI per host process at a time).
+    static bool& align64Args() { static bool on = false; return on; }
     template <typename T> T get() {
         if constexpr (std::is_same_v<T, double>) { const uint64_t b = dword(); double d; std::memcpy(&d, &b, 8); return d; }
         else if constexpr (std::is_same_v<T, float>) { const uint32_t b = word(); float f; std::memcpy(&f, &b, 4); return f; }

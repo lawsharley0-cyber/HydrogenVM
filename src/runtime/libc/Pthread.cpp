@@ -6,6 +6,7 @@
 // initialised ones (PTHREAD_MUTEX_INITIALIZER) just work. All waits poll the
 // process stop flag so quitting an app never hangs on a guest lock.
 #include "runtime/Process.hpp"
+#include "core/cpu/Engine.hpp"
 #include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include <cerrno>
@@ -83,8 +84,10 @@ GuestMutex& mutexFor(Ctx& x, uint32_t addr) {
         p = std::make_unique<GuestMutex>();
         p->addr = addr;
         const uint32_t sig = x.mem.read<uint32_t>(addr);
-        if (sig == kSigMutexRecursive) p->type = kRecursive;
-        else if (sig == kSigMutexErrorCheck) p->type = kErrorCheck;
+        // Android's static initializers: PTHREAD_RECURSIVE_MUTEX_INITIALIZER is 0x4000,
+        // PTHREAD_ERRORCHECK_MUTEX_INITIALIZER 0x8000 (a one-word bionic mutex).
+        if (sig == kSigMutexRecursive || sig == 0x4000) p->type = kRecursive;
+        else if (sig == kSigMutexErrorCheck || sig == 0x8000) p->type = kErrorCheck;
     }
     return *p;
 }
@@ -98,11 +101,23 @@ int lockMutex(Ctx& x, GuestMutex& m, bool tryOnly) {
     }
     if (m.owner && tryOnly) return D_EBUSY;
     if (m.owner) {
+        if (x.proc.session().replayingDetails()) {
+            lk.unlock(); // Other contenders must be able to consume their recorded turns.
+            x.proc.session().waitSchedTurn(me, "mutex_lock", m.addr);
+            lk.lock();
+        }
         BlockedScope blocked(x.proc, "pthread_mutex_lock", m.addr, m.owner);
         while (m.owner) {
             m.cv.wait_for(lk, 50ms);
             if (m.owner) { checkStop(x); blocked.setOwner(m.owner); }
+            if (m.owner && x.cpu.async_pending.load(std::memory_order_acquire)) {   // signal handlers run while waiting
+                lk.unlock();
+                x.proc.engine().runSafepoint(x.cpu);
+                lk.lock();
+            }
         }
+        if (x.proc.session().recordingDetails())
+            x.proc.session().recordSchedPoint(me, "mutex_lock", m.addr, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
     }
     m.owner = me;
     m.count = 1;
@@ -201,8 +216,14 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
             waiter->cv.wait_for(lk, 50ms);
             if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
             if (waiter->signaled) break;
+            if (x.cpu.async_pending.load(std::memory_order_acquire)) {   // signal handlers run while waiting
+                lk.unlock();
+                x.proc.engine().runSafepoint(x.cpu);
+                lk.lock();
+                if (waiter->signaled) break;
+            }
             if (deadlineNs) {
-                const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                const int64_t now = x.proc.wallNowNs();
                 if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
             }
         }
@@ -231,7 +252,7 @@ int32_t pc_timedwait(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
 }
 int32_t pc_timedwait_rel(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
     const int64_t s = x.mem.read<int32_t>(ts), ns = x.mem.read<int32_t>(ts + 4);
-    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const int64_t now = x.proc.wallNowNs();
     return condWait(x, cv, mu, now + s * 1000000000LL + ns + 1);
 }
 int32_t pc_signal(Ctx& x, GuestPtr cv) {

@@ -1,5 +1,7 @@
 # HydrogenVM plan (2026-10-30): fix the feedback loop, not the games
 
+**Expansion plan (2026-11-17):** [EXPANSION_PLAN.md](EXPANSION_PLAN.md) adds the next phases (feedback-loop tools, Android breadth, automation, player experience, server revival, compatibility list) under the rules below.
+
 **This is the only plan.** It replaces the priorities, work loops and "next steps" in every older
 handoff (`HANDOFF.md`, `GROK_HANDOFF.md`, `GEMINI_HANDOFF.md`, `dev-system/MASTER_PLAN.md`,
 `dev-system/ROADMAP.md`). Those files stay as *reference* (VM layout, headless run recipes, architecture
