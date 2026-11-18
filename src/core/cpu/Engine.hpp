@@ -174,6 +174,10 @@ private:
     std::mutex suspendMu_;
     std::condition_variable suspendCv_;
     Block* lookupOrDecode(uint32_t key);
+    // Guest address of the instruction that faulted: the op of the current block whose handler holds
+    // the faulting host instruction (narrowed by the ops the host registers point at), or the block
+    // start when that is not unique.
+    uint32_t faultPc(const Cpu& c, const uintptr_t* regs, int nregs, uintptr_t hostPc);
     std::unique_ptr<Block> decodeBlock(uint32_t key);
     void decodeArmBlock(Block& b, uint32_t pc);
     void decodeThumbBlock(Block& b, uint32_t pc);
