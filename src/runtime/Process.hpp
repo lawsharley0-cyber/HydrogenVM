@@ -96,6 +96,12 @@ struct ProcessConfig {
     // Session recording (runtime/Session.hpp): write the seed, start time and every input to
     // recordPath, or replay a recording from replayPath. At most one of the two.
     std::string recordPath, replayPath;
+    std::string inputRecordingPath; // Optional input-only companion for public reports.
+    bool detailedRecording = true; // CLI --record requests a detailed trace; the phone opts in per launch.
+    // Safe-mode retry (C3): per-game fallback overrides and active fallback identifier.
+    bool gles1Emulate = false;
+    uint32_t maxTextureSize = 0;       // 0: default (4096)
+    std::string safeModeFallback;
     // Audio: the platform pulls mixed sound from Process::mixer() (see audio/Audio.hpp).
 };
 
@@ -520,8 +526,14 @@ public:
     // Session recording and replay (runtime/Session.hpp): the seed every random source draws
     // from and the wall clock the guest sees go through here.
     Session& session() { return session_; }
+    const Session& session() const { return session_; }
     uint64_t entropy() { return session_.entropy(); }
     int64_t wallNowNs() const { return session_.wallNowNs(); }
+    uint64_t sessionMs() const;
+    uint64_t sessionSwaps() const;
+    uint64_t sessionHooks() const;
+    void recordFrameCheckpoint(uint64_t frameHash);
+    void recordFrameCheckpoint(const uint8_t* rgba, int w, int h);
     // Stamps an input event with the time and frame count and records it (when recording).
     void noteInput(SessionEvent e);
     void setTouchHandler(std::function<void(TouchPhase, float, float, uint32_t)> h) { touchHandler_ = std::move(h); }

@@ -15,6 +15,7 @@ struct Object {
     std::u16string type;
     std::u16string text;
     std::vector<Value> elements;
+    std::shared_ptr<ArrayBacking> backing;
     std::mutex mutex;
     std::condition_variable available;
     std::thread::id owner;
@@ -58,6 +59,14 @@ struct Arena::Storage {
         return uint32_t(objects.size());
     }
 
+    uint32_t addString(std::u16string text, size_t chargedCopies) {
+        const auto charge = sizeof(Object) + text.size() * sizeof(char16_t) * chargedCopies;
+        requireBytes(charge);
+        auto object = std::make_unique<Object>(u"Ljava/lang/String;");
+        object->text = std::move(text);
+        return add(std::move(object), charge);
+    }
+
     Object& get(uint32_t ref) const {
         if (!ref) throw JavaException{u"Ljava/lang/NullPointerException;"};
         std::lock_guard lock(mutex);
@@ -77,14 +86,15 @@ uint32_t Arena::object(std::u16string type) {
     return storage_->add(std::make_unique<Object>(std::move(type)), charge);
 }
 
+uint32_t Arena::newString(std::u16string text) {
+    std::lock_guard lock(storage_->mutex);
+    return storage_->addString(std::move(text), 1);
+}
+
 uint32_t Arena::intern(std::u16string text) {
     std::lock_guard lock(storage_->mutex);
     if (const auto it = storage_->interned.find(text); it != storage_->interned.end()) return it->second;
-    const auto charge = sizeof(Object) + text.size() * sizeof(char16_t) * 2;
-    storage_->requireBytes(charge);
-    auto value = std::make_unique<Object>(u"Ljava/lang/String;");
-    value->text = text;
-    const auto ref = storage_->add(std::move(value), charge);
+    const auto ref = storage_->addString(text, 2);
     storage_->interned.emplace(std::move(text), ref);
     return ref;
 }
@@ -120,8 +130,13 @@ uint32_t Arena::length(uint32_t reference) const {
 Value Arena::element(uint32_t reference, int32_t index) const {
     auto& array = storage_->get(reference);
     bounds(array, index);
-    std::lock_guard lock(array.mutex);
-    return array.elements[index];
+    std::shared_ptr<ArrayBacking> backing;
+    {
+        std::lock_guard lock(array.mutex);
+        backing = array.backing;
+        if (!backing) return array.elements[index];
+    }
+    return backing->read(uint32_t(index));
 }
 
 void Arena::setElement(uint32_t reference, int32_t index, Value value) {
@@ -139,8 +154,26 @@ void Arena::setElement(uint32_t reference, int32_t index, Value value) {
                 throw JavaException{u"Ljava/lang/ArrayStoreException;"};
             break;
     }
+    std::shared_ptr<ArrayBacking> backing;
+    {
+        std::lock_guard lock(array.mutex);
+        backing = array.backing;
+        if (!backing) {
+            array.elements[index] = value;
+            return;
+        }
+    }
+    backing->write(uint32_t(index), value);
+}
+
+void Arena::bindArray(uint32_t reference, std::shared_ptr<ArrayBacking> backing, bool copyElements) {
+    auto& array = storage_->get(reference);
+    expectArray(array);
     std::lock_guard lock(array.mutex);
-    array.elements[index] = value;
+    if (array.backing) throw FormatError("array already has shared backing");
+    if (copyElements)
+        for (uint32_t i = 0; i < array.elements.size(); ++i) backing->write(i, array.elements[i]);
+    array.backing = std::move(backing);
 }
 
 void Arena::enter(uint32_t reference) {
@@ -172,23 +205,43 @@ bool Arena::assignable(std::u16string_view from, std::u16string_view to) const {
             return assignable(from.substr(1), to.substr(1));
         return false;
     }
-    // Runtime-generated exception hierarchy until the class linker is attached.
-    if (from == u"Ljava/lang/OutOfMemoryError;" || from == u"Ljava/lang/StackOverflowError;")
-        return to == u"Ljava/lang/Error;" || to == u"Ljava/lang/VirtualMachineError;" || to == u"Ljava/lang/Throwable;";
-    if (from == u"Ljava/lang/NoClassDefFoundError;" || from == u"Ljava/lang/ExceptionInInitializerError;" ||
-        from == u"Ljava/lang/UnsatisfiedLinkError;" || from == u"Ljava/lang/NoSuchFieldError;" ||
-        from == u"Ljava/lang/NoSuchMethodError;" || from == u"Ljava/lang/AbstractMethodError;" ||
-        from == u"Ljava/lang/IncompatibleClassChangeError;" || from == u"Ljava/lang/InstantiationError;")
-        return to == u"Ljava/lang/Error;" || to == u"Ljava/lang/LinkageError;" || to == u"Ljava/lang/Throwable;";
-    if (from == u"Ljava/lang/ArrayIndexOutOfBoundsException;" && to == u"Ljava/lang/IndexOutOfBoundsException;")
-        return true;
-    if (from == u"Ljava/lang/ArithmeticException;" || from == u"Ljava/lang/NullPointerException;" ||
-        from == u"Ljava/lang/ArrayIndexOutOfBoundsException;" || from == u"Ljava/lang/ClassCastException;" ||
-        from == u"Ljava/lang/NegativeArraySizeException;" || from == u"Ljava/lang/ArrayStoreException;" ||
-        from == u"Ljava/lang/IllegalMonitorStateException;" || from == u"Ljava/lang/UnsupportedOperationException;" ||
-        from == u"Ljava/lang/IllegalThreadStateException;" || from == u"Ljava/lang/IndexOutOfBoundsException;" ||
-        from == u"Ljava/lang/IllegalArgumentException;")
-        return to == u"Ljava/lang/RuntimeException;" || to == u"Ljava/lang/Exception;" || to == u"Ljava/lang/Throwable;";
+    // Bootstrap exceptions are supplied by the VM, without class_def entries.
+    static const std::map<std::u16string_view, std::u16string_view> parents{
+        {u"Ljava/lang/AbstractMethodError;", u"Ljava/lang/IncompatibleClassChangeError;"},
+        {u"Ljava/lang/ArithmeticException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/ArrayIndexOutOfBoundsException;", u"Ljava/lang/IndexOutOfBoundsException;"},
+        {u"Ljava/lang/ArrayStoreException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/ClassCastException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/Error;", u"Ljava/lang/Throwable;"},
+        {u"Ljava/lang/Exception;", u"Ljava/lang/Throwable;"},
+        {u"Ljava/lang/ExceptionInInitializerError;", u"Ljava/lang/LinkageError;"},
+        {u"Ljava/lang/IllegalArgumentException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/IllegalMonitorStateException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/IllegalStateException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/IllegalThreadStateException;", u"Ljava/lang/IllegalArgumentException;"},
+        {u"Ljava/lang/IncompatibleClassChangeError;", u"Ljava/lang/LinkageError;"},
+        {u"Ljava/lang/IndexOutOfBoundsException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/InstantiationError;", u"Ljava/lang/IncompatibleClassChangeError;"},
+        {u"Ljava/lang/LinkageError;", u"Ljava/lang/Error;"},
+        {u"Ljava/lang/NegativeArraySizeException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/NoClassDefFoundError;", u"Ljava/lang/LinkageError;"},
+        {u"Ljava/lang/NoSuchFieldError;", u"Ljava/lang/IncompatibleClassChangeError;"},
+        {u"Ljava/lang/NoSuchMethodError;", u"Ljava/lang/IncompatibleClassChangeError;"},
+        {u"Ljava/lang/NullPointerException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/OutOfMemoryError;", u"Ljava/lang/VirtualMachineError;"},
+        {u"Ljava/lang/RuntimeException;", u"Ljava/lang/Exception;"},
+        {u"Ljava/lang/StackOverflowError;", u"Ljava/lang/VirtualMachineError;"},
+        {u"Ljava/lang/UnsatisfiedLinkError;", u"Ljava/lang/LinkageError;"},
+        {u"Ljava/lang/UnsupportedOperationException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/VirtualMachineError;", u"Ljava/lang/Error;"},
+    };
+    auto type = from;
+    while (true) {
+        const auto parent = parents.find(type);
+        if (parent == parents.end()) break;
+        type = parent->second;
+        if (type == to) return true;
+    }
     return classAssignable_ && classAssignable_(from, to);
 }
 

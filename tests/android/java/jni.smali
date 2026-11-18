@@ -30,6 +30,49 @@ div-int v0, v0, v1
 return v0
 .end method
 
+.method write([II)I 9
+.registers 4
+const/4 v0, 0
+aget v1, v2, v0
+aput v3, v2, v0
+return v1
+.end method
+
+.method newInts()[I 9
+.registers 1
+const/4 v0, 5
+filled-new-array [I, v0
+move-result-object v0
+return-object v0
+.end method
+
+.method store([Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String; 9
+.registers 4
+const/4 v0, 0
+aget-object v1, v2, v0
+aput-object v3, v2, v0
+return-object v1
+.end method
+
+.method same(Ljava/lang/String;Ljava/lang/String;)I 9
+.registers 3
+const/4 v0, 0
+# if-ne v1, v2, :different
+.words 0x2133, 0x0003
+const/4 v0, 1
+:different
+return v0
+.end method
+
+.class Ltest/Throwing; 1
+.method <init>()V 0x10001
+.registers 3
+const/4 v0, 1
+const/4 v1, 0
+div-int v0, v0, v1
+return-void
+.end method
+
 .class Ltest/JniWorker; 1
 .super Ljava/lang/Thread;
 .field count:I 9

@@ -160,9 +160,13 @@ int32_t map(Ctx& x, uint32_t owner, GuestPtr out, uint32_t size, uint32_t mask, 
 int32_t protect(Ctx& x, uint32_t owner, uint32_t address, uint32_t size, bool maximum, uint32_t protection) {
     if (!task(x, owner)) return 16;
     if (protection & ~7u) return 4;
-    // GuestArena has no maximum-protection or inaccessible-page metadata yet.
-    if (maximum || !protection) return 46;
-    if (!range(x, address, size, Memory::kProtRead)) return 1;
+    // GuestArena has no maximum-protection metadata; VM_PROT_NONE makes guard pages.
+    if (maximum) return 46;
+    if (!size) return 0;
+    const uint64_t end = uint64_t(address) + size;
+    if (end > (1ull << 32)) return 1;
+    for (uint64_t page = address & ~4095u; page < end; page += 4096)
+        if (!x.mem.isMapped(uint32_t(page))) return 1;   // KERN_INVALID_ADDRESS
     x.mem.protect(address, size, uint8_t(protection)); return 0;
 }
 }

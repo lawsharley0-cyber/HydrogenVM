@@ -1,5 +1,6 @@
 // HydrogenVM — libobjc's C API: message dispatch, ARC entry points,
 // introspection, exceptions, @synchronized, associated objects.
+#include <cstdlib>
 #include <cstring>
 #include <cctype>
 #include "ObjC.hpp"
@@ -64,10 +65,74 @@ IMP resolve(Ctx& x, id& self, SEL s) {
     return r.unrecognized(self, s);
 }
 
-void msgSend(Ctx& x) {
+// ---- objc_msgSend fast path (plan I7). A per-thread 2-way set-associative cache of (isa, selector) ->
+// IMP, valid for one Runtime cache generation, is tried by the HLE op before the full host call
+// (Engine::setFastHle). A hit on guest code is a tail jump with no host-call bookkeeping; a hit on a
+// host IMP calls it directly, skipping the outer objc_msgSend layer. Misses, nil-free resolution,
+// +initialize, forwarding and call tracing all stay on the full path, which fills the cache only
+// for plain lookups on initialized classes.
+struct SendCache {
+    // 2-way set associative: 2048 sets x 2 ways. A fill goes to the empty or least recently filled way.
+    static constexpr uint32_t kSets = 2048;   // power of two
+    struct Entry { uint32_t cls = 0, sel = 0, imp = 0; };
+    uint64_t owner = 0;
+    uint64_t gen = 0;
+    Entry e[kSets][2];
+    uint8_t next[kSets] = {};
+    static uint32_t set(uint32_t cls, uint32_t sel) {
+        return uint32_t((uint64_t(cls ^ (sel * 0x9E3779B1u)) * 0x85EBCA77u) >> 21) & (kSets - 1);
+    }
+    const Entry* find(uint32_t cls, uint32_t sel) const {
+        const Entry* w = e[set(cls, sel)];
+        if (w[0].cls == cls && w[0].sel == sel && w[0].imp) return &w[0];
+        if (w[1].cls == cls && w[1].sel == sel && w[1].imp) return &w[1];
+        return nullptr;
+    }
+    void put(const Entry& x) {
+        const uint32_t i = set(x.cls, x.sel);
+        Entry* w = e[i];
+        for (int k = 0; k < 2; ++k) if (w[k].cls == x.cls && w[k].sel == x.sel) { w[k] = x; return; }
+        w[next[i]] = x;
+        next[i] ^= 1;
+    }
+    void sync(uint64_t processId, uint64_t g) {
+        if (owner == processId && gen == g) return;
+        std::memset(e, 0, sizeof e);
+        std::memset(next, 0, sizeof next);
+        owner = processId;
+        gen = g;
+    }
+};
+thread_local SendCache t_send;
+
+bool fastMsgSend(CPU::Cpu& c, void* ctx, uint32_t& target) {
+    auto& runtime = *static_cast<Runtime*>(ctx);
+    const uint32_t self = c.r[0];
+    if (!self) { c.r[0] = c.r[1] = 0; return true; }   // a message to nil returns 0
+    const uint32_t cls = runtime.classOf(self);
+    SendCache& sc = t_send;
+    sc.sync(runtime.proc().identity(), runtime.cacheGeneration());
+    const SendCache::Entry* e = sc.find(cls, c.r[1]);
+    if (!e) return false;
+    target = e->imp;
+    return true;
+}
+
+void fillSendCache(Runtime& r, Class cls, SEL s, IMP imp) {
+    const uint64_t gen = r.cacheGeneration();
+    if (!imp || !r.sendReady(cls) || r.lookup(cls, s) != imp) return;
+    SendCache& sc = t_send;
+    sc.sync(r.proc().identity(), gen);
+    sc.put({cls, s, imp});
+}
+
+void msgSend(Ctx& x, Runtime* cache) {
     id self = x.cpu.r[0];
     if (!self) { x.cpu.r[0] = x.cpu.r[1] = 0; return; }
-    const IMP imp = resolve(x, self, x.cpu.r[1]);
+    const id original = self;
+    const SEL s = x.cpu.r[1];
+    const IMP imp = resolve(x, self, s);
+    if (cache && self == original) fillSendCache(*cache, cache->classOf(self), s, imp);
     x.cpu.r[0] = self;
     dispatch(x, imp);
 }
@@ -530,8 +595,13 @@ void z_void1(Ctx&, uint32_t) {}
 } // namespace
 
 void registerObjCApi(Process& p, Runtime& r) {
-    (void)r;
-    p.defineFunction("_objc_msgSend", &msgSend);
+    // Register the plain path unchanged for tracing and cache-off benchmarks.
+    if (p.config().traceCalls || std::getenv("HVM_NO_FAST_SEND")) {
+        p.defineFunction("_objc_msgSend", [](Ctx& x) { msgSend(x, nullptr); });
+    } else {
+        const uint32_t addr = p.defineFunction("_objc_msgSend", [&r](Ctx& x) { msgSend(x, &r); });
+        p.engine().setFastHle(p.engine().hleIndex(addr), &fastMsgSend, &r);
+    }
     p.defineFunction("_objc_msgSend_stret", &msgSendStret);
     p.defineFunction("_objc_msgSendSuper", &msgSendSuper);
     p.defineFunction("_objc_msgSendSuper2", &msgSendSuper2);

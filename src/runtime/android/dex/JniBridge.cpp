@@ -112,13 +112,40 @@ public:
             });
     }
 
+    std::shared_ptr<ArrayBacking> arrayBacking(Jni& j, jobject handle, char elem) {
+        const auto width = elementBytes(elem);
+        auto read = [this, &j, handle, elem, width](uint32_t i) -> Value {
+            uint64_t bits = 0;
+            {
+                std::lock_guard lock(j.mu);
+                const auto* obj = j.get(handle);
+                if (!obj) throw FormatError("lost JNI array reference");
+                if (elem == 'L') bits = obj->refs.at(i);
+                else std::memcpy(&bits, obj->data.data() + size_t(i) * width, width);
+            }
+            if (elem == 'L') bits = importReference(j, jobject(bits));
+            if (elem == 'B') bits = uint32_t(int32_t(int8_t(bits)));
+            if (elem == 'S') bits = uint32_t(int32_t(int16_t(bits)));
+            if (elem == 'Z') bits &= 1;
+            return {kind(elem), bits};
+        };
+        auto write = [this, &j, handle, elem, width](uint32_t i, Value value) {
+            const auto alias = elem == 'L' ? exportReference(j, uint32_t(value.bits)) : 0;
+            std::lock_guard lock(j.mu);
+            auto* obj = j.get(handle);
+            if (!obj) throw FormatError("lost JNI array reference");
+            if (elem == 'L') obj->refs.at(i) = alias;
+            else std::memcpy(obj->data.data() + size_t(i) * width, &value.bits, width);
+        };
+        return std::make_shared<ArrayBacking>(ArrayBacking{std::move(read), std::move(write)});
+    }
+
     uint32_t importReference(Jni& j, jobject handle) {
         if (!handle) return 0;
         std::lock_guard lock(references);
         if (auto it = fromJni.find(handle); it != fromJni.end()) return it->second;
         std::string cls, text;
-        std::vector<uint8_t> data;
-        std::vector<jobject> refs;
+        size_t length = 0;
         char elem;
         {
             std::lock_guard jniLock(j.mu);
@@ -127,30 +154,19 @@ public:
             cls = object->isClass ? "java/lang/Class" : object->cls;
             text = object->str;
             elem = object->elem;
-            if (elem) { data = object->data; refs = object->refs; }
+            if (elem) length = elem == 'L' ? object->refs.size() : object->data.size() / elementBytes(elem);
         }
         auto& heap = machine->heap();
         uint32_t ref;
         if (elem) {
-            const auto size = elem == 'L' ? refs.size() : data.size() / elementBytes(elem);
-            if (size > INT32_MAX) throw JavaException{u"Ljava/lang/OutOfMemoryError;"};
-            ref = heap.array(descriptor(cls), int32_t(size));
+            if (length > INT32_MAX) throw JavaException{u"Ljava/lang/OutOfMemoryError;"};
+            ref = heap.array(descriptor(cls), int32_t(length));
         } else {
-            ref = cls == "java/lang/String" ? heap.intern(fromUtf8(text)) : heap.object(descriptor(cls));
+            ref = cls == "java/lang/String" ? heap.newString(fromUtf8(text)) : heap.object(descriptor(cls));
         }
         fromJni.emplace(handle, ref);
         toJni.try_emplace(ref, handle);
-        if (elem == 'L') {
-            for (size_t i = 0; i < refs.size(); ++i)
-                heap.setElement(ref, int32_t(i), {ValueKind::Reference, importReference(j, refs[i])});
-        } else if (elem) {
-            const auto width = elementBytes(elem);
-            for (size_t i = 0; i < data.size() / width; ++i) {
-                uint64_t bits = 0;
-                std::memcpy(&bits, data.data() + i * width, width);
-                heap.setElement(ref, int32_t(i), {kind(elem), bits});
-            }
-        }
+        if (elem) heap.bindArray(ref, arrayBacking(j, handle, elem), false);
         return ref;
     }
 
@@ -175,18 +191,7 @@ public:
         else out = cls == "java/lang/String" ? j.newString(toMutf8(heap.string(reference))) : j.newObject(cls);
         toJni[reference] = out;
         fromJni[out] = reference;
-        if (array) {
-            const auto width = elementBytes(elem);
-            for (uint32_t i = 0; i < heap.length(reference); ++i) {
-                const auto value = heap.element(reference, int32_t(i));
-                const auto alias = elem == 'L' ? exportReference(j, uint32_t(value.bits)) : 0;
-                std::lock_guard jniLock(j.mu);
-                if (auto* object = j.get(out)) {
-                    if (elem == 'L') object->refs[i] = alias;
-                    else std::memcpy(object->data.data() + i * width, &value.bits, width);
-                }
-            }
-        }
+        if (array) heap.bindArray(reference, arrayBacking(j, out, elem), true);
         return out;
     }
 
