@@ -660,14 +660,9 @@ id pi_environment(Ctx& x, id, SEL) {
     }
     return makeDict(x, e);
 }
-std::string randomUuid() {
-    static std::mt19937_64 rng{std::random_device{}()};
-    static std::mutex mu;
+std::string randomUuid(Ctx& x) {   // from the session's entropy (runtime/Session.hpp)
     uint8_t b[16];
-    {
-        std::lock_guard<std::mutex> lk(mu);
-        for (int i = 0; i < 16; i += 8) { const uint64_t v = rng(); std::memcpy(b + i, &v, 8); }
-    }
+    for (int i = 0; i < 16; i += 8) { const uint64_t v = x.proc.entropy(); std::memcpy(b + i, &v, 8); }
     b[6] = (b[6] & 0x0F) | 0x40;
     b[8] = (b[8] & 0x3F) | 0x80;
     char s[37];
@@ -675,7 +670,7 @@ std::string randomUuid() {
                   b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
     return s;
 }
-id pi_guid(Ctx& x, id, SEL) { return makeString(x, randomUuid()); }
+id pi_guid(Ctx& x, id, SEL) { return makeString(x, randomUuid(x)); }
 id pi_hostName(Ctx& x, id, SEL) { return makeString(x, "localhost"); }
 id pi_osVersionString(Ctx& x, id, SEL) { return makeString(x, "Version " + x.proc.config().systemVersion + " (Build 10B141)"); }
 int32_t pi_pid(Ctx&, id, SEL) { return int32_t(getpid() & 0x7FFF); }
@@ -957,7 +952,7 @@ void parseUuid(const std::string& s, uint8_t out[16], bool* ok) {
 id uuid_init(Ctx& x, id self, SEL) {
     auto h = std::make_unique<UuidData>();
     bool ok;
-    parseUuid(randomUuid(), h->b, &ok);
+    parseUuid(randomUuid(x), h->b, &ok);
     rt(x).setHost(self, std::move(h));
     return self;
 }

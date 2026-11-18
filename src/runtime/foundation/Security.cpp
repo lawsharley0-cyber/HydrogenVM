@@ -236,8 +236,7 @@ int32_t s_delete(Ctx& x, id query) {
 }
 
 int32_t s_randomBytes(Ctx& x, GuestPtr, uint32_t count, GuestPtr out) {
-    static thread_local std::mt19937_64 rng{std::random_device{}()};
-    for (uint32_t i = 0; i < count; ++i) x.mem.write<uint8_t>(out + i, uint8_t(rng()));
+    for (uint32_t i = 0; i < count; ++i) x.mem.write<uint8_t>(out + i, uint8_t(x.proc.entropy()));
     return 0;
 }
 
@@ -477,10 +476,25 @@ int32_t sec_keyEncrypt(Ctx& x, id key, uint32_t padding, GuestPtr plain, uint32_
     if (plainLen) x.mem.copyOut(in.data(), plain, plainLen);
 #if defined(__APPLE__)
     if (!k->host) return errSecParam;
-    size_t n = out.size();
-    const OSStatus st = ::SecKeyEncrypt(k->host, ::SecPadding(padding), in.data(), in.size(), out.data(), &n);
-    if (st != errSecSuccess) return int32_t(st);
-    x.mem.copyIn(cipher, out.data(), n);
+    // SecKeyEncrypt exists only in the iOS SDK; SecKeyCreateEncryptedData is on every Apple host.
+    SecKeyAlgorithm alg = nullptr;
+    if (padding == kSecPaddingNone) alg = kSecKeyAlgorithmRSAEncryptionRaw;
+    else if (padding == kSecPaddingPKCS1) alg = kSecKeyAlgorithmRSAEncryptionPKCS1;
+    else if (padding == kSecPaddingOAEP) alg = kSecKeyAlgorithmRSAEncryptionOAEPSHA1;
+    if (!alg) return errSecParam;
+    CFDataRef plainData = CFDataCreate(nullptr, in.data(), CFIndex(in.size()));
+    CFErrorRef error = nullptr;
+    CFDataRef result = plainData ? ::SecKeyCreateEncryptedData(k->host, alg, plainData, &error) : nullptr;
+    if (plainData) CFRelease(plainData);
+    if (!result) {
+        const int32_t code = error ? int32_t(CFErrorGetCode(error)) : errSecParam;
+        if (error) CFRelease(error);
+        return code ? code : errSecParam;
+    }
+    const size_t n = size_t(CFDataGetLength(result));
+    if (n > outCap) { CFRelease(result); return errSecBufferTooSmall; }
+    x.mem.copyIn(cipher, CFDataGetBytePtr(result), n);
+    CFRelease(result);
     x.mem.write<uint32_t>(cipherLen, uint32_t(n));
     return errSecSuccess;
 #elif defined(HVM_HAVE_OPENSSL)

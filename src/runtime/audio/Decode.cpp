@@ -3,12 +3,24 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
+#include <cerrno>
+#include <limits>
+#include <sys/stat.h>
+#include <utility>
+#include <unistd.h>
 
 #define MINIMP3_IMPLEMENTATION
 #include "thirdparty/minimp3/minimp3.h"
 
+#define HVM_COMPILE_STB_VORBIS
+#include "thirdparty/stb/stb_vorbis.c"
+#undef HVM_COMPILE_STB_VORBIS
+
 namespace Hydrogen::Runtime::Audio {
 bool decodeHostContainer(DecodedAudio&, const uint8_t*, size_t);
+std::shared_ptr<AudioSource> openHostStream(const uint8_t*, size_t, std::shared_ptr<const void>);
+std::shared_ptr<AudioSource> openHostStream(int fd, size_t size);
 bool decodeMsAdpcm(DecodedAudio&, const uint8_t*, size_t);
 namespace {
 
@@ -20,37 +32,53 @@ uint32_t readBE32(const uint8_t* p) { return (uint32_t(p[0]) << 24) | (uint32_t(
 uint16_t readBE16(const uint8_t* p) { return uint16_t((p[0] << 8) | p[1]); }
 uint64_t readBE64(const uint8_t* p) { return (uint64_t(readBE32(p)) << 32) | readBE32(p + 4); }
 
+struct PcmLayout {
+    const uint8_t* data = nullptr;
+    size_t bytes = 0;
+    int channels = 0, bits = 0;
+    bool isFloat = false, bigEndian = false, exactWav = false;
+
+    size_t frameBytes() const {
+        const bool supported = isFloat ? (bits == 32 || bits == 64) :
+                                        (bits == 8 || bits == 16 || bits == 24 || bits == 32);
+        return supported && channels > 0 ? size_t(channels) * (bits / 8) : 0;
+    }
+};
+
 // Linear PCM in any common layout -> interleaved stereo int16.
-void pcmToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels, int bits, bool isFloat, bool bigEndian) {
-    // Reject layouts we cannot convert before deriving shifts from file metadata.
-    // Float64 must not pass through the 32-bit integer accumulator below.
-    if (isFloat ? (bits != 32 && bits != 64) :
-                  (bits != 8 && bits != 16 && bits != 24 && bits != 32)) return;
-    const int bps = bits / 8;
-    if (channels < 1 || bps < 1) return;
-    const size_t frameBytes = size_t(channels) * size_t(bps);
-    const size_t frames = bytes / frameBytes;
+void convertPcm(const PcmLayout& pcm, size_t frames, int16_t* output) {
+    const int bps = pcm.bits / 8;
+    const size_t frameBytes = pcm.frameBytes();
+    if (pcm.exactWav) {
+        for (size_t frame = 0; frame < frames; ++frame) {
+            const uint8_t* at = pcm.data + frame * frameBytes;
+            auto sample = [&](int channel) {
+                return bps == 2 ? int16_t(readLE16(at + channel * 2)) : int16_t((int(at[channel]) - 128) * 256);
+            };
+            output[2 * frame] = sample(0);
+            output[2 * frame + 1] = sample(pcm.channels >= 2);
+        }
+        return;
+    }
     auto sample = [&](const uint8_t* s) -> float {
-        if (isFloat) {
+        if (pcm.isFloat) {
             if (bps == 4) {
-                const uint32_t v = bigEndian ? readBE32(s) : readLE32(s);
+                const uint32_t v = pcm.bigEndian ? readBE32(s) : readLE32(s);
                 float f; std::memcpy(&f, &v, 4); return f;
             }
             if (bps == 8) {
                 uint64_t w = 0;
-                for (int i = 0; i < 8; ++i) w |= uint64_t(s[bigEndian ? i : 7 - i]) << (8 * (7 - i));
+                for (int i = 0; i < 8; ++i) w |= uint64_t(s[pcm.bigEndian ? i : 7 - i]) << (8 * (7 - i));
                 double d; std::memcpy(&d, &w, 8); return float(d);
             }
             return 0;
         }
         uint32_t v = 0;
-        for (int i = 0; i < bps; ++i) v |= uint32_t(s[bigEndian ? i : bps - 1 - i]) << (8 * (bps - 1 - i));
+        for (int i = 0; i < bps; ++i) v |= uint32_t(s[pcm.bigEndian ? i : bps - 1 - i]) << (8 * (bps - 1 - i));
         if (bps == 1) return (float(v) - 128.0f) / 128.0f;   // 8-bit PCM is unsigned
-        const int shift = 32 - bits;
+        const int shift = 32 - pcm.bits;
         return float(int32_t(v << shift)) / 2147483648.0f;
     };
-    out.channels = channels;
-    out.stereoPcm.resize(frames * 2);
     auto toInt16 = [](float v) -> int16_t {
         // A NaN has no integer representation. Silence it; infinities saturate
         // just like finite samples outside [-1, 1].
@@ -58,12 +86,21 @@ void pcmToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channels
         return int16_t(std::clamp(v * 32767.0f, -32768.0f, 32767.0f));
     };
     for (size_t f = 0; f < frames; ++f) {
-        const uint8_t* fp = p + f * frameBytes;
-        const float l = sample(fp), r = channels >= 2 ? sample(fp + bps) : l;
-        out.stereoPcm[f * 2] = toInt16(l);
-        out.stereoPcm[f * 2 + 1] = toInt16(r);
+        const uint8_t* fp = pcm.data + f * frameBytes;
+        const float l = sample(fp), r = pcm.channels >= 2 ? sample(fp + bps) : l;
+        output[f * 2] = toInt16(l);
+        output[f * 2 + 1] = toInt16(r);
     }
-    out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
+}
+
+void pcmToStereo(DecodedAudio& out, const PcmLayout& pcm) {
+    const size_t frameBytes = pcm.frameBytes();
+    if (!frameBytes) return;
+    const size_t frames = pcm.bytes / frameBytes;
+    out.channels = pcm.channels;
+    out.stereoPcm.resize(frames * 2);
+    out.duration = out.sampleRate ? double(frames) / out.sampleRate : 0;
+    convertPcm(pcm, frames, out.stereoPcm.data());
 }
 
 constexpr int16_t kSteps[89] = {7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
@@ -157,56 +194,77 @@ void ima4ToStereo(DecodedAudio& out, const uint8_t* p, size_t bytes, int channel
     out.duration = out.sampleRate ? double(frames) / double(out.sampleRate) : 0;
 }
 
+struct CafInfo {
+    double rate = 44100;
+    uint32_t format = 0, flags = 0, channels = 1, bits = 16, framesPerPacket = 0;
+    int64_t validFrames = -1, packets = -1;
+    size_t offset = 0, length = 0;
+
+    int sampleRate() const { return int(std::max(8000.0, std::min(rate, 192000.0))); }
+    PcmLayout layout(const uint8_t* audio) const {
+        return {audio, length, int(channels), int(bits), bool(flags & 1), !(flags & 2)};
+    }
+};
+
+template<typename Read>
+CafInfo cafInfo(size_t n, Read read) {
+    CafInfo info;
+    // The caller has already checked the file magic.
+    for (size_t pos = 8; pos + 12 <= n;) {
+        const auto* header = read(pos, 12);
+        if (!header) break;
+        const auto declared = readBE64(header + 4);
+        const uint32_t type = readBE32(header);
+        pos += 12;
+        const size_t size = size_t(std::min<uint64_t>(declared, n - pos));
+        if (type == 0x64657363 /* desc */ && size >= 32) {
+            const auto* desc = read(pos, 32);
+            if (!desc) break;
+            uint64_t rate = readBE64(desc);
+            std::memcpy(&info.rate, &rate, 8);
+            info.format = readBE32(desc + 8);
+            info.flags = readBE32(desc + 12);
+            info.framesPerPacket = readBE32(desc + 20);
+            info.channels = std::max<uint32_t>(1, readBE32(desc + 24));
+            info.bits = readBE32(desc + 28);
+        } else if (type == 0x70616B74 /* pakt */ && size >= 24) {
+            const auto* table = read(pos, 24);
+            if (!table) break;
+            info.packets = int64_t(readBE64(table));
+            info.validFrames = int64_t(readBE64(table + 8));
+        } else if (type == 0x64617461 /* data */ && size >= 4) {
+            info.offset = pos + 4;  // skip the edit count
+            info.length = size - 4;
+        }
+        pos += size;
+    }
+    return info;
+}
+
 bool decodeCaf(DecodedAudio& out, const uint8_t* data, size_t n) {
     if (n < 8 || std::memcmp(data, "caff", 4) != 0) return false;
-    size_t pos = 8;
-    double sr = 44100;
-    uint32_t fmt = 0, flags = 0, channels = 1, bits = 16, framesPerPacket = 0;
-    int64_t validFrames = -1, packets = -1;
-    const uint8_t* audio = nullptr;
-    size_t audioBytes = 0;
-    while (pos + 12 <= n) {
-        const uint8_t* h = data + pos;
-        int64_t size = int64_t(readBE64(h + 4));
-        pos += 12;
-        if (size < 0 || pos + size_t(size) > n) size = int64_t(n - pos);   // -1: data runs to EOF
-        if (std::memcmp(h, "desc", 4) == 0 && size >= 32) {
-            uint64_t bitsRate = readBE64(data + pos);
-            std::memcpy(&sr, &bitsRate, 8);
-            fmt = readBE32(data + pos + 8);
-            flags = readBE32(data + pos + 12);
-            framesPerPacket = readBE32(data + pos + 20);
-            channels = std::max<uint32_t>(1, readBE32(data + pos + 24));
-            bits = readBE32(data + pos + 28);
-        } else if (std::memcmp(h, "pakt", 4) == 0 && size >= 24) {
-            packets = int64_t(readBE64(data + pos));
-            validFrames = int64_t(readBE64(data + pos + 8));
-        } else if (std::memcmp(h, "data", 4) == 0 && size >= 4) {
-            audio = data + pos + 4;   // skip the edit count
-            audioBytes = size_t(size) - 4;
-        }
-        pos += size_t(size);
-    }
-    if (!audio) return false;
-    out.sampleRate = int(std::max(8000.0, std::min(sr, 192000.0)));
-    if (fmt == 0x6C70636D /* lpcm */) pcmToStereo(out, audio, audioBytes, int(channels), int(bits), flags & 1, !(flags & 2));
-    else if (fmt == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, audioBytes, int(channels));
+    const auto info = cafInfo(n, [&](size_t offset, size_t) { return data + offset; });
+    if (!info.offset) return false;
+    const auto* audio = data + info.offset;
+    out.sampleRate = info.sampleRate();
+    if (info.format == 0x6C70636D /* lpcm */) pcmToStereo(out, info.layout(audio));
+    else if (info.format == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, info.length, int(info.channels));
     else {
-        // A compressed codec this build cannot decode (AAC, ALAC, ... without a host
-        // decoder): silence of the length the packet table gives, so the file still opens.
-        int64_t frames = validFrames;
-        if (frames < 0 && packets >= 0 && framesPerPacket) frames = packets * int64_t(framesPerPacket);
-        // Bounded before allocating: 16M frames is 64 MB of stereo silence (over 6 minutes at
-        // 44.1 kHz). A longer (or hostile) packet table gets that much and no more.
+        // A compressed codec unavailable on this host still opens with the
+        // timing declared by the file. Limit the size of the silence buffer.
+        int64_t frames = info.validFrames;
+        if (frames < 0 && info.packets >= 0 && info.framesPerPacket &&
+            info.packets <= std::numeric_limits<int64_t>::max() / info.framesPerPacket)
+            frames = info.packets * int64_t(info.framesPerPacket);
         if (frames <= 0) return false;
         const int64_t realFrames = frames;
         frames = std::min<int64_t>(frames, int64_t(16) << 20);
-        out.channels = int(std::min<uint32_t>(channels, 8));
+        out.channels = int(std::min<uint32_t>(info.channels, 8));
         out.stereoPcm.assign(size_t(frames) * 2, 0);
-        out.duration = double(realFrames) / out.sampleRate;   // the file's real length, even past the cap
+        out.duration = double(realFrames) / out.sampleRate;
         out.silent = true;
     }
-    out.codec = fmt;
+    out.codec = info.format;
     return !out.stereoPcm.empty();
 }
 
@@ -248,12 +306,54 @@ bool decodeAiff(DecodedAudio& out, const uint8_t* data, size_t n) {
     }
     if (!audio) return false;
     out.sampleRate = int(std::max(8000.0, std::min(sr, 192000.0)));
-    if (comp == 0x4E4F4E45 /* NONE */ || comp == 0x74776F73 /* twos */) pcmToStereo(out, audio, audioBytes, channels, bits, false, true);
-    else if (comp == 0x736F7774 /* sowt */) pcmToStereo(out, audio, audioBytes, channels, bits, false, false);
-    else if (comp == 0x666C3332 /* fl32 */) pcmToStereo(out, audio, audioBytes, channels, 32, true, true);
+    if (comp == 0x4E4F4E45 /* NONE */ || comp == 0x74776F73 /* twos */) pcmToStereo(out, {audio, audioBytes, channels, bits, false, true});
+    else if (comp == 0x736F7774 /* sowt */) pcmToStereo(out, {audio, audioBytes, channels, bits, false, false});
+    else if (comp == 0x666C3332 /* fl32 */) pcmToStereo(out, {audio, audioBytes, channels, 32, true, true});
     else if (comp == 0x696D6134 /* ima4 */) ima4ToStereo(out, audio, audioBytes, channels);
     else return false;
     return !out.stereoPcm.empty();
+}
+
+struct WaveInfo {
+    uint16_t format = 1, channels = 1, bits = 16, blockBytes = 0, samplesPerBlock = 0;
+    uint32_t sampleRate = 44100, factFrames = 0;
+    size_t offset = 0, length = 0;
+
+    PcmLayout layout(const uint8_t* audio) const {
+        if (format != 1 && format != 3 && format != 0xFFFE) return {};
+        return {audio, length, channels, bits, format == 3, false, format == 1 && (bits == 8 || bits == 16)};
+    }
+};
+
+template<typename Read>
+WaveInfo waveInfo(size_t n, Read read) {
+    WaveInfo info;
+    for (size_t pos = 12; pos + 8 <= n;) {
+        const auto* header = read(pos, 8);
+        if (!header) break;
+        const uint32_t type = readBE32(header), size = readLE32(header + 4);
+        pos += 8;
+        if (size > n - pos) break;
+        if (type == 0x666D7420 /* fmt */ && size >= 16) {
+            const auto* format = read(pos, std::min<uint32_t>(size, 20));
+            if (!format) break;
+            info.format = readLE16(format);
+            info.channels = std::max<uint16_t>(1, readLE16(format + 2));
+            info.sampleRate = std::max<uint32_t>(8000, readLE32(format + 4));
+            info.blockBytes = readLE16(format + 12);
+            info.bits = readLE16(format + 14);
+            if (size >= 20 && readLE16(format + 16) >= 2) info.samplesPerBlock = readLE16(format + 18);
+        } else if (type == 0x66616374 /* fact */ && size >= 4) {
+            const auto* fact = read(pos, 4);
+            if (!fact) break;
+            info.factFrames = readLE32(fact);
+        } else if (type == 0x64617461 /* data */) {
+            info.offset = pos;
+            info.length = size;
+        }
+        pos += (size_t(size) + 1) & ~size_t(1);
+    }
+    return info;
 }
 
 DecodedAudio decodeKnown(const uint8_t* data, size_t n) {
@@ -262,72 +362,24 @@ DecodedAudio decodeKnown(const uint8_t* data, size_t n) {
     if (decodeCaf(out, data, n) || decodeAiff(out, data, n)) return out;
     out = DecodedAudio{};
 
-    // RIFF / WAVE parser
     if (std::memcmp(data, "RIFF", 4) == 0 && std::memcmp(data + 8, "WAVE", 4) == 0) {
-        size_t pos = 12;
-        uint16_t audioFmt = 1, numCh = 1, bitsPerSample = 16;
-        uint32_t sr = 44100;
-        uint16_t blockBytes = 0, samplesPerBlock = 0;
-        uint32_t factFrames = 0;
-        const uint8_t* pcmPtr = nullptr;
-        size_t pcmBytes = 0;
-
-        while (pos + 8 <= n) {
-            const uint8_t* hdr = data + pos;
-            const uint32_t chunkSize = readLE32(hdr + 4);
-            pos += 8;
-            if (pos + chunkSize > n) break;
-            if (std::memcmp(hdr, "fmt ", 4) == 0 && chunkSize >= 16) {
-                audioFmt = readLE16(data + pos);
-                numCh = std::max<uint16_t>(1, readLE16(data + pos + 2));
-                sr = std::max<uint32_t>(8000, readLE32(data + pos + 4));
-                bitsPerSample = readLE16(data + pos + 14);
-                blockBytes = readLE16(data + pos + 12);
-                if (chunkSize >= 20 && readLE16(data + pos + 16) >= 2)
-                    samplesPerBlock = readLE16(data + pos + 18);
-            } else if (std::memcmp(hdr, "fact", 4) == 0 && chunkSize >= 4) {
-                factFrames = readLE32(data + pos);
-            } else if (std::memcmp(hdr, "data", 4) == 0) {
-                pcmPtr = data + pos;
-                pcmBytes = chunkSize;
-            }
-            pos += (chunkSize + 1) & ~size_t(1);
-        }
-        out.sampleRate = int(sr);
-        out.channels = int(numCh);
-        if(audioFmt==2) {
+        const auto info = waveInfo(n, [&](size_t offset, size_t) { return data + offset; });
+        out.sampleRate = int(info.sampleRate);
+        out.channels = info.channels;
+        if (info.format == 2) {
             DecodedAudio decoded;
-            if(decodeMsAdpcm(decoded,data,n))return decoded;
+            if (decodeMsAdpcm(decoded, data, n)) return decoded;
             return DecodedAudio{};
         }
-        if (audioFmt == 0x11) {
-            if (pcmPtr && bitsPerSample == 4 && imaWavToStereo(out, pcmPtr, pcmBytes,
-                    numCh, blockBytes, samplesPerBlock, factFrames)) return out;
+        const auto* pcm = info.offset ? data + info.offset : nullptr;
+        if (info.format == 0x11) {
+            if (pcm && info.bits == 4 && imaWavToStereo(out, pcm, info.length, info.channels,
+                    info.blockBytes, info.samplesPerBlock, info.factFrames)) return out;
             return DecodedAudio{};
         }
-        if (pcmPtr && pcmBytes > 0 && (audioFmt == 3 || audioFmt == 0xFFFE || (audioFmt == 1 && bitsPerSample > 16))) {
-            // float, WAVE_FORMAT_EXTENSIBLE (PCM inside), 24/32-bit integer
-            pcmToStereo(out, pcmPtr, pcmBytes, int(numCh), int(bitsPerSample), audioFmt == 3, false);
-            return out;
-        }
-        if (pcmPtr && pcmBytes > 0 && audioFmt == 1 && (bitsPerSample == 8 || bitsPerSample == 16)) {
-            const size_t bytesPerFrame = size_t(numCh) * (bitsPerSample / 8);
-            const size_t frames = bytesPerFrame ? (pcmBytes / bytesPerFrame) : 0;
-            out.duration = double(frames) / double(sr);
-            out.stereoPcm.resize(frames * 2);
-            for (size_t f = 0; f < frames; ++f) {
-                const uint8_t* fp = pcmPtr + f * bytesPerFrame;
-                int16_t l = 0, r = 0;
-                if (bitsPerSample == 16) {
-                    std::memcpy(&l, fp, 2);
-                    r = (numCh >= 2) ? (std::memcpy(&r, fp + 2, 2), r) : l;
-                } else {
-                    l = int16_t((int(fp[0]) - 128) * 256);
-                    r = (numCh >= 2) ? int16_t((int(fp[1]) - 128) * 256) : l;
-                }
-                out.stereoPcm[f * 2 + 0] = l;
-                out.stereoPcm[f * 2 + 1] = r;
-            }
+        const auto layout = info.layout(pcm);
+        if (pcm && info.length && layout.frameBytes()) {
+            pcmToStereo(out, layout);
             return out;
         }
     }
@@ -361,11 +413,15 @@ bool parseMp3Header(const uint8_t* p, Mp3Header& h) {
     return h.size >= 24;
 }
 }
-bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
+namespace {
+template<typename Read, typename PacketHandler>
+bool walkMp3(size_t n, Mp3Packets& out, Read read, PacketHandler packet) {
     size_t off = 0;
-    if (n >= 10 && std::memcmp(data, "ID3", 3) == 0) {
-        off = 10 + ((size_t(data[6] & 0x7F) << 21) | (size_t(data[7] & 0x7F) << 14) | (size_t(data[8] & 0x7F) << 7) | size_t(data[9] & 0x7F));
-        if (data[5] & 0x10) off += 10;   // footer
+    const auto* tag = n >= 10 ? read(0, 10) : nullptr;
+    if (tag && std::memcmp(tag, "ID3", 3) == 0) {
+        off = 10 + ((size_t(tag[6] & 0x7F) << 21) | (size_t(tag[7] & 0x7F) << 14) |
+                    (size_t(tag[8] & 0x7F) << 7) | size_t(tag[9] & 0x7F));
+        if (tag[5] & 0x10) off += 10;   // footer
     }
     // The first frame: a header whose own length leads to another header of the same stream
     // (or to the end), so stray 0xFF bytes are not taken for audio.
@@ -373,11 +429,15 @@ bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
     const size_t scanEnd = std::min(n, off + (64u << 10));
     for (;; ++off) {
         if (off + 4 > scanEnd) return false;
-        if (!parseMp3Header(data + off, first)) continue;
+        const auto* header = read(off, 4);
+        if (!header) return false;
+        if (!parseMp3Header(header, first)) continue;
         const size_t next = off + first.size;
         Mp3Header second;
         if (next == n) break;
-        if (next + 4 <= n && parseMp3Header(data + next, second) && second.sampleRate == first.sampleRate && second.version == first.version) break;
+        const auto* following = next + 4 <= n ? read(next, 4) : nullptr;
+        if (following && parseMp3Header(following, second) &&
+            second.sampleRate == first.sampleRate && second.version == first.version) break;
     }
     // A Xing/Info frame describes the stream and holds no audio: AudioFile does not count it
     // as a packet. A LAME-compatible tag (LAME itself, or ffmpeg's "Lavc") carries the
@@ -386,9 +446,11 @@ bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
     uint32_t xingFrames = 0;
     int32_t lameDelay = 0, lamePad = 0;
     bool hasLame = false;
-    if (off + 4 + side + 4 <= n && (std::memcmp(data + off + 4 + side, "Xing", 4) == 0 || std::memcmp(data + off + 4 + side, "Info", 4) == 0)) {
-        const uint8_t* p = data + off + 4 + side + 4;
-        const uint8_t* const end = data + std::min(n, off + first.size);
+    const auto* firstFrame = read(off, first.size);
+    if (firstFrame && first.size >= 4 + side + 4 &&
+        (std::memcmp(firstFrame + 4 + side, "Xing", 4) == 0 || std::memcmp(firstFrame + 4 + side, "Info", 4) == 0)) {
+        const uint8_t* p = firstFrame + 4 + side + 4;
+        const uint8_t* const end = firstFrame + first.size;
         if (p + 4 <= end) {
             const uint32_t flags = readBE32(p);
             p += 4;
@@ -412,17 +474,20 @@ bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
     out.channels = first.channels;
     out.framesPerPacket = first.frames;
     out.dataOffset = uint32_t(off);
+    size_t packetCount = 0;
     while (off + 4 <= n) {
         Mp3Header h;
-        if (!parseMp3Header(data + off, h) || h.sampleRate != first.sampleRate || h.channels != first.channels || off + h.size > n) break;
-        out.packets.emplace_back(uint32_t(off), h.size);
+        const auto* header = read(off, 4);
+        if (!header || !parseMp3Header(header, h) || h.sampleRate != first.sampleRate ||
+            h.channels != first.channels || h.frames != first.frames || off + h.size > n) break;
+        packet(packetCount++, uint32_t(off), h.size);
         out.maxPacketSize = std::max(out.maxPacketSize, h.size);
         out.dataBytes += h.size;
         off += h.size;
     }
-    if (out.packets.empty()) return false;
+    if (!packetCount) return false;
     // Prefer the Xing frame count when it is present: that is what AudioFile uses.
-    const int64_t mpeg = int64_t(xingFrames ? xingFrames : out.packets.size()) * int64_t(out.framesPerPacket);
+    const int64_t mpeg = int64_t(xingFrames ? xingFrames : packetCount) * int64_t(out.framesPerPacket);
     if (hasLame && mpeg > int64_t(lameDelay) + int64_t(lamePad)) {
         out.primingFrames = lameDelay;
         out.remainderFrames = lamePad;
@@ -432,6 +497,16 @@ bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
     }
     return true;
 }
+}
+
+bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out) {
+    if (!data) return false;
+    return walkMp3(n, out, [&](size_t offset, size_t) { return data + offset; },
+                   [&](size_t, uint32_t offset, uint32_t size) {
+        out.packets.emplace_back(offset, size);
+    });
+}
+
 struct Mp3Stream {
     mp3dec_t dec;
     std::vector<uint8_t> carry;   // the tail of the last call that was not a whole frame
@@ -516,12 +591,312 @@ bool looksLikeMp3(const uint8_t* d, size_t n) {
 
 } // namespace
 
+namespace {
+constexpr size_t kStreamThreshold = 256 * 1024;
+
+// Byte ownership for NSData and file players. MP3's sequential header
+// scan and decoder share a bounded read-ahead buffer for file input.
+struct StreamBytes {
+    std::vector<uint8_t> owned;
+    size_t length = 0;
+    int file = -1;
+    std::vector<uint8_t> buffer;
+    size_t start = 0, available = 0;
+
+    ~StreamBytes() {
+        if (file >= 0) ::close(file);
+    }
+
+    static constexpr size_t kReadAhead = 65536;
+    size_t size() const { return file >= 0 ? length : owned.size(); }
+
+    const uint8_t* read(size_t offset, size_t needed) {
+        if (offset > size() || needed > size() - offset) return nullptr;
+        if (file < 0) return owned.data() + offset;
+        if (offset < start || offset - start > available || needed > available - (offset - start)) {
+            start = offset;
+            ssize_t got;
+            do { got = ::pread(file, buffer.data(), buffer.size(), off_t(start)); } while (got < 0 && errno == EINTR);
+            available = got > 0 ? size_t(got) : 0;
+        }
+        return needed <= available - (offset - start) ? buffer.data() + (offset - start) : nullptr;
+    }
+};
+
+class VorbisSource final : public AudioSource {
+public:
+    static std::shared_ptr<VorbisSource> create(stb_vorbis* handle, std::shared_ptr<StreamBytes> bytes = {}) {
+        Handle decoder(handle, stb_vorbis_close);
+        if (!decoder) return nullptr;
+        const auto info = stb_vorbis_get_info(decoder.get());
+        const auto length = stb_vorbis_stream_length_in_samples(decoder.get());
+        if (!length || info.sample_rate < 4000 || info.sample_rate > 192000 || info.channels < 1) return nullptr;
+        return std::make_shared<VorbisSource>(std::move(decoder), std::move(bytes), info, length);
+    }
+
+    using Handle = std::unique_ptr<stb_vorbis, decltype(&stb_vorbis_close)>;
+    VorbisSource(Handle decoder, std::shared_ptr<StreamBytes> bytes, stb_vorbis_info info, uint64_t length)
+        : AudioSource(int(info.sample_rate), info.channels, length), bytes_(std::move(bytes)), decoder_(std::move(decoder)) {}
+
+    size_t read(uint64_t first, int16_t* stereo, size_t count) override {
+        if (first >= frames() || !count) return 0;
+        if (first != cursor_ && !stb_vorbis_seek(decoder_.get(), unsigned(first))) return 0;
+        cursor_ = first;
+        count = std::min({count, size_t(frames() - first), size_t(std::numeric_limits<int>::max() / 2)});
+        // Ask for one channel for mono so exactly the same samples go to left and right.
+        const int outputChannels = channels() == 1 ? 1 : 2;
+        const size_t got = stb_vorbis_get_samples_short_interleaved(decoder_.get(), outputChannels, stereo, int(count) * outputChannels);
+        if (outputChannels == 1)
+            for (size_t i = got; i != 0; --i) stereo[2 * i - 1] = stereo[2 * i - 2] = stereo[i - 1];
+        cursor_ += got;
+        return got;
+    }
+
+private:
+    std::shared_ptr<StreamBytes> bytes_;
+    Handle decoder_;
+    uint64_t cursor_ = 0;
+};
+
+class Mp3FileSource final : public AudioSource {
+public:
+    static constexpr uint64_t kCheckpoint = 64;
+
+    Mp3FileSource(std::shared_ptr<StreamBytes> bytes, const Mp3Packets& index, size_t packets, std::vector<uint32_t> offsets)
+        : AudioSource(index.sampleRate, index.channels, uint64_t(packets) * index.framesPerPacket),
+          bytes_(std::move(bytes)), offsets_(std::move(offsets)), packetFrames_(index.framesPerPacket), offset_(index.dataOffset) {
+        mp3dec_init(&decoder_);
+    }
+
+    size_t read(uint64_t first, int16_t* stereo, size_t count) override {
+        if (first >= frames() || !count) return 0;
+        count = std::min<uint64_t>(count, frames() - first);
+        const uint64_t wantedPacket = first / packetFrames_;
+        if (!havePacket_ || wantedPacket < packet_ || wantedPacket > packet_ + 1) {
+            // Start before the requested packet so Layer III's bit reservoir,
+            // overlap/add and synthesis filter are warmed up before returning PCM.
+            const uint64_t checkpoint = wantedPacket / kCheckpoint;
+            const uint64_t warmup = checkpoint > 0 ? checkpoint - 1 : 0;
+            packet_ = warmup * kCheckpoint;
+            offset_ = offsets_[warmup];
+            havePacket_ = false;
+            mp3dec_init(&decoder_);
+        }
+
+        size_t produced = 0;
+        while (produced < count) {
+            const uint64_t position = first + produced;
+            const uint64_t wanted = position / packetFrames_;
+            while (!havePacket_ || packet_ < wanted) {
+                if (havePacket_) ++packet_;
+                if (!readPacket()) return produced;
+                havePacket_ = true;
+            }
+            const size_t skip = position % packetFrames_;
+            const size_t take = std::min(count - produced, packetFrames_ - skip);
+            std::copy_n(pcm_.data() + skip * 2, take * 2, stereo + produced * 2);
+            produced += take;
+        }
+        return produced;
+    }
+
+private:
+    bool readPacket() {
+        Mp3Header header;
+        const auto* bytes = bytes_->read(offset_, 4);
+        if (!bytes || !parseMp3Header(bytes, header)) return false;
+        bytes = bytes_->read(offset_, header.size);
+        if (!bytes) return false;
+        mp3dec_frame_info_t info{};
+        const int samples = mp3dec_decode_frame(&decoder_, bytes, int(header.size), pcm_.data(), &info);
+        offset_ += header.size;
+        if (samples != int(packetFrames_)) pcm_.fill(0);
+        else if (info.channels == 1)
+            for (size_t i = samples; i != 0; --i) pcm_[2 * i - 1] = pcm_[2 * i - 2] = pcm_[i - 1];
+        return true;
+    }
+
+    std::shared_ptr<StreamBytes> bytes_;
+    std::vector<uint32_t> offsets_;
+    size_t packetFrames_, offset_;
+    uint64_t packet_ = 0;
+    mp3dec_t decoder_{};
+    std::array<int16_t, MINIMP3_MAX_SAMPLES_PER_FRAME> pcm_;
+    bool havePacket_ = false;
+};
+
+class PcmSource final : public AudioSource {
+public:
+    static std::shared_ptr<AudioSource> create(std::shared_ptr<StreamBytes> bytes, bool caf) {
+        const auto read = [&](size_t offset, size_t count) { return bytes->read(offset, count); };
+        PcmLayout pcm;
+        int rate;
+        size_t offset;
+        if (caf) {
+            const auto info = cafInfo(bytes->size(), read);
+            if (info.format != 0x6C70636D /* lpcm */) return nullptr;
+            offset = info.offset;
+            pcm = info.layout(nullptr);
+            rate = info.sampleRate();
+        } else {
+            const auto info = waveInfo(bytes->size(), read);
+            offset = info.offset;
+            pcm = info.layout(nullptr);
+            rate = int(info.sampleRate);
+        }
+        const size_t stride = pcm.frameBytes();
+        if (!offset || !stride || stride > StreamBytes::kReadAhead || pcm.bytes < stride || rate <= 0) return nullptr;
+        return std::make_shared<PcmSource>(std::move(bytes), pcm, offset, rate);
+    }
+
+    PcmSource(std::shared_ptr<StreamBytes> bytes, PcmLayout layout, size_t offset, int rate)
+        : AudioSource(rate, layout.channels, layout.bytes / layout.frameBytes()),
+          bytes_(std::move(bytes)), layout_(layout), offset_(offset) {}
+
+    size_t read(uint64_t first, int16_t* stereo, size_t count) override {
+        if (first >= frames() || !count) return 0;
+        count = std::min<uint64_t>(count, frames() - first);
+        const size_t stride = layout_.frameBytes();
+        auto chunk = layout_;
+        size_t done = 0;
+        while (done < count) {
+            const size_t take = std::min(count - done, StreamBytes::kReadAhead / stride);
+            chunk.data = bytes_->read(offset_ + (first + done) * stride, take * stride);
+            if (!chunk.data) break;
+            convertPcm(chunk, take, stereo + done * 2);
+            done += take;
+        }
+        return done;
+    }
+
+private:
+    std::shared_ptr<StreamBytes> bytes_;
+    PcmLayout layout_;
+    size_t offset_;
+};
+
+bool isOgg(const uint8_t* data, size_t size) {
+    return size >= 4 && std::memcmp(data, "OggS", 4) == 0;
+}
+
+std::shared_ptr<AudioSource> openMp3(std::shared_ptr<StreamBytes> bytes) {
+    Mp3Packets index;
+    std::vector<uint32_t> checkpoints;
+    size_t packets = 0;
+    auto read = [&](size_t offset, size_t count) { return bytes->read(offset, count); };
+    if (!walkMp3(bytes->size(), index, read, [&](size_t packet, uint32_t offset, uint32_t) {
+        if (packet % Mp3FileSource::kCheckpoint == 0) checkpoints.push_back(offset);
+        ++packets;
+    })) return nullptr;
+    return std::make_shared<Mp3FileSource>(std::move(bytes), index, packets, std::move(checkpoints));
+}
+
+std::shared_ptr<AudioSource> openMemory(std::shared_ptr<StreamBytes> bytes) {
+    const size_t size = bytes->size();
+    const uint8_t* data = bytes->owned.data();
+    if (looksLikeMp3(data, size)) return openMp3(std::move(bytes));
+    if (isOgg(data, size)) return VorbisSource::create(stb_vorbis_open_memory(data, int(size), nullptr, nullptr), std::move(bytes));
+    if (size >= 12) {
+        if (std::memcmp(data, "RIFF", 4) == 0 && std::memcmp(data + 8, "WAVE", 4) == 0)
+            return PcmSource::create(std::move(bytes), false);
+        if (std::memcmp(data, "caff", 4) == 0)
+            if (auto pcm = PcmSource::create(bytes, true)) return pcm;
+    }
+    return openHostStream(data, size, bytes);
+}
+}
+
+std::shared_ptr<AudioSource> openStream(const std::string& path) {
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(path.c_str(), "rb"), std::fclose);
+    if (!file) return nullptr;
+    struct stat state{};
+    const int fd = fileno(file.get());
+    if (::fstat(fd, &state) != 0 || !S_ISREG(state.st_mode) || state.st_size < int64_t(kStreamThreshold) ||
+        uint64_t(state.st_size) > uint64_t(std::numeric_limits<int>::max())) return nullptr;
+    uint8_t header[12];
+    if (std::fread(header, 1, sizeof header, file.get()) != sizeof header) return nullptr;
+    if (isOgg(header, sizeof header)) {
+        if (std::fseek(file.get(), 0, SEEK_SET) != 0) return nullptr;
+        // stb owns the FILE even when it rejects the stream.
+        return VorbisSource::create(stb_vorbis_open_file(file.release(), true, nullptr, nullptr));
+    }
+    const bool m4a = std::memcmp(header + 4, "ftyp", 4) == 0;
+    const bool caf = std::memcmp(header, "caff", 4) == 0;
+    if (m4a || caf) {
+        if (auto source = openHostStream(fd, size_t(state.st_size))) return source;
+        if (m4a) return nullptr;
+    }
+    const bool mp3 = looksLikeMp3(header, sizeof header);
+    const bool wav = std::memcmp(header, "RIFF", 4) == 0 && std::memcmp(header + 8, "WAVE", 4) == 0;
+    if (!mp3 && !wav && !caf) return nullptr;
+    auto bytes = std::make_shared<StreamBytes>();
+    bytes->file = ::dup(fd);
+    if (bytes->file < 0) return nullptr;
+    bytes->length = size_t(state.st_size);
+    bytes->buffer.resize(StreamBytes::kReadAhead);
+    return mp3 ? openMp3(std::move(bytes)) : PcmSource::create(std::move(bytes), caf);
+}
+
+std::shared_ptr<AudioSource> openStream(std::vector<uint8_t>& input) {
+    if (input.size() < kStreamThreshold || input.size() > size_t(std::numeric_limits<int>::max())) return nullptr;
+    auto bytes = std::make_shared<StreamBytes>();
+    bytes->owned = std::move(input);
+    auto source = openMemory(bytes);
+    if (!source) input = std::move(bytes->owned);
+    return source;
+}
+
+bool SourceWindow::pair(AudioSource& source, uint64_t first, int16_t (&current)[2], int16_t (&next)[2], bool loop) {
+    if (first < start_ || first - start_ >= std::min(count_, kFrames)) {
+        const bool adjacent = count_ == kFrames + 1 && first == start_ + kFrames;
+        start_ = first;
+        if (adjacent) {
+            std::copy_n(samples_.data() + kFrames * 2, 2, samples_.data());
+            count_ = 1 + source.read(first + 1, samples_.data() + 2, kFrames);
+        } else {
+            count_ = source.read(first, samples_.data(), kFrames + 1);
+        }
+    }
+    if (start_ == 0 && count_ && !haveFirst_) {
+        std::copy_n(samples_.data(), 2, first_);
+        haveFirst_ = true;
+    }
+    const size_t index = size_t(first - start_);
+    if (index >= count_) return false;
+    const size_t following = std::min(index + 1, count_ - 1);
+    std::copy_n(samples_.data() + index * 2, 2, current);
+    if (loop && first + 1 == source.frames()) {
+        if (!haveFirst_) haveFirst_ = source.read(0, first_, 1) == 1;
+        if (haveFirst_) {
+            std::copy_n(first_, 2, next);
+            return true;
+        }
+    }
+    std::copy_n(samples_.data() + following * 2, 2, next);
+    return true;
+}
+
 DecodedAudio decode(const uint8_t* data, size_t n) {
     DecodedAudio host;
     if (decodeHostContainer(host, data, n)) return host;
     if (data && looksLikeMp3(data, n)) {
         DecodedAudio out;
         if (decodeMp3(out, data, n)) return out;
+    }
+    if (data && n <= size_t(std::numeric_limits<int>::max()) && isOgg(data, n)) {
+        auto source = VorbisSource::create(stb_vorbis_open_memory(data, int(n), nullptr, nullptr));
+        if (source) {
+            DecodedAudio out;
+            out.sampleRate = source->sampleRate();
+            out.channels = source->channels();
+            constexpr size_t kMaxFrames = 64u * 1024 * 1024;
+            if (source->frames() > kMaxFrames) return out;
+            out.stereoPcm.resize(size_t(source->frames()) * 2);
+            const size_t frames = source->read(0, out.stereoPcm.data(), size_t(source->frames()));
+            out.stereoPcm.resize(frames * 2);
+            out.duration = double(frames) / out.sampleRate;
+            return out;
+        }
     }
     return decodeKnown(data, n);
 }

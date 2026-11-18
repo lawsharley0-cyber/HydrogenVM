@@ -1297,18 +1297,37 @@ uint32_t ct_createName(Ctx& x, id name, float size, GuestPtr matrix) {
     rt(x).release(x.cpu, cg);
     return ct;
 }
-// Applies a CTFontDescriptor attribute dictionary. Only kCTFontNameAttribute is modelled; any other key is
-// reported as missing rather than silently dropped.
+// Applies a CTFontDescriptor attribute dictionary. The name, family and symbolic bold/italic traits are
+// modelled (family plus traits picks a PostScript-style "<Family>-Bold" name, which is how the system fonts
+// the text backend knows are named); any other key is reported as missing rather than silently dropped.
 void applyDescriptorAttributes(Ctx& x, FontData& h, id attrs) {
     if (!attrs) return;
+    std::string name, family;
+    uint32_t traits = 0;
+    bool hasTraits = false;
     for (auto [key, value] : Foundation::dictEntries(x, attrs)) {
         const std::string k = Foundation::utf8(x, key);
-        if (k == "kCTFontNameAttribute") {
-            const std::string name = Foundation::utf8(x, value);
-            if (name != h.name) h.face.reset();   // a custom face belongs to the old name; render the new one by name
-            h.name = name;
+        if (k == "kCTFontNameAttribute") name = Foundation::utf8(x, value);
+        else if (k == "kCTFontFamilyNameAttribute") family = Foundation::utf8(x, value);
+        else if (k == "kCTFontTraitsAttribute") {
+            for (auto [tk, tv] : Foundation::dictEntries(x, value)) {
+                if (Foundation::utf8(x, tk) == "kCTFontSymbolicTrait" && Foundation::isNumber(x, tv)) {
+                    traits = uint32_t(Foundation::numberInt(x, tv)); hasTraits = true;
+                }
+                else x.proc.reportMissing("CTFontDescriptor trait " + Foundation::utf8(x, tk));
+            }
         }
+        else if (k == "kCTFontSizeAttribute" && Foundation::isNumber(x, value)) h.size = float(Foundation::numberDouble(x, value));
         else x.proc.reportMissing("CTFontDescriptor attribute " + k);
+    }
+    if (name.empty() && !family.empty()) {
+        name = family;
+        const bool bold = hasTraits && (traits & 2u), italic = hasTraits && (traits & 1u);
+        if (bold || italic) name += std::string("-") + (bold ? "Bold" : "") + (italic ? "Italic" : "");
+    }
+    if (!name.empty()) {
+        if (name != h.name) h.face.reset();   // a custom face belongs to the old name; render the new one by name
+        h.name = name;
     }
 }
 uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) {
@@ -1323,6 +1342,26 @@ uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) {
     h->name = "Helvetica";   // same default as CGFontCreateWithFontName(nil)
     applyDescriptorAttributes(x, *h, attrs);
     return newObject(x, S(x).descriptor, std::move(h));
+}
+// The text backend resolves any name to a usable face, so the descriptor itself is the best match; the
+// mandatory-attribute set only narrows which of several candidates is returned on Apple.
+uint32_t ct_matchingDescriptor(Ctx& x, id desc, id /*mandatory*/) {
+    auto* f = hd<FontData>(x, desc);
+    return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0;
+}
+uint32_t ct_descriptorCopyAttribute(Ctx& x, id desc, id attr) {
+    auto* f = hd<FontData>(x, desc);
+    if (!f || !attr) return 0;
+    const std::string k = Foundation::utf8(x, attr);
+    if (k == "kCTFontNameAttribute" || k == "kCTFontDisplayNameAttribute")
+        return Foundation::makeString(x, f->face ? f->face->name(false) : f->name, true);
+    if (k == "kCTFontFamilyNameAttribute") {
+        if (f->face) return Foundation::makeString(x, f->face->name(true), true);
+        return Foundation::makeString(x, f->name.substr(0, f->name.find('-')), true);
+    }
+    if (k == "kCTFontSizeAttribute") return Foundation::makeNumberDouble(x, f->size, true);
+    x.proc.reportMissing("CTFontDescriptorCopyAttribute " + k);
+    return 0;
 }
 uint32_t ct_copyDescriptor(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
@@ -2071,6 +2110,9 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ct_copyDescriptor>("_CTFontCopyFontDescriptor");
     p.def<&ct_descriptorCopyWithAttributes>("_CTFontDescriptorCreateCopyWithAttributes");
     p.def<&ct_descriptorWithAttributes>("_CTFontDescriptorCreateWithAttributes");
+    p.def<&ct_descriptorCopyAttribute>("_CTFontDescriptorCopyAttribute");
+    supportDef<&ct_matchingDescriptor>(p, "_CTFontDescriptorCreateMatchingFontDescriptor", SupportStatus::Approx,
+        "returns a copy of the descriptor; the text backend resolves every name to a face");
     p.def<&ct_createDescriptor>("_CTFontCreateWithFontDescriptor");
     p.def<&ct_family>("_CTFontCopyFamilyName");
     p.def<&ct_traits>("_CTFontGetSymbolicTraits");
