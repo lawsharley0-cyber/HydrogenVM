@@ -445,7 +445,7 @@ void s_noop(Ctx&) {}
 struct OpenFds {
     explicit OpenFds(Process&) {}
     std::mutex mu;
-    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; };
+    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; std::string path; bool inBundle = false; };
     std::unordered_map<int32_t, FdTrack> tracks;
 };
 
@@ -500,9 +500,21 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
         assetReadAhead(fd, hp, flags, st);
     }
     const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
+    std::string replayPath;
+    bool inBundle = false;
+    if (x.proc.session().detailsActive()) {
+        const auto& bundle = x.proc.bundlePath();
+        const auto& home = x.proc.homePath();
+        inBundle = !bundle.empty() && (hp == bundle || hp.starts_with(bundle + "/"));
+        // Phone and bench installs have different UUIDs. Use the same logical path on both.
+        if (inBundle) replayPath = "@bundle" + hp.substr(bundle.size());
+        else if (!home.empty() && (hp == home || hp.starts_with(home + "/")))
+            replayPath = "@home" + hp.substr(home.size());
+        else replayPath = x.proc.absoluteGuestPath(gp);
+    }
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
-    ofs.tracks[fd] = {h, 0};
+    ofs.tracks[fd] = {h, 0, std::move(replayPath), inBundle};
     return fd;
 }
 // POSIX shared memory: Unity's Mono runtime opens a shared-handle segment at startup (Subway
@@ -563,9 +575,42 @@ void waitUntilReadable(Ctx& x, int fd) {
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
+    std::optional<std::string> trackedPath;
+    bool trackedInBundle = false;
+    uint64_t trackedOff = 0;
+    if (x.proc.session().detailsActive()) {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) {
+            trackedPath = it->second.path;
+            trackedInBundle = it->second.inBundle;
+            const off_t cur = ::lseek(fd, 0, SEEK_CUR);
+            trackedOff = cur >= 0 ? uint64_t(cur) : uint64_t(it->second.bytesRead);
+        }
+    }
+    if (trackedPath && !trackedInBundle && x.proc.session().replayingDetails()) {
+        if (auto rec = x.proc.session().replayFileRead(*trackedPath, trackedOff, n)) {
+            const size_t got = rec->size();
+            if (got > 0) x.mem.copyIn(buf, rec->data(), got);
+            ::lseek(fd, off_t(got), SEEK_CUR);
+            auto& ofs = x.proc.service<OpenFds>();
+            std::lock_guard<std::mutex> lk(ofs.mu);
+            auto it = ofs.tracks.find(fd);
+            if (it != ofs.tracks.end()) {
+                it->second.bytesRead += int64_t(got);
+                x.proc.updateFileRead(it->second.fileHandle, it->second.bytesRead);
+            }
+            return int32_t(got);
+        }
+    }
     waitUntilReadable(x, fd);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     if (r > 0) {
+        if (trackedPath && x.proc.session().recordingDetails()) {
+            x.proc.session().recordFileRead(*trackedPath, trackedOff, x.mem.host(buf), size_t(r), trackedInBundle,
+                                              x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+        }
         auto& ofs = x.proc.service<OpenFds>();
         std::lock_guard<std::mutex> lk(ofs.mu);
         auto it = ofs.tracks.find(fd);
@@ -855,6 +900,18 @@ int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t len) {
     return 0;
 }
 int32_t m_ok3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
+// mprotect(2): the guest permissions of whole 4 KB pages. GuestArena pushes them into host page
+// protection where a host page can express them, so later loads and stores are checked by the MMU.
+int32_t m_mprotect(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot) {
+    if ((addr & 4095u) || (prot & ~7)) { setErrno(x, EINVAL); return -1; }
+    if (!len) return 0;
+    const uint64_t end = (uint64_t(addr) + len + 4095u) & ~uint64_t(4095u);
+    if (end > (1ull << 32) || end > Memory::GuestArena::kHleBase) { setErrno(x, ENOMEM); return -1; }
+    for (uint64_t page = addr; page < end; page += 4096)
+        if (!x.mem.isMapped(uint32_t(page))) { setErrno(x, ENOMEM); return -1; }
+    x.mem.protect(addr, uint32_t(end - addr), uint8_t(prot));
+    return 0;
+}
 int32_t m_ok2(Ctx&, GuestPtr, uint32_t) { return 0; }
 
 // --------------------------------------------------------------- signals ---
@@ -1341,8 +1398,7 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
     p.def<&m_mmap>("_mmap");
     p.def<&m_munmap>("_munmap");
-    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub,
-        "Returns success without changing guest or host page protections");
+    p.def<&m_mprotect>("_mprotect");
     supportDef<&m_ok3>(p, "_madvise", SupportStatus::Stub,
         "Returns success without applying a memory advice policy");
     supportDef<&m_ok3>(p, "_msync", SupportStatus::Stub,

@@ -1244,7 +1244,11 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
     ContextData* c = currentCtx(x);
     auto wr = [&](int32_t v, int idx = 0) { x.mem.write<int32_t>(params + uint32_t(idx * 4), v); };
     switch (pname) {
-        case GL_MAX_TEXTURE_SIZE: case GL_MAX_RENDERBUFFER_SIZE: wr(4096); break;
+        case GL_MAX_TEXTURE_SIZE: case GL_MAX_RENDERBUFFER_SIZE: {
+            const uint32_t cap = x.proc.config().maxTextureSize;
+            wr(cap ? int32_t(cap) : 4096);
+            break;
+        }
         case GL_MAX_VIEWPORT_DIMS: wr(4096, 0); wr(4096, 1); break;
         case GL_MAX_TEXTURE_UNITS: case GL_MAX_TEXTURE_IMAGE_UNITS: case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS: wr(8); break;
         case GL_MAX_VERTEX_ATTRIBS: wr(16); break;

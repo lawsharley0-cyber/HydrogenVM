@@ -11,6 +11,7 @@
 #include "loader/AppBundle.hpp"
 #include "loader/Apk.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "runtime/uikit/UIKit.hpp"
@@ -549,6 +550,10 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool allowInternet = _allowInternet;
     const bool unlockFrameRate = _unlockFrameRate;
     const bool glTrace = _glTrace;
+    const bool gles1Emulate = _gles1Emulate;
+    const uint32_t maxTextureSize = _maxTextureSize;
+    const uint64_t memoryBudgetBytes = _memoryBudgetBytes;
+    const std::string safeModeFallback = _safeModeFallback.length > 0 ? _safeModeFallback.UTF8String : "";
 
     auto flushLogs = [core, weakSelf]() {
         std::vector<std::pair<std::string, RT::LogLevel>> batch;
@@ -573,13 +578,21 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         [fm removeItemAtPath:prevRec error:nil];
         [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
     }
-    const std::string recordPath = lastRec.UTF8String;
+    NSString *privateRec = [lastRec stringByAppendingPathExtension:@"private"];
+    NSString *prevPrivate = [prevRec stringByAppendingPathExtension:@"private"];
+    [fm removeItemAtPath:prevPrivate error:nil];
+    if ([fm fileExistsAtPath:privateRec]) [fm moveItemAtPath:privateRec toPath:prevPrivate error:nil];
+    const bool detailedRecording = _detailedRecording;
+    const std::string recordPath = detailedRecording ? privateRec.UTF8String : lastRec.UTF8String;
+    const std::string inputPath = detailedRecording ? lastRec.UTF8String : "";
 
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
         cfg.recordPath = recordPath;
+        cfg.detailedRecording = detailedRecording;
+        cfg.inputRecordingPath = inputPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
@@ -1121,6 +1134,33 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         G::setTextBackend(std::make_shared<CoreTextBackend>());
         G::setPlatformImageDecoder(&decodeWithImageIO);
     });
+}
+
++ (nullable NSString *)chooseFallbackForCrashReport:(NSString *)crashReport
+                                     internetAccess:(BOOL)internetAccess
+                                    unlockFrameRate:(BOOL)unlockFrameRate
+                                       gles1Emulate:(BOOL)gles1Emulate
+                                     maxTextureSize:(uint32_t)maxTextureSize {
+    RT::ProcessConfig cfg;
+    cfg.internetAccess = internetAccess;
+    cfg.unlockFrameRate = unlockFrameRate;
+    cfg.gles1Emulate = gles1Emulate;
+    cfg.maxTextureSize = maxTextureSize;
+    const std::string text = crashReport.length > 0 ? crashReport.UTF8String : "";
+    auto fb = RT::Compat::chooseFallback(text, cfg);
+    if (!fb) return nil;
+    for (const auto &info : RT::Compat::fallbacks()) {
+        if (info.fallback == *fb) return str(info.id);
+    }
+    return nil;
+}
+
++ (nullable NSString *)fallbackLabelForId:(NSString *)fallbackId {
+    if (fallbackId.length == 0) return nil;
+    if (const auto *info = RT::Compat::findFallback(fallbackId.UTF8String)) {
+        return str(info->label);
+    }
+    return nil;
 }
 
 @end
