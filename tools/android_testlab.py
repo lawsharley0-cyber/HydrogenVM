@@ -92,15 +92,16 @@ def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int, extra_a
             "cases": cases, "log": out[-20000:]}
 
 
-def run_java_layout(work: Path, timeout: int) -> dict:
-    """Run host-side DEX reader checks before the bytecode execution suite is attached."""
+def run_java_check(work: Path, timeout: int, source: str, label: str) -> dict:
+    """Run a host-side DEX check with the same C++ sources as the runtime."""
     fixtures = ROOT / "tests/android/java"
-    executable = work / "dex-layout"
+    executable = work / source
     compiler = shlex.split(os.environ.get("CXX", "c++"))
     try:
         build = subprocess.run(
             [*compiler, "-std=c++20", "-O2", "-pthread", "-I", str(ROOT / "src"),
-             str(fixtures / "DexLayout.cpp"), str(ROOT / "src/runtime/android/dex/DexFile.cpp"),
+             str(fixtures / (source + ".cpp")), str(ROOT / "src/runtime/android/dex/DexFile.cpp"),
+             str(ROOT / "src/runtime/android/dex/Interpreter.cpp"), str(ROOT / "src/runtime/android/dex/Heap.cpp"),
              "-o", str(executable)], capture_output=True, text=True, timeout=timeout,
         )
         run = subprocess.run([str(executable), str(fixtures)], capture_output=True, text=True,
@@ -108,7 +109,7 @@ def run_java_layout(work: Path, timeout: int) -> dict:
         output, code = run.stdout + run.stderr, run.returncode
     except (OSError, subprocess.TimeoutExpired) as err:
         output, code = str(err), None
-    return {"mode": "java (DEX layout, host)", "group": "java", "exitCode": code, "finished": "done:" in output,
+    return {"mode": f"java ({label}, host)", "group": "java", "exitCode": code, "finished": "done:" in output,
             "cases": parse(output), "log": output[-20000:]}
 
 
@@ -129,7 +130,10 @@ def main() -> int:
         work = Path(tmp)
         app = build_bundle(work)
         na_app = build_bundle(work, NA_SRC, NA_LIB, "NativeActivityTest.app", "NativeActivity")
-        runs = [run_java_layout(work, args.timeout)]
+        runs = [
+            run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
+            run_java_check(work, args.timeout, "DexExecution", "Dalvik execution"),
+        ]
         for phone in ([False, True] if args.phone else [False]):
             home = work / ("home-phone" if phone else "home")
             home.mkdir()
