@@ -12,8 +12,10 @@ struct GameDetailView: View {
     @AppStorage private var allowInternet: Bool
     @AppStorage private var unlockFrameRate: Bool
     @AppStorage private var softwareRenderer: Bool
+    @AppStorage private var virtualControllerEnabled: Bool
     @AppStorage(PlayerOverlay.settingKey) private var showOverlay = PlayerOverlay.settingDefault
     @State private var makingShortcut = false
+    @State private var configuringController = false
     @State private var confirmingReset = false
     @State private var confirmingDelete = false
 
@@ -28,6 +30,7 @@ struct GameDetailView: View {
         _allowInternet = AppStorage(wrappedValue: false, RunModel.internetKey(id))
         _unlockFrameRate = AppStorage(wrappedValue: false, RunModel.unlockFPSKey(id))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: id), RunModel.softwareRenderingKey(id))
+        _virtualControllerEnabled = AppStorage(wrappedValue: false, VirtualControllerLayout.enabledKey(id))
     }
 
     private var details: String {
@@ -69,6 +72,19 @@ struct GameDetailView: View {
 
                 GlossSectionLabel("Settings")
                 GlossCard {
+                    GlossToggleRow(title: "On-screen controller",
+                                   hint: "Off by default. Shows a virtual thumbstick and buttons mapped to touch or tilt for this game.",
+                                   isOn: $virtualControllerEnabled)
+                        .onChange(of: virtualControllerEnabled) { _, isOn in
+                            VirtualControllerLayout.setEnabled(isOn, bundleID: app.info.bundleIdentifier)
+                        }
+                    if virtualControllerEnabled {
+                        GlossRule()
+                        GlossLinkRow(title: "Controller layout & mapping", systemImage: "gamecontroller") {
+                            configuringController = true
+                        }
+                    }
+                    GlossRule()
                     GlossToggleRow(title: "Allow internet",
                                    hint: "Off: the game stays offline, with stand-in servers where HydrogenVM has them.",
                                    isOn: $allowInternet)
@@ -107,6 +123,12 @@ struct GameDetailView: View {
         .navigationTitle(app.title)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $makingShortcut) { AddToHomeScreenSheet(app: app) }
+        .sheet(isPresented: $configuringController) {
+            VirtualControllerConfigSheet(bundleID: app.info.bundleIdentifier, gameTitle: app.title)
+                .onDisappear {
+                    virtualControllerEnabled = VirtualControllerLayout.load(bundleID: app.info.bundleIdentifier).enabled
+                }
+        }
         .confirmationDialog("Reset \(app.title)'s data?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive, action: reset)
             Button("Cancel", role: .cancel) {}
