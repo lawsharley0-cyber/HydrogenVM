@@ -8,9 +8,18 @@
 //    iOS binaries are laid out on 4 KB pages, so two guest segments routinely share
 //    one host page. The old MapRegion re-mmap'd with MAP_FIXED on every call, which
 //    silently zeroed data an earlier segment had already loaded into that page.
-//  * Guest page permissions are tracked in software (4 KB granularity) instead of
-//    being pushed into host protections, which can't express them at 16 KB.
-//    Host pages are simply PROT_NONE (unmapped) or PROT_READ|PROT_WRITE.
+//  * Guest page permissions are tracked in software (4 KB granularity) and pushed
+//    into host protections wherever a host page can express them: when every guest
+//    page in a host page has the same permission (always on 4 KB hosts, nearly
+//    always on 16 KB ones), the host page gets exactly that permission, so guest
+//    loads and stores are checked by the MMU at no cost. A host page whose guest
+//    pages disagree ("split") gets the union of their permissions. Execute implies
+//    read on the host (ARMv7 has no execute-only pages; the decoder reads code).
+//  * Host code (the runtime, the loader) may write to guest memory the guest made
+//    read-only, as dyld and the kernel do on iOS. Such a write faults once; the fault
+//    handler lifts that host page back to read/write and the write is retried
+//    (liftHostFault). The page's guest permissions are re-applied at its next
+//    map/protect. HVM_GUEST_PROT=0 turns host protection off (the old behaviour).
 //  * Unaligned / type-punned access goes through memcpy (no UB).
 //  * Faults on PROT_NONE pages are turned into guest faults by FaultGuard.
 //  * Destruction keeps the 4 GB range reserved (PROT_NONE, no committed pages)
@@ -22,6 +31,7 @@
 #include <cstring>
 #include <vector>
 #include <mutex>
+#include <atomic>
 
 namespace Hydrogen::Memory {
 
@@ -33,6 +43,8 @@ enum GuestProt : uint8_t {
     kProtRW    = kProtRead | kProtWrite,
     kProtRX    = kProtRead | kProtExec,
     kProtRWX   = kProtRead | kProtWrite | kProtExec,
+    // Mapped but inaccessible (mmap/mprotect with PROT_NONE): isMapped() is true, no access bit is set.
+    kProtReserved = 8,
 };
 
 class GuestArena {
@@ -60,6 +72,10 @@ public:
     // Mapped address space / host backing, not physically resident bytes.
     struct Stats { uint64_t mappedBytes = 0, committedHostBytes = 0; };
     Stats stats() const;
+    // A ceiling on committed host memory (bench phone mode: the iPhone closes an app that uses
+    // too much). Committing past it throws, ending the run with a clear message. 0: none.
+    void setCommitBudget(uint64_t bytes) noexcept { budget_ = bytes; }
+    uint64_t committedBytes() const noexcept { return committed_bytes_; }
 
     // Commit [addr, addr+size) with the given guest permissions. Safe to call on
     // ranges that overlap already-committed memory; existing contents are kept.
@@ -67,6 +83,17 @@ public:
     // Decommit (contents discarded). Host pages still used by other guest pages stay.
     void unmap(uint32_t addr, uint32_t size);
     void protect(uint32_t addr, uint32_t size, uint8_t prot);
+
+    // Fault handler support (async-signal-safe). When `hostAddr` lies in a committed page of a live
+    // arena that host protection currently restricts, makes that host page read/write and returns
+    // true, so the faulting host access can be retried. Only for faults outside guest code.
+    static bool liftHostFault(uintptr_t hostAddr) noexcept;
+    // True when `hostAddr` is in a committed host page of a live arena (async-signal-safe).
+    static bool hostCommittedAt(uintptr_t hostAddr) noexcept;
+    // Host pages lifted by liftHostFault, and host pages whose guest pages disagree.
+    uint64_t liftedHostPages() const noexcept { return lifted_.load(std::memory_order_relaxed); }
+    uint64_t splitHostPages() const;
+    bool hostProtectionEnabled() const noexcept { return enforce_; }
 
     bool    isMapped(uint32_t addr) const noexcept { return prot_[addr >> kGuestPageShift] != kProtNone; }
     uint8_t protAt(uint32_t addr) const noexcept   { return prot_[addr >> kGuestPageShift]; }
@@ -111,11 +138,20 @@ public:
 private:
     void commitHostPages(uint64_t first, uint64_t last);   // inclusive host-page indices
     void releaseHostPage(uint64_t idx);
+    // Recompute and apply host protection for host pages [first, last]. Caller holds mu_.
+    void applyHostProt(uint64_t first, uint64_t last);
+    uint8_t hostProtFor(uint64_t idx, bool* split) const;
 
     uint8_t*             base_ = nullptr;
     size_t               host_page_ = 4096;
     std::vector<uint8_t> prot_;           // per guest page
     std::vector<uint8_t> host_committed_; // per host page
+    // Per host page: the PROT_* bits it has now (read by the fault handler without the lock).
+    std::vector<uint8_t> host_prot_;
+    bool enforce_ = true;
+    std::atomic<uint64_t> lifted_{0};
+    uint64_t budget_ = 0;
+    uint64_t committed_bytes_ = 0;
     mutable std::mutex   mu_;
 };
 

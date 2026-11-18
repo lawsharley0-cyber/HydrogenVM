@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <chrono>
 #include <mutex>
 #include <cstdio>
@@ -258,6 +259,8 @@ int runHostFaultTests();
 int runHostFaultChild(int fd, bool stress, bool afterUnwind);
 int runThreadProgressTests();
 int runGuestCallBoundaryTests();
+int runMsgSendTests(const std::function<void(bool, const char*)>& check);
+int runPageProtectionTests(const std::function<void(bool, const char*)>& check);
 int runSuspendTests();
 int runNSStringSearchTests();
 int runLegacyGlyphTests();
@@ -268,6 +271,7 @@ int runThreadLifetimeTests();
 int runThreadLifetimeChild();
 namespace Hydrogen { namespace Runtime { bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c); } }
 int runArenaPoolTests();
+int runCompatProfileTests();
 
 namespace {
 
@@ -3785,6 +3789,51 @@ int runFullSubsystemTests() {
         call2("_CFRelease", data, 0);
     }
     {
+        // Report #530 (Crossy Road): GameAnalytics signs requests with -[NSData base64Encoding].
+        // Expected strings are the RFC 4648 section 10 test vectors.
+        auto& sr = ObjC::rt(proc);
+        auto enc = [&](const char* text, uint32_t opts) {
+            const uint32_t d = Foundation::makeData(cx, text, uint32_t(std::strlen(text)), true);
+            const ObjC::id s = ObjC::id(opts == 0xFFFFFFFFu ? sr.send(cpu, d, "base64Encoding")
+                                                            : sr.send(cpu, d, "base64EncodedStringWithOptions:", {opts}));
+            return s ? Foundation::utf8(cx, s) : std::string("(nil)");
+        };
+        auto dec = [&](const char* text, uint32_t opts) {
+            const ObjC::id str = Foundation::makeString(cx, std::string(text), true);
+            const ObjC::id cls = ObjC::id(sr.getClass("NSData"));
+            const ObjC::id d = ObjC::id(sr.send(cpu, ObjC::id(sr.send(cpu, cls, sr.selAlloc)), "initWithBase64EncodedString:options:", {str, opts}));
+            if (!d) return std::string("(nil)");
+            const auto b = Foundation::dataBytes(cx, d);
+            return std::string(b.begin(), b.end());
+        };
+        std::string long57(57, 'a');
+        const std::string wrapped = enc(long57.c_str(), 1);   // 76 characters, so one CRLF after 64
+        check(enc("", 0) == "" && enc("f", 0) == "Zg==" && enc("fo", 0) == "Zm8=" && enc("foo", 0) == "Zm9v" &&
+              enc("foobar", 0xFFFFFFFFu) == "Zm9vYmFy" && wrapped.size() == 78 && wrapped.substr(64, 2) == "\r\n" &&
+              dec("Zm9vYmE=", 0) == "fooba" && dec("Zm9v\r\nYmFy", 0) == "(nil)" && dec("Zm9v\r\nYmFy", 1) == "foobar" &&
+              dec("Zm9v=YmFy", 0) == "(nil)",
+              "NSData base64 encodes RFC 4648 vectors, wraps 64-column lines with CRLF and rejects bad input unless told to ignore it");
+    }
+    {
+        // Report #545: NSCountedSet keeps one member per distinct object and a count for each.
+        auto& sr = ObjC::rt(proc);
+        const ObjC::id cls = ObjC::id(sr.getClass("NSCountedSet"));
+        const ObjC::id a = Foundation::makeString(cx, std::string("a"), true), b = Foundation::makeString(cx, std::string("b"), true);
+        const ObjC::id a2 = Foundation::makeString(cx, std::string("a"), true);
+        const ObjC::id set = cls ? ObjC::id(sr.send(cpu, ObjC::id(sr.send(cpu, cls, sr.selAlloc)), "init")) : 0;
+        auto count = [&](ObjC::id o) { return uint32_t(sr.send(cpu, set, "countForObject:", {o})); };
+        bool ok = set != 0;
+        if (ok) {
+            sr.send(cpu, set, "addObject:", {a}); sr.send(cpu, set, "addObject:", {a2}); sr.send(cpu, set, "addObject:", {b});
+            ok = uint32_t(sr.send(cpu, set, "count")) == 2 && count(a) == 2 && count(b) == 1;
+            sr.send(cpu, set, "removeObject:", {a});
+            ok = ok && count(a) == 1 && uint32_t(sr.send(cpu, set, "count")) == 2;
+            sr.send(cpu, set, "removeObject:", {a2});
+            ok = ok && count(a) == 0 && uint32_t(sr.send(cpu, set, "count")) == 1 && uint8_t(sr.send(cpu, set, "isKindOfClass:", {ObjC::id(sr.getClass("NSMutableSet"))}));
+        }
+        check(ok, "NSCountedSet counts repeated equal objects, removes one occurrence at a time and is an NSMutableSet");
+    }
+    {
         // Issue #310: CoreData option and store-type constants are exported data
         // symbols whose value is an NSString equal to the documented string.
         // An unexported constant binds as NULL and becomes a nil dictionary key.
@@ -4690,6 +4739,69 @@ int runFullSubsystemTests() {
             cx.proc.setInfoPlist(saved);
             check(sdk == 2 && oldMissing.empty() && isNibException(newMissing, "RootControllerLandscapeOf"),
                   "loadNibNamed: missing NIB returns nil for an app built with SDK 2/3, raises for SDK 4");
+        }
+
+        // Dead 2009-2015 SDK offline overrides (OpenFeint 2.4-2.12+ & Everyplay 1760):
+        // verify before/after behavior against synthetic guest SDK classes.
+        {
+            int approveCalls = 0, lastApproved = -1, originalModalCalls = 0;
+            int deniedDelegateCalls = 0, deniedInvCalls = 0;
+            uint32_t receivedParam = 0;
+            bool originalExpiredAlert = false;
+
+            auto ofCls = r.defineClass("OpenFeint", "NSObject");
+            ofCls.classMethod("userDidApproveFeint:", [&](Ctx& x) {
+                ++approveCalls;
+                lastApproved = int(x.cpu.r[2] & 0xffu);
+            }, "v12@0:4c8")
+                 .classMethod("presentUserFeintApprovalModal:deniedDelegate:", [&](Ctx&) {
+                     ++originalModalCalls;
+                 }, "v16@0:4^{OFDelegate=}8^{OFDelegate=}12")
+                 .classMethod("presentUserFeintApprovalModalInvocation:deniedInvocation:", [&](Ctx&) {
+                     ++originalModalCalls;
+                 }, "v16@0:4@8@12");
+
+            auto epCls = r.defineClass("Everyplay", "NSObject");
+            epCls.method("showExpiredMessage", [&](Ctx&) {
+                originalExpiredAlert = true;
+            }, "v8@0:4");
+
+            auto delCls = r.defineClass("HVMLegacySdkDelegate", "NSObject");
+            delCls.method("onDenied:", [&](Ctx& x) {
+                ++deniedDelegateCalls;
+                receivedParam = x.cpu.r[2];
+            }, "v12@0:4@8")
+                  .method("invoke", [&](Ctx&) {
+                      ++deniedInvCalls;
+                  }, "v8@0:4");
+
+            const ObjC::id epObj = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, epCls.cls(), r.selAlloc)), r.selInit));
+            r.send(cpu, epObj, "showExpiredMessage");
+            const bool failBeforeExpired = originalExpiredAlert;
+            originalExpiredAlert = false;
+
+            UIKit::applyLegacySdkOverrides(cx.proc, r);
+
+            const ObjC::id delObj = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, delCls.cls(), r.selAlloc)), r.selInit));
+            const ObjC::id paramObj = Foundation::makeString(cx, "of-param");
+            const uint32_t delegateAddr = cx.proc.heap().allocZeroed(16);
+            cx.mem.write<uint32_t>(delegateAddr + 0, delObj);
+            cx.mem.write<uint32_t>(delegateAddr + 4, paramObj);
+            cx.mem.write<uint32_t>(delegateAddr + 12, r.sel("onDenied:"));
+
+            r.send(cpu, ofCls.cls(), "presentUserFeintApprovalModal:deniedDelegate:", {0, delegateAddr});
+            for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(cx.proc).runOnce(cpu, 0.0);
+
+            r.send(cpu, ofCls.cls(), "presentUserFeintApprovalModalInvocation:deniedInvocation:", {0, delObj});
+            for (int i = 0; i < 3; ++i) Foundation::mainRunLoop(cx.proc).runOnce(cpu, 0.0);
+
+            r.send(cpu, epObj, "showExpiredMessage");
+
+            check(failBeforeExpired && !originalExpiredAlert && originalModalCalls == 0 &&
+                  approveCalls == 2 && lastApproved == 0 &&
+                  deniedDelegateCalls == 1 && receivedParam == paramObj &&
+                  deniedInvCalls == 1,
+                  "LegacySdks takes OpenFeint declined offline path and suppresses dead Everyplay alert");
         }
 
         // A real, minimal NIBArchive: root -> NSArray -> NSString. This must
@@ -8458,6 +8570,220 @@ int runFullSubsystemTests() {
               "AVAudioPlayer WAV decoding, duration calculation, and mixer output");
         r.send(cpu, player, "stop");
 
+        // Host-driven Android ABI test. The fixture is opened through the same
+        // guest OpenSL vtables a native APK uses, then rendered by the mixer.
+        {
+            const std::string uriHome = proc.homePath() + "/opensl-uri";
+            std::filesystem::create_directories(uriHome);
+            ProcessConfig androidConfig;
+            androidConfig.bundlePath = androidConfig.homePath = uriHome;
+            androidConfig.androidLib = uriHome + "/libopensl-fixture.so";
+            androidConfig.phoneMode = true;
+            Process android(androidConfig);
+            auto& acpu = android.mainThread().cpu;
+            auto& mem = android.mem();
+            auto& mixer = android.mixer();
+            mem.map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+            acpu.r[CPU::kSP] = 0xBF000000u - 256;
+
+            // OpenSL ES 1.0.1 header constants and guest 32-bit interface layout.
+            const auto address = [&](const char* name) { return android.lookupSymbol(name).value(); };
+            const auto iid = [&](const char* name) { return mem.read<uint32_t>(address(name)); };
+            const auto invoke = [&](uint32_t itf, uint32_t method, std::initializer_list<uint32_t> args) {
+                return uint32_t(android.callGuest(acpu, mem.read<uint32_t>(mem.read<uint32_t>(itf) + 4 * method), args));
+            };
+            const uint32_t out = android.heap().allocZeroed(16);
+            const uint32_t loc = android.heap().allocZeroed(8);
+            const uint32_t mime = android.heap().allocZeroed(12);
+            const uint32_t src = android.heap().allocZeroed(8);
+            const uint32_t sinkLoc = android.heap().allocZeroed(8);
+            const uint32_t sink = android.heap().allocZeroed(8);
+            const uint32_t requested = android.heap().allocZeroed(8);
+            const uint32_t uriBytes = android.heap().allocZeroed(2048);
+            mem.write<uint32_t>(loc, 1);  // SL_DATALOCATOR_URI
+            mem.write<uint32_t>(loc + 4, uriBytes);
+            mem.write<uint32_t>(mime, 1);  // SL_DATAFORMAT_MIME
+            mem.write<uint32_t>(mime + 8, 1);  // SL_CONTAINERTYPE_UNSPECIFIED
+            mem.write<uint32_t>(src, loc);
+            mem.write<uint32_t>(src + 4, mime);
+            mem.write<uint32_t>(sink, sinkLoc);
+            mem.write<uint32_t>(sinkLoc, 4);  // SL_DATALOCATOR_OUTPUTMIX
+            mem.write<uint32_t>(requested, iid("android:SL_IID_SEEK"));
+            mem.write<uint32_t>(requested + 4, 1);
+            auto getInterface = [&](uint32_t object, const char* name) -> uint32_t {
+                return invoke(object, 3, {object, iid(name), out}) == 0 ? mem.read<uint32_t>(out) : 0;
+            };
+            auto createPlayer = [&](uint32_t engine, const std::string& uri) {
+                mem.copyIn(uriBytes, uri.c_str(), uri.size() + 1);
+                return invoke(engine, 2, {engine, out, src, sink, 1, requested, requested + 4});
+            };
+            bool setup = android.callGuest(acpu, address("android:slCreateEngine"), {out, 0, 0, 0, 0, 0}) == 0;
+            const uint32_t engineObject = mem.read<uint32_t>(out);
+            setup = setup && invoke(engineObject, 0, {engineObject, 0}) == 0;
+            const uint32_t engine = setup ? getInterface(engineObject, "android:SL_IID_ENGINE") : 0;
+            setup = engine && invoke(engine, 7, {engine, out, 0, 0, 0}) == 0;
+            const uint32_t outputMix = setup ? mem.read<uint32_t>(out) : 0;
+            setup = setup && invoke(outputMix, 0, {outputMix, 0}) == 0;
+            mem.write<uint32_t>(sinkLoc + 4, outputMix);
+            check(setup, "OpenSL local URI tests create an Android engine and output mix");
+
+            if (setup) {
+                check(createPlayer(engine, "https://example.invalid/music.ogg") == 10 &&
+                      createPlayer(engine, "file:///etc/passwd") == 10 &&
+                      createPlayer(engine, "file:///bad%00path") == 10,
+                      "OpenSL URI player rejects remote, out-of-sandbox and invalid paths");
+                using AudioReference = std::array<int16_t, 512 * 2>;
+                const auto matchesPcm = [](const AudioReference& reference, const std::array<float, 512>& left,
+                                           const std::array<float, 512>& right) {
+                    int maxError = 0;
+                    for (size_t i = 0; i < left.size(); ++i) {
+                        maxError = std::max({maxError,
+                            std::abs(int(std::lround(left[i] * 32768)) - reference[2 * i]),
+                            std::abs(int(std::lround(right[i] * 32768)) - reference[2 * i + 1])});
+                    }
+                    if (maxError > 12) std::printf("    peak difference from FFmpeg at seek: %d PCM counts\n", maxError);
+                    return maxError <= 12;
+                };
+                const auto testTrack = [&](const std::string& file, unsigned duration, unsigned target,
+                                           const AudioReference* reference) {
+                    const auto path = std::filesystem::path(uriHome) / file;
+                    const std::string local = android.guestPath(path.string());
+                    std::string uri = "file://localhost";
+                    for (char c : local) {
+                        if (c == ' ') uri += "%20";
+                        else uri += c;
+                    }
+#if defined(__linux__)
+                    // Reset the process RSS high-water mark just before the URI is opened.
+                    if (reference) { std::ofstream reset("/proc/self/clear_refs"); reset << 5; }
+                    rusage before{};
+                    getrusage(RUSAGE_SELF, &before);
+#endif
+                    if (createPlayer(engine, uri) != 0) return false;
+                    const uint32_t object = mem.read<uint32_t>(out);
+                    const bool realized = invoke(object, 0, {object, 0}) == 0;
+                    const uint32_t play = realized ? getInterface(object, "android:SL_IID_PLAY") : 0;
+                    const uint32_t seek = realized ? getInterface(object, "android:SL_IID_SEEK") : 0;
+                    bool ok = play && seek;
+                    if (ok) {
+                        const auto position = [&]() {
+                            return invoke(play, 3, {play, out}) ? 0xFFFFFFFFu : mem.read<uint32_t>(out);
+                        };
+                        ok &= invoke(play, 2, {play, out}) == 0;
+                        const uint32_t reported = mem.read<uint32_t>(out);
+                        ok &= std::abs(int64_t(reported) - duration) <= (reference ? 60 : 0);
+                        ok &= invoke(seek, 0, {seek, target, 0}) == 2;  // invalid seek mode
+                        ok &= invoke(seek, 0, {seek, target, 2}) == 0 && position() == target;
+                        ok &= invoke(play, 0, {play, 3}) == 0;
+                        std::array<float, 512> left{}, right{};
+                        const auto renderEnergy = [&]() {
+                            mixer.render(left.data(), right.data(), left.size());
+                            double energy = 0;
+                            for (const float sample : left) energy += double(sample) * sample;
+                            return energy;
+                        };
+                        ok &= renderEnergy() > 0.1 && position() == target + 12;  // round(512/44100 s)
+                        if (reference) ok &= matchesPcm(*reference, left, right);
+                        ok &= invoke(play, 0, {play, 2}) == 0;
+                        ok &= renderEnergy() == 0 && position() == target + 12;
+                        ok &= invoke(seek, 1, {seek, 1, 0, 0xFFFFFFFFu}) == 0;
+                        ok &= invoke(seek, 2, {seek, out, out + 4, out + 8}) == 0 &&
+                              mem.read<uint32_t>(out) == 1 && mem.read<uint32_t>(out + 4) == 0 &&
+                              mem.read<uint32_t>(out + 8) == 0xFFFFFFFFu;
+                        ok &= invoke(seek, 0, {seek, reported - 5, 1}) == 0;
+                        ok &= invoke(play, 0, {play, 3}) == 0;
+                        renderEnergy();
+                        ok &= position() < 20;  // crosses the end and wraps to the start
+                        ok &= invoke(seek, 1, {seek, 0, 0, 0xFFFFFFFFu}) == 0;
+                        ok &= invoke(play, 0, {play, 1}) == 0 && position() == 0;
+                        ok &= invoke(play, 0, {play, 3}) == 0;
+                        // A seek never changes the player's sample rate or clock.
+                        for (uint32_t elapsed = 0; elapsed < reported + 20; elapsed += 11)
+                            renderEnergy();
+                        ok &= invoke(play, 1, {play, out}) == 0 && mem.read<uint32_t>(out) == 2;
+                        ok &= std::abs(int64_t(position()) - reported) <= 1;
+                        ok &= invoke(seek, 0, {seek, target, 2}) == 0 && renderEnergy() == 0 && position() == target;
+                        ok &= invoke(play, 0, {play, 3}) == 0 && renderEnergy() > 0.1;
+                    }
+#if defined(__linux__)
+                    if (reference) {
+                        rusage after{};
+                        getrusage(RUSAGE_SELF, &after);
+                        const long extra = after.ru_maxrss - before.ru_maxrss;
+                        std::printf("    OpenSL %s peak extra RSS: %ld KiB\n", file.c_str(), extra);
+                        ok &= extra >= 0 && extra < 4096;
+                    }
+#endif
+                    invoke(object, 6, {object});
+                    return ok;
+                };
+
+                const auto testIOS = [&](const std::string& file, const AudioReference& reference) {
+                    ProcessConfig iosConfig;
+                    iosConfig.bundlePath = iosConfig.homePath = uriHome;
+                    iosConfig.phoneMode = true;
+                    Process ios(iosConfig);
+                    auto& icpu = ios.mainThread().cpu;
+                    ios.mem().map(0xBF000000u - (1u << 20), 1u << 20, Memory::kProtRW);
+                    icpu.r[CPU::kSP] = 0xBF000000u - 256;
+                    Ctx context{ios, icpu, ios.mem()};
+                    auto& objc = ObjC::rt(ios);
+                    const uint32_t pool = objc.poolPush();
+                    const auto path = Foundation::makeString(context, uriHome + "/" + file);
+                    const auto url = uint32_t(objc.send(icpu, objc.getClass("NSURL"), "fileURLWithPath:", {path}));
+                    const auto allocated = uint32_t(objc.send(icpu, objc.getClass("AVAudioPlayer"), "alloc"));
+                    const auto player = uint32_t(objc.send(icpu, allocated, "initWithContentsOfURL:error:", {url, 0}));
+                    const auto duration = std::bit_cast<double>(objc.send(icpu, player, "duration"));
+                    const uint64_t seek = std::bit_cast<uint64_t>(121.0);
+                    objc.send(icpu, player, "setCurrentTime:", {uint32_t(seek), uint32_t(seek >> 32)});
+                    const bool playing = objc.send(icpu, player, "play") & 255;
+                    std::array<float, 512> left{}, right{};
+                    ios.mixer().render(left.data(), right.data(), left.size());
+                    const bool ok = playing && std::abs(duration - 240) < 0.06 && matchesPcm(reference, left, right);
+                    objc.send(icpu, player, "stop");
+                    objc.release(icpu, player);
+                    objc.poolPop(icpu, pool);
+                    return ok;
+                };
+
+                {
+                    std::ofstream shortPcm(uriHome + "/short tone.wav", std::ios::binary);
+                    shortPcm.write(reinterpret_cast<const char*>(wav.data()), wav.size());
+                }
+                check(testTrack("short tone.wav", 100, 30, nullptr),
+                      "OpenSL file URI decodes, seeks and loops a short WAV");
+                if (std::system("command -v ffmpeg >/dev/null 2>&1") == 0) {
+                    const std::string ffmpeg = "ffmpeg -nostdin -v error -f lavfi -i "
+                        "'aevalsrc=0.16*sin(2*PI*(311*t+0.125*t*t))|0.12*sin(2*PI*(571*t+0.125*t*t)):s=44100:d=240' -y ";
+                    for (const auto& [extension, codec] : std::array<std::pair<const char*, const char*>, 2>{{
+                        {"mp3", "-c:a libmp3lame -b:a 128k -write_xing 0 -id3v2_version 0"},
+                        {"ogg", "-c:a libvorbis -q:a 4"},
+                    }}) {
+                        const std::string file = std::string("long tone.") + extension;
+                        const std::string input = "'" + uriHome + "/" + file + "'";
+                        const std::string pcmPath = uriHome + "/reference.pcm";
+                        const bool generated = std::system((ffmpeg + codec + " " + input).c_str()) == 0;
+                        // FFmpeg decodes from the start before trimming to the target sample.
+                        const std::string decode = "ffmpeg -nostdin -v error -i " + input +
+                            " -af atrim=start_sample=5336100:end_sample=5336612 -f s16le -y '" + pcmPath + "'";
+                        const bool decoded = generated && std::system(decode.c_str()) == 0;
+                        AudioReference reference{};
+                        std::ifstream pcm(pcmPath, std::ios::binary);
+                        const bool haveReference = decoded &&
+                            bool(pcm.read(reinterpret_cast<char*>(reference.data()), sizeof reference));
+                        const std::string openSLLabel = std::string("OpenSL URI plays, seeks and loops four-minute ") + extension;
+                        const std::string avLabel = std::string("AVAudioPlayer seek PCM agrees with FFmpeg for ") + extension;
+                        check(haveReference && testTrack(file, 240000, 121000, &reference), openSLLabel.c_str());
+                        check(haveReference && testIOS(file, reference), avLabel.c_str());
+                    }
+                } else {
+                    std::printf("  skip OpenSL MP3/Ogg generated fixtures (ffmpeg unavailable)\n");
+                }
+                invoke(outputMix, 6, {outputMix});
+                invoke(engineObject, 6, {engineObject});
+            }
+        }
+
         // OpenAL test
         auto callAL = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint64_t {
             auto addr = proc.lookupSymbol(sym);
@@ -11501,6 +11827,7 @@ int runFullSubsystemTests() {
             "    \"blocksDecoded\": 0,\n"
             "    \"frames\": 0,\n"
             "    \"framesPresented\": 0,\n"
+            "    \"gameSwaps\": 0,\n"
             "    \"avgFrameMs\": 0,\n"
             "    \"avgCompositeMs\": 0,\n"
             "    \"presentWaitMs\": 0,\n"
@@ -11651,6 +11978,162 @@ int runFullSubsystemTests() {
         ok &= pp.hostPath("/private" + gh + "/Documents/s.dat") == root + "/Documents/s.dat";
         if (!ok) std::printf("    gh=%s gb=%s g(res)=%s\n", gh.c_str(), gb.c_str(), pp.guestPath(root + "/Game.app/data/a.png").c_str());
         check(ok, "Path mapping keeps '/' when the app passes paths with a trailing slash, and accepts /private/var spellings");
+    }
+
+    // Phone mode (hvm run --phone): what the iPhone does where Linux differs. A Linux host's /proc
+    // and /sys never reach the game; lookups ignore case like APFS (and only then); the arena
+    // stops at the memory budget. (Bugs this catches: Dead Space #504 stale links, Alto #507 /proc.)
+    {
+        std::error_code ec;
+        const std::string root = "/tmp/hvm_phone_mode_" + std::to_string(getpid());
+        std::filesystem::remove_all(root, ec);
+        std::filesystem::create_directories(root + "/Game.app/Data/Textures", ec);
+        { std::ofstream(root + "/Game.app/Data/Textures/Hero.PNG") << "x"; }
+        ProcessConfig c;
+        c.homePath = root;
+        c.bundlePath = root + "/Game.app";
+        c.phoneMode = true;
+        Process pp(c);
+        const std::string gb = pp.guestBundlePath();
+        bool ok = pp.hostPath(gb + "/data/textures/hero.png") == root + "/Game.app/Data/Textures/Hero.PNG";
+        ok &= pp.hostPath(gb + "/Data/Textures/Hero.PNG") == root + "/Game.app/Data/Textures/Hero.PNG";
+        ok &= !std::filesystem::exists(pp.hostPath(gb + "/data/missing.png"), ec);
+        ok &= !std::filesystem::exists(pp.hostPath("/proc/self/maps"), ec);
+        ok &= !std::filesystem::exists(pp.hostPath("/proc/cpuinfo"), ec);
+        ok &= !std::filesystem::exists(pp.hostPath("/sys/devices/system/cpu"), ec);
+        ProcessConfig plain;
+        plain.homePath = root;
+        plain.bundlePath = root + "/Game.app";
+        Process lp(plain);
+        ok &= lp.hostPath(lp.guestBundlePath() + "/data/textures/hero.png") == root + "/Game.app/data/textures/hero.png";
+        check(ok, "Phone mode: no host /proc or /sys, case-insensitive lookups only in phone mode");
+
+        Memory::GuestArena arena;
+        arena.setCommitBudget(1u << 20);
+        bool threw = false;
+        arena.map(0x10000000u, 512u << 10);
+        try { arena.map(0x20000000u, 1u << 20); } catch (const std::runtime_error& e) {
+            threw = std::string(e.what()).find("memory budget") != std::string::npos;
+        }
+        check(threw && arena.committedBytes() <= (1u << 20), "Phone mode: committing past the memory budget ends the run with a clear message");
+        std::filesystem::remove_all(root, ec);
+    }
+
+    // Session recording (runtime/Session.hpp): a recording replays with the same seed, so every
+    // random source gives the same values; the guest's clock shows the recorded date; input lines
+    // round-trip; a broken file is refused with a readable reason.
+    {
+        const std::string rec = "/tmp/hvm_session_" + std::to_string(getpid()) + ".hvmrec";
+        uint64_t recorded[3];
+        {
+            Session s;
+            s.startRecording(rec, "Test.app");
+            for (auto& v : recorded) v = s.entropy();
+            SessionEvent t = SessionEvent::input(SessionEvent::Kind::Touch, 3, 2, 120.5f, 284.25f);
+            t.ms = 1234; t.swaps = 56; t.hooks = 78;
+            s.note(t);
+            SessionEvent b = SessionEvent::input(SessionEvent::Kind::Background);
+            b.ms = 2000; b.swaps = 60; b.hooks = 90;
+            s.note(b);
+        }
+        // Make the recorded start time a day ago, as if replaying yesterday's session.
+        std::string text;
+        { std::ifstream in(rec); std::stringstream ss; ss << in.rdbuf(); text = ss.str(); }
+        const auto w = text.find("wall="), we = text.find(' ', w);
+        const int64_t dayAgo = guestWallNowNs() - 86'400'000'000'000LL;
+        text = text.substr(0, w) + "wall=" + std::to_string(dayAgo) + text.substr(we);
+        { std::ofstream(rec) << text; }
+        bool ok;
+        {
+            Session r;
+            r.startReplay(rec);
+            ok = r.mode() == Session::Mode::Replay && r.app() == "Test.app" && r.events().size() == 2;
+            for (const auto v : recorded) ok &= r.entropy() == v;
+            const auto& e = r.events();
+            ok &= e.size() == 2 && e[0].kind == SessionEvent::Kind::Touch && e[0].phase == 3 && e[0].finger == 2 &&
+                  e[0].x == 120.5f && e[0].y == 284.25f && e[0].ms == 1234 && e[0].swaps == 56 && e[0].hooks == 78 &&
+                  e[1].kind == SessionEvent::Kind::Background && e[1].swaps == 60;
+            const int64_t shift = guestWallNowNs() - dayAgo;
+            ok &= shift >= 0 && shift < 5'000'000'000LL;   // the guest sees (about) the recorded time
+        }
+        const int64_t after = guestWallNowNs() - std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        ok &= after > -1'000'000'000LL && after < 1'000'000'000LL;   // and the real time once replay ends
+        { std::ofstream(rec) << "HVMREC 1 seed=1 wall=0 app=x\n10 nonsense touch\n"; }
+        bool refused = false;
+        try { Session bad; bad.startReplay(rec); } catch (const std::runtime_error& e) {
+            refused = std::string(e.what()).find("line 2") != std::string::npos;
+        }
+        check(ok && refused, "Session: replay repeats the recorded random values, date and input; bad files are refused");
+        std::remove(rec.c_str());
+    }
+    // HVMREC 2: round-trip clock reads, file reads (bundle vs external), RNG seeds, network answers,
+    // scheduling points, and frame/call-ring divergence detection.
+    {
+        const std::string rec2 = "/tmp/hvm_session_v2_" + std::to_string(getpid()) + ".hvmrec";
+        const uint8_t extData[] = {0x48, 0x56, 0x4d, 0x32};
+        const uint8_t netData[] = {0x4f, 0x4b, 0x21};
+        {
+            Session s;
+            s.startRecording(rec2, "V2Test.app", true, rec2 + ".inputs");
+            s.note(SessionEvent::input(SessionEvent::Kind::Touch, 1, 0, 12, 34));
+            s.recordClockRead("mach_absolute", 123456789ULL, 10, 1, 2);
+            s.recordFileRead("/var/mobile/App.app/asset.bin", 0, extData, sizeof(extData), true, 12, 1, 2);
+            s.recordFileRead("/var/mobile/Documents/save.dat", 64, extData, sizeof(extData), false, 15, 2, 3);
+            s.recordRngSeed("srand", 0xdeadbeefULL, 16, 2, 3);
+            s.recordNetAnswer(netData, sizeof(netData), 20, 3, 4);
+            s.recordSchedPoint(2, "mutex_lock", 0x10004000ULL, 22, 3, 4);
+            s.recordCheckpoint(1, 0x1111222233334444ULL, 10, 0xaaaabbbbccccddddULL, 25, 4, 5);
+            s.recordCheckpoint(2, 0x5555666677778888ULL, 20, 0x123456789abcdef0ULL, 40, 5, 6);
+        }
+        bool ok = false;
+        {
+            Session r;
+            r.startReplay(rec2);
+            ok = r.version() == 2 && r.replayingDetails();
+            auto clk = r.replayClockRead("mach_absolute");
+            ok &= clk && *clk == 123456789ULL;
+            // Bundle file read has no bytes stored; external file read replays exact bytes.
+            ok &= !r.replayFileRead("/var/mobile/App.app/asset.bin", 0, 16).has_value();
+            auto fprefix = r.replayFileRead("/var/mobile/Documents/save.dat", 64, 2);
+            auto fsuffix = r.replayFileRead("/var/mobile/Documents/save.dat", 66, 16);
+            ok &= fprefix && *fprefix == std::vector<uint8_t>{'H', 'V'} &&
+                  fsuffix && *fsuffix == std::vector<uint8_t>{'M', '2'};
+            auto seed = r.replayRngSeed("srand");
+            ok &= seed && *seed == 0xdeadbeefULL;
+            auto prefix = r.replayNetAnswer(1);
+            auto suffix = r.replayNetAnswer(16);
+            ok &= prefix && *prefix == std::vector<uint8_t>{'O'} &&
+                  suffix && *suffix == std::vector<uint8_t>{'K', '!'};
+            r.waitSchedTurn(2, "mutex_lock", 0x10004000ULL);
+            // Frame 1 matches, frame 2 diverges.
+            ok &= r.checkCheckpoint(1, 0x1111222233334444ULL, 10, 0xaaaabbbbccccddddULL);
+            ok &= !r.firstDivergence().has_value();
+            ok &= !r.checkCheckpoint(2, 0x9999999999999999ULL, 20, 0x123456789abcdef0ULL);
+            auto div = r.firstDivergence();
+            ok &= div.has_value() && div->frame == 2 &&
+                  r.formatDivergence().find("frame 2") != std::string::npos;
+        }
+        {
+            Session inputs;
+            inputs.startReplay(rec2 + ".inputs");
+            std::ifstream publicFile(rec2 + ".inputs");
+            std::string line;
+            unsigned lines = 0;
+            while (std::getline(publicFile, line)) ++lines;
+            ok &= inputs.version() == 1 && !inputs.detailsActive() && inputs.events().size() == 1 &&
+                  inputs.events()[0].x == 12 && lines == 2;
+        }
+        {
+            Session skipped;
+            skipped.startReplay(rec2);
+            ok &= !skipped.checkCheckpoint(2, 0x5555666677778888ULL, 20, 0x123456789abcdef0ULL);
+            ok &= skipped.firstDivergence() && skipped.firstDivergence()->frame == 1;
+            ok &= skipped.matchedCheckpointCount() == 0 && skipped.recordedCheckpointCount() == 2;
+        }
+        std::remove((rec2 + ".inputs").c_str());
+        check(ok, "Session: HVMREC 2 round-trips clock, file, RNG, net, sched, and detects first diverging frame");
+        std::remove(rec2.c_str());
     }
 
     // Regressions: pthread_from_mach_thread_np, mmap MAP_FIXED, and formatGuest with flags after width
@@ -13795,11 +14278,14 @@ int runFullSubsystemTests() {
     check(runHostFaultTests() == 0, "host-fault bundle contains complete thread, arena, HLE and log evidence");
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
+    runMsgSendTests([&](bool ok, const char* what) { check(ok, what); });
+    runPageProtectionTests([&](bool ok, const char* what) { check(ok, what); });
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
     check(runNSStringSearchTests() == 0, "bounded character-set search contract");
     check(runLegacyGlyphTests() == 0, "legacy CGContext glyph outlines and ABI");
     check(runPositionalFormatTests() == 0, "positional formatting arguments and ABI");
     check(runLegacyAnimationTests() == 0, "UIKit animation, window and timer-pool lifetime");
+    check(runCompatProfileTests()==0,"documented compatibility profiles preserve existing predicates and defaults");
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

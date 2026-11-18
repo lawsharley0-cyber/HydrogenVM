@@ -86,6 +86,9 @@ enum class Exit : uint32_t {
 // Per-thread direct-mapped cache in front of the engine's block map. `first`
 // is the block's first op, so indirect branches can jump without touching the Block.
 struct FastEntry { uint32_t key; Block* block; const Op* first; };
+// An empty FastEntry. Keys are `target | thumb`: ARM targets have bits 1:0 clear and Thumb keys
+// have bit 0 set, so bits 1:0 = 0b10 never occur. (0xFFFFFFFF does: a Thumb jump to 0xFFFFFFFE.)
+inline constexpr uint32_t kFastEmpty = 0xFFFFFFFEu;
 inline constexpr size_t kFastSize = 1u << 14;
 inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
@@ -180,6 +183,10 @@ struct alignas(64) Cpu {
     // host code or is parked, i.e. whenever its registers in r[] are a
     // complete, stable picture of its guest state.
     std::atomic<uint32_t> suspend_count{0};
+    // Set by another thread to have this one run Engine's safepoint hook (asynchronous
+    // signal delivery): at the end of a time slice, on return from a host function, and in
+    // host waits that check it.
+    std::atomic<uint32_t> async_pending{0};
     std::atomic<bool> in_guest{false};
     // Index of the host function this thread is in (outermost-latest), for the
     // guest sampling profiler. Not used for control flow.

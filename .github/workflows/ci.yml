@@ -36,10 +36,23 @@ jobs:
         # 2026-10-26: this step hung for 30+ minutes on a hosted runner while
         # the same step takes ~30 s normally. Bound the hang with a step
         # timeout and retry transient apt failures with backoff.
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq libicu-dev clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema python3-pil
+          # Ubuntu mirrors sometimes stall mid-download: bounded attempts with retries and a
+          # connection timeout instead of one install that runs into the step limit.
+          APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for attempt in 1 2 3; do
+            timeout 300 sudo apt-get $APT update -q && timeout 420 sudo apt-get $APT install -yq libicu-dev clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema python3-pil && break
+            echo "apt attempt $attempt failed; retrying on another mirror"; sleep 10
+            # The runner's regional mirror has stalled for whole attempts (2026-11-18); try the
+            # other one GitHub-hosted runners use instead of the same mirror again.
+            if [ "$attempt" = 1 ]; then MIRROR=http://azure.archive.ubuntu.com/ubuntu; else MIRROR=http://archive.ubuntu.com/ubuntu; fi
+            # GitHub's images list mirrors in /etc/apt/apt-mirrors.txt (sources use mirror+file:);
+            # older ones name the mirror in the sources files. Point both at the new mirror.
+            if [ -f /etc/apt/apt-mirrors.txt ]; then echo "$MIRROR" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null; fi
+            sudo sed -i -E "s#http://[a-zA-Z0-9.-]*archive\.ubuntu\.com/ubuntu/?#$MIRROR/#g" /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+          done
+          dpkg -s clang cmake ninja-build >/dev/null
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
@@ -80,6 +93,11 @@ jobs:
         run: python3 -m unittest discover -s tools/tests
       - name: Support registration tests
         run: build/hvm_support_tests
+      - name: Android Test Lab (desktop and phone mode)
+        # Android games run on the GPU renderer, which needs host OpenGL ES (Mesa, headless).
+        run: |
+          sudo apt-get install -yq libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri
+          python3 tools/android_testlab.py --phone --out report/android-testlab
       - name: Guest termination watchdog is a failed run
         run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime

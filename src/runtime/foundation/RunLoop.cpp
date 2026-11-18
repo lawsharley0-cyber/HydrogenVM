@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — run loops, timers, dates, delayed/cross-thread performs, NSThread.
 #include <exception>
 #include "Foundation.hpp"
@@ -29,7 +30,7 @@ std::string runModeKey(Ctx& x, id mode) {
 
 double now() {
     using namespace std::chrono;
-    return duration<double>(system_clock::now().time_since_epoch()).count() - 978307200.0;
+    return double(guestWallNowNs()) / 1e9 - 978307200.0;   // shifted on replay (runtime/Session.hpp)
 }
 
 // ------------------------------------------------------------- RunLoop ---
@@ -407,7 +408,7 @@ void scheduleTimer(Ctx& x, id timer, RunLoop& rl, const std::string& mode) {
     rt(x).retain(x.cpu, timer);   // the run loop retains scheduled timers
     Process* p = &x.proc;
     double interval = d->interval;   // what -timeInterval reports stays the game's own value
-    if (d->repeats && x.proc.config().unlockFrameRate && interval > 1.0 / 50 && interval <= 1.0 / 20) {
+    if (d->repeats && Compat::unlockFrameRate(x.proc) && interval > 1.0 / 50 && interval <= 1.0 / 20) {
         static std::once_flag logged;
         std::call_once(logged, [&] {
             x.proc.logf(LogLevel::Info, "Unlock frame rate: a repeating %.4f s timer (%.0f per second) fires every 1/60 s instead",
@@ -1050,6 +1051,10 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:");
     supportMethod(p, rl, "NSRunLoop", "runMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); },
                   SupportStatus::Approx, "Runs one emulated mode iteration until the supplied date; host event and source model is approximate", "c@:@@");
+    // Unity drains touch input each frame with acceptInputForMode:beforeDate:[NSDate distantPast]. It is
+    // one runMode:beforeDate: pass without the result; timers due in that pass also fire here.
+    supportMethod(p, rl, "NSRunLoop", "acceptInputForMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); x.cpu.r[0] = 0; },
+                  SupportStatus::Approx, "One emulated mode iteration until the supplied date; due timers may also fire", "v@:@@");
     rl.m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);

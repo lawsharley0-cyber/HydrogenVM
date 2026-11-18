@@ -24,7 +24,7 @@ using Job = std::function<void(Ctx&)>;
 using SteadyClock = std::chrono::steady_clock;
 
 uint64_t nowNs() { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(SteadyClock::now().time_since_epoch()).count()); }
-uint64_t wallNs() { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count()); }
+uint64_t wallNs() { return uint64_t(guestWallNowNs()); }   // shifted on replay (runtime/Session.hpp)
 
 constexpr uint64_t kTimeNow = 0, kTimeForever = ~uint64_t(0);
 

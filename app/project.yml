@@ -61,6 +61,8 @@ targetTemplates:
       - sdk: OpenGLES.framework                    # GLES on the GPU (Bridge/HostGLEAGL.mm)
       - sdk: QuartzCore.framework
       - sdk: Security.framework                    # TLS bridge for games allowed online (Bridge/TlsBridgeApple.mm)
+      - sdk: GameController.framework              # On-screen GCVirtualController (VirtualController.swift)
+      - sdk: BackgroundTasks.framework             # Continued background imports (LibraryView.swift)
     settings:
       configs:
         Release:

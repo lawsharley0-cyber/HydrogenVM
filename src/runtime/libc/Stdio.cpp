@@ -539,6 +539,12 @@ void flushGuestStdio(Process& p) {
     for (auto& [k, f] : s.files) s.flush(f);
 }
 
+void registerStdioStreams(Process& p, uint32_t base, uint32_t stride) {
+    auto& st = p.service<Stdio>();
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (int i = 0; i < 3; ++i) st.files[base + uint32_t(i) * stride].stream = i;
+}
+
 void registerLibcStdio(Process& p) {
     auto& st = p.service<Stdio>();
     st.sF = p.defineDataBlock("___sF", kFileSize * 3);

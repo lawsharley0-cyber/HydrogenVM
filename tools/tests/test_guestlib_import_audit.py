@@ -105,7 +105,7 @@ class GuestLibImportAuditTests(unittest.TestCase):
         self.assertEqual(symbols["_pthread_mutex_lock"]["status"], "present")
         self.assertEqual(symbols["_pthread_getspecific"]["status"], "present")
         self.assertEqual(symbols["_setlocale"]["status"], "stubbed-dishonestly")
-        self.assertEqual(symbols["_uselocale"]["status"], "missing")
+        self.assertEqual(symbols["_uselocale"]["status"], "present")  # xlocale per-thread slot (report fixes)
         self.assertEqual(symbols["_wcrtomb"]["status"], "present")  # implemented in #330 slice 1
         self.assertEqual(symbols["_catopen"]["status"], "missing")
 

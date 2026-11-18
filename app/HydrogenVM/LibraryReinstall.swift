@@ -88,13 +88,20 @@ struct VerificationResult {
 
 func verifyAppFiles(appBundleURL: URL, ipaURL: URL) throws -> VerificationResult {
     let entries = try readZipEntries(from: ipaURL)
+    let isAPK = ["apk", "xapk", "apks", "apkm"].contains(ipaURL.pathExtension.lowercased())
 
-    // We only care about files in Payload/*.app/
-    let payloadPrefix = "Payload/"
-    guard let appDirEntry = entries.first(where: { $0.name.hasPrefix(payloadPrefix) && $0.name.hasSuffix(".app/") && $0.name.split(separator: "/").count == 2 }) else {
-        throw NSError(domain: "Verify", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid IPA structure"])
+    // An .ipa: the files in Payload/*.app/. An .apk: its lib/ and assets/, which the import
+    // copies into the bundle at the same paths.
+    let appPrefix: String
+    if isAPK {
+        appPrefix = ""
+    } else {
+        let payloadPrefix = "Payload/"
+        guard let appDirEntry = entries.first(where: { $0.name.hasPrefix(payloadPrefix) && $0.name.hasSuffix(".app/") && $0.name.split(separator: "/").count == 2 }) else {
+            throw NSError(domain: "Verify", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid IPA structure"])
+        }
+        appPrefix = appDirEntry.name
     }
-    let appPrefix = appDirEntry.name
 
     var matchCount = 0
     var missing = [String]()
@@ -102,6 +109,7 @@ func verifyAppFiles(appBundleURL: URL, ipaURL: URL) throws -> VerificationResult
 
     for entry in entries {
         guard !entry.isDirectory, entry.name.hasPrefix(appPrefix) else { continue }
+        if isAPK && !(entry.name.hasPrefix("lib/") || entry.name.hasPrefix("assets/")) { continue }
 
         // Remove appPrefix to get relative path within .app bundle
         let relPath = String(entry.name.dropFirst(appPrefix.count))

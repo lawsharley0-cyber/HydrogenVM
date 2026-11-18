@@ -326,6 +326,9 @@ void registerSqlite(Process& p) {
     p.def<&q_createFunction>("_sqlite3_create_function");
     p.def<&q_zero1>("_sqlite3_user_data");
     p.def<&q_ok>("_sqlite3_initialize");
+    // sqlite3_config(op, ...): accepted (Pocket God #543 sets SQLITE_CONFIG_SERIALIZED). The host
+    // library is already configured; threading options are honoured by its own serialized mode.
+    p.def<&q_ok>("_sqlite3_config");
     p.def<&q_ok>("_sqlite3_shutdown");
     p.def<&q_ok>("_sqlite3_enable_shared_cache");
     p.def<&q_ok>("_sqlite3_vfs_register");

@@ -11,7 +11,7 @@ constexpr uint32_t RO_META = 1, RO_ROOT = 2, RO_HAS_CXX_STRUCTORS = 4;
 
 struct DispatchCache {
     uint64_t gen = 0;
-    const Runtime* owner = nullptr;
+    uint64_t owner = 0;
     std::unordered_map<uint64_t, IMP> map;
 };
 thread_local DispatchCache t_cache;
@@ -298,7 +298,7 @@ void Runtime::invalidateCaches() { cacheGen_.fetch_add(1, std::memory_order_acq_
 IMP Runtime::lookup(Class cls, SEL s) {
     if (!cls) return 0;
     const uint64_t gen = cacheGen_.load(std::memory_order_acquire);
-    if (t_cache.gen != gen || t_cache.owner != this) { t_cache.map.clear(); t_cache.gen = gen; t_cache.owner = this; }
+    if (t_cache.gen != gen || t_cache.owner != proc_.identity()) { t_cache.map.clear(); t_cache.gen = gen; t_cache.owner = proc_.identity(); }
     const uint64_t key = (uint64_t(cls) << 32) | s;
     auto hit = t_cache.map.find(key);
     if (hit != t_cache.map.end()) return hit->second;
@@ -344,6 +344,14 @@ void Runtime::initializeClass(CPU::Cpu& c, Class cls) {
         throw;
     }
     ci->initState.store(2, std::memory_order_release);
+}
+
+bool Runtime::sendReady(Class cls) const {
+    const ClassInfo* ci = info(cls);
+    if (!ci) return false;
+    const Class instCls = ci->isMeta ? ci->instanceClass : cls;
+    const ClassInfo* ii = instCls ? info(instCls) : nullptr;
+    return ii && ii->initState.load(std::memory_order_acquire) == 2;
 }
 
 IMP Runtime::lookupForSend(Class cls, SEL s) {

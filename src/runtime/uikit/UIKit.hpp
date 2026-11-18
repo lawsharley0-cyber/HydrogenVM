@@ -325,6 +325,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r);
 void registerUIWidgets(Process& p, ObjC::Runtime& r);
 void registerGameKit(Process& p, ObjC::Runtime& r);
 void registerMiscFrameworks(Process& p, ObjC::Runtime& r);
+void registerLegacySdks(Process& p, ObjC::Runtime& r);
+void applyLegacySdkOverrides(Process& p, ObjC::Runtime& r);
 
 // NIB loading (Nib.cpp): returns the top-level objects (autoreleased array) or 0.
 id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObjects);
