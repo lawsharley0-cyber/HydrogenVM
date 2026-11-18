@@ -27,6 +27,7 @@ struct LinkedClass {
     uint32_t flags = 0;
     LinkedClass* super = nullptr;
     std::vector<LinkedClass*> interfaces;
+    std::vector<std::u16string> externalInterfaces;
     std::map<Symbol, BoundMethod> local;
     std::map<Symbol, BoundMethod> vtable;
     std::map<Symbol, BoundField> fields;
@@ -123,8 +124,11 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
             made->superName = file.type(cls.super);
             made->super = link(made->superName, depth + 1);
         }
-        for (const auto id : cls.interfaces)
-            if (auto* iface = link(file.type(id), depth + 1)) made->interfaces.push_back(iface);
+        for (const auto id : cls.interfaces) {
+            auto name = file.type(id);
+            if (auto* iface = link(name, depth + 1)) made->interfaces.push_back(iface);
+            else made->externalInterfaces.push_back(std::move(name));
+        }
 
         if (made->super) made->vtable = made->super->vtable;
         auto addMethods = [&](const auto& methods, bool virt) {
@@ -179,6 +183,8 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
             if (!cls || !visited.insert(cls).second) continue;
             if (cls->name == to || cls->superName == to) return true;
             if (!cls->super && !cls->superName.empty() && arena.assignable(cls->superName, to)) return true;
+            for (const auto& iface : cls->externalInterfaces)
+                if (arena.assignable(iface, to)) return true;
             pending.push_back(cls->super);
             pending.insert(pending.end(), cls->interfaces.begin(), cls->interfaces.end());
         }
@@ -360,15 +366,17 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
         auto* actual = link(arena.typeOf(reference));
         if (!actual) return callBoundary(owner, key, false, false, args);
         auto& receiver = *actual;
-        if (owner == u"Ljava/lang/Thread;" && arena.assignable(receiver.name, owner)) {
-            if (kind == InvokeKind::Virtual) {
-                const auto override = receiver.vtable.find(key);
-                if (override != receiver.vtable.end()) return run(override->second, args, budget);
-            }
-            return threadMethod(receiver, key, reference);
-        }
         auto* declaredClass = link(owner);
-        if (!declaredClass) return callBoundary(owner, key, false, false, args);
+        if (!declaredClass) {
+            if (arena.assignable(receiver.name, owner)) {
+                if (kind == InvokeKind::Virtual || kind == InvokeKind::Interface) {
+                    const auto method = receiver.vtable.find(key);
+                    if (method != receiver.vtable.end()) return run(method->second, args, budget);
+                }
+                if (owner == u"Ljava/lang/Thread;") return threadMethod(receiver, key, reference);
+            }
+            return callBoundary(owner, key, false, false, args);
+        }
         auto& declared = *declaredClass;
         if (!arena.assignable(receiver.name, declared.name)) throw JavaException{u"Ljava/lang/IncompatibleClassChangeError;"};
         const BoundMethod* resolved = nullptr;
