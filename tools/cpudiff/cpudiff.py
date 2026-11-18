@@ -264,6 +264,9 @@ def differences(h: dict, u: dict):
     return diffs
 
 
+INVALID_MARK = "<unpredictable> "
+
+
 def disassemble(case) -> str:
     tool = shutil.which("llvm-mc") or shutil.which("llvm-mc-18")
     if not tool:
@@ -271,11 +274,16 @@ def disassemble(case) -> str:
     triple = "thumbv7-none-eabi" if case["thumb"] else "armv7-none-eabi"
     text = " ".join(f"0x{b:02x}" for b in case["code"])
     try:
-        out = subprocess.run([tool, "--disassemble", f"-triple={triple}", "-mattr=+neon,+vfp3,+fp16"],
-                             input=text, capture_output=True, text=True, timeout=10).stdout
+        proc = subprocess.run([tool, "--disassemble", f"-triple={triple}", "-mattr=+neon,+vfp3,+fp16"],
+                              input=text, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return ""
-    return "; ".join(l.strip() for l in out.splitlines() if l.strip() and not l.strip().startswith("."))
+    asm = "; ".join(l.strip() for l in proc.stdout.splitlines() if l.strip() and not l.strip().startswith("."))
+    # llvm-mc skips bytes it cannot decode (an UNPREDICTABLE Thumb-2 STM with PC and SP in the list,
+    # say) and prints the rest, which then looks like an ordinary ALU op. Mark the case instead.
+    if "invalid instruction encoding" in proc.stderr or "potentially undefined" in proc.stderr:
+        asm = INVALID_MARK + asm
+    return asm
 
 
 def not_comparable(asm: str) -> str:
@@ -283,6 +291,8 @@ def not_comparable(asm: str) -> str:
     read memory the two emulators lay out differently; they are counted, not reported."""
     if not asm:
         return ""
+    if asm.startswith(INVALID_MARK):
+        return "encoding the disassembler rejects (UNPREDICTABLE or invalid)"
     if "^" in asm:
         return "LDM/STM with ^ (user-bank registers / exception return; privileged)"
     if re.search(r"\[pc\b", asm):
