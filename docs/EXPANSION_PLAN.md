@@ -203,6 +203,9 @@ placeholders.
   The recording is attached to A1 reports.
 - **Replay** on the bench under `--phone`, deterministic to the extent the record captures.
   Divergence is detected by comparing frame hashes and the call ring.
+- Recover a one-tap report recording with `python3 tools/phone_recording.py ISSUE session.hvmrec`
+  (requires GitHub CLI). Match the game version from the report, then run
+  `build/hvm run GAME --phone --gpu --replay session.hvmrec --report replay.json`.
 - **Done when:** a recorded phone session that crashes after minutes of play crashes at the
   same point on replay.
 
