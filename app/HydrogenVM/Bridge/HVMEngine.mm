@@ -564,21 +564,22 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 
     core->logFile = openRunLog(bundle, playSession);
 
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *recDir = [_homePath stringByAppendingPathComponent:@"Library/HydrogenVM"];
+    [fm createDirectoryAtPath:recDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *lastRec = [recDir stringByAppendingPathComponent:@"last-session.hvmrec"];
+    NSString *prevRec = [recDir stringByAppendingPathComponent:@"previous-session.hvmrec"];
+    if ([fm fileExistsAtPath:lastRec]) {
+        [fm removeItemAtPath:prevRec error:nil];
+        [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
+    }
+    const std::string recordPath = lastRec.UTF8String;
+
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
-        {
-            std::error_code recEc;
-            const std::filesystem::path recDir = std::filesystem::path(home) / "Library" / "HydrogenVM";
-            std::filesystem::create_directories(recDir, recEc);
-            const std::filesystem::path lastRec = recDir / "last-session.hvmrec";
-            const std::filesystem::path prevRec = recDir / "previous-session.hvmrec";
-            if (std::filesystem::exists(lastRec, recEc)) {
-                std::filesystem::rename(lastRec, prevRec, recEc);
-            }
-            cfg.recordPath = lastRec.string();
-        }
+        cfg.recordPath = recordPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
