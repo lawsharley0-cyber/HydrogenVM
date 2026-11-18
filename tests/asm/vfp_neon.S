@@ -555,6 +555,95 @@ t_neon_mix:
     .ltorg
 
     .arm
+@ VFP arithmetic honours FPSCR.RMode (ARM ARM: 0 RN, 1 RP, 2 RM, 3 RZ). 1 + 2^-30 is 1.0 to
+@ nearest but the next float up toward +inf; its negation goes to the next float down toward -inf;
+@ toward zero it is 1.0. sqrt(2) to nearest (0x3FB504F3) lies below the true value, so RP rounds up.
+@ TEST vfp_rounding_modes
+@ EXPECT r0=0x3F800000 r1=0x3F800001 r2=0xBF800001 r3=0x3F800000 r4=0x3FB504F4
+    .global vfp_rounding_modes
+vfp_rounding_modes:
+    ldr     r0, =0x3F800000
+    vmov    s0, r0                  @ 1.0
+    ldr     r0, =0x30800000
+    vmov    s1, r0                  @ 2^-30
+    vadd.f32 s2, s0, s1             @ RN -> 1.0
+    mov     r5, #0x00400000         @ RMode = RP
+    vmsr    fpscr, r5
+    vadd.f32 s3, s0, s1             @ -> 0x3F800001
+    vneg.f32 s6, s0
+    vneg.f32 s7, s1
+    mov     r5, #0x00800000         @ RMode = RM
+    vmsr    fpscr, r5
+    vadd.f32 s4, s6, s7             @ -(1 + 2^-30) -> 0xBF800001
+    mov     r5, #0x00C00000         @ RMode = RZ
+    vmsr    fpscr, r5
+    vadd.f32 s5, s0, s1             @ -> 1.0
+    mov     r5, #0x00400000         @ RP
+    vmsr    fpscr, r5
+    ldr     r0, =0x40000000
+    vmov    s8, r0                  @ 2.0
+    vsqrt.f32 s9, s8                @ -> 0x3FB504F4
+    mov     r5, #0
+    vmsr    fpscr, r5
+    vmov    r0, s2
+    vmov    r1, s3
+    vmov    r2, s4
+    vmov    r3, s5
+    vmov    r4, s9
+    bx      lr
+    .ltorg
+
+    .arm
+@ VFP in RunFast mode (FPSCR.FZ + FPSCR.DN), how every iOS thread starts: denormal inputs and
+@ results become a zero of the same sign, normal arithmetic is unchanged, NaN results are the
+@ default NaN. (ARM ARM: FPSCR.FZ flush-to-zero, FPSCR.DN default NaN.)
+@ TEST vfp_runfast_flush
+@ EXPECT r0=0x00000000 r1=0x80000000 r2=0x00000000 r3=0x40700000 r4=0x00000000 r6=0x7FC00000
+    .global vfp_runfast_flush
+vfp_runfast_flush:
+    mov     r5, #0x03000000
+    vmsr    fpscr, r5
+    ldr     r0, =0x3F800000
+    vmov    s1, r0                  @ 1.0
+    ldr     r0, =0x00000001
+    vmov    s0, r0                  @ smallest positive denormal
+    vmul.f32 s2, s0, s1             @ denormal input -> +0
+    ldr     r0, =0x80000005
+    vmov    s3, r0
+    vmul.f32 s4, s3, s1             @ negative denormal input -> -0
+    ldr     r0, =0x00C00000         @ 1.5 * 2^-126
+    vmov    s5, r0
+    ldr     r0, =0x00800000         @ 2^-126 (smallest normal)
+    vmov    s6, r0
+    vsub.f32 s7, s5, s6             @ 0.5 * 2^-126 is denormal -> flushed to +0
+    ldr     r0, =0x3FC00000         @ 1.5
+    vmov    s8, r0
+    ldr     r0, =0x40100000         @ 2.25
+    vmov    s9, r0
+    vadd.f32 s10, s8, s9            @ 3.75, untouched
+    mov     r0, #1
+    mov     r1, #0
+    vmov    d8, r0, r1              @ smallest positive double denormal
+    mov     r0, #0
+    ldr     r1, =0x3FF00000
+    vmov    d9, r0, r1              @ 1.0
+    vmul.f64 d10, d8, d9            @ -> +0.0
+    ldr     r0, =0x7F800001         @ signalling NaN
+    vmov    s22, r0
+    vadd.f32 s23, s22, s1           @ -> default NaN
+    vmov    r0, s2
+    vmov    r1, s4
+    vmov    r2, s7
+    vmov    r3, s10
+    vmov    r4, r5, d10
+    orr     r4, r4, r5
+    vmov    r6, s23
+    mov     r5, #0
+    vmsr    fpscr, r5
+    bx      lr
+    .ltorg
+
+    .arm
 @ NEON float always flushes denormals (inputs and results keep only the sign)
 @ and returns the default NaN, in both the D and the Q forms.
 @ TEST neon_ftz_default_nan
