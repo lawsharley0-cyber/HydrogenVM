@@ -50,6 +50,20 @@ int main(int argc, char** argv) {
           value(vm.callStatic(u"Ltest/Child;", u"throughInterface", u"()I"), 12));
     check("virtual dispatch uses the vtable of the actual receiver",
           value(vm.callStatic(u"Ltest/Child;", u"throughBase", u"()I"), 11));
+    // JLS 15.12.4.4 selects the implementation on the actual receiver.
+    check("platform Callable and Object calls dispatch to DEX overrides",
+          value(vm.callStatic(u"Ltest/Child;", u"platformDispatch", u"()I"), 71));
+    check("a DEX class is assignable to its platform interface",
+          vm.heap().assignable(u"Ltest/Child;", u"Ljava/util/concurrent/Callable;"));
+    check("Java exception base classes participate in transitive matching",
+          vm.heap().assignable(u"Ljava/lang/RuntimeException;", u"Ljava/lang/Throwable;") &&
+          vm.heap().assignable(u"Ljava/lang/IllegalThreadStateException;", u"Ljava/lang/IllegalArgumentException;") &&
+          vm.heap().assignable(u"Ljava/lang/NoSuchFieldError;", u"Ljava/lang/IncompatibleClassChangeError;") &&
+          !vm.heap().assignable(u"Ljava/lang/LinkageError;", u"Ljava/lang/Exception;"));
+    const auto fresh = vm.heap().newString(u"same");
+    check("equal freshly allocated strings retain distinct Java identities",
+          fresh != vm.heap().newString(u"same") && fresh != vm.heap().intern(u"same") &&
+          vm.heap().string(fresh) == u"same");
     check("filled-new-array returns a reference through move-result-object",
           value(vm.callStatic(u"Ltest/Child;", u"arraySum", u"()I"), 7));
     check("failed class initialization is reported and never rerun",

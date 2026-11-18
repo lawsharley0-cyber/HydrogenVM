@@ -24,6 +24,7 @@ class Heap {
 public:
     virtual ~Heap() = default;
     virtual uint32_t object(std::u16string type) = 0;
+    virtual uint32_t newString(std::u16string text) = 0;
     virtual uint32_t intern(std::u16string text) = 0;
     virtual uint32_t array(std::u16string type, int32_t length) = 0;
     virtual std::u16string typeOf(uint32_t reference) const = 0;
@@ -42,6 +43,7 @@ public:
     explicit Arena(size_t byteLimit = 128 * 1024 * 1024, ClassAssignable classAssignable = {});
     ~Arena() override;
     uint32_t object(std::u16string type) override;
+    uint32_t newString(std::u16string text) override;
     uint32_t intern(std::u16string text) override;
     uint32_t array(std::u16string type, int32_t length) override;
     std::u16string typeOf(uint32_t reference) const override;

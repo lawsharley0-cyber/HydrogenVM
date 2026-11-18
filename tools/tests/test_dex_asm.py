@@ -15,7 +15,7 @@ class DexAssemblerTest(unittest.TestCase):
     def test_fixtures_are_reproducible_and_valid(self):
         fixtures = ROOT / "tests/android/java"
         for name, classes, methods in (("classes", 2, 4), ("classes2", 1, 1), ("arithmetic", 1, 12), ("objects", 1, 7),
-                                       ("linkage-base", 2, 5), ("linkage-child", 3, 18), ("jni", 2, 11)):
+                                       ("linkage-base", 2, 5), ("linkage-child", 3, 23), ("jni", 2, 11)):
             with self.subTest(fixture=name):
                 data = assemble((fixtures / f"{name}.smali").read_text())
                 self.assertEqual(data, (fixtures / f"{name}.dex").read_bytes())
