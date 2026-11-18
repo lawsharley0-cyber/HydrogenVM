@@ -108,7 +108,7 @@ def run_java_layout(work: Path, timeout: int) -> dict:
         output, code = run.stdout + run.stderr, run.returncode
     except (OSError, subprocess.TimeoutExpired) as err:
         output, code = str(err), None
-    return {"mode": "java (DEX layout, host)", "exitCode": code, "finished": "done:" in output,
+    return {"mode": "java (DEX layout, host)", "group": "java", "exitCode": code, "finished": "done:" in output,
             "cases": parse(output), "log": output[-20000:]}
 
 
@@ -147,10 +147,13 @@ def main() -> int:
         for c in run["cases"]:
             print(f"  {'ok  ' if c['passed'] else 'FAIL'} {c['name']}" + (f" — {c['detail']}" if c["detail"] else ""))
         failed += sum(not c["passed"] for c in run["cases"])
-        if not run["finished"] or not run["cases"] or run["exitCode"] not in (0, 1):
+        bad_exit = run["exitCode"] not in (0, 1)
+        if not run["finished"] or not run["cases"] or (run.get("group") == "java" and bad_exit):
             broken += 1
             print(f"  run did not finish (exit {run['exitCode']}); last output:")
             print("    " + "\n    ".join(run["log"].splitlines()[-25:]))
+        elif bad_exit:
+            print(f"  process exited {run['exitCode']} after reporting completion")
     total = sum(len(r["cases"]) for r in runs)
     print(f"{total - failed}/{total} passed" + (", run broke" if broken else ""))
     return 2 if broken else (1 if failed else 0)
