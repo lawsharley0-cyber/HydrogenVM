@@ -33,10 +33,11 @@ final class LibraryStore {
     func refresh() {
         let fm = FileManager.default
         try? fm.createDirectory(at: Self.appsDir, withIntermediateDirectories: true)
-        // Pick up .ipa files dropped into Documents (or the old Documents/Library).
+        let androidExtensions: Set<String> = ["apk", "xapk", "apks", "apkm", "obb"]
+        // Pick up .ipa / Android files dropped into Documents (or the old Documents/Library).
         let dropped = [URL.documentsDirectory, URL.documentsDirectory.appending(path: "Library")]
             .flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
-            .filter { ["ipa", "apk"].contains($0.pathExtension.lowercased()) }
+            .filter { $0.pathExtension.lowercased() == "ipa" || androidExtensions.contains($0.pathExtension.lowercased()) }
         for ipa in dropped { importIPA(at: ipa, removeAfter: true) }
         reloadList()
     }
@@ -55,9 +56,10 @@ final class LibraryStore {
         HydrogenShortcuts.updateAppShortcutParameters()
     }
 
-    /// Copies (if needed) and extracts an .ipa (or an Android .apk) off the main thread.
+    /// Copies (if needed) and extracts an .ipa (or an Android .apk/.xapk/.apks/.apkm/.obb) off the main thread.
     func importIPA(at url: URL, removeAfter: Bool = false) {
-        if url.pathExtension.lowercased() == "apk" { importAPK(at: url, removeAfter: removeAfter); return }
+        let ext = url.pathExtension.lowercased()
+        if ["apk", "xapk", "apks", "apkm", "obb"].contains(ext) { importAPK(at: url, removeAfter: removeAfter); return }
         let name = url.lastPathComponent
         importing.append(name)
         let scoped = url.startAccessingSecurityScopedResource()
@@ -104,13 +106,15 @@ final class LibraryStore {
         }
     }
 
-    /// Copies and extracts an Android .apk off the main thread.
+    /// Copies and extracts an Android .apk/.xapk/.apks/.apkm/.obb off the main thread.
     func importAPK(at url: URL, removeAfter: Bool = false) {
         let name = url.lastPathComponent
+        let ext = url.pathExtension.lowercased()
         importing.append(name)
         let scoped = url.startAccessingSecurityScopedResource()
-        let staged = URL.temporaryDirectory.appending(path: UUID().uuidString + ".apk")
+        let staged = URL.temporaryDirectory.appending(path: ext == "obb" ? name : "\(UUID().uuidString).\(ext)")
         do {
+            try? FileManager.default.removeItem(at: staged)
             try FileManager.default.copyItem(at: url, to: staged)
         } catch {
             if scoped { url.stopAccessingSecurityScopedResource() }
@@ -127,14 +131,14 @@ final class LibraryStore {
                 let info = try HVMEngine.importAPK(staged.path(percentEncoded: false), intoDirectory: root)
                 // Kept like an .ipa, so Reinstall and Verify work for Android games too.
                 let keep = UserDefaults.standard.object(forKey: "keepIpaForReinstall") as? Bool ?? true
-                if keep, let sha256 = staged.sha256 {
+                if keep, ext != "obb", let sha256 = staged.sha256 {
                     let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                     let dir = appSupport.appendingPathComponent("HydrogenVM/IPAs/\(info.bundleIdentifier)", isDirectory: true)
                     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                     for old in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
                         try? FileManager.default.removeItem(at: old)
                     }
-                    try FileManager.default.copyItem(at: staged, to: dir.appendingPathComponent("\(sha256).apk"))
+                    try FileManager.default.copyItem(at: staged, to: dir.appendingPathComponent("\(sha256).\(ext)"))
                 }
             }
             catch { message = (error as NSError).localizedDescription }
@@ -327,11 +331,16 @@ struct LibraryView: View {
             }
             .fileImporter(isPresented: $pickingFile,
                           allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .zip,
-                                                UTType(filenameExtension: "apk") ?? .zip, .zip],
+                                                UTType(filenameExtension: "apk") ?? .zip,
+                                                UTType(filenameExtension: "xapk") ?? .zip,
+                                                UTType(filenameExtension: "apks") ?? .zip,
+                                                UTType(filenameExtension: "apkm") ?? .zip,
+                                                UTType(filenameExtension: "obb") ?? .data,
+                                                .zip, .data],
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { urls.forEach { store.importIPA(at: $0) } }
             }
-            .onOpenURL { url in if ["ipa", "apk"].contains(url.pathExtension.lowercased()) { store.importIPA(at: url) } }
+            .onOpenURL { url in if ["ipa", "apk", "xapk", "apks", "apkm", "obb"].contains(url.pathExtension.lowercased()) { store.importIPA(at: url) } }
             .alert("Import failed", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
                 Button("OK") { store.lastError = nil }
             } message: { Text(store.lastError ?? "") }

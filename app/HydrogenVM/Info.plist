@@ -83,6 +83,8 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.android.package-archive</string>
+				<string>com.hydrogenvm.android-split-archive</string>
+				<string>com.hydrogenvm.android-obb</string>
 			</array>
 		</dict>
 	</array>
@@ -123,6 +125,42 @@
 				<key>public.mime-type</key>
 				<array>
 					<string>application/vnd.android.package-archive</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.hydrogenvm.android-split-archive</string>
+			<key>UTTypeDescription</key>
+			<string>Android Split Package Archive</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>xapk</string>
+					<string>apks</string>
+					<string>apkm</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.hydrogenvm.android-obb</string>
+			<key>UTTypeDescription</key>
+			<string>Android Expansion File</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>obb</string>
 				</array>
 			</dict>
 		</dict>

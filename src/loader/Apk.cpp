@@ -138,24 +138,161 @@ std::vector<ResValue> resolveStrings(const std::vector<uint8_t>& d, uint32_t id)
     return out;
 }
 
+namespace {
+
+std::string lowerExt(const std::string& path) {
+    std::string ext = fs::path(path).extension().string();
+    for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return ext;
+}
+
+// Parses main.<version>.<package>.obb or patch.<version>.<package>.obb -> <package>.
+std::string packageFromObbName(const std::string& filename) {
+    if (lowerExt(filename) != ".obb") return {};
+    const std::string stem = filename.substr(0, filename.size() - 4);
+    const size_t first = stem.find('.');
+    if (first == std::string::npos) return {};
+    const size_t second = stem.find('.', first + 1);
+    if (second == std::string::npos || second + 1 >= stem.size()) return {};
+    const std::string kind = stem.substr(0, first);
+    if (kind != "main" && kind != "patch") return {};
+    return stem.substr(second + 1);
+}
+
+bool isRelevantSplitApk(const std::string& entryName, const ZipReader& z) {
+    const std::string base = fs::path(entryName).filename().string();
+    std::string lower = base;
+    for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (lower.find("arm64") != std::string::npos || lower.find("x86") != std::string::npos ||
+        lower.find("mips") != std::string::npos) {
+        // Only reject if it doesn't also carry 32-bit ARM libs.
+        bool hasArm32 = false;
+        for (const auto& e : z.entries())
+            if (e.name.rfind("lib/armeabi-v7a/", 0) == 0 || e.name.rfind("lib/armeabi/", 0) == 0) { hasArm32 = true; break; }
+        if (!hasArm32) return false;
+    }
+    // Skip non-English language splits (config.fr.apk, split_config.de.apk, etc.).
+    for (const char* pre : {"config.", "split_config."}) {
+        const std::string p = pre;
+        if (lower.rfind(p, 0) == 0 && lower.size() == p.size() + 6 && lower.compare(p.size() + 2, 4, ".apk") == 0) {
+            const std::string lang = lower.substr(p.size(), 2);
+            if (lang != "en") return false;
+        }
+    }
+    return true;
+}
+
+AppInfo importStandaloneObb(const std::string& obbPath, const std::string& appsRoot) {
+    const std::string filename = fs::path(obbPath).filename().string();
+    std::string pkg = packageFromObbName(filename);
+    if (pkg.empty()) throw ZipError("Expansion file name must be main.<version>.<package>.obb or patch.<version>.<package>.obb.");
+    for (char& c : pkg) if (c == '/' || c == '\\' || c == ':') c = '_';
+
+    const fs::path container = fs::path(appsRoot) / pkg;
+    const fs::path obbDir = container / "Library/Caches/sdcard/Android/obb" / pkg;
+    std::error_code ec;
+    fs::create_directories(obbDir, ec);
+    fs::copy_file(obbPath, obbDir / filename, fs::copy_options::overwrite_existing);
+
+    if (fs::is_directory(container, ec)) {
+        for (const auto& entry : fs::directory_iterator(container, ec)) {
+            const std::string name = entry.path().filename().string();
+            if (entry.is_directory(ec) && name.size() > 4 && name.compare(name.size() - 4, 4, ".app") == 0)
+                return readBundle(entry.path().string());
+        }
+    }
+    AppInfo info;
+    info.bundleId = pkg;
+    info.displayName = filename;
+    info.runnable = false;
+    info.problem = "Expansion file installed for " + pkg + ". Import the game's .apk to play.";
+    return info;
+}
+
+} // namespace
+
 AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
-    ZipReader zip(apkPath);
+    if (lowerExt(apkPath) == ".obb") return importStandaloneObb(apkPath, appsRoot);
+
+    ZipReader outerZip(apkPath);
+    std::vector<std::string> splitPaths;
+    std::vector<std::string> outerObbs;
+    std::string baseApkPath = apkPath;
+    fs::path tempSplitsDir;
+
+    if (!outerZip.find("AndroidManifest.xml")) {
+        // Split APK archive (.xapk, .apks, .apkm): find nested .apk and .obb entries.
+        std::vector<const ZipEntry*> apkEntries;
+        for (const auto& e : outerZip.entries()) {
+            const std::string ext = lowerExt(e.name);
+            if (ext == ".apk") apkEntries.push_back(&e);
+            else if (ext == ".obb") outerObbs.push_back(e.name);
+        }
+        if (apkEntries.empty())
+            throw ZipError("This file isn't an Android app (.apk has no AndroidManifest.xml).");
+
+        tempSplitsDir = fs::path(appsRoot) / ("_hvm_splits_" + fs::path(apkPath).stem().string());
+        std::error_code ec;
+        fs::remove_all(tempSplitsDir, ec);
+        fs::create_directories(tempSplitsDir, ec);
+
+        std::string chosenBase;
+        for (size_t i = 0; i < apkEntries.size(); ++i) {
+            const auto* e = apkEntries[i];
+            const std::string fname = fs::path(e->name).filename().string();
+            const fs::path dst = tempSplitsDir / (std::to_string(i) + "_" + fname);
+            const auto bytes = outerZip.read(*e);
+            std::ofstream(dst, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+            try {
+                ZipReader sz(dst.string());
+                if (!isRelevantSplitApk(fname, sz)) continue;
+                splitPaths.push_back(dst.string());
+                std::string lower = fname;
+                for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+                if (sz.find("AndroidManifest.xml") &&
+                    (chosenBase.empty() || lower == "base.apk" || lower == "base-master.apk"))
+                    chosenBase = dst.string();
+            } catch (const std::exception&) {}
+        }
+        if (chosenBase.empty()) {
+            fs::remove_all(tempSplitsDir, ec);
+            throw ZipError("Split archive has no base .apk with AndroidManifest.xml.");
+        }
+        baseApkPath = chosenBase;
+    }
+
+    ZipReader zip(baseApkPath);
     const auto* manifestEntry = zip.find("AndroidManifest.xml");
-    if (!manifestEntry) throw ZipError("This file isn't an Android app (.apk has no AndroidManifest.xml).");
+    if (!manifestEntry) {
+        std::error_code ec;
+        if (!tempSplitsDir.empty()) fs::remove_all(tempSplitsDir, ec);
+        throw ZipError("This file isn't an Android app (.apk has no AndroidManifest.xml).");
+    }
     const auto manifestBytes = zip.read(*manifestEntry);
     ApkManifest m = parseManifest(manifestBytes);
     std::vector<uint8_t> arsc;
     if (const auto* e = zip.find("resources.arsc")) arsc = zip.read(*e);
 
-    std::string lib;
-    for (const char* abi : {"lib/armeabi-v7a/", "lib/armeabi/"}) {
-        const std::string prefix = abi;
-        // Several libraries: the largest is the game (the others are helpers it loads).
-        uint64_t best = 0;
-        for (const auto& e : zip.entries())
-            if (e.name.rfind(prefix, 0) == 0 && e.name.find('/', prefix.size()) == std::string::npos &&
-                e.name.size() > 3 && e.name.compare(e.name.size() - 3, 3, ".so") == 0 && e.size > best) { lib = e.name; best = e.size; }
+    auto findLibInZip = [](const ZipReader& z) -> std::string {
+        for (const char* abi : {"lib/armeabi-v7a/", "lib/armeabi/"}) {
+            const std::string prefix = abi;
+            uint64_t best = 0;
+            std::string found;
+            for (const auto& e : z.entries())
+                if (e.name.rfind(prefix, 0) == 0 && e.name.find('/', prefix.size()) == std::string::npos &&
+                    e.name.size() > 3 && e.name.compare(e.name.size() - 3, 3, ".so") == 0 && e.size > best) {
+                    found = e.name;
+                    best = e.size;
+                }
+            if (!found.empty()) return found;
+        }
+        return {};
+    };
+    std::string lib = findLibInZip(zip);
+    for (const auto& sp : splitPaths) {
         if (!lib.empty()) break;
+        ZipReader sz(sp);
+        lib = findLibInZip(sz);
     }
 
     std::string label = m.label;
@@ -179,11 +316,34 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     fs::create_directories(app);
     if (!lib.empty()) zip.extract("lib/", (app / "lib").string());
     zip.extract("assets/", (app / "assets").string());
+    for (const auto& sp : splitPaths) {
+        if (sp == baseApkPath) continue;
+        ZipReader sz(sp);
+        sz.extract("lib/", (app / "lib").string());
+        sz.extract("assets/", (app / "assets").string());
+    }
+    // Extract any .obb expansion files from the outer .xapk/.apks/.apkm or from assets/ into sdcard/Android/obb/<pkg>/.
+    const fs::path obbDir = staging / "Library/Caches/sdcard/Android/obb" / pkg;
+    for (const auto& obbEntry : outerObbs) {
+        if (const auto* e = outerZip.find(obbEntry)) {
+            fs::create_directories(obbDir, ec);
+            const auto bytes = outerZip.read(*e);
+            std::ofstream(obbDir / fs::path(obbEntry).filename(), std::ios::binary)
+                .write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+        }
+    }
+    for (const auto& e : fs::directory_iterator(app / "assets", ec)) {
+        if (lowerExt(e.path().string()) == ".obb") {
+            fs::create_directories(obbDir, ec);
+            fs::copy_file(e.path(), obbDir / e.path().filename(), fs::copy_options::overwrite_existing, ec);
+        }
+    }
+
     // Unity reads its data from inside the APK (Context.getPackageCodePath): keep a copy.
     bool unity = false;
     for (const auto& e : zip.entries())
         if (e.name.size() > 12 && e.name.compare(e.name.size() - 12, 12, "/libunity.so") == 0) unity = true;
-    if (unity) fs::copy_file(apkPath, app / "base.apk", fs::copy_options::overwrite_existing);
+    if (unity) fs::copy_file(baseApkPath, app / "base.apk", fs::copy_options::overwrite_existing);
     std::ofstream(app / "AndroidManifest.xml", std::ios::binary)
         .write(reinterpret_cast<const char*>(manifestBytes.data()), std::streamsize(manifestBytes.size()));
 
@@ -210,8 +370,13 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     std::vector<std::string> libNames;
     if (!lib.empty()) {
         const std::string dir = lib.substr(0, lib.rfind('/') + 1);
-        for (const auto& e : zip.entries())
-            if (e.name.rfind(dir, 0) == 0 && e.name.find('/', dir.size()) == std::string::npos) libNames.push_back(e.name.substr(dir.size()));
+        auto addLibs = [&](const ZipReader& z) {
+            for (const auto& e : z.entries())
+                if (e.name.rfind(dir, 0) == 0 && e.name.find('/', dir.size()) == std::string::npos)
+                    libNames.push_back(e.name.substr(dir.size()));
+        };
+        addLibs(zip);
+        for (const auto& sp : splitPaths) if (sp != baseApkPath) addLibs(ZipReader(sp));
     }
     std::string dexText;
     for (const auto& e : zip.entries())
@@ -221,6 +386,7 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
         }
     const AndroidEngine engine = detectAndroidEngine(libNames, dexText);
     dexText.clear();
+    if (!tempSplitsDir.empty()) fs::remove_all(tempSplitsDir, ec);
 
     const bool portrait = m.screenOrientation.find("ortrait") != std::string::npos;
     std::ofstream plist(app / "Info.plist");
@@ -242,11 +408,12 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
           << "</dict>\n</plist>\n";
     plist.close();
 
-    // An update keeps the game's data.
+    // An update keeps the game's data (merge Library/Caches/sdcard/Android/obb/ if new OBBs were extracted).
     if (fs::is_directory(container, ec)) {
         for (const auto& entry : fs::directory_iterator(container, ec)) {
             const std::string name = entry.path().filename().string();
             if (entry.is_directory(ec) && name.size() > 4 && name.compare(name.size() - 4, 4, ".app") == 0) continue;
+            if (fs::exists(staging / entry.path().filename(), ec)) continue;
             fs::rename(entry.path(), staging / entry.path().filename(), ec);
         }
     }
