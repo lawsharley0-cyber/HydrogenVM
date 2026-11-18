@@ -1,5 +1,6 @@
 import Darwin
 import CoreMotion
+import GameController
 import SwiftUI
 import UIKit
 
@@ -15,6 +16,11 @@ final class RunModel {
 
     let app: InstalledApp
     private(set) var frame: CGImage?
+    /// The engine has presented GPU frames. A game drawn only on the GPU (Android games, which
+    /// have no UIKit layer over them) never delivers a `frame`, yet it is on screen.
+    private(set) var gpuPresenting = false
+    /// Something of the game is on screen: a composited frame or a GPU present.
+    var hasPicture: Bool { frame != nil || gpuPresenting }
     /// GPU-rendered GL drawable, shown under `frame` (nil on the software renderer).
     private(set) var glLayer: CALayer?
     private(set) var screenSize = CGSize(width: 320, height: 480)
@@ -22,16 +28,29 @@ final class RunModel {
     private(set) var running = false
     /// The guest text field that has focus, if any: the host keyboard bar is shown for it (#303).
     private(set) var keyboard: HVMTextInputRequest?
+    var photoPicker: GamePhotoRequest?
+    var documentPicker: HVMDocumentPickerRequest?
+    /// The video the game is playing, shown over the game picture.
+    private(set) var movie: GameMovieRequest?
     private(set) var fps = 0
     private(set) var orientation = GuestOrientation.portrait
     private(set) var activity = PlayerActivity()
     private(set) var frameTimeP95 = 0.0
     var volume: Double = 1 { didSet { session?.outputVolume = Float(volume) } }
-    var inputEnabled: Bool { running && frame != nil && !closing && activity.acceptsInput }
+    // A movie shown before the game's first frame still takes touches (a tap to skip it).
+    var inputEnabled: Bool { running && (hasPicture || movie != nil) && !closing && activity.acceptsInput }
     @ObservationIgnored private var activityTimer: Timer?
     @ObservationIgnored private var activeTouches: [Int: CGPoint] = [:]
+    var controllerLayout: VirtualControllerLayout {
+        didSet {
+            controllerLayout.save(bundleID: app.info.bundleIdentifier)
+            syncVirtualController()
+        }
+    }
+    @ObservationIgnored private var virtualController: VirtualControllerCoordinator?
 
     private func cancelActiveTouches() {
+        virtualController?.releaseAllInputs()
         for (finger, point) in activeTouches {
             session?.touch(.cancelled, x: Float(point.x), y: Float(point.y), finger: UInt(finger))
         }
@@ -43,23 +62,31 @@ final class RunModel {
         cancelActiveTouches()
         activity.userPaused.toggle()
         reconcileActivity()
+        syncVirtualController()
     }
 
     private func reconcileActivity() {
         guard let session else { return }
         guard !closing else { return }
-        let command = activity.reconcile(ready: frame != nil, backgrounded: session.isBackgrounded, running: running)
+        let command = activity.reconcile(ready: hasPicture, backgrounded: session.isBackgrounded, running: running)
         switch command {
         case .background: session.enterBackground(); stopSensors()
         case .foreground: session.enterForeground()
         case nil: break
         }
         if inputEnabled && !motion.isAccelerometerActive { startSensors() }
+        syncVirtualController()
     }
 
     var crashReport: String?
     var savedCrash: CrashReport?
     var reportSaveError: String?
+    var safeModeRetryOffer: String?
+    @ObservationIgnored private var pendingCrashFields: [String: Any]?
+    @ObservationIgnored private var sessionStartTime: Date?
+    @ObservationIgnored private var activeFallback: String?
+    @ObservationIgnored private var triedFallbackThisRun = false
+    @ObservationIgnored private var lastKeepGoing = false
     @ObservationIgnored private var memoryTimer: Timer?
     @ObservationIgnored private var memorySamples: [[String: Any]] = []
     var exitMessage: String?
@@ -78,7 +105,10 @@ final class RunModel {
     @ObservationIgnored private var lastPresented: UInt64 = 0
     @ObservationIgnored private var fpsTimer: Timer?
 
-    init(app: InstalledApp) { self.app = app }
+    init(app: InstalledApp) {
+        self.app = app
+        self.controllerLayout = VirtualControllerLayout.load(bundleID: app.info.bundleIdentifier)
+    }
 
     /// CI hook: HVM_AUTORUN=<bundle id> launches that app at startup (see LibraryView);
     /// in that mode the guest log is mirrored to stdout and HVM_AUTOTAP="x,y@t;x,y@t"
@@ -110,13 +140,49 @@ final class RunModel {
         }
     }
 
-    func start(keepGoing: Bool) {
+    func finishDocument(_ path: String?, requestId: UInt64) {
+        guard running, !closing, documentPicker?.requestId == requestId else { return }
+        session?.submitDocument(path, requestId: requestId)
+    }
+
+    func finishPhoto(_ data: Data?, requestId: UInt64) {
+        guard running, !closing, photoPicker?.id == requestId else { return }
+        session?.submitPhoto(data, requestId: requestId)
+    }
+
+    /// The video ended, could not be played, or was taken down: the game moves on.
+    func finishMovie(requestId: UInt64) {
+        guard movie?.id == requestId else { return }
+        movie = nil
+        session?.movieFinished(requestId)
+    }
+
+    func start(keepGoing: Bool, detailedRecording: Bool = false) {
         guard session == nil else { return }
+        lastKeepGoing = keepGoing
+        sessionStartTime = Date()
+        let fallback = activeFallback ?? Self.compatFallback(for: app.info.bundleIdentifier)
+        activeFallback = fallback
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
         s.keepGoing = keepGoing
+        s.playSession = true
+        s.detailedRecording = detailedRecording
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
+        s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
+        s.unlockFrameRate = Self.unlocksFrameRate(for: app.info.bundleIdentifier)
+        if let fallback {
+            s.safeModeFallback = fallback
+            switch fallback {
+            case "gles1-emulation": s.gles1Emulate = true
+            case "frame-rate-cap": s.unlockFrameRate = false
+            case "internet-off": s.allowInternet = false
+            case "reduced-texture-resolution": s.maxTextureSize = 1024
+            case "extra-memory-headroom": s.memoryBudgetBytes = 2048 * 1024 * 1024
+            default: break
+            }
+        }
         // Taller guest screen and safe-area insets, per game; both are cleared when off.
         let display = UIScreen.main.bounds.size
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -135,6 +201,27 @@ final class RunModel {
         s.onTextInput = { [weak self] request in
             MainActor.assumeIsolated { self?.keyboard = request.active ? request : nil }
         }
+        s.onDocumentPicker = { [weak self] request in
+            MainActor.assumeIsolated {
+                guard let self, self.running, !self.closing else { return }
+                if request.active { self.documentPicker = request }
+                else if self.documentPicker?.requestId == request.requestId { self.documentPicker = nil }
+            }
+        }
+        s.onPhotoPicker = { [weak self] request in
+            MainActor.assumeIsolated {
+                guard let self, self.running, !self.closing else { return }
+                if request.active { self.photoPicker = GamePhotoRequest(id: request.requestId) }
+                else if self.photoPicker?.id == request.requestId { self.photoPicker = nil }
+            }
+        }
+        s.onMovie = { [weak self] request in
+            MainActor.assumeIsolated {
+                guard let self, self.running, !self.closing else { return }
+                if request.active { self.movie = GameMovieRequest(id: request.requestId, url: URL(fileURLWithPath: request.path)) }
+                else if self.movie?.id == request.requestId { self.movie = nil }
+            }
+        }
         s.onFrame = { [weak self] image in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -143,6 +230,7 @@ final class RunModel {
                 self.frameCount += 1
                 self.scheduleAutoTaps()
                 if let size = self.session?.screenSize, size != self.screenSize { self.screenSize = size }
+                self.syncVirtualController()
             }
         }
         s.onGLLayer = { [weak self] layer in
@@ -159,9 +247,13 @@ final class RunModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.keyboard = nil
+                self.photoPicker = nil
+                self.documentPicker = nil
+                self.movie = nil
                 self.running = false
                 self.closing = false
                 self.cancelActiveTouches()
+                self.virtualController?.disconnect()
                 self.stopSensors()
                 self.activityTimer?.invalidate()
                 self.fpsTimer?.invalidate()
@@ -178,7 +270,30 @@ final class RunModel {
                     fields["summary"] = fields["summary"] ?? crash.components(separatedBy: "\n").first
                     fields["report"] = crash
                     fields["bundleId"] = self.app.info.bundleIdentifier
+                    fields["recordingPath"] = self.session?.recordingPath ?? self.app.homeURL.appending(path: "Library/HydrogenVM/last-session.hvmrec").path(percentEncoded: false)
                     fields["memorySamples"] = self.memorySamples
+                    if let fb = self.activeFallback { fields["safeModeFallback"] = fb }
+                    if fields["logs"] == nil { fields["logs"] = self.log.suffix(3000).map(\.text) }
+                    let usedInternet = self.session?.allowInternet ?? false
+                    let usedUnlockFPS = self.session?.unlockFrameRate ?? false
+                    let usedGles1 = self.session?.gles1Emulate ?? false
+                    let usedMaxTex = self.session?.maxTextureSize ?? 0
+                    self.session = nil
+                    let withinWindow = self.sessionStartTime.map { Date().timeIntervalSince($0) <= 180 } ?? false
+                    if withinWindow, !self.triedFallbackThisRun,
+                       let chosen = HVMEngine.chooseFallback(forCrashReport: crash + "\n" + self.logText,
+                                                             internetAccess: usedInternet,
+                                                             unlockFrameRate: usedUnlockFPS,
+                                                             gles1Emulate: usedGles1,
+                                                             maxTextureSize: usedMaxTex) {
+                        if UserDefaults.standard.bool(forKey: "player.safeModeAlwaysRetry") {
+                            self.retryInSafeMode(fallback: chosen)
+                        } else {
+                            self.pendingCrashFields = fields
+                            self.safeModeRetryOffer = chosen
+                        }
+                        return
+                    }
                     do {
                         self.savedCrash = try CrashReport.save(fields, app: self.app.info.bundleIdentifier)
                         CrashReport.clearPending()
@@ -187,6 +302,10 @@ final class RunModel {
                         self.crashReport = crash
                     }
                 } else {
+                    self.session = nil
+                    if let fb = self.activeFallback {
+                        Self.setCompatFallback(fb, for: self.app.info.bundleIdentifier)
+                    }
                     CrashReport.clearPending()
                     if self.userStopped { self.finished = true }
                     else { self.exitMessage = "The app exited (status \(code))." }
@@ -203,6 +322,7 @@ final class RunModel {
         activity.hostBackgrounded = UIApplication.shared.applicationState == .background
         s.outputVolume = Float(volume)
         s.start()
+        syncVirtualController()
         activityTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.reconcileActivity() }
         }
@@ -216,6 +336,15 @@ final class RunModel {
                 // GPU-presented games show frames without a new UIKit composite,
                 // so count what the engine presented rather than delivered images.
                 let presented = self.session?.framesPresented ?? 0
+                if presented > 0 && self.glLayer != nil && !self.gpuPresenting {
+                    self.gpuPresenting = true
+                    self.reconcileActivity()
+                    if self.inputEnabled && !self.motion.isAccelerometerActive { self.startSensors() }
+                }
+                if self.hasPicture, let fb = self.activeFallback,
+                   let startTime = self.sessionStartTime, Date().timeIntervalSince(startTime) >= 5 {
+                    Self.setCompatFallback(fb, for: self.app.info.bundleIdentifier)
+                }
                 self.fps = presented >= self.lastPresented ? max(Int(presented - self.lastPresented), self.frameCount) : self.frameCount
                 self.lastPresented = presented
                 self.frameCount = 0
@@ -223,6 +352,51 @@ final class RunModel {
                 // orientation here too (landscape games rotate at startup).
                 self.syncOrientation()
             }
+        }
+    }
+
+    nonisolated static func compatFallbackKey(_ bundleID: String) -> String { "compatFallback.\(bundleID)" }
+    nonisolated static func compatFallback(for bundleID: String) -> String? {
+        UserDefaults.standard.string(forKey: compatFallbackKey(bundleID))
+    }
+    nonisolated static func setCompatFallback(_ fallback: String?, for bundleID: String) {
+        if let fallback, !fallback.isEmpty {
+            UserDefaults.standard.set(fallback, forKey: compatFallbackKey(bundleID))
+        } else {
+            UserDefaults.standard.removeObject(forKey: compatFallbackKey(bundleID))
+        }
+    }
+
+    func retryInSafeMode(fallback: String) {
+        safeModeRetryOffer = nil
+        pendingCrashFields = nil
+        CrashReport.clearPending()
+        triedFallbackThisRun = true
+        activeFallback = fallback
+        session = nil
+        let keepGoing = lastKeepGoing
+        let bundleID = app.info.bundleIdentifier
+        append("[hvm] safe-mode retry: relaunching with fallback \(fallback)", .info)
+        Task.detached { [weak self] in
+            _ = HVMEngine.wait(forGuestArenaRelease: 2.0)
+            await MainActor.run {
+                guard let self else { return }
+                Self.setCompatFallback(fallback, for: bundleID)
+                self.start(keepGoing: keepGoing)
+            }
+        }
+    }
+
+    func declineSafeModeRetry() {
+        safeModeRetryOffer = nil
+        guard let fields = pendingCrashFields else { return }
+        pendingCrashFields = nil
+        do {
+            savedCrash = try CrashReport.save(fields, app: app.info.bundleIdentifier)
+            CrashReport.clearPending()
+        } catch {
+            reportSaveError = "Could not save the crash report: \(error.localizedDescription)"
+            crashReport = fields["report"] as? String ?? "Unknown crash"
         }
     }
 
@@ -234,10 +408,46 @@ final class RunModel {
         return d.bool(forKey: "softwareRenderer")
     }
 
+    /// Per-game "Allow internet" switch; key "internet.<bundle id>", off unless the player turns it on.
+    /// Games stay offline by default; this lets one chosen game reach its servers, e.g. to download
+    /// content it needs before those servers close (Minion Rush's DLC).
+    nonisolated static func internetKey(_ bundleID: String) -> String { "internet.\(bundleID)" }
+    nonisolated static func unlockFPSKey(_ bundleID: String) -> String { "unlockFPS.\(bundleID)" }
+    nonisolated static func unlocksFrameRate(for bundleID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: unlockFPSKey(bundleID))
+    }
+    nonisolated static func allowsInternet(for bundleID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: internetKey(bundleID))
+    }
+
     private func syncOrientation() {
         guard let s = session else { return }
         let o = GuestOrientation(rawValue: s.interfaceOrientation) ?? .portrait
         if o != orientation { orientation = o }
+        // GPU-presented games send no software frames, so the guest screen (in points, what
+        // touches are mapped to: 768x1024 for an iPad-only game) is picked up here too.
+        if s.screenSize.width > 0, s.screenSize != screenSize { screenSize = s.screenSize }
+        syncVirtualController()
+    }
+
+    func syncVirtualController(effectiveOrientation: GuestOrientation? = nil) {
+        if virtualController == nil {
+            let coordinator = VirtualControllerCoordinator(layout: controllerLayout)
+            coordinator.onTouch = { [weak self] phase, point, finger in
+                self?.touch(phase, at: point, finger: finger)
+            }
+            coordinator.onTilt = { [weak self] ax, ay, az in
+                self?.session?.setAccelerationX(ax, y: ay, z: az)
+            }
+            virtualController = coordinator
+        }
+        virtualController?.syncState(
+            enabled: running && !closing && controllerLayout.enabled,
+            layout: controllerLayout,
+            guestSize: screenSize,
+            orientation: effectiveOrientation ?? orientation,
+            inputEnabled: inputEnabled
+        )
     }
 
     /// A GitHub issue for this session, built from the console: only the lines that
@@ -265,11 +475,26 @@ final class RunModel {
         return url.url!
     }
 
+    /// The console's problems and the whole log, as a one-tap report.
+    func consoleProblemReport() -> ProblemReport {
+        let report = ConsoleReport(lines: log.map { ($0.text, $0.level) })
+        var summary = "**App:** \(app.title) \(app.info.version) (`\(app.info.bundleIdentifier)`) · \(app.info.isAndroid ? "Android" : "iOS")\n"
+        summary += ProblemReporter.deviceLine + " · renderer \(session?.useGPU == false ? "software" : "GPU")"
+        summary += " · \(fps) fps · p95 frame \(String(format: "%.1f", frameTimeP95)) ms\n\n"
+        summary += report.markdown(limit: 20_000)
+        return ProblemReport(title: "[console] \(app.info.bundleIdentifier): \(report.headline ?? "problem report")",
+                             summary: summary,
+                             parts: [.init(name: "problems.md", text: report.markdown(limit: 400_000), language: "markdown"),
+                                     .init(name: "log.txt", text: logText)])
+    }
+
     private func sampleMemory() {
         memorySamples.append(["utc": ISO8601DateFormatter().string(from: Date()),
                               "availableBytes": HVMCrashJournal.availableMemory()])
         if memorySamples.count > 120 { memorySamples.removeFirst() }
+        let recPath = session?.recordingPath ?? app.homeURL.appending(path: "Library/HydrogenVM/last-session.hvmrec").path(percentEncoded: false)
         let fields: [String: Any] = ["bundleId": app.info.bundleIdentifier, "appVersion": app.info.version,
+                                     "recordingPath": recPath,
                                      "deviceModel": CrashReport.deviceModel,
                                      "iOSVersion": UIDevice.current.systemVersion,
                                      "host": ["pageSize": getpagesize()],
@@ -287,6 +512,7 @@ final class RunModel {
     func stop() {
         guard running, !closing else { return }
         cancelActiveTouches()
+        virtualController?.disconnect()
         userStopped = true
         closing = true
         session?.stopGracefully()
@@ -295,6 +521,8 @@ final class RunModel {
 
     func teardown() {
         stop()
+        virtualController?.disconnect()
+        virtualController = nil
         memoryTimer?.invalidate()
         fpsTimer?.invalidate()
         fpsTimer = nil
@@ -364,7 +592,10 @@ final class RunModel {
     func dismissKeyboard(focusId: UInt64) { session?.dismissKeyboard(forFocus: focusId) }
 
     func touch(_ phase: HVMTouchPhase, at p: CGPoint, finger: Int) {
-        guard phase == .cancelled || inputEnabled else { return }
+        // A finger that is already down always gets its end, even if input closed meanwhile
+        // (a movie shown before the first frame ended while it was held).
+        let lifting = (phase == .ended || phase == .cancelled) && activeTouches[finger] != nil
+        guard lifting || phase == .cancelled || inputEnabled else { return }
         guard phase == .began || activeTouches[finger] != nil else { return }
         if phase == .ended || phase == .cancelled { activeTouches[finger] = nil }
         else { activeTouches[finger] = p }
@@ -396,6 +627,8 @@ final class RunModel {
             guard let a = data?.acceleration else { return }
             MainActor.assumeIsolated {
                 guard let self, self.inputEnabled else { return }
+                // When the virtual controller thumbstick is actively driving tilt, do not overwrite it with device gravity.
+                if self.virtualController?.isDrivingTilt == true { return }
                 let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
                 let host = GuestOrientation(rawValue: scene?.effectiveGeometry.interfaceOrientation.rawValue ?? 1) ?? .portrait
@@ -403,14 +636,86 @@ final class RunModel {
                 self.session?.setAccelerationX(mapped.0, y: mapped.1, z: mapped.2)
             }
         }
+        startControllers()
     }
 
-    private func stopSensors() { motion.stopAccelerometerUpdates() }
+    private func stopSensors() {
+        motion.stopAccelerometerUpdates()
+        stopControllers()
+    }
+
+    func pressBackButton() {
+        guard app.info.isAndroid, running, !closing else { return }
+        session?.sendAndroidKey(4, down: true) // KEYCODE_BACK = 4
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            self?.session?.sendAndroidKey(4, down: false)
+        }
+    }
+
+    @ObservationIgnored private var controllerObserver: NSObjectProtocol?
+
+    private func attachController(_ controller: GCController) {
+        guard app.info.isAndroid, let gp = controller.extendedGamepad else { return }
+        gp.valueChangedHandler = { [weak self] pad, element in
+            MainActor.assumeIsolated {
+                guard let self, self.inputEnabled, let session = self.session else { return }
+                if element === pad.leftThumbstick || element === pad.rightThumbstick || element === pad.dpad {
+                    session.sendJoystickLX(pad.leftThumbstick.xAxis.value,
+                                           ly: -pad.leftThumbstick.yAxis.value,
+                                           rx: pad.rightThumbstick.xAxis.value,
+                                           ry: -pad.rightThumbstick.yAxis.value,
+                                           hatX: pad.dpad.xAxis.value,
+                                           hatY: -pad.dpad.yAxis.value)
+                } else if element === pad.buttonA {
+                    session.sendAndroidKey(96, down: pad.buttonA.isPressed)   // KEYCODE_BUTTON_A
+                } else if element === pad.buttonB {
+                    session.sendAndroidKey(97, down: pad.buttonB.isPressed)   // KEYCODE_BUTTON_B
+                } else if element === pad.buttonX {
+                    session.sendAndroidKey(99, down: pad.buttonX.isPressed)   // KEYCODE_BUTTON_X
+                } else if element === pad.buttonY {
+                    session.sendAndroidKey(100, down: pad.buttonY.isPressed)  // KEYCODE_BUTTON_Y
+                } else if element === pad.leftShoulder {
+                    session.sendAndroidKey(102, down: pad.leftShoulder.isPressed) // KEYCODE_BUTTON_L1
+                } else if element === pad.rightShoulder {
+                    session.sendAndroidKey(103, down: pad.rightShoulder.isPressed) // KEYCODE_BUTTON_R1
+                } else if element === pad.buttonMenu {
+                    session.sendAndroidKey(108, down: pad.buttonMenu.isPressed) // KEYCODE_BUTTON_START
+                } else if element === pad.buttonOptions {
+                    session.sendAndroidKey(109, down: pad.buttonOptions?.isPressed ?? false) // KEYCODE_BUTTON_SELECT
+                }
+            }
+        }
+    }
+
+    private func startControllers() {
+        guard app.info.isAndroid, controllerObserver == nil else { return }
+        for c in GCController.controllers() { attachController(c) }
+        controllerObserver = NotificationCenter.default.addObserver(
+            forName: .GCControllerDidConnect, object: nil, queue: .main
+        ) { [weak self] _ in
+            // Re-scan instead of reading note.object: neither the Notification nor the controller
+            // is Sendable, and Swift 6 rejects passing them into the main actor. Attaching sets the
+            // gamepad's handler, so attaching an already attached controller again is harmless.
+            Task { @MainActor in
+                for c in GCController.controllers() { self?.attachController(c) }
+            }
+        }
+    }
+
+    private func stopControllers() {
+        if let obs = controllerObserver {
+            NotificationCenter.default.removeObserver(obs)
+            controllerObserver = nil
+        }
+        for c in GCController.controllers() { c.extendedGamepad?.valueChangedHandler = nil }
+    }
 }
 
 struct RunView: View {
     let app: InstalledApp
     let keepGoing: Bool
+    let detailedRecording: Bool
     @State private var model: RunModel
     @State private var showLog = false
     @State private var hudExpanded = false
@@ -419,6 +724,7 @@ struct RunView: View {
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
+    @State private var editingControllerTargets = false
     @State private var overrideOrientation: GuestOrientation?
     /// Display mode for this game; the global default lives in the library's Options menu.
     @AppStorage private var scaleSetting: String?
@@ -429,14 +735,19 @@ struct RunView: View {
     @AppStorage("player.filter") private var filterSetting = PlayerFilter.linear.rawValue
     /// Read by the session at start (RunModel.start): GPU rendering unless this is on. Per game.
     @AppStorage private var softwareRenderer: Bool
+    @AppStorage private var allowInternet: Bool
+    @AppStorage private var unlockFrameRate: Bool
     @Environment(\.dismiss) private var dismiss
 
-    init(app: InstalledApp, keepGoing: Bool) {
+    init(app: InstalledApp, keepGoing: Bool, detailedRecording: Bool = false) {
+        self.detailedRecording = detailedRecording
         self.app = app
         self.keepGoing = keepGoing
         _model = State(initialValue: RunModel(app: app))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: app.info.bundleIdentifier),
                                        RunModel.softwareRenderingKey(app.info.bundleIdentifier))
+        _allowInternet = AppStorage(wrappedValue: false, RunModel.internetKey(app.info.bundleIdentifier))
+        _unlockFrameRate = AppStorage(wrappedValue: false, RunModel.unlockFPSKey(app.info.bundleIdentifier))
         _scaleSetting = AppStorage(PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
         _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
                                        PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
@@ -467,18 +778,36 @@ struct RunView: View {
 
             // Viewport & Game Canvas
             GeometryReader { geo in
+                let focusPoint = PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position
+                let playerGeo = PlayerGeometry(
+                    container: geo.size,
+                    guest: model.screenSize,
+                    pixels: model.screenSize,
+                    orientation: effectiveOrientation,
+                    mode: effectiveScaleMode,
+                    displayScale: UIScreen.main.scale,
+                    focus: focusPoint
+                )
                 ZStack {
                     EmulatorScreen(image: model.frame, glLayer: model.glLayer, guestSize: model.screenSize,
                                    orientation: effectiveOrientation,
                                    mode: effectiveScaleMode,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
-                                   inputEnabled: model.inputEnabled,
+                                   inputEnabled: model.inputEnabled && !editingControllerTargets,
                                    onOverlayGesture: showDebugOverlay ? nil : {
                                        overlay.summon()
                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { hudExpanded = true }
                                    },
-                                   focus: PlayerCropFocus(rawValue: cropFocusSetting)?.position ?? PlayerCropFocus.center.position) { phase, point, finger in
+                                   focus: focusPoint) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
+                    }
+                    if editingControllerTargets {
+                        VirtualControllerTargetEditorOverlay(
+                            layout: $model.controllerLayout,
+                            viewportRect: playerGeo.rect
+                        ) {
+                            editingControllerTargets = false
+                        }
                     }
                     if model.closing {
                         VStack(spacing: 12) {
@@ -487,11 +816,20 @@ struct RunView: View {
                         }
                         .padding(20)
                         .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
-                    } else if model.frame == nil && model.running {
+                    } else if !model.hasPicture && model.running && model.movie == nil {
                         VStack(spacing: 12) {
                             ProgressView().tint(.white)
                             Text("Starting \(app.title)…").foregroundStyle(.white.opacity(0.8)).font(.callout)
                         }
+                    }
+                    // A video the game plays (logo, intro, loading movie), over the game picture.
+                    // Touches pass through to the game, which may stop the video itself.
+                    if let movie = model.movie {
+                        GameMoviePlayer(request: movie, volume: Float(model.volume)) { model.finishMovie(requestId: movie.id) }
+                            .id(movie.id)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .background(Color.black)
+                            .allowsHitTesting(false)
                     }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -504,7 +842,8 @@ struct RunView: View {
             if showLog {
                 VStack {
                     Spacer()
-                    LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() })
+                    LogPanel(lines: model.log, copyText: { model.logText }, issueURL: { model.consoleIssueURL() },
+                             problemReport: { model.consoleProblemReport() })
                         .frame(height: 220)
                 }
             }
@@ -541,11 +880,18 @@ struct RunView: View {
         .statusBarHidden(true)
         .preferredColorScheme(.dark)
         .persistentSystemOverlays(.hidden)
+        // A game's touches near the screen edges go straight to it instead of waiting for iOS to
+        // decide whether they start a system swipe (Control Center, Home); the swipe takes a second try.
+        .defersSystemGestures(on: .all)
         .onAppear {
             OrientationLock.shared.lock(hostMask(for: effectiveOrientation), preferring: effectiveOrientation.mask)
-            model.start(keepGoing: keepGoing)
+            model.start(keepGoing: keepGoing, detailedRecording: detailedRecording)
+            model.syncVirtualController(effectiveOrientation: effectiveOrientation)
         }
-        .onChange(of: effectiveOrientation) { _, orientation in OrientationLock.shared.lock(hostMask(for: orientation), preferring: orientation.mask) }
+        .onChange(of: effectiveOrientation) { _, orientation in
+            OrientationLock.shared.lock(hostMask(for: orientation), preferring: orientation.mask)
+            model.syncVirtualController(effectiveOrientation: orientation)
+        }
         .onChange(of: model.finished) { _, done in
             if done {
                 OrientationLock.shared.lock(.all)
@@ -568,7 +914,27 @@ struct RunView: View {
             model.teardown()
             OrientationLock.shared.lock(.all)
         }
+        .sheet(isPresented: Binding(get: { model.documentPicker != nil }, set: { _ in })) {
+            if let request = model.documentPicker {
+                GameDocumentPicker(types: request.types) { path in
+                    model.finishDocument(path, requestId: request.requestId)
+                }.interactiveDismissDisabled()
+            }
+        }
+        .sheet(item: $model.photoPicker) { request in
+            GamePhotoPicker { data in model.finishPhoto(data, requestId: request.id) }
+                .interactiveDismissDisabled()
+        }
         .sheet(item: $model.savedCrash) { CrashReportView(report: $0) }
+        .alert("Safe-Mode Retry", isPresented: Binding(get: { model.safeModeRetryOffer != nil }, set: { if !$0 { model.declineSafeModeRetry() } })) {
+            if let fb = model.safeModeRetryOffer {
+                let label = HVMEngine.fallbackLabel(forId: fb) ?? fb
+                Button("Retry in Safe Mode (\(label))") { model.retryInSafeMode(fallback: fb) }
+            }
+            Button("Show Crash Report", role: .cancel) { model.declineSafeModeRetry() }
+        } message: {
+            Text("\(app.title) stopped shortly after launch. HydrogenVM can try relaunching once with this compatibility fallback.")
+        }
         .alert("\(app.title) crashed", isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {
             Button("Copy Report") { UIPasteboard.general.string = (model.crashReport ?? "") + "\n\n--- log ---\n" + model.logText; dismiss() }
             Button("Show Log") { showLog = true }
@@ -674,6 +1040,19 @@ struct RunView: View {
                         .disabled(!model.running || model.closing)
                         .accessibilityIdentifier("player-pause")
 
+                        if app.info.isAndroid {
+                            Button {
+                                model.pressBackButton()
+                            } label: {
+                                Label("Back", systemImage: "arrow.uturn.backward")
+                                    .font(.caption.weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!model.running || model.closing)
+                            .accessibilityIdentifier("player-android-back")
+                        }
+
                         // Manual Orientation Toggle
                         Button {
                             withAnimation {
@@ -753,11 +1132,62 @@ struct RunView: View {
                         }
                         .pickerStyle(.segmented)
 
+                        Toggle(isOn: $model.controllerLayout.enabled) {
+                            Text("On-screen controller")
+                                .font(.caption)
+                        }
+                        .accessibilityIdentifier("player-virtual-controller")
+
+                        if model.controllerLayout.enabled {
+                            Picker("Stick Mode", selection: $model.controllerLayout.thumbstickMode) {
+                                ForEach(VirtualThumbstickMode.allCases) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("player-virtual-controller-mode")
+
+                            Button {
+                                editingControllerTargets.toggle()
+                                if editingControllerTargets {
+                                    hudExpanded = false
+                                    overlay.minimize()
+                                }
+                            } label: {
+                                Label(editingControllerTargets ? "Finish Editing Targets" : "Adjust Button Targets on Screen",
+                                      systemImage: "hand.draw")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityIdentifier("player-virtual-controller-targets")
+                        }
+
                         Toggle(isOn: Binding(get: { !softwareRenderer }, set: { softwareRenderer = !$0 })) {
                             Text("GPU rendering for this game (next launch)")
                                 .font(.caption)
                         }
                         .accessibilityIdentifier("player-gpu-rendering")
+
+                        Toggle(isOn: $allowInternet) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Allow internet for this game (next launch)")
+                                    .font(.caption)
+                                Text("Lets it reach its own servers, e.g. to download levels.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityIdentifier("player-allow-internet")
+
+                        Toggle(isOn: $unlockFrameRate) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Unlock frame rate (experimental, next launch)")
+                                    .font(.caption)
+                                Text("Runs games capped at 30 fps at 60. A game that counts frames instead of time may run too fast.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityIdentifier("player-unlock-frame-rate")
 
                         // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
                         virtualScreenControls
@@ -862,17 +1292,39 @@ struct LogPanel: View {
     let lines: [RunModel.LogLine]
     let copyText: () -> String
     var issueURL: (() -> URL)? = nil
+    /// With a GitHub token saved, "Report" sends this in one tap instead of opening a web form.
+    var problemReport: (@MainActor () -> ProblemReport)? = nil
     @Environment(\.openURL) private var openURL
+    @State private var reportStatus: String?
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 Text("Log").font(.caption.weight(.semibold))
                 Spacer()
+                if let reportStatus {
+                    Text(reportStatus).font(.caption2).lineLimit(1)
+                }
                 if let issueURL {
-                    Button("Report on GitHub", systemImage: "exclamationmark.bubble") { openURL(issueURL()) }
+                    Button("Report on GitHub", systemImage: "exclamationmark.bubble") {
+                        if let problemReport, ProblemReporter.hasToken {
+                            let report = problemReport()
+                            reportStatus = "Sending…"
+                            Task {
+                                do {
+                                    let url = try await ProblemReporter.send(report)
+                                    reportStatus = "Sent"
+                                    openURL(url)
+                                } catch {
+                                    reportStatus = error is ProblemReporter.SendError ? "Not sent" : "Saved, sends later"
+                                }
+                            }
+                        } else {
+                            openURL(issueURL())
+                        }
+                    }
                         .font(.caption)
-                        .accessibilityHint("Opens a GitHub issue with the errors from this session")
+                        .accessibilityHint("Sends this session's problems and log to GitHub as an issue")
                 }
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = copyText() }
                     .labelStyle(.iconOnly).font(.caption)

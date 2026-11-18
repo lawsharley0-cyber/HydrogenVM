@@ -174,6 +174,16 @@ template <Kind K> void st_ctor2(Ctx& x, GuestPtr self, GuestPtr vtt) { construct
 template <Kind K> void st_ctorOpen(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode) { construct(x, self, K, 0); open(x, self, path, mode); }
 template <Kind K> void st_ctorOpen2(Ctx& x, GuestPtr self, GuestPtr vtt, GuestPtr path, uint32_t mode) { construct(x, self, K, vtt); open(x, self, path, mode); }
 void st_dtor(Ctx& x, GuestPtr self) { destroy(x, self); }
+// The deleting destructor, and the two destructors reached through the vtable (`delete stream`
+// on a base pointer): the offset to top at vptr[-8] finds the whole object from any subobject.
+void st_dtorDelete(Ctx& x, GuestPtr self) {
+    if (!self) return;
+    destroy(x, self);
+    x.proc.heap().free(self);
+}
+uint32_t streamTop(Ctx& x, uint32_t sub) { return sub + uint32_t(int32_t(x.mem.read<uint32_t>(x.mem.read<uint32_t>(sub) - 8))); }
+void st_virtualDtor(Ctx& x, GuestPtr self) { destroy(x, streamTop(x, self)); }
+void st_virtualDtorDelete(Ctx& x, GuestPtr self) { st_dtorDelete(x, streamTop(x, self)); }
 void st_open(Ctx& x, GuestPtr self, GuestPtr path, uint32_t mode) { open(x, objectFor(x, self, 0), path, mode); }
 void st_close(Ctx& x, GuestPtr self) { close(x, objectFor(x, self, 0)); }
 
@@ -515,11 +525,15 @@ void registerLibStdcxx(Process& p) {
     const uint32_t badVirtual = p.registerHostFunction("libstdc++ stream virtual call", [](Ctx&) {
         throw std::runtime_error("the app made a virtual call on a C++ file stream (not supported yet)");
     });
+    const uint32_t virtualD1 = p.registerHostFunction("std::fstream virtual destructor", [](Ctx& x) { st_virtualDtor(x, x.cpu.r[0]); });
+    const uint32_t virtualD0 = p.registerHostFunction("std::fstream virtual deleting destructor", [](Ctx& x) { st_virtualDtorDelete(x, x.cpu.r[0]); });
     auto vtable = [&](uint32_t vbase, int32_t toTop) {
         const uint32_t a = p.defineDataBlock("hvm_stream_vtable_" + std::to_string(vbase) + "_" + std::to_string(-toTop), 12 + 16 * 4);
         p.mem().write<uint32_t>(a, vbase);
         p.mem().write<uint32_t>(a + 4, uint32_t(toTop));
         for (uint32_t i = 0; i < 16; ++i) p.mem().write<uint32_t>(a + 12 + i * 4, badVirtual);
+        p.mem().write<uint32_t>(a + 12, virtualD1);       // the streams' only virtuals are their destructors
+        p.mem().write<uint32_t>(a + 16, virtualD0);
         return a + 12;
     };
     s.vtIn = vtable(kVbase, 0);
@@ -560,7 +574,8 @@ void registerLibStdcxx(Process& p) {
     p.def<&st_ctorOpen<Kind::InOut>>(sym(io, "C1EPKcSt13_Ios_Openmode"));
     p.def<&st_ctorOpen2<Kind::InOut>>(sym(io, "C2EPKcSt13_Ios_Openmode"));
     for (const char* cls : {in, out, io}) {
-        for (const char* v : {"D0Ev", "D1Ev", "D2Ev"}) p.def<&st_dtor>(sym(cls, v));
+        for (const char* v : {"D1Ev", "D2Ev"}) p.def<&st_dtor>(sym(cls, v));
+        p.def<&st_dtorDelete>(sym(cls, "D0Ev"));
         p.def<&st_open>(sym(cls, "4openEPKcSt13_Ios_Openmode"));
         p.def<&st_close>(sym(cls, "5closeEv"));
     }

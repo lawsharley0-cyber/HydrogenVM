@@ -86,6 +86,9 @@ void registerFoundation(Process& p) {
                  starts("AVVideo") || starts("AVMetadata") || starts("UIActivityType") || starts("UITransitionContext") || starts("UIFontTextStyle") ||
                  starts("ADBannerContentSizeIdentifier") || starts("SLServiceType") ||
                  starts("ACAccountTypeIdentifier") || starts("SKStoreProductParameter") ||
+                 // CoreText's font trait dictionary keys (kCTFontSymbolicTrait, ...WeightTrait, ...): a nil
+                 // key stopped Crossy Road when Unity described a font.
+                 (starts("kCTFont") && ends("Trait")) ||
                  (name[0] == 'k' && std::isupper(uint8_t(name[1])) &&
                   (name.find("Property") != std::string::npos || name.find("SSL") != std::string::npos ||
                    name.find("ServiceType") != std::string::npos || name.find("Attr") != std::string::npos ||

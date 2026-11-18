@@ -1,8 +1,9 @@
 // HydrogenVM — small framework pieces apps touch at launch:
 //   UIWebView (no web engine: remote loads fail offline, HTML loads "finish"),
 //   CoreTelephony (no carrier), SystemConfiguration's CaptiveNetwork (no Wi-Fi info),
-//   Security certificates/keys (unavailable), +attemptRotationToDeviceOrientation.
+//   +attemptRotationToDeviceOrientation.
 #include "UIKit.hpp"
+#include "runtime/Support.hpp"
 #include <cctype>
 #include <functional>
 
@@ -65,9 +66,6 @@ void ct_ignore(Ctx&, id, SEL, uint32_t) {}
 
 // ---- misc C functions
 uint32_t z1(Ctx&, uint32_t) { return 0; }
-uint32_t z2(Ctx&, uint32_t, uint32_t) { return 0; }
-int32_t secUnimplemented6(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return -4; }   // errSecUnimplemented
-int32_t secUnimplemented3(Ctx&, uint32_t, uint32_t, uint32_t) { return -4; }
 void vc_attemptRotation(Ctx& x, id, SEL) { reevaluateRootOrientation(x, "attemptRotationToDeviceOrientation", true); }
 
 // ---- MobileCoreServices: uniform type identifiers for common file types.
@@ -123,14 +121,35 @@ void later(Ctx& x, id keep, double delay, std::function<void(Ctx&)> fn) {
     });
 }
 
-// ---- UIImagePickerController: no camera or photo library available.
-bool ip_sourceAvailable(Ctx&, id, SEL, int32_t) { return false; }
-id ip_mediaTypes(Ctx&, id, SEL, int32_t) { return 0; }
-bool ip_cameraAvailable(Ctx&, id, SEL, int32_t) { return false; }
-void ip_ignoreInt(Ctx&, id, SEL, int32_t) {}
-void ip_ignoreObj(Ctx&, id, SEL, id) {}
-void ip_ignoreBool(Ctx&, id, SEL, bool) {}
-int32_t ip_zero(Ctx&, id, SEL) { return 0; }
+// ---- NSNetService / NSNetServiceBrowser: Bonjour on a network with no other devices. A browser
+// starts searching (the delegate hears netServiceBrowserWillSearch:) and never finds a service; a
+// published or resolved service hears nothing back, as when no peer answers.
+struct NetServiceData : ObjC::HostObject { id delegate = 0, name = 0, type = 0, domain = 0; int32_t port = -1; };
+id ns_delegate(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).delegate; }
+void ns_setDelegate(Ctx& x, id self, SEL, id d) { rt(x).host<NetServiceData>(self).delegate = d; }
+id ns_initService(Ctx& x, id self, SEL, id domain, id type, id name, int32_t port) {
+    auto& d = rt(x).host<NetServiceData>(self);
+    d.domain = id(rt(x).send(x.cpu, domain, "copy")); d.type = id(rt(x).send(x.cpu, type, "copy"));
+    d.name = id(rt(x).send(x.cpu, name, "copy")); d.port = port;
+    return self;
+}
+id ns_initServiceNoPort(Ctx& x, id self, SEL s, id domain, id type, id name) { return ns_initService(x, self, s, domain, type, name, -1); }
+id ns_name(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).name; }
+id ns_type(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).type; }
+id ns_domain(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).domain; }
+int32_t ns_port(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).port; }
+void ns_dealloc(Ctx& x, id self, SEL) {
+    if (auto* d = rt(x).hostIf<NetServiceData>(self)) for (id o : {d->name, d->type, d->domain}) if (o) rt(x).release(x.cpu, o);
+    rt(x).sendSuper(x.cpu, self, rt(x).getClass("NSObject"), rt(x).sel("dealloc"));
+}
+void nsb_search(Ctx& x, id self, SEL, id, id) {
+    const id d = rt(x).host<NetServiceData>(self).delegate;
+    if (d && rt(x).respondsTo(d, rt(x).sel("netServiceBrowserWillSearch:"))) rt(x).send(x.cpu, d, "netServiceBrowserWillSearch:", {self});
+}
+void nsb_stop(Ctx& x, id self, SEL) {
+    const id d = rt(x).host<NetServiceData>(self).delegate;
+    if (d && rt(x).respondsTo(d, rt(x).sel("netServiceBrowserDidStopSearch:"))) rt(x).send(x.cpu, d, "netServiceBrowserDidStopSearch:", {self});
+}
 
 // ---- CLLocationManager: location services are off. Updates fail with kCLErrorDenied.
 struct LocData : ObjC::HostObject { id delegate = 0; };
@@ -163,9 +182,16 @@ id loc_nil(Ctx&, id, SEL) { return 0; }
 void loc_ignoreObj(Ctx&, id, SEL, id) {}
 void loc_ignoreInt(Ctx&, id, SEL, int32_t) {}
 
-// ---- MPMoviePlayerController: no video decoding. play() "finishes" right away, so
-// intro/cut-scene code moves on as if the movie had played.
-struct MovieData : ObjC::HostObject { id url = 0, view = 0, background = 0; int32_t state = 0; bool finished = false; };
+// ---- MPMoviePlayerController. The host plays the file when it can (UIKit::startHostMovie)
+// and the finish notifications follow the real end of the movie. Without a host player
+// play() "finishes" right away, so intro/cut-scene code moves on as if the movie had played.
+struct MovieData : ObjC::HostObject {
+    id url = 0, view = 0, background = 0;
+    int32_t state = 0;
+    bool finished = false;
+    uint64_t hostMovie = 0;    // the host is playing this player's movie
+    uint64_t generation = 0;   // bumped by each play: a late "finished" for an earlier movie is dropped
+};
 MovieData& MD(Ctx& x, id self) { return rt(x).host<MovieData>(self); }
 id mp_initWithURL(Ctx& x, id self, SEL, id url) {
     MovieData& m = MD(x, self);
@@ -180,30 +206,59 @@ id mp_view(Ctx& x, id self, SEL) { return MD(x, self).view; }
 id mp_url(Ctx& x, id self, SEL) { return MD(x, self).url; }
 void mp_setURL(Ctx& x, id self, SEL, id url) {
     MovieData& m = MD(x, self);
+    // A new movie ends the one that is playing (iOS stops playback when contentURL changes).
+    if (m.hostMovie) { UIKit::stopHostMovie(x, m.hostMovie); m.state = 0; }
     const id old = m.url;
     m.url = url ? rt(x).retain(x.cpu, url) : 0;
     if (old) rt(x).release(x.cpu, old);
     m.finished = false;
 }
 id mp_background(Ctx& x, id self, SEL) { MovieData& m = MD(x, self); return m.background ? m.background : m.view; }
+void mp_finished(Ctx& cx, id self, uint64_t generation, int32_t reason) {
+    MovieData& m = MD(cx, self);
+    if (m.generation != generation) return;   // another movie has started on this player since
+    m.state = 0;
+    const id info = Foundation::makeDict(cx, {{Foundation::constString(cx.proc, "MPMoviePlayerPlaybackDidFinishReasonUserInfoKey"),
+                                               Foundation::makeNumberInt(cx, reason)}});
+    postNote(cx, "MPMoviePlayerPlaybackStateDidChangeNotification", self, 0);
+    postNote(cx, "MPMoviePlayerPlaybackDidFinishNotification", self, info);
+}
 void mp_play(Ctx& x, id self, SEL) {
     MovieData& m = MD(x, self);
-    if (m.finished) return;
+    if (m.state == 2 && m.hostMovie) { m.state = 1; return; }   // resumed (the host movie was never paused)
+    if (m.finished || m.hostMovie) return;
     m.finished = true;
-    m.state = 1;   // MPMoviePlaybackStatePlaying, briefly
+    m.state = 1;   // MPMoviePlaybackStatePlaying
+    const uint64_t generation = ++m.generation;
     later(x, self, 0.05, [self](Ctx& cx) {
         postNote(cx, "MPMoviePlayerLoadStateDidChangeNotification", self, 0);
         postNote(cx, "MPMoviePlayerPlaybackStateDidChangeNotification", self, 0);
     });
-    later(x, self, 0.25, [self](Ctx& cx) {
-        MD(cx, self).state = 0;
-        const id info = Foundation::makeDict(cx, {{Foundation::constString(cx.proc, "MPMoviePlayerPlaybackDidFinishReasonUserInfoKey"),
-                                                   Foundation::makeNumberInt(cx, 0 /* MPMovieFinishReasonPlaybackEnded */)}});
-        postNote(cx, "MPMoviePlayerPlaybackStateDidChangeNotification", self, 0);
-        postNote(cx, "MPMoviePlayerPlaybackDidFinishNotification", self, info);
-    });
+    std::string hostPath;
+    if (UIKit::hostMovieFile(x, m.url, hostPath)) {
+        // The player object must outlive the movie: the game may release it while it plays.
+        rt(x).retain(x.cpu, self);
+        const uint64_t movie = UIKit::startHostMovie(x, hostPath, [self, generation](Ctx& cx, bool finished) {
+            MD(cx, self).hostMovie = 0;
+            if (!finished) MD(cx, self).state = 0;   // stopped or replaced
+            if (finished) mp_finished(cx, self, generation, 0 /* MPMovieFinishReasonPlaybackEnded */);
+            rt(cx).release(cx.cpu, self);
+        });
+        if (movie) { m.hostMovie = movie; return; }
+        rt(x).release(x.cpu, self);
+    }
+    later(x, self, 0.25, [self, generation](Ctx& cx) { mp_finished(cx, self, generation, 0); });
 }
-void mp_stop(Ctx& x, id self, SEL) { MD(x, self).state = 0; }
+void mp_stop(Ctx& x, id self, SEL) {
+    MovieData& m = MD(x, self);
+    if (m.hostMovie) {
+        // Stopping a playing movie ends it: the game is told, as on iOS (reason: user exited).
+        const uint64_t generation = m.generation;
+        later(x, self, 0, [self, generation](Ctx& cx) { mp_finished(cx, self, generation, 2 /* MPMovieFinishReasonUserExited */); });
+        UIKit::stopHostMovie(x, m.hostMovie);   // drops the reference the movie held; `self` lives on in the timer
+    }
+    MD(x, self).state = 0;
+}
 void mp_pause(Ctx& x, id self, SEL) { MD(x, self).state = 2; }
 void mp_prepare(Ctx& x, id self, SEL) { later(x, self, 0.02, [self](Ctx& cx) { postNote(cx, "MPMediaPlaybackIsPreparedToPlayDidChangeNotification", self, 0); }); }
 bool mp_yes(Ctx&, id, SEL) { return true; }
@@ -301,19 +356,35 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
         .m<&vc_presentMovie>("presentMoviePlayerViewControllerAnimated:", "v@:@")
         .m<&vc_dismissMovie>("dismissMoviePlayerViewControllerAnimated", "v@:");
 
-    ObjC::ClassBuilder ip = r.defineClass("UIImagePickerController", "UINavigationController");
-    ip.cm<&ip_sourceAvailable>("isSourceTypeAvailable:", "c@:i").cm<&ip_mediaTypes>("availableMediaTypesForSourceType:", "@@:i")
-      .cm<&ip_cameraAvailable>("isCameraDeviceAvailable:", "c@:i").cm<&ip_cameraAvailable>("isFlashAvailableForCameraDevice:", "c@:i")
-      .m<&ip_ignoreInt>("setSourceType:", "v@:i").m<&ip_zero>("sourceType", "i@:").m<&ip_ignoreObj>("setMediaTypes:", "v@:@")
-      .m<&ip_ignoreBool>("setAllowsEditing:", "v@:c").m<&ip_ignoreBool>("setAllowsImageEditing:", "v@:c")
-      .m<&ip_ignoreInt>("setCameraDevice:", "v@:i").m<&ip_ignoreBool>("setShowsCameraControls:", "v@:c")
-      .m<&ip_ignoreObj>("setCameraOverlayView:", "v@:@").m<&ip_ignoreInt>("setVideoQuality:", "v@:i");
-    for (const char* n : {"_UIImagePickerControllerOriginalImage", "_UIImagePickerControllerEditedImage", "_UIImagePickerControllerMediaType",
-                          "_UIImagePickerControllerCropRect", "_UIImagePickerControllerMediaURL", "_UIImagePickerControllerReferenceURL",
-                          "_UIImagePickerControllerMediaMetadata"})
-        p.mem().write<uint32_t>(p.defineDataBlock(n, 4), Foundation::constString(p, n + 1));
+    registerPhotoPicker(p, r);
+    registerDocumentPicker(p, r);
 
+    ObjC::ClassBuilder nsvc = r.defineClass("NSNetService", "NSObject");
+    nsvc.m<&ns_initService>("initWithDomain:type:name:port:").m<&ns_initServiceNoPort>("initWithDomain:type:name:")
+        .m<&ns_delegate>("delegate").m<&ns_setDelegate>("setDelegate:", "v@:@")
+        .m<&ns_name>("name").m<&ns_type>("type").m<&ns_domain>("domain").m<&ns_port>("port", "i@:")
+        .m<&ns_dealloc>("dealloc", "v@:");
+    // No Bonjour peers exist: nothing resolves, publishing is never confirmed and no addresses are known.
+    struct NoPeer { const char* sel; const char* types; };
+    for (const NoPeer& np : {NoPeer{"hostName", "@@:"}, {"addresses", "@@:"}, {"TXTRecordData", "@@:"}})
+        supportMethod(p, nsvc, "NSNetService", np.sel, [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Unavailable,
+                      "no Bonjour peer has resolved this service, so it has no host, addresses or TXT record", np.types);
+    for (const NoPeer& np : {NoPeer{"publish", "v@:"}, {"resolve", "v@:"}, {"stop", "v@:"}, {"resolveWithTimeout:", "v@:d"},
+                             {"scheduleInRunLoop:forMode:", "v@:@@"}, {"removeFromRunLoop:forMode:", "v@:@@"}})
+        supportMethod(p, nsvc, "NSNetService", np.sel, [](Ctx&) {}, SupportStatus::Unavailable,
+                      "no Bonjour network: requests are accepted and no peer ever answers", np.types);
+    ObjC::ClassBuilder nsbr = r.defineClass("NSNetServiceBrowser", "NSObject");
+    nsbr.m<&ns_delegate>("delegate").m<&ns_setDelegate>("setDelegate:", "v@:@")
+        .m<&nsb_search>("searchForServicesOfType:inDomain:", "v@:@@").m<&nsb_stop>("stop", "v@:");
+    for (const NoPeer& np : {NoPeer{"searchForBrowsableDomains", "v@:"}, {"searchForRegistrationDomains", "v@:"},
+                             {"scheduleInRunLoop:forMode:", "v@:@@"}, {"removeFromRunLoop:forMode:", "v@:@@"}})
+        supportMethod(p, nsbr, "NSNetServiceBrowser", np.sel, [](Ctx&) {}, SupportStatus::Unavailable,
+                      "no Bonjour network: searches never find a domain or service", np.types);
     ObjC::ClassBuilder lm = r.defineClass("CLLocationManager", "NSObject");
+    // iOS 3.x exposed this availability query on the manager instance.
+    supportMethod(p,lm,"CLLocationManager","locationServicesEnabled",[](Ctx& x) {
+        x.cpu.r[0]=locc_no(x,x.cpu.r[0],x.cpu.r[1]);
+    },SupportStatus::Unavailable,"No location source configured; deprecated instance query reports disabled like the class API","c@:");
     lm.cm<&locc_no>("locationServicesEnabled", "c@:").cm<&locc_no>("headingAvailable", "c@:")
       .cm<&locc_no>("significantLocationChangeMonitoringAvailable", "c@:").cm<&locc_no>("regionMonitoringAvailable", "c@:")
       .cm<&locc_status>("authorizationStatus", "i@:")
@@ -348,6 +419,11 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
       .m<&mp_dealloc>("dealloc", "v@:");
     ObjC::ClassBuilder mpvc = r.defineClass("MPMoviePlayerViewController", "UIViewController");
     mpvc.m<&mpvc_initWithURL>("initWithContentURL:").m<&mpvc_player>("moviePlayer");
+    // MPVolumeSettingsAlertShow / Hide / IsVisible (Tap Tap Revenge 2 #546): the system volume
+    // alert. The player's volume is the phone's own; there's no alert to show, so none is visible.
+    p.def<+[](Ctx&) {}>("_MPVolumeSettingsAlertShow");
+    p.def<+[](Ctx&) {}>("_MPVolumeSettingsAlertHide");
+    p.def<+[](Ctx&) -> uint32_t { return 0; }>("_MPVolumeSettingsAlertIsVisible");
     ObjC::ClassBuilder mus = r.defineClass("MPMusicPlayerController", "NSObject");
     mus.cm<&mus_shared>("applicationMusicPlayer").cm<&mus_shared>("iPodMusicPlayer").cm<&mus_shared>("systemMusicPlayer")
        .cm<&mus_shared>("applicationQueuePlayer")
@@ -383,20 +459,6 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
       .m<&ad_uuid>("advertisingIdentifier")
       .m<&ad_trackingEnabled>("isAdvertisingTrackingEnabled", "c@:");
 
-    // Security: certificates and public-key operations aren't available.
-    p.def<&z2>("_SecCertificateCreateWithData");
-    p.def<&z1>("_SecCertificateCopySubjectSummary");
-    p.def<&z1>("_SecCertificateCopyData");
-    p.def<&z1>("_SecKeyGetBlockSize");
-    p.def<&secUnimplemented6>("_SecKeyEncrypt");
-    p.def<&secUnimplemented6>("_SecKeyDecrypt");
-    p.def<&secUnimplemented6>("_SecKeyRawVerify");
-    p.def<&secUnimplemented3>("_SecTrustCreateWithCertificates");
-    p.def<&secUnimplemented3>("_SecTrustEvaluate");
-    p.def<&z1>("_SecTrustCopyPublicKey");
-    p.def<&z1>("_SecTrustGetCertificateCount");
-    p.def<&z2>("_SecTrustGetCertificateAtIndex");
-    p.def<&secUnimplemented3>("_SecPolicyCreateBasicX509");
 }
 
 } // namespace Hydrogen::Runtime::UIKit

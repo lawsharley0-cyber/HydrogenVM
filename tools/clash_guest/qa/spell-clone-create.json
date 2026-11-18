@@ -1,0 +1,11 @@
+{
+  "name": "Earned home, original Fireball selected; restart the same private instance after creating",
+  "steps": [
+    {"id":"settings","expected":"settings","actions":[{"tap":[290,52]}],"settleSeconds":3},
+    {"id":"editors","expected":"editors","actions":[{"tap":[230,250]}],"settleSeconds":3},
+    {"id":"spell-lab","expected":"spell lab","actions":[{"tap":[160,373]}],"settleSeconds":3},
+    {"id":"tools","expected":"tools","actions":[{"tap":[248,122]}],"settleSeconds":3},
+    {"id":"clone-base-spell","expected":"clone base spell","actions":[{"tap":[92,276]}],"settleSeconds":3},
+    {"id":"create-custom-fireball","expected":"create custom fireball","actions":[{"tap":[83,181]}],"settleSeconds":3}
+  ]
+}

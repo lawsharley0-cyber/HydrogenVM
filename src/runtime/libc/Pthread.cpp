@@ -6,6 +6,7 @@
 // initialised ones (PTHREAD_MUTEX_INITIALIZER) just work. All waits poll the
 // process stop flag so quitting an app never hangs on a guest lock.
 #include "runtime/Process.hpp"
+#include "core/cpu/Engine.hpp"
 #include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include <cerrno>
@@ -31,6 +32,7 @@ struct GuestMutex {
     uint32_t owner = 0;
     int count = 0;
     int type = kNormal;
+    uint32_t addr = 0;   // the guest pthread_mutex_t, for stall reports
 };
 
 struct GuestCond {
@@ -80,9 +82,12 @@ GuestMutex& mutexFor(Ctx& x, uint32_t addr) {
     auto& p = t.mutexes[addr];
     if (!p) {
         p = std::make_unique<GuestMutex>();
+        p->addr = addr;
         const uint32_t sig = x.mem.read<uint32_t>(addr);
-        if (sig == kSigMutexRecursive) p->type = kRecursive;
-        else if (sig == kSigMutexErrorCheck) p->type = kErrorCheck;
+        // Android's static initializers: PTHREAD_RECURSIVE_MUTEX_INITIALIZER is 0x4000,
+        // PTHREAD_ERRORCHECK_MUTEX_INITIALIZER 0x8000 (a one-word bionic mutex).
+        if (sig == kSigMutexRecursive || sig == 0x4000) p->type = kRecursive;
+        else if (sig == kSigMutexErrorCheck || sig == 0x8000) p->type = kErrorCheck;
     }
     return *p;
 }
@@ -95,7 +100,25 @@ int lockMutex(Ctx& x, GuestMutex& m, bool tryOnly) {
         if (m.type == kErrorCheck || tryOnly) return tryOnly ? D_EBUSY : D_EDEADLK;
     }
     if (m.owner && tryOnly) return D_EBUSY;
-    while (m.owner) { m.cv.wait_for(lk, 50ms); if (m.owner) checkStop(x); }
+    if (m.owner) {
+        if (x.proc.session().replayingDetails()) {
+            lk.unlock(); // Other contenders must be able to consume their recorded turns.
+            x.proc.session().waitSchedTurn(me, "mutex_lock", m.addr);
+            lk.lock();
+        }
+        BlockedScope blocked(x.proc, "pthread_mutex_lock", m.addr, m.owner);
+        while (m.owner) {
+            m.cv.wait_for(lk, 50ms);
+            if (m.owner) { checkStop(x); blocked.setOwner(m.owner); }
+            if (m.owner && x.cpu.async_pending.load(std::memory_order_acquire)) {   // signal handlers run while waiting
+                lk.unlock();
+                x.proc.engine().runSafepoint(x.cpu);
+                lk.lock();
+            }
+        }
+        if (x.proc.session().recordingDetails())
+            x.proc.session().recordSchedPoint(me, "mutex_lock", m.addr, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
     m.owner = me;
     m.count = 1;
     return 0;
@@ -116,6 +139,7 @@ int unlockMutex(Ctx& x, GuestMutex& m) {
 int32_t pm_init(Ctx& x, GuestPtr mu, GuestPtr attr) {
     auto& t = T(x);
     auto m = std::make_unique<GuestMutex>();
+    m->addr = mu;
     if (attr) {
         const uint32_t type = x.mem.read<uint32_t>(attr + 4);
         m->type = type == 2 ? kRecursive : type == 1 ? kErrorCheck : kNormal;
@@ -186,13 +210,20 @@ int condWait(Ctx& x, GuestPtr cv, GuestPtr mu, int64_t deadlineNs) {
             m.owner = 0; m.count = 0;
             m.cv.notify_one();
         }
+        BlockedScope blocked(x.proc, deadlineNs ? "pthread_cond_timedwait" : "pthread_cond_wait", cv);
         while (!waiter->signaled) {
             if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
             waiter->cv.wait_for(lk, 50ms);
             if (x.proc.stopping() || cancelPending(x)) { result = -1; break; }
             if (waiter->signaled) break;
+            if (x.cpu.async_pending.load(std::memory_order_acquire)) {   // signal handlers run while waiting
+                lk.unlock();
+                x.proc.engine().runSafepoint(x.cpu);
+                lk.lock();
+                if (waiter->signaled) break;
+            }
             if (deadlineNs) {
-                const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                const int64_t now = x.proc.wallNowNs();
                 if (now >= deadlineNs) { result = D_ETIMEDOUT; break; }
             }
         }
@@ -221,7 +252,7 @@ int32_t pc_timedwait(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
 }
 int32_t pc_timedwait_rel(Ctx& x, GuestPtr cv, GuestPtr mu, GuestPtr ts) {
     const int64_t s = x.mem.read<int32_t>(ts), ns = x.mem.read<int32_t>(ts + 4);
-    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const int64_t now = x.proc.wallNowNs();
     return condWait(x, cv, mu, now + s * 1000000000LL + ns + 1);
 }
 int32_t pc_signal(Ctx& x, GuestPtr cv) {
@@ -252,7 +283,10 @@ int32_t rw_init(Ctx& x, GuestPtr rw, GuestPtr) { rwFor(x, rw); return 0; }
 int32_t rw_rdlock(Ctx& x, GuestPtr rw) {
     GuestRwlock& l = rwFor(x, rw);
     std::unique_lock<std::mutex> lk(l.m);
-    while (l.writer) { l.cv.wait_for(lk, 50ms); if (l.writer) checkStop(x); }
+    if (l.writer) {
+        BlockedScope blocked(x.proc, "pthread_rwlock_rdlock", rw, l.writer);
+        while (l.writer) { l.cv.wait_for(lk, 50ms); if (l.writer) checkStop(x); }
+    }
     ++l.readers;
     return 0;
 }
@@ -260,7 +294,10 @@ int32_t rw_tryrdlock(Ctx& x, GuestPtr rw) { GuestRwlock& l = rwFor(x, rw); std::
 int32_t rw_wrlock(Ctx& x, GuestPtr rw) {
     GuestRwlock& l = rwFor(x, rw);
     std::unique_lock<std::mutex> lk(l.m);
-    while (l.writer || l.readers) { l.cv.wait_for(lk, 50ms); if (l.writer || l.readers) checkStop(x); }
+    if (l.writer || l.readers) {
+        BlockedScope blocked(x.proc, "pthread_rwlock_wrlock", rw, l.writer);
+        while (l.writer || l.readers) { l.cv.wait_for(lk, 50ms); if (l.writer || l.readers) checkStop(x); }
+    }
     l.writer = tid(x);
     return 0;
 }
@@ -284,7 +321,10 @@ int32_t p_once(Ctx& x, GuestPtr once, GuestPtr fn) {
         // The guest word after the signature is our "done" flag, so a
         // pthread_once_t that's reused after being reset behaves correctly.
         if (x.mem.read<uint32_t>(once + 4) == 2) return 0;
-        while (t.once[once] == 1) { t.onceCv.wait_for(lk, 50ms); checkStop(x); }
+        if (t.once[once] == 1) {
+            BlockedScope blocked(x.proc, "pthread_once (another thread is running it)", once);
+            while (t.once[once] == 1) { t.onceCv.wait_for(lk, 50ms); checkStop(x); }
+        }
         if (x.mem.read<uint32_t>(once + 4) == 2) return 0;
         t.once[once] = 1;
     }
@@ -303,23 +343,37 @@ int32_t p_once(Ctx& x, GuestPtr once, GuestPtr fn) {
 int32_t k_create(Ctx& x, GuestPtr out, GuestPtr dtor) {
     auto& t = T(x);
     std::lock_guard<std::mutex> lk(t.mu);
+    if (t.nextKey >= kThreadSpecificSlots) return 35;   // EAGAIN: all 512 keys are taken
     const uint32_t k = t.nextKey++;
     t.keyDestructors[k] = dtor;
     x.mem.write<uint32_t>(out, k);
     return 0;
 }
 int32_t k_delete(Ctx& x, uint32_t key) { auto& t = T(x); std::lock_guard<std::mutex> lk(t.mu); t.keyDestructors.erase(key); return 0; }
+// The values live in the guest's own slot array, the one the thread register points at: code
+// that has pthread_getspecific inlined reads the slot directly, and must see what
+// pthread_setspecific stored (Crossy Road: Unity found no per-thread allocator and freed a
+// temporary block through the wrong one).
 uint32_t k_get(Ctx& x, uint32_t key) {
-    auto& tsd = x.proc.currentThread().tsd;
-    auto it = tsd.find(key);
-    return it == tsd.end() ? 0 : it->second;
+    const uint32_t self = x.proc.currentThread().self;
+    return self && key < kThreadSpecificSlots ? x.mem.read<uint32_t>(self + key * 4) : 0;
 }
-int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) { x.proc.currentThread().tsd[key] = v; return 0; }
+int32_t k_set(Ctx& x, uint32_t key, GuestPtr v) {
+    const uint32_t self = x.proc.currentThread().self;
+    if (!self || key >= kThreadSpecificSlots) return 22;   // EINVAL
+    x.mem.write<uint32_t>(self + key * 4, v);
+    return 0;
+}
 
 // -------------------------------------------------------------- threads ---
 
 // Private guest pthread_attr_t: signature, size, detach state, base, top.
 constexpr uint32_t kAttrSignature = 0x54484441;
+// PTHREAD_STACK_MIN is 8 KiB on 32-bit Darwin/iOS (16 KiB on 64-bit and on
+// armv7k). FMOD Ex's iPhone port (fmod_os_misc.cpp) passes 8192 — it even
+// clamps smaller requests *up* to that — and maps a failed setstacksize to
+// FMOD error 33, which System::createSound treats as fatal.
+constexpr uint32_t kPthreadStackMin = 8u << 10;
 bool validAttr(Ctx& x, GuestPtr a) { return a && x.mem.read<uint32_t>(a) == kAttrSignature; }
 bool validCustomSize(uint32_t size) { return size >= (16u << 10) && !(size & 4095); }
 int32_t attrWrite(Ctx& x, GuestPtr out, uint32_t value) {
@@ -333,7 +387,7 @@ int32_t pa_init(Ctx& x, GuestPtr a) {
 }
 int32_t pa_destroy(Ctx& x, GuestPtr a) { return validAttr(x, a) ? attrWrite(x, a, 0) : 22; }
 int32_t pa_setstacksize(Ctx& x, GuestPtr a, uint32_t s) {
-    if (!validAttr(x, a) || s < (16u << 10)) return 22;
+    if (!validAttr(x, a) || s < kPthreadStackMin) return 22;
     if ((x.mem.read<uint32_t>(a + 12) || x.mem.read<uint32_t>(a + 16)) && !validCustomSize(s)) return 22;
     return attrWrite(x, a + 4, s);
 }
@@ -395,6 +449,7 @@ int32_t t_create(Ctx& x, GuestPtr out, GuestPtr attr, GuestPtr fn, GuestPtr arg)
 }
 int32_t t_join(Ctx& x, uint32_t th, GuestPtr ret) {
     uint32_t r = 0;
+    BlockedScope blocked(x.proc, "pthread_join", th);
     if (!x.proc.joinThread(th, &r)) return D_ESRCH;
     if (ret) x.mem.write<uint32_t>(ret, r);
     return 0;
@@ -605,7 +660,7 @@ void registerLibcPthread(Process& p) {
     p.def<&t_testcancel>("_pthread_testcancel");
     p.def<&t_cancelstate>("_pthread_setcancelstate");
     p.def<&t_canceltype>("_pthread_setcanceltype");
-    p.def<&pm_init>("_pthread_mutex_init");
+    supportDef<&pm_init>(p, "_pthread_mutex_init", SupportStatus::Real, "host-backed guest mutex: normal, recursive or error-check from the attribute");
     p.def<&pm_lock>("_pthread_mutex_lock");
     p.def<&pm_trylock>("_pthread_mutex_trylock");
     p.def<&pm_unlock>("_pthread_mutex_unlock");
@@ -628,13 +683,13 @@ void registerLibcPthread(Process& p) {
     p.def<&pca_ok>("_pthread_condattr_init");
     p.def<&pca_ok>("_pthread_condattr_destroy");
     p.def<&rw_init>("_pthread_rwlock_init");
-    p.def<&rw_rdlock>("_pthread_rwlock_rdlock");
+    supportDef<&rw_rdlock>(p, "_pthread_rwlock_rdlock", SupportStatus::Real, "blocks while a writer holds the lock");
     p.def<&rw_tryrdlock>("_pthread_rwlock_tryrdlock");
-    p.def<&rw_wrlock>("_pthread_rwlock_wrlock");
+    supportDef<&rw_wrlock>(p, "_pthread_rwlock_wrlock", SupportStatus::Real, "blocks while a writer or readers hold the lock");
     p.def<&rw_trywrlock>("_pthread_rwlock_trywrlock");
     p.def<&rw_unlock>("_pthread_rwlock_unlock");
     p.def<&rw_destroy>("_pthread_rwlock_destroy");
-    p.def<&p_once>("_pthread_once");
+    supportDef<&p_once>(p, "_pthread_once", SupportStatus::Real, "runs the routine once; other callers wait for it");
     p.def<&k_create>("_pthread_key_create");
     p.def<&k_delete>("_pthread_key_delete");
     p.def<&k_get>("_pthread_getspecific");

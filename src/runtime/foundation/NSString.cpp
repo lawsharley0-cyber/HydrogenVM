@@ -10,6 +10,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #else
 #include <unicode/ubrk.h>
+#include <unicode/uchar.h>
+#include <unicode/unorm2.h>
 #endif
 
 namespace Hydrogen::Runtime::Foundation {
@@ -28,6 +30,32 @@ Strings& S(Process& p) { return p.service<Strings>(); }
 Strings& S(Ctx& x) { return S(x.proc); }
 
 using U16 = std::u16string;
+// Foundation's ASCII loss byte 0xff selects fallback conversion in CF; it is
+// not an output byte. Use native CF on Apple and Unicode decomposition on
+// Linux for accented/compatibility characters, with '?' for other scalars.
+std::string lossyAsciiScalar(const U16& value) {
+#if defined(__APPLE__)
+    const auto text = ::CFStringCreateWithCharacters(nullptr, reinterpret_cast<const UniChar*>(value.data()), CFIndex(value.size()));
+    UInt8 bytes[64]; CFIndex used = 0;
+    ::CFStringGetBytes(text, CFRangeMake(0, CFIndex(value.size())), kCFStringEncodingASCII, 0xff, false, bytes, sizeof(bytes), &used);
+    ::CFRelease(text);
+    return std::string(reinterpret_cast<const char*>(bytes), size_t(used));
+#else
+    UErrorCode error = U_ZERO_ERROR;
+    const auto normalizer = unorm2_getNFKDInstance(&error);
+    UChar normalized[64];
+    const int32_t length = U_SUCCESS(error) ? unorm2_normalize(normalizer,
+        reinterpret_cast<const UChar*>(value.data()), int32_t(value.size()), normalized, 64, &error) : 0;
+    if (U_FAILURE(error)) return "?";
+    std::string out;
+    for (int32_t i = 0; i < length; ++i) {
+        if (normalized[i] < 128) out += char(normalized[i]);
+        else if (u_charType(normalized[i]) != U_NON_SPACING_MARK && u_charType(normalized[i]) != U_COMBINING_SPACING_MARK)
+            return "?";
+    }
+    return out.empty() ? "?" : out;
+#endif
+}
 std::string toUtf8(const U16& s) { return Plist::utf16ToUtf8(s.data(), s.size()); }
 U16 fromUtf8(const std::string& s) { return Plist::utf8ToUtf16(s); }
 
@@ -240,7 +268,9 @@ id i_initWithContentsOfFileUsed(Ctx& x, id self, SEL s, id path, GuestPtr usedEn
 }
 id i_initWithContentsOfFile1(Ctx& x, id self, SEL s, id path) { return i_initWithContentsOfFile(x, self, s, path, kNSUTF8, 0); }
 id i_initWithContentsOfURL(Ctx& x, id self, SEL s, id url, uint32_t enc, GuestPtr err) {
-    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+    if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
+        if (auto reply = standInFetch(x, url, "GET")) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(*body)); return self; }
         if (err) x.mem.write<uint32_t>(err, 0);
         rt(x).release(x.cpu, self);
         return 0;
@@ -249,7 +279,9 @@ id i_initWithContentsOfURL(Ctx& x, id self, SEL s, id url, uint32_t enc, GuestPt
     return i_initWithContentsOfFile(x, self, s, path, enc, err);
 }
 id i_initWithContentsOfURLUsed(Ctx& x, id self, SEL s, id url, GuestPtr usedEnc, GuestPtr err) {
-    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+    if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
+        if (auto reply = standInFetch(x, url, "GET")) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(*body)); return self; }
         if (err) x.mem.write<uint32_t>(err, 0);
         rt(x).release(x.cpu, self);
         return 0;
@@ -258,7 +290,9 @@ id i_initWithContentsOfURLUsed(Ctx& x, id self, SEL s, id url, GuestPtr usedEnc,
     return i_initWithContentsOfFileUsed(x, self, s, path, usedEnc, err);
 }
 id i_initWithContentsOfURL1(Ctx& x, id self, SEL s, id url) {
-    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+    if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
+        if (auto reply = standInFetch(x, url, "GET")) { setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { setValue(x, self, fromUtf8(*body)); return self; }
         rt(x).release(x.cpu, self);
         return 0;
     }
@@ -280,6 +314,14 @@ id c_stringWithString(Ctx& x, id self, SEL, id o) {
     // so apps that over-release it (The Sandbox) get away with it as on iOS.
     auto& st = S(x);
     if ((self == st.nsString || self == st.cfString) && o && rt(x).classOf(o) == st.constString) return o;
+    // The same for any immutable string: Foundation's initWithString: copies, and copying an
+    // immutable string is the string itself. Minion Rush 5.7's Crashlytics keeps
+    // [NSString stringWithString:<Info.plist value>] without retaining it; on iOS that is the
+    // bundle's own long-lived string, here a new one was freed under it.
+    if ((self == st.nsString || self == st.cfString) && o) {
+        const StringData* d = dataOf(x, o);
+        if (d && !d->isMutable) return autoreleased(x, rt(x).retain(x.cpu, o));
+    }
     return construct(x, self, i_initWithString, o);
 }
 id c_stringWithUTF8String(Ctx& x, id self, SEL, GuestPtr c) { return construct(x, self, i_initWithUTF8String, c); }
@@ -355,23 +397,94 @@ uint32_t utf8Pointer(Ctx& x, id self) {
     return x.proc.allocCString(u);   // guest subclass: leaks a little, like an autoreleased buffer
 }
 uint32_t s_UTF8String(Ctx& x, id self, SEL) { return utf8Pointer(x, self); }
+// The bytes of a C string in an encoding: no byte-order mark (that belongs to dataUsingEncoding:,
+// an external form), wide encodings in the machine's little-endian order, and `unit` set to the
+// size of the terminator. A mark in front made Plants vs. Zombies read 0xFF as the typed letter.
+std::string cStringBytes(const std::u16string& s, uint32_t enc, bool* ok, uint32_t* unit) {
+    *unit = 1;
+    if (enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE) { *unit = 2; return encodeBytes(s, enc == kNSUnicode ? uint32_t(kNSUTF16LE) : enc, false, ok); }
+    if (enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE) { *unit = 4; return encodeBytes(s, enc == kNSUTF32 ? uint32_t(kNSUTF32LE) : enc, false, ok); }
+    return encodeBytes(s, enc, false, ok);
+}
 uint32_t s_cStringUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     if (enc == kNSUTF8 || enc == kNSASCII) return utf8Pointer(x, self);
     bool ok = true;
-    const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
+    uint32_t unit = 1;
+    const std::string b = cStringBytes(sv(x, self), enc, &ok, &unit);
     if (!ok) return 0;
-    return x.proc.allocCString(b);
+    if (unit == 1) return x.proc.allocCString(b);
+    const uint32_t buf = x.proc.heap().allocZeroed(uint32_t(b.size()) + unit);   // like an autoreleased buffer
+    if (buf && !b.empty()) x.mem.copyIn(buf, b.data(), b.size());
+    return buf;
 }
 bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc) {
     bool ok = true;
-    const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
-    if (!ok || b.size() + 1 > max) return false;
-    x.mem.copyIn(buf, b.c_str(), b.size() + 1);
+    uint32_t unit = 1;
+    std::string b = cStringBytes(sv(x, self), enc, &ok, &unit);
+    if (!ok || b.size() + unit > max) return false;
+    b.append(unit, '\0');
+    x.mem.copyIn(buf, b.data(), b.size());
     return true;
+}
+// NSString's range is in UTF-16 units, while maxLength/usedLength count bytes.
+// Unlike getCString:, this API converts a prefix and never adds a terminator.
+// A NULL buffer is a sizing query, independent of maxLength. Contract:
+// https://developer.apple.com/documentation/foundation/nsstring/getbytes(_:maxlength:usedlength:encoding:options:range:remaining:)
+bool s_getBytes(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, GuestPtr used,
+                uint32_t enc, uint32_t options, uint32_t loc, uint32_t len, GuestPtr remaining) {
+    const U16 value = sv(x, self);
+    if (loc > value.size() || len > value.size() - loc)
+        throw ObjC::ObjCError("*** -[NSString getBytes:...] range out of bounds");
+    auto store = [&](uint64_t address, const void* bytes, size_t size) {
+        uint32_t fault = uint32_t(address);
+        if (address > UINT32_MAX || !x.mem.copyInWritable(uint32_t(address), bytes, size, fault))
+            throw CPU::GuestFault(CPU::Exit::MemFault, fault, x.cpu.r[CPU::kPC], uint32_t(x.cpu.thumb), "NSString getBytes output is not writable");
+    };
+    const uint32_t end = loc + len;
+    uint32_t position = loc;
+    uint32_t count = 0;
+    const bool lossy = options & 1;
+    const bool external = options & 2;
+    const bool utf16 = enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE;
+    const bool supported = enc == kNSUTF8 || utf16 || enc == kNSUTF32 ||
+        enc == kNSUTF32LE || enc == kNSUTF32BE || enc == kNSASCII || enc == kNSISOLatin1;
+    const uint32_t byteEncoding = enc == kNSUnicode ? uint32_t(kNSUTF16LE) :
+                                  enc == kNSUTF32 ? uint32_t(kNSUTF32LE) : enc;
+    std::string prefix;
+    if (external && len) {
+        if (enc == kNSUnicode) prefix.assign("\xff\xfe", 2);
+        else if (enc == kNSUTF32) prefix.assign("\xff\xfe\0\0", 4);
+        else if (enc == kNSUTF8) prefix.assign("\xef\xbb\xbf", 3);
+    }
+    // Do not emit just a byte-order mark if the first character cannot fit.
+    while (supported && position < end) {
+        uint32_t units = 1;
+        const char16_t c = value[position];
+        if (c >= 0xd800 && c <= 0xdbff && position + 1 < end &&
+            value[position + 1] >= 0xdc00 && value[position + 1] <= 0xdfff) units = 2;
+        else if (!utf16 && c >= 0xd800 && c <= 0xdfff && !lossy) break;
+        bool ok = true;
+        std::string bytes;
+        if (lossy && enc == kNSASCII && c >= 0x80) bytes = lossyAsciiScalar(value.substr(position, units));
+        else if (lossy && c >= 0xd800 && c <= 0xdfff && units == 1 && !utf16)
+            bytes = encodeBytes(U16(1, 0xfffd), byteEncoding, true, &ok);
+        else bytes = encodeBytes(value.substr(position, units), byteEncoding, lossy, &ok);
+        if (!ok) break;
+        if (!prefix.empty()) bytes.insert(0, prefix);
+        if (buf && bytes.size() > uint64_t(max) - count) break;
+        if (buf && !bytes.empty()) store(uint64_t(buf) + count, bytes.data(), bytes.size());
+        count += uint32_t(bytes.size());
+        prefix.clear();
+        position += units;
+    }
+    if (used) store(used, &count, sizeof(count));
+    const uint32_t rest[] = {position, end - position};
+    if (remaining) store(remaining, rest, sizeof(rest));
+    return value.empty() || (position != loc && (!(options & (1u << 20)) || position == end));
 }
 bool s_canConvert(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; encodeBytes(sv(x, self), enc, false, &ok); return ok; }
 uint32_t s_lengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { bool ok = true; const std::string b = encodeBytes(sv(x, self), enc, false, &ok); return ok ? uint32_t(b.size()) : 0; }
-uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode ? 2 : 1); }
+uint32_t s_maxLengthOfBytes(Ctx& x, id self, SEL, uint32_t enc) { return (enc == kNSUTF32 ? 4 : 0) + uint32_t(sv(x, self).size()) * (enc == kNSUTF8 ? 3 : enc == kNSUnicode || enc == kNSUTF16LE || enc == kNSUTF16BE ? 2 : enc == kNSUTF32 || enc == kNSUTF32LE || enc == kNSUTF32BE ? 4 : 1); }
 id s_dataUsingEncoding(Ctx& x, id self, SEL, uint32_t enc) {
     bool ok = true;
     const std::string b = encodeBytes(sv(x, self), enc, false, &ok);
@@ -408,21 +521,43 @@ bool s_containsString(Ctx& x, id self, SEL, id needle) { return findString(sv(x,
 }   // namespace
 namespace {
 
-void s_rangeOfCharacterFromSet(Ctx& x, GuestPtr out, id self, SEL, id set) {
+// Range coordinates are UTF-16 units; membership is by Unicode scalar when
+// both halves of a surrogate pair lie in the requested range. Only backwards
+// and anchored are search options for this API; it does no normalization.
+// https://developer.apple.com/documentation/foundation/nsstring/rangeofcharacter(from:options:range:)
+void s_rangeOfCharacterFromSetOptionsRange(Ctx& x, GuestPtr out, id self, SEL, id set, uint32_t opts, uint32_t loc, uint32_t len) {
     const U16 v = sv(x, self);
-    for (size_t i = 0; i < v.size(); ++i)
-        if (characterSetContains(x, set, v[i])) { writeRange(x, out, {uint32_t(i), 1}); return; }
-    writeRange(x, out, {kNotFound, 0});
-}
-void s_rangeOfCharacterFromSetOptions(Ctx& x, GuestPtr out, id self, SEL, id set, uint32_t opts) {
-    const U16 v = sv(x, self);
-    if (opts & kBackwards) {
-        for (size_t i = v.size(); i-- > 0;) if (characterSetContains(x, set, v[i])) { writeRange(x, out, {uint32_t(i), 1}); return; }
-    } else {
-        for (size_t i = 0; i < v.size(); ++i) if (characterSetContains(x, set, v[i])) { writeRange(x, out, {uint32_t(i), 1}); return; }
+    if (!set) throw ObjC::ObjCError("*** NSString character search requires a non-nil character set");
+    if (loc > v.size() || len > v.size() - loc)
+        throw ObjC::ObjCError("*** rangeOfCharacterFromSet: search range out of bounds");
+    const uint32_t end = loc + len;
+    const bool backwards = opts & kBackwards;
+    uint32_t cursor = backwards ? end : loc;
+    Range result{kNotFound,0};
+    while (backwards ? cursor > loc : cursor < end) {
+        uint32_t first = backwards ? cursor - 1 : cursor;
+        uint32_t scalar = v[first], units = 1;
+        if (backwards && scalar >= 0xdc00 && scalar <= 0xdfff && first > loc && v[first-1] >= 0xd800 && v[first-1] <= 0xdbff) {
+            scalar = 0x10000 + ((uint32_t(v[first-1]) - 0xd800) << 10) + scalar - 0xdc00;
+            --first; units = 2;
+        } else if (!backwards && scalar >= 0xd800 && scalar <= 0xdbff && first + 1 < end && v[first+1] >= 0xdc00 && v[first+1] <= 0xdfff) {
+            scalar = 0x10000 + ((scalar - 0xd800) << 10) + uint32_t(v[first+1]) - 0xdc00;
+            units = 2;
+        }
+        const bool member = scalar <= 0xffff ? characterSetContains(x,set,char16_t(scalar)) :
+            (rt(x).send(x.cpu,set,"longCharacterIsMember:",{scalar}) & 0xff) != 0;
+        if (member) { result = {first,units}; break; }
+        if (opts & kAnchored) break;
+        cursor = backwards ? first : first + units;
     }
-    writeRange(x, out, {kNotFound, 0});
+    uint32_t fault = 0;
+    if (!x.mem.copyInWritable(out,&result,sizeof(result),fault))
+        throw CPU::GuestFault(CPU::Exit::MemFault,fault,x.cpu.r[CPU::kPC],uint32_t(x.cpu.thumb),"NSString search output is not writable");
 }
+void s_rangeOfCharacterFromSetOptions(Ctx& x, GuestPtr out, id self, SEL sel, id set, uint32_t opts) {
+    s_rangeOfCharacterFromSetOptionsRange(x,out,self,sel,set,opts,0,uint32_t(sv(x,self).size()));
+}
+void s_rangeOfCharacterFromSet(Ctx& x, GuestPtr out, id self, SEL sel, id set) { s_rangeOfCharacterFromSetOptions(x,out,self,sel,set,0); }
 // Forward segmentation to the host Unicode engine. UTF-16 code units are the
 // guest API's coordinates; a surrogate-pair-only approximation splits accents,
 // joined emoji, regional indicators and other multi-code-point characters.
@@ -825,6 +960,24 @@ id constString(Process& p, const std::string& s) {
 std::string decodeBytes(const uint8_t* p, size_t n, uint32_t enc, bool* ok) {
     if (ok) *ok = true;
     switch (enc) {
+        case kNSUTF32: case kNSUTF32LE: case kNSUTF32BE: {   // to UTF-8; plain UTF-32 may start with a mark
+            bool be = enc == kNSUTF32BE;
+            size_t i = 0;
+            if (enc == kNSUTF32 && n >= 4) {
+                if (p[0] == 0xFF && p[1] == 0xFE && p[2] == 0 && p[3] == 0) i = 4;
+                else if (p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) { be = true; i = 4; }
+            }
+            if (n % 4 != 0 && ok) *ok = false;
+            std::u16string u;
+            for (; i + 4 <= n; i += 4) {
+                const uint32_t c = be ? (uint32_t(p[i]) << 24) | (uint32_t(p[i + 1]) << 16) | (uint32_t(p[i + 2]) << 8) | p[i + 3]
+                                      : (uint32_t(p[i + 3]) << 24) | (uint32_t(p[i + 2]) << 16) | (uint32_t(p[i + 1]) << 8) | p[i];
+                if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) { if (ok) *ok = false; u += char16_t(0xFFFD); }
+                else if (c >= 0x10000) { u += char16_t(0xD800 + ((c - 0x10000) >> 10)); u += char16_t(0xDC00 + ((c - 0x10000) & 0x3FF)); }
+                else u += char16_t(c);
+            }
+            return toUtf8(u);
+        }
         case kNSUTF8: case kNSASCII: case kNSNonLossyASCII: {
             // Validate UTF-8; ASCII decoding also accepts it.
             size_t i = 0;
@@ -852,15 +1005,6 @@ std::string decodeBytes(const uint8_t* p, size_t n, uint32_t enc, bool* ok) {
             for (; i + 1 < n; i += 2) u += char16_t(be ? (p[i] << 8 | p[i + 1]) : (p[i + 1] << 8 | p[i]));
             return toUtf8(u);
         }
-        case kNSUTF32: {
-            U16 u;
-            for (size_t i = 0; i + 3 < n; i += 4) {
-                const uint32_t c = uint32_t(p[i]) | uint32_t(p[i + 1]) << 8 | uint32_t(p[i + 2]) << 16 | uint32_t(p[i + 3]) << 24;
-                if (c >= 0x10000) { u += char16_t(0xD800 + ((c - 0x10000) >> 10)); u += char16_t(0xDC00 + ((c - 0x10000) & 0x3FF)); }
-                else u += char16_t(c);
-            }
-            return toUtf8(u);
-        }
         case kNSMacOSRoman: {
             static const char16_t hi[128] = {
                 0xC4,0xC5,0xC7,0xC9,0xD1,0xD6,0xDC,0xE1,0xE0,0xE2,0xE4,0xE3,0xE5,0xE7,0xE9,0xE8,0xEA,0xEB,0xED,0xEC,0xEE,0xEF,0xF1,0xF3,0xF2,0xF4,0xF6,0xF5,0xFA,0xF9,0xFB,0xFC,
@@ -886,9 +1030,29 @@ std::string encodeBytes(const std::u16string& s, uint32_t enc, bool lossy, bool*
         case kNSUnicode: { std::string out("\xFF\xFE", 2); for (char16_t c : s) { out += char(c & 0xFF); out += char(c >> 8); } return out; }
         case kNSUTF16LE: { std::string out; for (char16_t c : s) { out += char(c & 0xFF); out += char(c >> 8); } return out; }
         case kNSUTF16BE: { std::string out; for (char16_t c : s) { out += char(c >> 8); out += char(c & 0xFF); } return out; }
+        case kNSUTF32: case kNSUTF32LE: case kNSUTF32BE: {   // plain UTF-32 is an external form: it starts with a mark
+            std::string out;
+            if (enc == kNSUTF32) out.assign("\xFF\xFE\x00\x00", 4);
+            for (size_t i = 0; i < s.size(); ++i) {
+                uint32_t c = s[i];
+                if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (s[i + 1] - 0xDC00); ++i; }
+                else if (c >= 0xD800 && c <= 0xDFFF) {   // half a pair is not a character
+                    if (!lossy) { if (ok) *ok = false; return {}; }
+                    c = 0xFFFD;
+                }
+                if (enc == kNSUTF32BE) { out += char(c >> 24); out += char(c >> 16); out += char(c >> 8); out += char(c); }
+                else { out += char(c); out += char(c >> 8); out += char(c >> 16); out += char(c >> 24); }
+            }
+            return out;
+        }
         case kNSASCII: {
             std::string out;
-            for (char16_t c : s) { if (c >= 0x80) { if (!lossy) { if (ok) *ok = false; return {}; } out += '?'; } else out += char(c); }
+            for (size_t i = 0; i < s.size(); ++i) {
+                if (s[i] < 0x80) { out += char(s[i]); continue; }
+                if (!lossy) { if (ok) *ok = false; return {}; }
+                const size_t units = s[i] >= 0xd800 && s[i] <= 0xdbff && i + 1 < s.size() && s[i+1] >= 0xdc00 && s[i+1] <= 0xdfff ? 2 : 1;
+                out += lossyAsciiScalar(s.substr(i, units)); i += units - 1;
+            }
             return out;
         }
         default: {
@@ -938,6 +1102,7 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_getCharactersRange>("getCharacters:range:", "v@:^S{_NSRange=II}").m<&s_getCharacters>("getCharacters:")
       .m<&s_UTF8String>("UTF8String", "*@:").m<&s_UTF8String>("cString").m<&s_UTF8String>("lossyCString")
       .m<&s_cStringUsingEncoding>("cStringUsingEncoding:").m<&s_getCString>("getCString:maxLength:encoding:")
+      .m<&s_getBytes>("getBytes:maxLength:usedLength:encoding:options:range:remainingRange:", "c@:^vI^III{_NSRange=II}^{_NSRange=II}")
       .m<&s_canConvert>("canBeConvertedToEncoding:", "c@:I").m<&s_lengthOfBytes>("lengthOfBytesUsingEncoding:").m<&s_maxLengthOfBytes>("maximumLengthOfBytesUsingEncoding:")
       .m<&s_dataUsingEncoding>("dataUsingEncoding:").m<&s_dataUsingEncodingLossy>("dataUsingEncoding:allowLossyConversion:")
       .m<&s_isEqualToString>("isEqualToString:", "c@:@").m<&s_isEqual>("isEqual:", "c@:@").m<&s_hash>("hash", "I@:")
@@ -947,7 +1112,9 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_hasPrefix>("hasPrefix:", "c@:@").m<&s_hasSuffix>("hasSuffix:", "c@:@")
       .m<&s_rangeOfString>("rangeOfString:", "{_NSRange=II}@:@").m<&s_rangeOfStringOptions>("rangeOfString:options:")
       .m<&s_rangeOfStringOptionsRange>("rangeOfString:options:range:").m<&s_containsString>("containsString:")
-      .m<&s_rangeOfCharacterFromSet>("rangeOfCharacterFromSet:").m<&s_rangeOfCharacterFromSetOptions>("rangeOfCharacterFromSet:options:")
+      .m<&s_rangeOfCharacterFromSet>("rangeOfCharacterFromSet:","{_NSRange=II}@:@")
+      .m<&s_rangeOfCharacterFromSetOptions>("rangeOfCharacterFromSet:options:","{_NSRange=II}@:@I")
+      .m<&s_rangeOfCharacterFromSetOptionsRange>("rangeOfCharacterFromSet:options:range:","{_NSRange=II}@:@I{_NSRange=II}")
       .m<&s_rangeOfComposed>("rangeOfComposedCharacterSequenceAtIndex:", "{_NSRange=II}@:I")
       .m<&s_rangeOfComposedRange>("rangeOfComposedCharacterSequencesForRange:", "{_NSRange=II}@:{_NSRange=II}")
       .m<&s_substringFromIndex>("substringFromIndex:").m<&s_substringToIndex>("substringToIndex:").m<&s_substringWithRange>("substringWithRange:")

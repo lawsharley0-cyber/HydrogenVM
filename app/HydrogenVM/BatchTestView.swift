@@ -22,6 +22,8 @@ struct BatchTestView: View {
     @State private var showShareSheet = false
     @State private var shareItems: [Any] = []
     @State private var copiedMarkdownAlert = false
+    /// "Test every game" was turned off and no game is picked yet.
+    @State private var choosingGames = false
     @Environment(\.dismiss) private var dismiss
 
     init(installedApps: [InstalledApp]) {
@@ -82,6 +84,16 @@ struct BatchTestView: View {
             }
             .sheet(isPresented: $showOptionsSheet) {
                 optionsFormSheet
+            }
+            .onChange(of: showOptionsSheet) { _, shown in
+                // Once per presentation (not when returning from the game picker): show the
+                // player's remembered pick, not a retest's list, minus games removed since.
+                guard shown else { return }
+                let installed = Set(runnableApps.map(\.info.bundleIdentifier))
+                let remembered = BatchTestRunner.rememberedGameChoice()
+                runner.options.onlyGames = remembered.filter { installed.contains($0) }
+                // A pick whose games were all removed stays a pick (Start disabled), never "every game".
+                choosingGames = !remembered.isEmpty
             }
             .sheet(isPresented: $showShareSheet) {
                 ShareSheet(items: shareItems)
@@ -160,7 +172,7 @@ struct BatchTestView: View {
         ContentUnavailableView {
             Label("Test All Games", systemImage: "checkmark.seal")
         } description: {
-            Text("Run automated serial test passes across all installed games in your library. Generates picture checks, FPS reports, and crash logs.")
+            Text("Run automated test passes across the games in your library, or only the ones you pick. Generates picture checks, FPS reports, and crash logs.")
         } actions: {
             VStack(spacing: 12) {
                 if BatchTestRunner.hasPendingSession() {
@@ -182,9 +194,24 @@ struct BatchTestView: View {
     // MARK: - Results List
 
     private var resultsListView: some View {
-        List {
+        // Once per render; only offered when no batch is running or paused (Resume stays).
+        let problems = runner.canRetest ? runner.gamesWithProblems : []
+        return List {
             Section {
                 summaryCard
+            }
+
+            if !problems.isEmpty {
+                Section {
+                    Button {
+                        runner.retest(problems, apps: installedApps)
+                    } label: {
+                        Label(BatchSelection.retestTitle(problems.count), systemImage: "arrow.clockwise")
+                    }
+                    .accessibilityIdentifier("batch-retest-problems")
+                } footer: {
+                    Text("Runs only the games that crashed, showed no picture or failed a check, with the same options. The results on screen are replaced; the last full run's report is kept and goes into the next export.")
+                }
             }
 
             Section("App Test Results (\(runner.results.count))") {
@@ -244,9 +271,46 @@ struct BatchTestView: View {
 
     // MARK: - Options Form Sheet
 
+    private var runnableApps: [InstalledApp] { installedApps.filter(\.info.runnable) }
+
+    /// "All 38 games" or "3 of 38 games".
+    private var gameChoiceSummary: String {
+        let total = runnableApps.count
+        let chosen = runner.options.games(from: installedApps).count
+        return runner.options.onlyGames.isEmpty ? "All \(total) games" : "\(chosen) of \(total) games"
+    }
+
     private var optionsFormSheet: some View {
         NavigationStack {
             Form {
+                Section {
+                    Toggle("Test every game", isOn: Binding(get: {
+                        runner.options.onlyGames.isEmpty && !choosingGames
+                    }, set: { every in
+                        // Off: the player picks games below. On: forget the pick.
+                        if every { runner.options.onlyGames = [] }
+                        choosingGames = !every
+                    }))
+                    .accessibilityIdentifier("batch-test-every-game")
+                    if choosingGames {
+                        NavigationLink {
+                            BatchGamePicker(apps: runnableApps, chosen: Binding(get: {
+                                Set(runner.options.onlyGames)
+                            }, set: { ids in
+                                // Library order, so runs and reports list games the same way.
+                                runner.options.onlyGames = runnableApps.map(\.info.bundleIdentifier).filter { ids.contains($0) }
+                            }))
+                        } label: {
+                            LabeledContent("Games to test", value: gameChoiceSummary)
+                        }
+                        .accessibilityIdentifier("batch-choose-games")
+                    }
+                } header: {
+                    Text("Games")
+                } footer: {
+                    Text("Pick a few games to test just those. The choice is kept for the next run.")
+                }
+
                 Section("Test Duration") {
                     Stepper("Seconds per game: \(runner.options.secondsPerApp)s", value: Binding(get: {
                         runner.options.secondsPerApp
@@ -320,10 +384,13 @@ struct BatchTestView: View {
                 }
 
                 Section {
-                    Button("Start Batch Test") {
+                    Button(runner.options.onlyGames.isEmpty ? "Start Batch Test" : "Test \(gameChoiceSummary)") {
                         showOptionsSheet = false
+                        choosingGames = false
+                        BatchTestRunner.rememberGameChoice(runner.options.onlyGames)   // the player's pick, for next time
                         runner.startNewBatch(apps: installedApps, options: runner.options)
                     }
+                    .disabled(choosingGames && runner.options.onlyGames.isEmpty)
                     .font(.headline)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .foregroundStyle(.tint)
@@ -511,6 +578,63 @@ private struct BatchResultRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation { isExpanded.toggle() }
+        }
+    }
+}
+
+// MARK: - Game picker
+
+/// Choose which games a batch run covers. Search, select all, clear.
+private struct BatchGamePicker: View {
+    let apps: [InstalledApp]
+    @Binding var chosen: Set<String>
+    @State private var search = ""
+
+    private var shown: [InstalledApp] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return apps }
+        return apps.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.info.bundleIdentifier.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(shown) { app in
+                    let id = app.info.bundleIdentifier
+                    Button {
+                        if chosen.contains(id) { chosen.remove(id) } else { chosen.insert(id) }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(app.title).foregroundStyle(.primary)
+                                Text(app.info.version.isEmpty ? id : "\(app.info.version) · \(id)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: chosen.contains(id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(chosen.contains(id) ? Color.accentColor : .secondary)
+                                .imageScale(.large)
+                        }
+                    }
+                    .accessibilityIdentifier("batch-pick-\(id)")
+                }
+            } footer: {
+                Text("\(chosen.count) selected")
+            }
+        }
+        .searchable(text: $search, prompt: "Find a game")
+        .navigationTitle("Games to Test")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("Select All Shown") { chosen.formUnion(shown.map(\.info.bundleIdentifier)) }
+                    Button("Clear Selection", role: .destructive) { chosen.removeAll() }
+                } label: {
+                    Image(systemName: "checklist")
+                }
+            }
         }
     }
 }

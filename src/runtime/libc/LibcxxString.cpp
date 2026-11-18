@@ -25,11 +25,16 @@
 // Buffers come from the guest heap, the same heap operator new/delete use, so
 // the app's inline code may free or reuse them.
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <random>
 #include <string>
+#include <cstdlib>
+#include <climits>
+#include <cerrno>
 #include <vector>
 
 namespace Hydrogen::Runtime {
@@ -555,16 +560,116 @@ template <uint32_t W> void growByAndReplace(Ctx& x, GuestPtr self, uint32_t oldC
 
 // -------------------------------------------------------- to_string ---
 void putResult(Ctx& x, GuestPtr ret, const std::string& s) { Str<1>(x).initHost(ret, s); }
+// The two operator+ overloads libc++ exports from the dylib (the others are inline in its
+// headers): "prefix" + string and 'c' + string. The result is returned through ret (sret).
+std::string hostOf(Ctx& x, GuestPtr s) {
+    Str<1> t(x);
+    const uint32_t n = t.size(s), d = t.data(s);
+    std::string out(n, '\0');
+    if (n) x.mem.copyOut(out.data(), d, n);
+    return out;
+}
+void plusPtrStr(Ctx& x, GuestPtr ret, GuestPtr lhs, GuestPtr rhs) {
+    putResult(x, ret, (lhs ? x.proc.readCString(lhs, 1u << 30) : std::string()) + hostOf(x, rhs));
+}
+void plusCharStr(Ctx& x, GuestPtr ret, uint32_t c, GuestPtr rhs) { putResult(x, ret, std::string(1, char(c)) + hostOf(x, rhs)); }
+// std::random_device: libc++'s object is one int (a /dev/urandom descriptor); the
+// session's entropy (runtime/Session.hpp) supplies the numbers, so the guest object needs nothing in it.
+void randomDeviceCtor(Ctx& x, GuestPtr self, GuestPtr) { if (self) x.mem.write<uint32_t>(self, 0); }
+void randomDeviceDtor(Ctx&, GuestPtr) {}
+uint32_t randomDeviceNext(Ctx& x, GuestPtr) { return uint32_t(x.proc.entropy()); }
 void toStringI(Ctx& x, GuestPtr ret, int32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringU(Ctx& x, GuestPtr ret, uint32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringLL(Ctx& x, GuestPtr ret, int64_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringULL(Ctx& x, GuestPtr ret, uint64_t v) { putResult(x, ret, std::to_string(v)); }
+// std::stoi and friends: strtol-family parsing of a std::string. Leading space and a sign are
+// allowed, *idx gets how many characters were used. No digits throws invalid_argument and a
+// value that does not fit throws out_of_range, as in libc++ (here as a host error report).
+template <class T, class Parse>
+T stoParse(Ctx& x, GuestPtr str, GuestPtr idx, const char* name, Parse parse) {
+    const std::string s = hostOf(x, str);
+    errno = 0;
+    char* end = nullptr;
+    const T v = parse(s.c_str(), &end);
+    if (end == s.c_str()) throw std::runtime_error(std::string("std::invalid_argument: ") + name + ": no conversion");
+    if (errno == ERANGE) outOfRange(name);
+    if (idx) x.mem.write<uint32_t>(idx, uint32_t(end - s.c_str()));
+    return v;
+}
+uint32_t stoI(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    const long long v = stoParse<long long>(x, s, idx, "stoi", [&](const char* c, char** e) { return std::strtoll(c, e, base); });
+    if (v < INT32_MIN || v > INT32_MAX) outOfRange("stoi");
+    return uint32_t(int32_t(v));
+}
+uint32_t stoUL(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    const unsigned long long v = stoParse<unsigned long long>(x, s, idx, "stoul", [&](const char* c, char** e) { return std::strtoull(c, e, base); });
+    const bool negative = hostOf(x, s).find('-') != std::string::npos;
+    if (!negative && v > UINT32_MAX) outOfRange("stoul");   // a 32-bit unsigned long; "-1" wraps as in C
+    return uint32_t(v);
+}
+uint64_t stoLL(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    return uint64_t(stoParse<long long>(x, s, idx, "stoll", [&](const char* c, char** e) { return std::strtoll(c, e, base); }));
+}
+uint64_t stoULL(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    return stoParse<unsigned long long>(x, s, idx, "stoull", [&](const char* c, char** e) { return std::strtoull(c, e, base); });
+}
+float stoF(Ctx& x, GuestPtr s, GuestPtr idx) { return stoParse<float>(x, s, idx, "stof", [](const char* c, char** e) { return std::strtof(c, e); }); }
+double stoD(Ctx& x, GuestPtr s, GuestPtr idx) { return stoParse<double>(x, s, idx, "stod", [](const char* c, char** e) { return std::strtod(c, e); }); }
 void toStringD(Ctx& x, GuestPtr ret, double v) {
     char b[512];
     std::snprintf(b, sizeof b, "%f", v);
     putResult(x, ret, b);
 }
 void toStringF(Ctx& x, GuestPtr ret, float v) { toStringD(x, ret, double(v)); }
+
+// std::generic_category() and std::system_category(): each is an object whose first word is
+// its vtable (the libc++ layout) and whose second word says which one it is (0 generic, 1 system).
+// Codes are host-independent Darwin errno values; messages come from the host's strerror for
+// the codes both share, else "Unknown error".
+GuestPtr categoryObject(Ctx& x, int which) {
+    return x.proc.lookupSymbol(which ? "__hvm_libcxx_category_system" : "__hvm_libcxx_category_generic").value_or(0);
+}
+GuestPtr genericCategory(Ctx& x) { return categoryObject(x, 0); }
+GuestPtr systemCategory(Ctx& x) { return categoryObject(x, 1); }
+GuestPtr catName(Ctx& x, GuestPtr self) { return x.mem.read<uint32_t>(self + 8); }
+void catNop(Ctx&, GuestPtr) {}
+// error_condition default_error_condition(int ev): sret r0, this r1, ev r2.
+void catDefaultCondition(Ctx& x, GuestPtr ret, GuestPtr self, int32_t ev) {
+    x.mem.write<uint32_t>(ret, uint32_t(ev));
+    x.mem.write<uint32_t>(ret + 4, x.mem.read<uint32_t>(self + 4) == 1 ? categoryObject(x, 0) : self);
+}
+// bool equivalent(int code, const error_condition& c)
+uint32_t catEquivCode(Ctx& x, GuestPtr self, int32_t code, GuestPtr cond) {
+    const GuestPtr cat = x.mem.read<uint32_t>(self + 4) == 1 ? categoryObject(x, 0) : self;
+    return int32_t(x.mem.read<uint32_t>(cond)) == code && x.mem.read<uint32_t>(cond + 4) == cat;
+}
+// bool equivalent(const error_code& ec, int cond)
+uint32_t catEquivCond(Ctx& x, GuestPtr self, GuestPtr ec, int32_t cond) {
+    return int32_t(x.mem.read<uint32_t>(ec)) == cond && x.mem.read<uint32_t>(ec + 4) == self;
+}
+void catMessage(Ctx& x, GuestPtr ret, GuestPtr, int32_t ev) {
+    const char* m = (ev > 0 && ev < 35) ? std::strerror(ev) : nullptr;   // 1-34 match on Darwin and Linux
+    putResult(x, ret, ev == 0 ? std::string("Undefined error: 0") : m ? std::string(m) : "Unknown error: " + std::to_string(ev));
+}
+void registerErrorCategories(Process& p) {
+    const uint32_t vt = p.defineDataBlock("__hvm_libcxx_category_vtable", 8 + 7 * 4) + 8;
+    const uint32_t slots[] = {supportDef<&catNop>(p, "__hvm_libcxx_category_dtor", SupportStatus::Real, "the two categories live as long as the process"),
+                              supportDef<&catNop>(p, "__hvm_libcxx_category_delete", SupportStatus::Real, "the two categories live as long as the process"),
+                              p.def<&catName>("__hvm_libcxx_category_name"), p.def<&catDefaultCondition>("__hvm_libcxx_category_default_condition"),
+                              p.def<&catEquivCode>("__hvm_libcxx_category_equivalent_code"), p.def<&catEquivCond>("__hvm_libcxx_category_equivalent_condition"),
+                              p.def<&catMessage>("__hvm_libcxx_category_message")};
+    for (uint32_t i = 0; i < 7; ++i) p.mem().write<uint32_t>(vt + 4 * i, slots[i]);
+    const char* names[] = {"generic", "system"};
+    for (int i = 0; i < 2; ++i) {
+        const uint32_t obj = p.defineDataBlock(std::string("__hvm_libcxx_category_") + names[i], 32);
+        p.mem().write<uint32_t>(obj, vt);
+        p.mem().write<uint32_t>(obj + 4, uint32_t(i));
+        p.mem().write<uint32_t>(obj + 8, obj + 16);
+        std::memcpy(p.mem().host(obj + 16), names[i], std::strlen(names[i]) + 1);
+    }
+    supportDef<&genericCategory>(p, "__ZNSt3__116generic_categoryEv", SupportStatus::Real, "libc++ generic_category: name, message (strerror), default_error_condition and equivalent");
+    supportDef<&systemCategory>(p, "__ZNSt3__115system_categoryEv", SupportStatus::Real, "libc++ system_category: errno codes, maps to generic_category");
+}
 
 void throwLength(Ctx&, GuestPtr) { lengthError("basic_string"); }
 void throwRange(Ctx&, GuestPtr) { outOfRange("basic_string"); }
@@ -634,6 +739,13 @@ void registerLibcxxString(Process& p) {
     registerFor<4>(p, "w");
     p.def<&throwLength>("__ZNKSt3__121__basic_string_commonILb1EE20__throw_length_errorEv");
     p.def<&throwRange>("__ZNKSt3__121__basic_string_commonILb1EE20__throw_out_of_rangeEv");
+    p.def<&plusPtrStr>("__ZNSt3__1plIcNS_11char_traitsIcEENS_9allocatorIcEEEENS_12basic_stringIT_T0_T1_EEPKS6_RKS9_");
+    p.def<&plusCharStr>("__ZNSt3__1plIcNS_11char_traitsIcEENS_9allocatorIcEEEENS_12basic_stringIT_T0_T1_EES6_RKS9_");
+    p.def<&randomDeviceCtor>("__ZNSt3__113random_deviceC1ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE");
+    p.def<&randomDeviceCtor>("__ZNSt3__113random_deviceC2ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE");
+    supportDef<&randomDeviceDtor>(p, "__ZNSt3__113random_deviceD1Ev", SupportStatus::Real, "the guest object holds no descriptor: nothing to close");
+    supportDef<&randomDeviceDtor>(p, "__ZNSt3__113random_deviceD2Ev", SupportStatus::Real, "the guest object holds no descriptor: nothing to close");
+    p.def<&randomDeviceNext>("__ZNSt3__113random_deviceclEv");
     p.def<&toStringI>("__ZNSt3__19to_stringEi");
     p.def<&toStringI>("__ZNSt3__19to_stringEl");
     p.def<&toStringU>("__ZNSt3__19to_stringEj");
@@ -642,7 +754,19 @@ void registerLibcxxString(Process& p) {
     p.def<&toStringULL>("__ZNSt3__19to_stringEy");
     p.def<&toStringF>("__ZNSt3__19to_stringEf");
     p.def<&toStringD>("__ZNSt3__19to_stringEd");
+    {
+        const std::string str = "ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPm";
+        const char* why = "strtol-family parse of a std::string; bad input or overflow reports invalid_argument/out_of_range";
+        supportDef<&stoI>(p, "__ZNSt3__14stoi" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoI>(p, "__ZNSt3__14stol" + str + "i", SupportStatus::Real, why);   // long is 32 bits here
+        supportDef<&stoUL>(p, "__ZNSt3__15stoul" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoLL>(p, "__ZNSt3__15stoll" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoULL>(p, "__ZNSt3__16stoull" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoF>(p, "__ZNSt3__14stof" + str, SupportStatus::Real, why);
+        supportDef<&stoD>(p, "__ZNSt3__14stod" + str, SupportStatus::Real, why);
+    }
     p.def<&toStringD>("__ZNSt3__19to_stringEe");
+    registerErrorCategories(p);
 }
 
 } // namespace Hydrogen::Runtime

@@ -11,7 +11,7 @@ constexpr uint32_t RO_META = 1, RO_ROOT = 2, RO_HAS_CXX_STRUCTORS = 4;
 
 struct DispatchCache {
     uint64_t gen = 0;
-    const Runtime* owner = nullptr;
+    uint64_t owner = 0;
     std::unordered_map<uint64_t, IMP> map;
 };
 thread_local DispatchCache t_cache;
@@ -19,7 +19,49 @@ thread_local DispatchCache t_cache;
 
 Runtime& rt(Process& p) { return p.service<Runtime>(); }
 
+namespace {
+// Pool state for a host thread that is not one of a Process's guest threads
+// (a test worker, a host callback). currentThread() treats such a thread as
+// main, but sharing main's pool stack would let two host threads grow the
+// same unsynchronized vectors at once. On iOS every thread has its own
+// autorelease pool stack, so each host thread gets its own here too, one per
+// Process it calls into: a host thread can push a pool in one Process, call
+// into another, and come back to pop the first.
+//
+// Entries hold only guest ids, never pointers into a Process. When a host
+// thread first touches a new Process, entries with nothing pooled and entries
+// whose Process no longer exists are dropped. Identities are never reused, so
+// a stale entry could not be picked up by a later Process anyway; dropping it
+// bounds the list.
+//
+// Known divergence from iOS: libobjc's TLS destructor pops every pool still
+// open when a thread exits, releasing its objects. A non-guest host thread
+// that exits with pools still open here drops them without releasing those
+// objects (they leak): the thread_local destructor has no Cpu to send
+// -release with and cannot know the Process is still alive for the whole
+// drain. Guest threads do drain at exit (Process::threadMain). A host
+// caller must pop every pool it pushes.
+struct ForeignThreadState {
+    uint64_t process = 0;
+    std::unique_ptr<ThreadState> state;
+};
+thread_local std::vector<ForeignThreadState> t_foreignStates;
+
+bool idle(const ThreadState& s) { return s.marks.empty() && s.pool.empty() && !s.optimizedReturn; }
+
+ThreadState& foreignThreadState(uint64_t process) {
+    for (auto& e : t_foreignStates)
+        if (e.process == process) return *e.state;
+    std::erase_if(t_foreignStates, [](const ForeignThreadState& e) {
+        return idle(*e.state) || !Process::isLiveIdentity(e.process);
+    });
+    t_foreignStates.push_back({process, std::make_unique<ThreadState>()});
+    return *t_foreignStates.back().state;
+}
+} // namespace
+
 ThreadState& threadState(Process& p) {
+    if (!p.isGuestBoundThread()) return foreignThreadState(p.identity());
     GuestThread& t = p.currentThread();
     if (!t.objcState) {
         t.objcState = new ThreadState;
@@ -256,7 +298,7 @@ void Runtime::invalidateCaches() { cacheGen_.fetch_add(1, std::memory_order_acq_
 IMP Runtime::lookup(Class cls, SEL s) {
     if (!cls) return 0;
     const uint64_t gen = cacheGen_.load(std::memory_order_acquire);
-    if (t_cache.gen != gen || t_cache.owner != this) { t_cache.map.clear(); t_cache.gen = gen; t_cache.owner = this; }
+    if (t_cache.gen != gen || t_cache.owner != proc_.identity()) { t_cache.map.clear(); t_cache.gen = gen; t_cache.owner = proc_.identity(); }
     const uint64_t key = (uint64_t(cls) << 32) | s;
     auto hit = t_cache.map.find(key);
     if (hit != t_cache.map.end()) return hit->second;
@@ -302,6 +344,14 @@ void Runtime::initializeClass(CPU::Cpu& c, Class cls) {
         throw;
     }
     ci->initState.store(2, std::memory_order_release);
+}
+
+bool Runtime::sendReady(Class cls) const {
+    const ClassInfo* ci = info(cls);
+    if (!ci) return false;
+    const Class instCls = ci->isMeta ? ci->instanceClass : cls;
+    const ClassInfo* ii = instCls ? info(instCls) : nullptr;
+    return ii && ii->initState.load(std::memory_order_acquire) == 2;
 }
 
 IMP Runtime::lookupForSend(Class cls, SEL s) {
@@ -487,6 +537,7 @@ id Runtime::createInstance(Class cls, uint32_t extraBytes) {
         // Where each object was made, so a message to it after it's freed can
         // point at the API that returned it (an over-release usually starts there).
         std::string site = proc_.backtrace(proc_.currentThread().cpu, 8);
+        if (const std::string api = proc_.activeHostCalls(); !api.empty()) site = "    made inside " + api + "\n" + site;
         std::lock_guard<std::mutex> lk(zombieMu_);
         allocSites_[obj] = std::move(site);
     }
@@ -637,6 +688,16 @@ void Runtime::poolPop(CPU::Cpu& c, uint32_t token) {
         while (ts.pool.size() > mark) {
             const id obj = ts.pool.back();
             ts.pool.pop_back();
+            // An app that releases an object it got autoreleased (Bad Piggies, a
+            // +stringWithUTF8String: result) frees it before its pool drains. On iOS the freed
+            // block usually still looks like the object and the extra release goes unnoticed;
+            // here the heap reuses its first word at once. A pool entry whose class word is no
+            // class is such an object: skip it and say so, instead of messaging freed memory.
+            // (With zombies on, the zombie report names the over-release instead.)
+            if (!zombiesEnabled_ && !info(classOf(obj))) {
+                proc_.reportDefaulted("autorelease pool skipped an object the app had already freed (it released an object it did not own)");
+                continue;
+            }
             release(c, obj);
         }
         ts.marks.pop_back();

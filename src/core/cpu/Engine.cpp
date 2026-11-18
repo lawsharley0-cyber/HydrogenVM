@@ -1,11 +1,18 @@
 #include "Engine.hpp"
 #include "Decoder.hpp"
+#include <algorithm>
 #include <chrono>
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
 #include <cerrno>
 #include <unistd.h>   // write() in the host-fault diagnostics
+#if defined(__APPLE__)
+#include <sys/ucontext.h>   // <ucontext.h> needs _XOPEN_SOURCE on Apple
+#include <mach/thread_status.h>
+#else
+#include <ucontext.h>
+#endif
 
 namespace Hydrogen::CPU {
 
@@ -13,6 +20,7 @@ namespace Hydrogen::CPU {
 
 Block* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
 void   hvmCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
+bool   hvmFastHle(Cpu* c, uint32_t index)  { return c->engine->tryFastHle(*c, index); }
 void   hvmObserveEntry(Cpu* c, uint32_t address) { c->engine->notifyEntry(*c, address); }
 
 #ifdef HVM_PROFILE_PAIRS
@@ -56,7 +64,47 @@ struct FaultScope {
     sigjmp_buf jb;
     uintptr_t arenaBase;
     uint32_t addr;
+    Cpu* cpu = nullptr;
+    // Host general registers at the fault. The faulting handler holds its `const Op*` in one of
+    // them; Engine::run picks the value that points at an op of the current block (precise PC).
+    static constexpr int kMaxRegs = 32;
+    uintptr_t regs[kMaxRegs];
+    int nregs = 0;
+    uintptr_t hostPc = 0;   // the faulting host instruction
 };
+
+// Copies the interrupted context's general registers (async-signal-safe: plain loads).
+void captureRegisters(FaultScope* s, void* uctx) {
+    s->nregs = 0;
+    s->hostPc = 0;
+    if (!uctx) return;
+    auto* uc = static_cast<ucontext_t*>(uctx);
+#if defined(__APPLE__) && defined(__aarch64__)
+    // The accessor macros work whether or not the SDK makes fp/lr/pc opaque (arm64e).
+    const auto& ss = uc->uc_mcontext->__ss;
+    s->hostPc = uintptr_t(arm_thread_state64_get_pc(ss));
+    for (int i = 0; i < 29; ++i) s->regs[s->nregs++] = uintptr_t(ss.__x[i]);
+    s->regs[s->nregs++] = uintptr_t(arm_thread_state64_get_fp(ss));
+    s->regs[s->nregs++] = uintptr_t(arm_thread_state64_get_lr(ss));
+#elif defined(__APPLE__) && defined(__x86_64__)
+    const auto& ss = uc->uc_mcontext->__ss;
+    s->hostPc = uintptr_t(ss.__rip);
+    for (uintptr_t v : {ss.__rax, ss.__rbx, ss.__rcx, ss.__rdx, ss.__rdi, ss.__rsi, ss.__rbp, ss.__r8, ss.__r9,
+                        ss.__r10, ss.__r11, ss.__r12, ss.__r13, ss.__r14, ss.__r15})
+        s->regs[s->nregs++] = v;
+#elif defined(__linux__) && defined(__x86_64__)
+    s->hostPc = uintptr_t(uc->uc_mcontext.gregs[REG_RIP]);
+    for (int i = 0; i < NGREG && s->nregs < FaultScope::kMaxRegs; ++i)
+        if (i != REG_RIP && i != REG_RSP && i != REG_EFL && i != REG_CSGSFS && i != REG_ERR && i != REG_TRAPNO &&
+            i != REG_OLDMASK && i != REG_CR2)
+            s->regs[s->nregs++] = uintptr_t(uc->uc_mcontext.gregs[i]);
+#elif defined(__linux__) && defined(__aarch64__)
+    s->hostPc = uintptr_t(uc->uc_mcontext.pc);
+    for (int i = 0; i < 31 && s->nregs < FaultScope::kMaxRegs; ++i) s->regs[s->nregs++] = uintptr_t(uc->uc_mcontext.regs[i]);
+#else
+    (void)uc;
+#endif
+}
 thread_local FaultScope* t_scope = nullptr;
 
 struct sigaction g_oldSegv, g_oldBus;
@@ -83,6 +131,7 @@ void registerCpu(Cpu* c) {
         if (s.claimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             s.active.store(false, std::memory_order_relaxed);
             s.generation.store(g_threadGeneration.fetch_add(1) + 1, std::memory_order_relaxed);
+            s.cpu.store(c, std::memory_order_release);
             c->fault_state = &s;
             return;
         }
@@ -93,6 +142,7 @@ void registerCpu(Cpu* c) {
 void unregisterCpu(Cpu* c) {
     if (!c->fault_state) { g_untrackedCpus.fetch_sub(1, std::memory_order_relaxed); return; }
     c->fault_state->active.store(false, std::memory_order_release);
+    c->fault_state->cpu.store(nullptr, std::memory_order_release);
     c->fault_state->claimed.store(false, std::memory_order_release);
 }
 
@@ -186,8 +236,14 @@ static std::atomic<bool> g_faultDiagnosticActive{false};
 void faultHandler(int sig, siginfo_t* si, void* uctx) {
     FaultScope* s = t_scope;
     const uintptr_t address = reinterpret_cast<uintptr_t>(si ? si->si_addr : nullptr);
+    // Host code (a library function, the loader, another host thread) touching a guest page whose
+    // guest permissions the host page enforces: lift that page and retry, as the kernel and dyld
+    // may write read-only user pages. Guest loads and stores are never lifted.
+    const bool guestCode = s && s->cpu && s->cpu->in_guest.load(std::memory_order_relaxed);
+    if (!guestCode && Memory::GuestArena::liftHostFault(address)) return;
     if (s && address >= s->arenaBase && uint64_t(address - s->arenaBase) < Memory::GuestArena::kArenaSize) {
         s->addr = uint32_t(address - s->arenaBase);
+        if (guestCode) captureRegisters(s, uctx); else s->nregs = 0;
         siglongjmp(s->jb, 1);
     }
 
@@ -219,9 +275,16 @@ void faultHandler(int sig, siginfo_t* si, void* uctx) {
             auto& state = g_threads[i];
             if (!state.active.load(std::memory_order_acquire)) continue;
             const auto generation = state.generation.load(std::memory_order_acquire);
-            const auto pc = state.pc.load(std::memory_order_relaxed);
-            const auto lr = state.lr.load(std::memory_order_relaxed);
-            const auto block = state.block.load(std::memory_order_relaxed);
+            auto pc = state.pc.load(std::memory_order_relaxed);
+            auto lr = state.lr.load(std::memory_order_relaxed);
+            auto block = state.block.load(std::memory_order_relaxed);
+            // Running guest code: the block it is in now and its LR, read from its CPU (the
+            // samples above are from the last time slice or library call).
+            if (const Cpu* cc = state.cpu.load(std::memory_order_acquire); cc && state.inGuest.load(std::memory_order_relaxed)) {
+                block = __atomic_load_n(&cc->block_pc, __ATOMIC_RELAXED);
+                lr = __atomic_load_n(&cc->r[kLR], __ATOMIC_RELAXED);
+                pc = block;
+            }
             const auto arena = state.arena.load(std::memory_order_relaxed);
             const bool inGuest = state.inGuest.load(std::memory_order_relaxed);
             char name[sizeof state.hleName]{};
@@ -426,6 +489,21 @@ void Engine::callHle(Cpu* c, uint32_t index) {
         c->exit_info = index;
         t_hostError = hle_[index].name + ": " + e.what();
     }
+    if (__builtin_expect(c->async_pending.load(std::memory_order_acquire) != 0, 0) && c->exit == Exit::None) {
+        try {
+            runSafepoint(*c);
+        } catch (const GuestFault& f) {
+            c->exit = f.exit;
+            c->exit_info = f.info;
+            c->r[kPC] = f.pc;
+            c->thumb = f.thumb;
+            if (f.exit == Exit::HostError) t_hostError = f.what();
+        } catch (const std::exception& e) {
+            c->exit = Exit::HostError;
+            c->exit_info = index;
+            t_hostError = std::string("signal handler: ") + e.what();
+        }
+    }
 }
 
 
@@ -433,13 +511,14 @@ Block* Engine::enterBlock(Cpu* c, uint32_t key) {
     const uint64_t g = gen_.load(std::memory_order_acquire);
     if (__builtin_expect(c->fast_gen != g, 0)) {
         if (!c->fast) c->fast.reset(new FastEntry[kFastSize]);
-        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {0xFFFFFFFFu, nullptr, nullptr};
+        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {kFastEmpty, nullptr, nullptr};
         c->fast_gen = g;
     }
     FastEntry& fe = c->fast[fastIndex(key)];
     if (fe.key == key) return fe.block;
     Block* b = lookupOrDecode(key);
-    fe.key = key; fe.block = b; fe.first = b ? b->ops.data() : nullptr;
+    // Never cache a miss: the handlers' fast path follows `first` without checking it.
+    if (b) { fe.key = key; fe.block = b; fe.first = b->ops.data(); }
     return b;
 }
 
@@ -455,13 +534,118 @@ Block* Engine::lookupOrDecode(uint32_t key) {
     stats_.guest_insns_decoded += raw->guest_insns;
     stats_.ops_emitted += raw->ops.size();
     blocks_.emplace(key, std::move(b));
+    if (!isHleAddress(key & ~1u) && raw->end > (key & ~1u))
+        for (uint32_t pg = (key & ~1u) >> 12; pg <= (raw->end - 1) >> 12; ++pg) pageBlocks_[pg].push_back(key);
     return raw;
+}
+
+uint32_t Engine::faultPc(const Cpu& c, const uintptr_t* regs, int nregs, uintptr_t hostPc) {
+    const uint32_t blockPc = c.block_pc;
+    if (nregs <= 0 && !hostPc) return blockPc;
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = blocks_.find(blockPc | (c.thumb & 1u));
+    if (it == blocks_.end() || it->second->ops.empty()) return blockPc;
+    const std::vector<Op>& ops = it->second->ops;
+    const size_t n = ops.size();
+    // 1. Ops whose handler holds the faulting host instruction: the nearest handler entry at or
+    //    below the host PC among this block's handlers (handlers are separate functions).
+    uintptr_t bestFn = 0;
+    for (const Op& o : ops) {
+        const auto fn = reinterpret_cast<uintptr_t>(o.fn);
+        if (fn <= hostPc && hostPc - fn < 0x4000 && fn > bestFn) bestFn = fn;
+    }
+    std::vector<size_t> byFn;
+    if (bestFn)
+        for (size_t i = 0; i < n; ++i) if (reinterpret_cast<uintptr_t>(ops[i].fn) == bestFn) byFn.push_back(i);
+    // 2. Ops a host register points at (the handler's `op`, or `op + 1` loaded for the tail call).
+    const auto lo = reinterpret_cast<uintptr_t>(ops.data()), hi = lo + n * sizeof(Op);
+    std::vector<size_t> byReg;
+    for (int i = 0; i < nregs; ++i) {
+        const uintptr_t v = regs[i];
+        if (v < lo || v > hi || (v - lo) % sizeof(Op)) continue;
+        const size_t k = (v - lo) / sizeof(Op);
+        if (k < n) byReg.push_back(k);
+        if (k > 0) byReg.push_back(k - 1);
+    }
+    std::sort(byReg.begin(), byReg.end());
+    byReg.erase(std::unique(byReg.begin(), byReg.end()), byReg.end());
+    size_t pick = n;
+    std::vector<size_t> both;
+    for (size_t k : byFn) if (std::binary_search(byReg.begin(), byReg.end(), k)) both.push_back(k);
+    // Both signals must agree. The handler alone decides only when no register names an op of
+    // this block; when registers do but none matches, the fault was in a helper the handler called.
+    if (both.size() == 1) pick = both[0];
+    else if (byReg.empty() && byFn.size() == 1) pick = byFn[0];
+    if (pick == n) return blockPc;
+    // A fused pair runs ops[pick] and ops[pick + 1] in one handler; only memory ops fault, so when
+    // just the second one touches memory, it is the faulting instruction.
+    if (pick + 1 < n && pairMemoryParts(ops[pick].fn) == 2) ++pick;
+    const uint32_t pc = ops[pick].pc;
+    // Ops carry the address of their source instruction; it must lie inside this block.
+    return pc >= blockPc && pc < it->second->end ? pc : blockPc;
 }
 
 void Engine::flushCache() {
     std::lock_guard<std::mutex> lk(mu_);
-    blocks_.clear();
+    // HLE blocks stay: they never change, and a thread blocked inside a host function is
+    // still running the HLE block that called it.
+    for (auto it = blocks_.begin(); it != blocks_.end();) {
+        if (isHleAddress(uint32_t(it->first) & ~1u)) ++it;
+        else it = blocks_.erase(it);
+    }
+    pageBlocks_.clear();
     gen_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void Engine::resetFastCache(Cpu& c) {
+    if (!c.fast) return;
+    for (size_t i = 0; i < kFastSize; ++i) c.fast[i] = {kFastEmpty, nullptr, nullptr};
+    c.fast_gen = gen_.load(std::memory_order_acquire);
+}
+
+bool Engine::hasBlocksIn(uint32_t addr, uint32_t size) {
+    if (!size) return false;
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint64_t lo = addr, hi = uint64_t(addr) + size;
+    for (uint64_t pg = lo >> 12; pg <= (hi - 1) >> 12; ++pg) {
+        auto it = pageBlocks_.find(uint32_t(pg));
+        if (it == pageBlocks_.end()) continue;
+        for (const uint32_t key : it->second) {
+            auto b = blocks_.find(key);
+            if (b != blocks_.end() && (key & ~1u) < hi && b->second->end > lo) return true;
+        }
+    }
+    return false;
+}
+
+void Engine::retireRange(uint32_t addr, uint32_t size) {
+    if (!size) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint64_t lo = addr, hi = uint64_t(addr) + size;
+    for (uint64_t pg = lo >> 12; pg <= (hi - 1) >> 12; ++pg) {
+        auto pit = pageBlocks_.find(uint32_t(pg));
+        if (pit == pageBlocks_.end()) continue;
+        auto& keys = pit->second;
+        for (size_t i = 0; i < keys.size();) {
+            auto it = blocks_.find(keys[i]);
+            if (it == blocks_.end()) { keys[i] = keys.back(); keys.pop_back(); continue; }   // already gone
+            const uint64_t bl = it->first & ~1u, bh = it->second->end;
+            if (bl < hi && bh > lo) {
+                std::unique_ptr<Block> b = std::move(it->second);
+                blocks_.erase(it);
+                Op& o = b->ops[0];
+                o.fn = &H_Stale;
+                o.imm = b->key;
+                b->valid = false;
+                retired_.push_back(std::move(b));   // links may still reach it
+                keys[i] = keys.back();
+                keys.pop_back();
+                continue;
+            }
+            ++i;
+        }
+        if (keys.empty()) pageBlocks_.erase(pit);
+    }
 }
 
 void Engine::invalidateRange(uint32_t addr, uint32_t size) {
@@ -605,6 +789,7 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     FaultScope scope;
     scope.arenaBase = reinterpret_cast<uintptr_t>(mem_.base());
     scope.addr = 0;
+    scope.cpu = &cpu;
     // Restore on C++ exceptions too: a subsequent host fault must not follow
     // a scope pointer into the abandoned Engine::run stack frame.
     struct RestoreScope {
@@ -621,7 +806,9 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
         t_scope = prev;
         cpu.exit = Exit::MemFault;
         cpu.exit_info = scope.addr;
-        cpu.r[kPC] = cpu.block_pc;   // precise PC within the block isn't tracked
+        // The faulting instruction: the op of the current block named by the fault context, or the
+        // block start when no register identifies one.
+        cpu.r[kPC] = faultPc(cpu, scope.regs, scope.nregs, scope.hostPc);
         cpu.insn_count += uint64_t(startBudget - cpu.budget);
         // Sample the registers before releasing the CPU: once in_guest is false a suspender may rewrite them.
         cpu.recordFaultRegisters(cpu.r[kPC]);
@@ -633,14 +820,21 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     }
     uint8_t* const base = mem_.base();
     enterGuest(cpu);
-    while (cpu.exit == Exit::None) {
-        const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
-        Block* b = enterBlock(&cpu, key);
-        if (!b) break;
-        cpu.block_pc = key & ~1u;
-        cpu.recordFaultRegisters(cpu.block_pc);
-        const Op* first = b->ops.data();
-        first->fn(&cpu, first, base);
+    for (;;) {
+        while (cpu.exit == Exit::None) {
+            const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
+            Block* b = enterBlock(&cpu, key);
+            if (!b) break;
+            cpu.block_pc = key & ~1u;
+            cpu.recordFaultRegisters(cpu.block_pc);
+            const Op* first = b->ops.data();
+            first->fn(&cpu, first, base);
+        }
+        if (cpu.exit != Exit::Svc || !svcHandler_) break;
+        cpu.exit = Exit::None;
+        if (svcHandler_(cpu, cpu.exit_info)) continue;
+        cpu.exit = Exit::Svc;
+        break;
     }
     t_scope = prev;
     cpu.recordFaultRegisters(cpu.r[kPC]);   // before releasing the CPU to a suspender
@@ -719,6 +913,14 @@ Exit Engine::runToExit(Cpu& cpu) {
         const Exit e = run(cpu, kSlice);
         if (e == Exit::MemFault && faultHook_ && faultHook_(cpu, e)) continue;
         if (e != Exit::Budget) return e;
+        if (__builtin_expect(cpu.async_pending.load(std::memory_order_acquire) != 0, 0)) {
+            try {
+                runSafepoint(cpu);
+            } catch (const GuestFault& f) {
+                cpu.exit = f.exit; cpu.exit_info = f.info; cpu.r[kPC] = f.pc; cpu.thumb = f.thumb;
+                return f.exit;
+            }
+        }
     }
 }
 

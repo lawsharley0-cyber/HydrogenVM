@@ -56,6 +56,50 @@ class DeviceReportTests(unittest.TestCase):
                 self.assertEqual(device_report.main([str(new), '--previous', str(old)]), 0)
             self.assertIn('fixed (1):', out.getvalue())
 
+    def test_partial_run_lists_unselected_games_as_not_tested(self):
+        # Previous full run: a, b, c, d (gpu) and a (software). This run picked a and b only;
+        # b did not finish (no row), a's picture is fixed. Worked out by hand:
+        #   c, d were not picked -> not tested this run; b was picked but has no row -> removed.
+        with tempfile.TemporaryDirectory() as t:
+            old = self.write(Path(t) / 'old', report([app('a', signal='all-black'), app('a', renderer='software'),
+                                                      app('b'), app('c', crashed=True), app('d')]))
+            part = report([app('a'), app('a', renderer='software')])
+            part['options'] = {'seconds': 10, 'selection': {'partial': True, 'selected': ['a', 'b'], 'libraryGames': 4}}
+            new = self.write(Path(t) / 'new', part)
+            self.assertEqual(device_report.selection(device_report.load(new)), {'a', 'b'})
+            diff = device_report.compare(device_report.summarize(device_report.load(new)),
+                                         device_report.summarize(device_report.load(old)),
+                                         device_report.selection(device_report.load(new)))
+            self.assertEqual(diff['untested'], ['c [gpu]', 'd [gpu]'])
+            self.assertEqual(diff['removed'], ['b [gpu]'])
+            self.assertEqual(diff['fixed'], [('a [gpu]', 'picture: all-black')])
+            self.assertEqual(diff['new'], [])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(device_report.main([str(new), '--previous', str(old)]), 0)
+            text = out.getvalue()
+            self.assertIn('partial run: 2 of 4 games selected', text)
+            self.assertIn('not tested this run (2): c [gpu], d [gpu]', text)
+            self.assertIn('only in the previous run: b [gpu]', text)
+            self.assertNotIn('c [gpu]', text.split('only in the previous run:')[1].split('\n')[0])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                device_report.main([str(new), '--previous', str(old), '--json'])
+            data = json.loads(out.getvalue())
+            self.assertEqual(data['selection'], ['a', 'b'])
+            self.assertEqual(data['diff']['untested'], ['c [gpu]', 'd [gpu]'])
+
+    def test_full_runs_and_old_reports_have_no_selection(self):
+        old_style = report([app('a')])   # written before the app recorded a selection
+        self.assertIsNone(device_report.selection(old_style))
+        full = report([app('a')])
+        full['options'] = {'selection': {'partial': False, 'selected': [], 'libraryGames': 1}}
+        self.assertIsNone(device_report.selection(full))
+        diff = device_report.compare(device_report.summarize(report([app('a')])),
+                                     device_report.summarize(report([app('a'), app('gone')])), None)
+        self.assertEqual(diff['removed'], ['gone [gpu]'])
+        self.assertEqual(diff['untested'], [])
+
     def test_gl_errors_compare_without_arguments(self):
         self.assertEqual(device_report.gl_key('glBindTexture(0x0de1, 1) -> 0x0502 [main]'), 'glBindTexture -> 0x0502 [main]')
         self.assertEqual(device_report.gl_key('glClear -> 0x0506 [main] (framebuffer 1 status 0x8cd6: color0 renderbuffer 1 0x0 0x8056)'),

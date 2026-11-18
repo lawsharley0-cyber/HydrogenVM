@@ -56,7 +56,12 @@ struct HostContext {
     uint32_t guestError = 0;
     bool trace = false;           // ProcessConfig::glTrace when the context was made
     uint32_t fboDescribes = 0;    // incomplete-framebuffer descriptions logged (bounded)
-    std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: target
+    // Which form of a texture format this driver accepted (hg_glTexImage2D): the internal format
+    // for BGRA pixels (0 = not asked yet), and whether half-float and float textures need their
+    // sized internal format (-1 = not asked yet).
+    int32_t bgraInternal = 0;
+    int8_t halfFloatSized = -1, floatSized = -1;
+    std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: the buffer object's name (a target's binding changes while mapped)
     // ES 1.1 guest on an ES 2/3 host context: fixed function emulated in shaders.
     std::shared_ptr<Gles1Emu> gles1;
 };

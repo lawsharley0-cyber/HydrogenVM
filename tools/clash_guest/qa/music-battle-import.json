@@ -1,0 +1,109 @@
+{
+  "name": "Battle music import; provide --document-import through a wrapper",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "Native settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "modlab",
+      "expected": "Mod Lab editors",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "music",
+      "expected": "Music editor",
+      "actions": [
+        {
+          "tap": [
+            160,
+            445
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "battle-context",
+      "expected": "Battle context highlighted",
+      "actions": [
+        {
+          "tap": [
+            235,
+            76
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "import",
+      "expected": "Track ready or explicit rejection; current assignment retained on failure",
+      "actions": [
+        {
+          "tap": [
+            160,
+            125
+          ]
+        }
+      ],
+      "settleSeconds": 8
+    },
+    {
+      "id": "preview",
+      "expected": "Selected track audible",
+      "actions": [
+        {
+          "tap": [
+            80,
+            180
+          ]
+        }
+      ],
+      "settleSeconds": 5
+    },
+    {
+      "id": "stop",
+      "expected": "Preview stops",
+      "actions": [
+        {
+          "tap": [
+            235,
+            180
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "apply",
+      "expected": "Battle assignment saved; menu.bin unchanged",
+      "actions": [
+        {
+          "tap": [
+            160,
+            242
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

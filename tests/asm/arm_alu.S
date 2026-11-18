@@ -431,3 +431,11 @@ msr_flags:
 tpidr_read:
     mrc     p15, 0, r0, c13, c0, 3
     bx      lr
+
+@ TEST jump_to_top_of_memory
+@ EXPECT fault=0xFFFFFFFE
+@ A Thumb jump to 0xFFFFFFFE once matched the block cache's empty marker and crashed the host.
+    .global jump_to_top_of_memory
+jump_to_top_of_memory:
+    mvn     r0, #0
+    bx      r0

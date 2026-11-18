@@ -9,6 +9,10 @@ Save it anywhere the desktop can see it (the desktop's test_ipa folder), then:
   tools/device_report.py <export> --previous <older>   plus fixed / new / still failing
   tools/device_report.py <export> --json               machine-readable summary
 
+A run can cover only some games (the app's game picker, or "Retest the games with
+problems"); report.json then says so in options.selection. Games the previous run had
+but this run did not select are listed as "not tested this run", not as missing.
+
 A game's "problems" are its failing and warning checks, a crash, a blank screen
 and GL errors, so two runs compare the same way the desktop probe's do.
 
@@ -42,6 +46,15 @@ def load(path: Path) -> dict:
 
 def rows(report: dict) -> list[dict]:
     return ((report.get('suites') or {}).get('apps') or {}).get('apps') or []
+
+
+def selection(report: dict) -> set[str] | None:
+    """The bundle ids a partial run picked, or None for a full run (and for reports written
+    before the app recorded a selection, which were always full runs)."""
+    sel = (report.get('options') or {}).get('selection') or {}
+    if not sel.get('partial'):
+        return None
+    return {str(b) for b in sel.get('selected') or []}
 
 
 def key(row: dict) -> str:
@@ -179,8 +192,10 @@ def summarize(report: dict) -> dict[str, dict]:
     return result
 
 
-def compare(new: dict[str, dict], old: dict[str, dict]) -> dict[str, list]:
-    diff = {'fixed': [], 'new': [], 'still': [], 'added': [], 'removed': []}
+def compare(new: dict[str, dict], old: dict[str, dict], selected: set[str] | None = None) -> dict[str, list]:
+    """selected: the bundle ids a partial new run picked (see selection()). Previous games it did
+    not pick go to 'untested'; a picked game that is still missing stays in 'removed'."""
+    diff = {'fixed': [], 'new': [], 'still': [], 'added': [], 'removed': [], 'untested': []}
     for k, cur in sorted(new.items()):
         if k not in old:
             diff['added'].append(k)
@@ -192,7 +207,9 @@ def compare(new: dict[str, dict], old: dict[str, dict]) -> dict[str, list]:
             diff['new'].append((k, p))
         for p in sorted(after & before):
             diff['still'].append((k, p))
-    diff['removed'] = sorted(set(old) - set(new))
+    for k in sorted(set(old) - set(new)):
+        bundle = k.rsplit(' [', 1)[0]
+        diff['untested' if selected is not None and bundle not in selected else 'removed'].append(k)
     return diff
 
 
@@ -205,9 +222,11 @@ def main(argv: list[str] | None = None) -> int:
 
     report = load(a.export)
     cur = summarize(report)
-    diff = compare(cur, summarize(load(a.previous))) if a.previous else None
+    picked = selection(report)
+    diff = compare(cur, summarize(load(a.previous)), picked) if a.previous else None
     if a.json:
         print(json.dumps({'build': report.get('build'), 'device': report.get('device'), 'games': cur, 'diff': diff,
+                          'selection': sorted(picked) if picked is not None else None,
                           'shared': [{'problem': p, 'games': b} for p, b in shared(cur)]}, indent=1))
         return 0
 
@@ -215,6 +234,9 @@ def main(argv: list[str] | None = None) -> int:
     device = report.get('device') or {}
     print(f"build {str(build)[:12]} on {device.get('model', '?')} iOS {device.get('systemVersion', '?')}: "
           f"{sum(g['ok'] for g in cur.values())}/{len(cur)} runs without problems")
+    if picked is not None:
+        total = ((report.get('options') or {}).get('selection') or {}).get('libraryGames', '?')
+        print(f'partial run: {len(picked)} of {total} games selected')
     for k, g in sorted(cur.items()):
         mark = 'ok  ' if g['ok'] else 'FAIL'
         print(f"{mark} {g['name']} {g['version']} {k}  frames={g['frames']} draws={g['glDraws']} glErrors={g['glErrors']}")
@@ -245,6 +267,8 @@ def main(argv: list[str] | None = None) -> int:
             print('\nonly in this run: ' + ', '.join(diff['added']))
         if diff['removed']:
             print('only in the previous run: ' + ', '.join(diff['removed']))
+        if diff['untested']:
+            print(f"not tested this run ({len(diff['untested'])}): " + ', '.join(diff['untested']))
     return 0
 
 

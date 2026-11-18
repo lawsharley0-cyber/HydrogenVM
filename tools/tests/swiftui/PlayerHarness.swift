@@ -36,6 +36,23 @@ final class PlayerProbe {
     weak var session: HVMSession?
 }
 
+struct HVMPhotoPickerRequest {
+    let active: Bool
+    let requestId: UInt64
+}
+
+struct HVMDocumentPickerRequest {
+    let active: Bool
+    let requestId: UInt64
+    let types: [String]
+}
+
+struct HVMMovieRequest {
+    let active: Bool
+    let requestId: UInt64
+    let path: String
+}
+
 final class HVMTextInputRequest {
     let active: Bool, keyInput: Bool, hasText: Bool
     let text = "", placeholder = ""
@@ -60,6 +77,10 @@ final class HVMSession {
     var onExit: ((Int, String?) -> Void)?
     var crashBundle: String?
     var onTextInput: ((HVMTextInputRequest) -> Void)?
+    var onDocumentPicker: ((HVMDocumentPickerRequest) -> Void)?
+    var onMovie: ((HVMMovieRequest) -> Void)?
+    var onPhotoPicker: ((HVMPhotoPickerRequest) -> Void)?
+    private(set) var submittedPhotos: [(id: UInt64, data: Data?)] = []
     var screenSize = CGSize(width: 320, height: 480)
     var interfaceOrientation = 1
     var isBackgrounded = false
@@ -119,6 +140,9 @@ final class HVMSession {
     }
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
     func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {}
+    func submitDocument(_ path: String?, requestId: UInt64) {}
+    func movieFinished(_ requestId: UInt64) {}
+    func submitPhoto(_ data: Data?, requestId: UInt64) { submittedPhotos.append((requestId, data)) }
     func submitReturnKey(forFocus focusId: UInt64) {}
     private func publishKeyInput(active: Bool = true) {
         onTextInput?(HVMTextInputRequest(active: active, keyInput: true,

@@ -1,0 +1,98 @@
+{
+  "name": "Post-training default profile: Apply Knight size 125 percent",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "editor",
+      "expected": "editor",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "enable",
+      "expected": "enable",
+      "actions": [
+        {
+          "tap": [
+            160,
+            316
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "size125",
+      "expected": "size125",
+      "actions": [
+        {
+          "tap": [
+            292,
+            489
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "scroll",
+      "expected": "scroll",
+      "actions": [
+        {
+          "drag": [
+            160,
+            465,
+            160,
+            190
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "apply",
+      "expected": "apply",
+      "actions": [
+        {
+          "tap": [
+            84,
+            447
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "close",
+      "expected": "close",
+      "actions": [
+        {
+          "tap": [
+            275,
+            28
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

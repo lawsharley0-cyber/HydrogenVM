@@ -129,7 +129,13 @@ public:
         o += indent + "\"tainted\": " + (total > 0 ? "true" : "false") + ",\n";
         o += indent + "\"stubHits\": " + std::to_string(total) + ",\n";
         o += indent + "\"missingApisOverflow\": " + std::to_string(overflow) + ",\n";
-        o += indent + "\"missingApis\": [";
+        o += indent + listField("missingApis", indent, recs);
+        return o;
+    }
+    // One "key": [records] field (the same record shape as missingApis).
+    std::string listField(const std::string& key, const std::string& indent = "  ") const { return listField(key, indent, records()); }
+    std::string listField(const std::string& key, const std::string& indent, const std::vector<MissingApiRecord>& recs) const {
+        std::string o = "\"" + key + "\": [";
         for (size_t i = 0; i < recs.size(); ++i) {
             const MissingApiRecord& r = recs[i];
             char num[96];

@@ -1,5 +1,6 @@
 // HydrogenVM — time and sleeping.
 #include "runtime/Process.hpp"
+#include "core/cpu/Engine.hpp"
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -30,28 +31,36 @@ std::tm loadTm(Ctx& x, GuestPtr in) {
 
 // Sleep in slices so a stop request isn't held up by a long sleep.
 void sleepFor(Ctx& x, std::chrono::nanoseconds d) {
+    BlockedScope blocked(x.proc, "sleep (usleep/nanosleep/sleep)");
     const auto end = Clock::now() + d;
     while (Clock::now() < end) {
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
-        std::this_thread::sleep_for(std::min<std::chrono::nanoseconds>(end - Clock::now(), std::chrono::milliseconds(50)));
+        if (x.cpu.async_pending.load(std::memory_order_acquire)) x.proc.engine().runSafepoint(x.cpu);   // signal handlers
+        std::this_thread::sleep_for(std::min<std::chrono::nanoseconds>(end - Clock::now(), std::chrono::milliseconds(20)));
     }
 }
 
 int32_t t_time(Ctx& x, GuestPtr out) {
-    const int32_t t = int32_t(std::time(nullptr));
+    const int32_t t = int32_t(x.proc.wallNowNs() / 1000000000);
     if (out) x.mem.write<int32_t>(out, t);
     return t;
 }
 int32_t t_gettimeofday(Ctx& x, GuestPtr tv, GuestPtr tz) {
-    timeval v;
-    ::gettimeofday(&v, nullptr);
-    if (tv) { x.mem.write<int32_t>(tv, int32_t(v.tv_sec)); x.mem.write<int32_t>(tv + 4, int32_t(v.tv_usec)); }
+    const int64_t now = x.proc.wallNowNs();
+    if (tv) { x.mem.write<int32_t>(tv, int32_t(now / 1000000000)); x.mem.write<int32_t>(tv + 4, int32_t(now / 1000 % 1000000)); }
     if (tz) { x.mem.write<int32_t>(tz, 0); x.mem.write<int32_t>(tz + 4, 0); }
     return 0;
 }
 uint32_t t_clock(Ctx&) { return uint32_t(std::clock() * (1000000.0 / CLOCKS_PER_SEC)); }
-uint64_t t_mach_absolute_time(Ctx&) {
-    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
+uint64_t t_mach_absolute_time(Ctx& x) {
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayClockRead("mach_absolute")) return *v;
+    }
+    const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
+    if (session.recordingDetails())
+        session.recordClockRead("mach_absolute", now, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    return now;
 }
 int32_t t_mach_timebase_info(Ctx& x, GuestPtr info) {
     x.mem.write<uint32_t>(info, 1);       // mach_absolute_time() is in nanoseconds here
@@ -68,8 +77,23 @@ int32_t t_nanosleep(Ctx& x, GuestPtr req, GuestPtr rem) {
 }
 // clock_gettime arrived in iOS 10.
 int32_t t_clock_gettime(Ctx& x, uint32_t clk, GuestPtr ts) {
+    if (!ts) return -1;
     timespec v;
-    ::clock_gettime(clk == 0 ? CLOCK_REALTIME : CLOCK_MONOTONIC, &v);
+    if (clk == 0) {
+        const int64_t now = x.proc.wallNowNs();
+        v.tv_sec = time_t(now / 1000000000);
+        v.tv_nsec = long(now % 1000000000);
+    } else if (auto rec = x.proc.session().replayingDetails()
+                              ? x.proc.session().replayClockRead("monotonic") : std::nullopt) {
+        v.tv_sec = time_t(*rec / 1000000000ULL);
+        v.tv_nsec = long(*rec % 1000000000ULL);
+    } else {
+        ::clock_gettime(CLOCK_MONOTONIC, &v);
+        if (x.proc.session().recordingDetails()) {
+            const uint64_t ns = uint64_t(v.tv_sec) * 1000000000ULL + uint64_t(v.tv_nsec);
+            x.proc.session().recordClockRead("monotonic", ns, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+        }
+    }
     x.mem.write<int32_t>(ts, int32_t(v.tv_sec));
     x.mem.write<int32_t>(ts + 4, int32_t(v.tv_nsec));
     return 0;

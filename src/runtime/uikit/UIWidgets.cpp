@@ -1101,6 +1101,12 @@ void nc_loadView(Ctx& x, id self, SEL) {
     rt(x).release(x.cpu, v);
     syncNavControllerView(x, self);
 }
+void nc_didLayout(Ctx& x, id self, SEL) {
+    // The container owns the content frame even when a custom child view has
+    // no flexible autoresizing mask (common for EAGL views). Rotation changes
+    // the container bounds after loadView, so its initial frame is insufficient.
+    syncNavControllerView(x, self);
+}
 void nc_push(Ctx& x, id self, SEL, id vc, bool animated) {
     if (!vc) return;
     ensureNavBars(x, self);
@@ -2377,6 +2383,7 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder nc = r.defineClass("UINavigationController", "UIViewController");
     nc.m<&nc_initWithRoot>("initWithRootViewController:").m<&nc_init>("init").m<&nc_initWithCoder>("initWithCoder:")
       .m<&nc_dealloc>("dealloc", "v@:").m<&nc_loadView>("loadView", "v@:")
+      .m<&nc_didLayout>("viewDidLayoutSubviews", "v@:")
       .m<&nc_push>("pushViewController:animated:", "v@:@c")
       .m<&nc_pop>("popViewControllerAnimated:", "@@:c")
       .m<&nc_popToRoot>("popToRootViewControllerAnimated:", "@@:c")

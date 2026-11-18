@@ -1,10 +1,13 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — QuartzCore HLE: CALayer, CATransform3D, CATransaction,
 // CADisplayLink, CAAnimation (accepted; completion callbacks fire, no
 // interpolation yet) and the compositor that turns the layer trees of all
 // visible windows into the framebuffer.
+#include "runtime/Support.hpp"
 #include "UIKit.hpp"
 #include "runtime/gl/HostGL.hpp"
 #include <chrono>
+#include <cstdio>
 
 namespace Hydrogen::Runtime::UIKit {
 
@@ -35,9 +38,9 @@ void l_dealloc(Ctx& x, id self, SEL) {
         auto subs = std::move(d->sublayers);
         d->sublayers.clear();
         for (id s : subs) { if (LayerData* sd = rt(x).hostIf<LayerData>(s)) sd->superlayer = 0; rt(x).release(x.cpu, s); }
-        const id c = d->contents, m = d->mask, n = d->name;
-        d->contents = d->mask = d->name = 0;
-        for (id o : {c, m, n}) if (o) rt(x).release(x.cpu, o);
+        const id c = d->contents, m = d->mask, n = d->name, gc = d->gradientColors, gl = d->gradientLocations;
+        d->contents = d->mask = d->name = d->gradientColors = d->gradientLocations = 0;
+        for (id o : {c, m, n, gc, gl}) if (o) rt(x).release(x.cpu, o);
     }
     dirty(x);
     rt(x).disposeInstance(x.cpu, self);
@@ -541,12 +544,57 @@ struct Compositor {
         }
     }
 
+    // Rasterized at device resolution over the bounds; t is the projection on start→end.
+    void drawGradientLayer(const LayerData& d, const G::Affine& m, const G::Path& devShape, const G::Clip& clip, float alpha) {
+        const float s = std::max(0.25f, std::sqrt(std::fabs(m.a * m.d - m.b * m.c)));
+        G::Image img;
+        img.width = std::max(1, int(std::ceil(d.bounds.w * s)));
+        img.height = std::max(1, int(std::ceil(d.bounds.h * s)));
+        if (int64_t(img.width) * img.height > 4096 * 4096) return;
+        img.rgba.resize(size_t(img.width) * size_t(img.height) * 4);
+        const auto& stops = d.gradientStops;
+        auto sample = [&](float t) {
+            if (t <= stops.front().first) return stops.front().second;
+            if (t >= stops.back().first) return stops.back().second;
+            for (size_t i = 1; i < stops.size(); ++i)
+                if (t <= stops[i].first) {
+                    const auto& [t0, c0] = stops[i - 1];
+                    const auto& [t1, c1] = stops[i];
+                    const float k = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+                    return G::Color{c0.r + (c1.r - c0.r) * k, c0.g + (c1.g - c0.g) * k, c0.b + (c1.b - c0.b) * k, c0.a + (c1.a - c0.a) * k};
+                }
+            return stops.back().second;
+        };
+        const float dx = d.gradientEnd.x - d.gradientStart.x, dy = d.gradientEnd.y - d.gradientStart.y;
+        const float len2 = dx * dx + dy * dy;
+        for (int y = 0; y < img.height; ++y)
+            for (int xx = 0; xx < img.width; ++xx) {
+                const float u = (float(xx) + 0.5f) / float(img.width), v = (float(y) + 0.5f) / float(img.height);
+                const float t = len2 > 0 ? ((u - d.gradientStart.x) * dx + (v - d.gradientStart.y) * dy) / len2 : 0;
+                const G::Color c = sample(t);
+                uint8_t* p = &img.rgba[(size_t(y) * img.width + xx) * 4];
+                const float a = std::clamp(c.a, 0.0f, 1.0f);
+                p[0] = uint8_t(std::lround(std::clamp(c.r, 0.0f, 1.0f) * a * 255));
+                p[1] = uint8_t(std::lround(std::clamp(c.g, 0.0f, 1.0f) * a * 255));
+                p[2] = uint8_t(std::lround(std::clamp(c.b, 0.0f, 1.0f) * a * 255));
+                p[3] = uint8_t(std::lround(a * 255));
+            }
+        const G::Affine im = G::Affine::scale(d.bounds.w / float(img.width), d.bounds.h / float(img.height))
+                                 .then(G::Affine::translate(d.bounds.x, d.bounds.y)).then(m);
+        const G::Clip c2 = d.cornerRadius > 0 ? G::intersectClip(clip, devShape, false) : clip;
+        G::drawImage(dst, img, im, c2, alpha, true);
+    }
+
     void render(id layer, const G::Affine& parentToDevice, const G::Clip& clip, float parentOpacity) {
         const LayerData& d = L(x, layer);
         if (d.hidden || d.opacity <= 0.001f) return;
         if (clip.x1 <= clip.x0 || clip.y1 <= clip.y0) return;
         const float alpha = parentOpacity * std::clamp(d.opacity, 0.0f, 1.0f);
         const G::Affine m = layerToSuper(d).then(parentToDevice);
+        // A quarter-turn maps rectangles to rectangles too. axisAligned() only
+        // recognizes diagonal matrices, so using it alone sends landscape solid
+        // backgrounds through the per-pixel path rasterizer unnecessarily.
+        const bool rectangular = m.axisAligned() || (m.a == 0 && m.d == 0);
         G::Path shape;
         if (d.cornerRadius > 0) shape.addRoundedRect(d.bounds, d.cornerRadius, d.cornerRadius);
         else shape.addRect(d.bounds);
@@ -557,7 +605,7 @@ struct Compositor {
             const float tm[6] = {m.a, m.b, m.c, m.d, m.tx, m.ty};
             HostGL::layerPlaced(x.proc, layer, tm, d.bounds.x, d.bounds.y, d.bounds.w, d.bounds.h, dst.width, dst.height);
             // Cut a hole down to the host's GPU layer, then draw what sits on top.
-            if (d.cornerRadius <= 0 && m.axisAligned()) G::fillRect(dst, m.applyRect(d.bounds), {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
+            if (d.cornerRadius <= 0 && rectangular) G::fillRect(dst, m.applyRect(d.bounds), {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
             else G::fillPath(dst, devShape, false, {0, 0, 0, 0}, clip, G::BlendMode::Copy, 1);
         } else
         // background
@@ -572,9 +620,12 @@ struct Compositor {
                         G::drawImage(dst, pat, G::Affine::scale(pw / float(pat.width), ph / float(pat.height)).then(G::Affine::translate(xx, yy)).then(m), c2, alpha, true);
             }
         } else if (d.background.a > 0) {
-            if (d.cornerRadius <= 0 && m.axisAligned()) G::fillRect(dst, m.applyRect(d.bounds), d.background, clip, G::BlendMode::Normal, alpha);
+            if (d.cornerRadius <= 0 && rectangular) G::fillRect(dst, m.applyRect(d.bounds), d.background, clip, G::BlendMode::Normal, alpha);
             else G::fillPath(dst, devShape, false, d.background, clip, G::BlendMode::Normal, alpha);
         }
+
+        // CAGradientLayer
+        if (d.gradientStops.size() >= 1 && d.bounds.w > 0 && d.bounds.h > 0) drawGradientLayer(d, m, devShape, clip, alpha);
 
         // contents
         G::ImagePtr img;
@@ -733,24 +784,61 @@ void displayPass(Ctx& x, id layer, IMP baseDrawRect) {
 }
 }
 
+namespace {
+// A frame the player feels as a hitch (over 45 ms) gets one play-log line saying where the time
+// went, at most one line a second (the rest are counted into the next line). The phone's play
+// log is the only place a hitch that the bench cannot reproduce shows up.
+struct HitchLog {
+    std::chrono::steady_clock::time_point lastLine{};
+    unsigned unreported = 0;
+};
+double msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+}
+
 void runFrame(Ctx& x, double now) {
     auto& u = ui(x);
     using Clock = std::chrono::steady_clock;
     const auto t0 = Clock::now();
     auto& perf = x.proc.perf();
+    struct Sections { Clock::time_point input, links, display; size_t touches = 0; uint64_t presentNs0 = 0, presentCalls0 = 0; };
+    Sections sec{t0, t0, t0, 0, perf.presentCallNs.load(), perf.presentCalls.load()};
     struct FrameTimer {
+        Ctx& x;
         Runtime::Process::Perf& p;
         Clock::time_point t0;
+        Sections& sec;
         ~FrameTimer() {
-            const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
+            const auto end = Clock::now();
+            const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(end - t0).count());
             p.recordFrame(ns);
+            if (ns < 45'000'000) return;
+            static thread_local HitchLog h;
+            if (h.lastLine != Clock::time_point{} && end - h.lastLine < std::chrono::seconds(1)) { ++h.unreported; return; }
+            char line[320];
+            const double since = std::chrono::duration<double>(end - p.origin).count();
+            const double presentMs = double(p.presentCallNs.load() - sec.presentNs0) / 1e6;
+            const uint64_t presents = p.presentCalls.load() - sec.presentCalls0;
+            std::snprintf(line, sizeof line,
+                          "Hitch: %.0f ms frame at %.1f s (touches %zu: %.1f ms, game frame %.1f ms incl. %llu present%s %.1f ms, "
+                          "layout+draw %.1f ms, composite %.1f ms)%s",
+                          double(ns) / 1e6, since, sec.touches, msBetween(t0, sec.input), msBetween(sec.input, sec.links),
+                          static_cast<unsigned long long>(presents), presents == 1 ? "" : "s", presentMs,
+                          msBetween(sec.links, sec.display), msBetween(sec.display, end),
+                          h.unreported ? (" +" + std::to_string(h.unreported) + " more since the last line").c_str() : "");
+            x.proc.log(LogLevel::Info, line);
+            h.lastLine = end;
+            h.unreported = 0;
         }
-    } timer{perf, t0};
+    } timer{x, perf, t0, sec};
     if (u.deviceOrientationNotePending) {
         u.deviceOrientationNotePending = false;
         if (u.currentDevice) Foundation::postNotification(x, "UIDeviceOrientationDidChangeNotification", u.currentDevice);
     }
+    { std::lock_guard<std::mutex> lk(u.inputMu); sec.touches = u.pendingTouches.size(); }
     deliverPendingInput(x);
+    sec.input = Clock::now();
     rotateLegacyControllers(x, "frame");   // a controller view added after launch, or a new orientation
     layoutPass(x);
     // display links
@@ -759,7 +847,15 @@ void runFrame(Ctx& x, double now) {
         for (size_t i = 0; i < n && i < u.links.size(); ++i) {
             UIState::Link l = u.links[i];
             if (!l.obj || l.paused) continue;
-            if (++u.links[i].counter < l.interval) continue;
+            // "Unlock frame rate" (experimental, per game): every screen frame, whatever the game
+            // asked for; -frameInterval still reports the game's own value.
+            const int interval = Compat::unlockFrameRate(x.proc) ? 1 : l.interval;
+            if (l.interval > 1 && interval == 1 && !u.unlockLogged) {
+                u.unlockLogged = true;
+                x.proc.logf(LogLevel::Info, "Unlock frame rate: a display link asking for every %d frames (%d fps) runs every frame",
+                            l.interval, 60 / l.interval);
+            }
+            if (++u.links[i].counter < interval) continue;
             u.links[i].counter = 0;
             if (LinkData* ld = rt(x).hostIf<LinkData>(l.obj)) {
                 ld->timestamp = ca_mediaTime(x);
@@ -768,9 +864,11 @@ void runFrame(Ctx& x, double now) {
         }
         u.links.erase(std::remove_if(u.links.begin(), u.links.end(), [](const UIState::Link& l) { return !l.obj; }), u.links.end());
     }
+    sec.links = Clock::now();
     layoutPass(x);
     const IMP baseDrawRect = rt(x).lookup(u.view, rt(x).sel("drawRect:"));
     for (id w : std::vector<id>(u.windows)) if (viewData(x, w).visible) displayPass(x, viewLayer(x, w), baseDrawRect);
+    sec.display = Clock::now();
     bool external = false;
     (void)now;
     if (u.needsComposite || external) {
@@ -778,14 +876,20 @@ void runFrame(Ctx& x, double now) {
         compositeFrame(x);
         perf.compositeNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - c0).count());
         perf.notePresented();
+        x.proc.recordFrameCheckpoint(u.framebuffer.rgba.data(), u.framebuffer.width, u.framebuffer.height);
         if (x.proc.config().present) x.proc.config().present(u.framebuffer.rgba.data(), u.framebuffer.width, u.framebuffer.height);
     }
 }
 
 namespace {
+void displayPass(Ctx& x, id layer, IMP baseDrawRect);
 void l_renderInContextImpl(Ctx& x, id self, id ctx) {
     CG::ContextData* cd = CG::context(x, ctx);
     if (!cd) return;
+    // Like Core Animation, draw what has not been drawn yet first: a label made only to be
+    // rendered into a bitmap (Groove Coaster Zero builds its glyph atlas that way) was never
+    // on screen, so its text was never drawn and the bitmap came out empty.
+    displayPass(x, self, rt(x).lookup(ui(x).view, rt(x).sel("drawRect:")));
     Compositor c{x, cd->surface};
     // Render with the layer's own bounds at the context's current CTM (layer space = user space).
     LayerData& d = L(x, self);
@@ -794,6 +898,46 @@ void l_renderInContextImpl(Ctx& x, id self, id ctx) {
 }
 }
 namespace { void l_renderInContext(Ctx& x, id self, SEL, id ctx) { l_renderInContextImpl(x, self, ctx); } }
+
+// ---- CAGradientLayer (axial): colors spread evenly unless locations are given.
+void gradientRebuild(Ctx& x, LayerData& d) {
+    d.gradientStops.clear();
+    const std::vector<id> colors = d.gradientColors ? Foundation::arrayItems(x, d.gradientColors) : std::vector<id>{};
+    const std::vector<id> locs = d.gradientLocations ? Foundation::arrayItems(x, d.gradientLocations) : std::vector<id>{};
+    for (size_t i = 0; i < colors.size(); ++i) {
+        float t = colors.size() > 1 ? float(i) / float(colors.size() - 1) : 0;
+        if (locs.size() == colors.size()) {
+            uint64_t bits = rt(x).send(x.cpu, locs[i], "floatValue");
+            std::memcpy(&t, &bits, sizeof t);
+        }
+        d.gradientStops.push_back({t, CG::colorOf(x, colors[i])});
+    }
+    std::stable_sort(d.gradientStops.begin(), d.gradientStops.end(), [](auto& a, auto& b) { return a.first < b.first; });
+}
+id gl_colors(Ctx& x, id self, SEL) { return L(x, self).gradientColors; }
+void gl_setColors(Ctx& x, id self, SEL, id a) {
+    LayerData& d = L(x, self);
+    const id old = d.gradientColors;
+    d.gradientColors = a ? id(rt(x).send(x.cpu, a, "copy")) : 0;
+    if (old) rt(x).release(x.cpu, old);
+    gradientRebuild(x, d);
+    dirty(x);
+}
+id gl_locations(Ctx& x, id self, SEL) { return L(x, self).gradientLocations; }
+void gl_setLocations(Ctx& x, id self, SEL, id a) {
+    LayerData& d = L(x, self);
+    const id old = d.gradientLocations;
+    d.gradientLocations = a ? id(rt(x).send(x.cpu, a, "copy")) : 0;
+    if (old) rt(x).release(x.cpu, old);
+    gradientRebuild(x, d);
+    dirty(x);
+}
+void gl_start(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CG::fromG(L(x, self).gradientStart)); }
+void gl_setStart(Ctx& x, id self, SEL, CGPoint p) { L(x, self).gradientStart = CG::toG(p); dirty(x); }
+void gl_end(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CG::fromG(L(x, self).gradientEnd)); }
+void gl_setEnd(Ctx& x, id self, SEL, CGPoint p) { L(x, self).gradientEnd = CG::toG(p); dirty(x); }
+id gl_type(Ctx& x, id, SEL) { return Foundation::constString(x.proc, "axial"); }
+void gl_setType(Ctx&, id, SEL, id) {}
 
 void registerQuartzCore(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
@@ -863,6 +1007,15 @@ void registerQuartzCore(Process& p, ObjC::Runtime& r) {
         }
         if (name == "CAPropertyAnimation") b.cm<&anim_withKeyPath>("animationWithKeyPath:");
     }
+    ObjC::ClassBuilder grad = r.defineClass("CAGradientLayer", "CALayer");
+    grad.m<&gl_colors>("colors").m<&gl_setColors>("setColors:", "v@:@")
+        .m<&gl_locations>("locations").m<&gl_setLocations>("setLocations:", "v@:@")
+        .m<&gl_start>("startPoint", P + "@:").m<&gl_setStart>("setStartPoint:", "v@:" + P)
+        .m<&gl_end>("endPoint", P + "@:").m<&gl_setEnd>("setEndPoint:", "v@:" + P)
+        .m<&gl_type>("type");
+    supportMethod(p, grad, "CAGradientLayer", "setType:", [](Ctx& x) { callWrapped<&gl_setType>(x); }, SupportStatus::Approx,
+                  "Only axial gradients are drawn; other types are accepted and drawn as axial", "v@:@");
+
     ObjC::ClassBuilder tf = r.defineClass("CAMediaTimingFunction", "NSObject");
     tf.cm<&tf_withName>("functionWithName:").cm<&tf_withControlPoints>("functionWithControlPoints::::");
     for (const char* n : {"kCAMediaTimingFunctionLinear", "kCAMediaTimingFunctionEaseIn", "kCAMediaTimingFunctionEaseOut",

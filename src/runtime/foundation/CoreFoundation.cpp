@@ -1179,6 +1179,26 @@ void cs_addRange(Ctx& x, id set, uint32_t loc, uint32_t len) {
 
 } // namespace
 
+// CFError is toll-free bridged with NSError: the Copy functions return a retained result of the
+// matching NSError method (nil when the error has none), the Get functions an unretained one.
+// (Flight Control #534 asks for the recovery suggestion.)
+uint32_t err_copy(Ctx& x, id e, const char* sel) {
+    if (!e) return 0;
+    const id v = id(send(x, e, sel));
+    return v ? R(x).retain(x.cpu, v) : 0;
+}
+uint32_t err_copyDescription(Ctx& x, id e) { return err_copy(x, e, "localizedDescription"); }
+uint32_t err_copyFailureReason(Ctx& x, id e) { return err_copy(x, e, "localizedFailureReason"); }
+uint32_t err_copyRecoverySuggestion(Ctx& x, id e) { return err_copy(x, e, "localizedRecoverySuggestion"); }
+uint32_t err_copyUserInfo(Ctx& x, id e) { return err_copy(x, e, "userInfo"); }
+uint32_t err_getDomain(Ctx& x, id e) { return e ? uint32_t(send(x, e, "domain")) : 0; }
+int32_t err_getCode(Ctx& x, id e) { return e ? int32_t(send(x, e, "code")) : 0; }
+uint32_t err_create(Ctx& x, uint32_t, id domain, int32_t code, id userInfo) {
+    const id cls = R(x).getClass("NSError");
+    const id e = id(send(x, id(send(x, cls, "alloc")), "initWithDomain:code:userInfo:", {domain, uint32_t(code), userInfo}));
+    return e;   // alloc/init: already owned by the caller, as CFErrorCreate's result is
+}
+
 void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     auto& c = p.service<CF>();
     c.bitVector = r.defineClass("__HVMCFBitVector", "NSObject").cls();
@@ -1199,6 +1219,13 @@ void registerCoreFoundation(Process& p, ObjC::Runtime& r) {
     c.cfEqualFn = p.def<&cf_equal>("_CFEqual");
     c.cfHashFn = p.def<&cf_hash>("_CFHash");
     c.cfCopyDescFn = p.def<&cf_copyDescription>("_CFCopyDescription");
+    p.def<&err_copyDescription>("_CFErrorCopyDescription");
+    p.def<&err_copyFailureReason>("_CFErrorCopyFailureReason");
+    p.def<&err_copyRecoverySuggestion>("_CFErrorCopyRecoverySuggestion");
+    p.def<&err_copyUserInfo>("_CFErrorCopyUserInfo");
+    p.def<&err_getDomain>("_CFErrorGetDomain");
+    p.def<&err_getCode>("_CFErrorGetCode");
+    p.def<&err_create>("_CFErrorCreate");
     p.def<&cf_show>("_CFShow");
     p.def<&cf_getAllocator>("_CFGetAllocator");
     p.def<&cf_getTypeID>("_CFGetTypeID");

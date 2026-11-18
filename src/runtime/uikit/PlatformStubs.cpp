@@ -10,12 +10,17 @@
 #include <deque>
 #include <cmath>
 #include <cstring>
+#include <array>
 #include <fstream>
+#include <map>
+#include <set>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
 namespace Hydrogen::Runtime::UIKit {
+
+void registerCoreMediaTime(Process& p);
 
 using Foundation::autoreleased;
 using Foundation::makeString;
@@ -80,6 +85,13 @@ struct AudioQueueInstance {
     bool running = false, isFloat = false, nonInterleaved = false;
     uint32_t voice = 0;   // mixer stream; buffers go back to the app as they finish
     std::shared_ptr<Foundation::RunLoop::Timer> pump;
+    // AudioQueueAddPropertyListener: called when the property changes (IsRunning, mostly:
+    // how a player learns its sound has finished).
+    struct Listener { uint32_t prop, proc, userData; };
+    std::vector<Listener> listeners;
+    // AudioQueueStop / AudioQueueDispose with inImmediate false: what is queued plays out
+    // first, then the queue stops (or goes away).
+    bool draining = false, disposeWhenDrained = false;
     std::vector<AudioQueueBufferInfo> buffers;
     // Recording queues (AudioQueueNewInput): buffers wait here until they are filled
     // with microphone audio at the queue's rate.
@@ -95,6 +107,8 @@ struct AudioQueueInstance {
     int outRate = 44100, outChannels = 2, outBits = 16;
     std::deque<float> offlineSource;   // converted source frames, outChannels per frame
     double offlinePhase = 0;           // fractional position in offlineSource
+    // A queue created with an MP3 format: enqueued buffers hold MPEG frames, decoded here.
+    std::shared_ptr<Audio::Mp3Stream> mp3;
 };
 
 // A file an app is writing (AudioFileCreateWithURL / ExtAudioFileCreateWithURL): the audio
@@ -106,6 +120,9 @@ struct AudioFileInstance {
     std::vector<uint8_t> rawBytes;
     DecodedAudio decoded;
     std::shared_ptr<AudioWriter> writer;   // set for a file being written
+    // Set for an MP3 source: the file is presented as its compressed packets, as on iOS,
+    // and the app decodes them through an AudioQueue. Other sources are presented decoded.
+    std::shared_ptr<Audio::Mp3Packets> mp3;
 };
 
 struct AudioUnitInstance {
@@ -122,11 +139,32 @@ struct AudioUnitInstance {
     uint32_t actionFlags = 0, timeStamp = 0;
     double sampleTime = 0;
     uint64_t nextTag = 1;
+    // A mixer unit ('aumx') has one input per element; each is kept as a unit of its own
+    // (its callback, stream format, buffers and mixer voice), found here by element number.
+    std::map<uint32_t, uint32_t> buses;
+    // An output unit fed by another unit instead of a callback (AUGraphConnectNodeInput,
+    // kAudioUnitProperty_MakeConnection): the unit it pulls from.
+    uint32_t source = 0;
+    // For a mixer input: the unit connected to it (kAudioUnitProperty_MakeConnection on the
+    // mixer), a converter with its own callback or another mixer.
+    uint32_t feeder = 0;
+    // AudioUnitAddRenderNotify: called before and after every render cycle of the chain this
+    // unit is in. Apps do their sound bookkeeping there (Plants vs. Zombies starts and
+    // connects its sound effects from it).
+    struct Notify { uint32_t proc, userData; };
+    std::vector<Notify> notifies;
+    bool inputFormatSet = false;   // a converter: its input format (what its callback gives) is known
+    // For a mixer input: its element number (the callback's inBusNumber) and mix settings.
+    uint32_t busNumber = 0;
+    bool enabled = true;
+    float gain = 1.0f, pan = 0.0f, rate = 1.0f;
+    bool isMixer() const { return desc[0] == 0x61756D78; }   // 'aumx'
 };
 
 struct AUGraphInstance {
     uint32_t id;
     std::vector<uint32_t> nodes;
+    bool running = false;
 };
 
 struct AudioToolboxState {
@@ -142,20 +180,35 @@ struct AudioToolboxState {
     std::unordered_map<uint32_t, AudioFileInstance> files;
     std::unordered_map<uint32_t, AudioUnitInstance> units;
     std::unordered_map<uint32_t, AUGraphInstance> graphs;
+    // AudioComponentFindNext results: the description asked for, by component handle.
+    std::vector<std::array<uint32_t, 5>> components;
 };
 AudioToolboxState& ATS(Ctx& x) { return x.proc.service<AudioToolboxState>(); }
 
+uint32_t auRenderFrames(double sampleRate, double rate = 1.0);
+// The I/O buffer duration the audio session reports: what one render callback is asked for.
+float ioBufferSeconds() { return float(auRenderFrames(44100.0)) / 44100.0f; }
 int32_t as_init(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t as_setProperty(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
+// "'chbd'" for a four-character code, "0x12" for a number that is not one.
+std::string code4(uint32_t v) {
+    char c[4] = {char(v >> 24), char(v >> 16), char(v >> 8), char(v)};
+    for (char ch : c) if (ch < 0x20 || ch > 0x7e) { char b[16]; std::snprintf(b, sizeof b, "0x%x", v); return b; }
+    return "'" + std::string(c, 4) + "'";
+}
+void defaulted(Ctx& x, const std::string& what) { x.proc.reportDefaulted(what); }
+
 int32_t as_getProperty(Ctx& x, uint32_t prop, GuestPtr size, GuestPtr out) {
     if (out && size) {
         const uint32_t n = x.mem.read<uint32_t>(size);
         if (prop == 0x63687372 /* 'chsr' hw sample rate */ && n >= 8) x.mem.write<double>(out, 44100.0);
+        else if ((prop == 0x63686264 /* 'chbd' hw I/O buffer duration */ || prop == 0x696f6264 /* 'iobd' preferred */) && n >= 4)
+            x.mem.write<float>(out, ioBufferSeconds());   // zero sent Minion Rush's mixer into an endless loop
         else if (prop == 0x6368766C /* 'chvl' output volume */ && n >= 4) x.mem.write<float>(out, 1.0f);
         else if (prop == 0x61696176 /* 'aiav' audio input available */ && n >= 4) x.mem.write<uint32_t>(out, 1);
         else if (prop == 0x63686963 /* 'chic' input channels */ && n >= 4) x.mem.write<uint32_t>(out, 1);
         else if (prop == 0x63686f63 /* 'choc' output channels */ && n >= 4) x.mem.write<uint32_t>(out, 2);
-        else if (n >= 4) x.mem.write<uint32_t>(out, 0);
+        else if (n >= 4) { x.mem.write<uint32_t>(out, 0); defaulted(x, "AudioSessionGetProperty(" + code4(prop) + ") answered 0"); }
     }
     return 0;
 }
@@ -207,6 +260,20 @@ void ss_removeCompletion(Ctx& x, uint32_t sid) {
     if (st.sounds.count(sid)) st.sounds[sid].completionProc = 0;
 }
 
+constexpr uint32_t kFormatMp3 = 0x2E6D7033;   // '.mp3'
+// Decodes the MPEG frames in an enqueued buffer of an MP3 queue to interleaved stereo.
+// Returns the stream's sample rate, 0 if nothing decoded. The header is guest memory: the
+// data pointer and size are used only inside the block recorded when the buffer was allocated.
+int decodeMp3Buffer(Ctx& x, AudioQueueInstance& q, uint32_t buf, std::vector<int16_t>& stereo) {
+    uint32_t capacity = 0;
+    for (const auto& b : q.buffers) if (b.guestAddr == buf) capacity = b.capacity;
+    const uint32_t data = x.mem.read<uint32_t>(buf + 4), bytes = std::min(x.mem.read<uint32_t>(buf + 8), capacity);
+    if (!capacity || data != buf + 32 || !bytes) return 0;
+    std::vector<uint8_t> host(bytes);
+    x.mem.copyOut(host.data(), data, bytes);
+    return Audio::mp3StreamDecode(*q.mp3, host.data(), host.size(), stereo);
+}
+
 // AudioQueue API
 int32_t aq_newOutput(Ctx& x, GuestPtr format, uint32_t callbackProc, uint32_t userData, uint32_t, uint32_t, uint32_t, GuestPtr outAQ) {
     auto& st = ATS(x);
@@ -225,6 +292,15 @@ int32_t aq_newOutput(Ctx& x, GuestPtr format, uint32_t callbackProc, uint32_t us
         const uint32_t flags = x.mem.read<uint32_t>(format + 12);
         q.isFloat = flags & 1;
         q.nonInterleaved = flags & 0x20;
+        const uint32_t formatID = x.mem.read<uint32_t>(format + 8);
+        if (formatID == kFormatMp3) {   // buffers will hold MPEG frames
+            q.mp3 = Audio::mp3StreamNew();
+            q.bitsPerChannel = 16;
+            q.isFloat = q.nonInterleaved = false;
+        } else if (formatID && formatID != 0x6C70636D /* 'lpcm' */) {
+            char name[5] = {char(formatID >> 24), char(formatID >> 16), char(formatID >> 8), char(formatID), 0};
+            x.proc.reportMissing(std::string("AudioQueue in the compressed format '") + name + "' (its buffers are not decoded)");
+        }
     }
     q.voice = MX(x.proc).createStream({q.volume, 0, 1, false});
     audioTrace("AudioQueueNewOutput", qid, (uint64_t(q.sampleRate) << 32) | uint32_t(q.channels));
@@ -262,8 +338,13 @@ int32_t aq_allocateBuffer(Ctx& x, uint32_t qid, uint32_t byteSize, GuestPtr outB
 int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf);
 int32_t aq_allocateBufferWithPacketDescriptions(Ctx& x, uint32_t qid, uint32_t byteSize, uint32_t descs, GuestPtr outBuf) {
     const int32_t r = aq_allocateBuffer(x, qid, byteSize, outBuf);
-    if (r != 0 || !descs) return r;
+    if (r != 0) return r;
     const uint32_t hdr = x.mem.read<uint32_t>(outBuf);
+    // A compressed file is presented to the app as PCM, one frame per "packet". A game written
+    // for the compressed file asks for no descriptions when it sees a constant packet size, yet
+    // still copies one description per packet it read (PvZ's music stream, between its primed
+    // and its queue buffers). Give the buffer room for as many as it can hold frames.
+    if (!descs) descs = std::min<uint32_t>(std::max(byteSize, 16u) / 2, (8u << 20) / 16);
     // 16-byte AudioStreamPacketDescriptions: refuse a count whose size wraps or cannot be allocated.
     const uint32_t descBlock = descs <= (64u << 20) / 16 ? x.proc.heap().allocZeroed(descs * 16) : 0;
     if (!descBlock) { aq_freeBuffer(x, qid, hdr); x.mem.write<uint32_t>(outBuf, 0); return -108; }
@@ -283,6 +364,24 @@ int32_t aq_freeBuffer(Ctx& x, uint32_t qid, GuestPtr buf) {
 }
 // Hands finished buffers back to the app's callback (on the main run loop).
 void aqPumpInput(Process& p, CPU::Cpu& c, uint32_t qid);
+int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate);
+constexpr uint32_t kAqIsRunning = 0x6171726E;   // 'aqrn' kAudioQueueProperty_IsRunning
+// Tells the queue's listeners that a property changed: proc(userData, queue, property).
+void aqNotify(Process& p, CPU::Cpu& c, uint32_t qid, uint32_t prop) {
+    auto& st = p.service<AudioToolboxState>();
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end() || p.terminating() || p.stopping()) return;
+    const std::vector<AudioQueueInstance::Listener> listeners = it->second.listeners;   // a listener may remove itself
+    for (const auto& l : listeners) {
+        if (l.prop != prop || !l.proc || !st.queues.count(qid)) continue;
+        p.callGuest(c, l.proc, {l.userData, qid, prop});
+    }
+}
+// The same, from the main run loop's next pass (the caller is inside an AudioQueue call).
+void aqNotifyLater(Process& p, uint32_t qid, uint32_t prop) {
+    Process* process = &p;
+    Foundation::mainRunLoop(p).post([process, qid, prop](CPU::Cpu& c) { aqNotify(*process, c, qid, prop); });
+}
 void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
     auto& st = p.service<AudioToolboxState>();
     auto it = st.queues.find(qid);
@@ -293,27 +392,56 @@ void aqPump(Process& p, CPU::Cpu& c, uint32_t qid) {
         if (p.terminating() || p.stopping() || !cb || !st.queues.count(qid)) break;
         p.callGuest(c, cb, {ud, qid, uint32_t(buf)});
     }
+    // A queue asked to stop once its sound has played out: nothing left, so it stops now.
+    it = st.queues.find(qid);
+    if (it == st.queues.end() || !it->second.draining) return;
+    AudioQueueInstance& q = it->second;
+    if (MX(p).queuedCount(q.voice) != 0 || MX(p).processedCount(q.voice) != 0) return;
+    q.draining = false;
+    q.running = false;
+    audioTrace("AudioQueueDrained", qid);
+    MX(p).setPaused(q.voice, true);
+    const bool dispose = q.disposeWhenDrained;
+    aqNotify(p, c, qid, kAqIsRunning);
+    if (dispose && st.queues.count(qid)) { Ctx x{p, c, p.mem()}; aq_dispose(x, qid, true); }
 }
 int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr);
 // AudioQueueEnqueueBufferWithParameters(q, buf, nDescs, descs, trimStart, trimEnd, nParams, params, startTime, actualStart)
 void aq_enqueueWithParams(Ctx& x) {
-    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t sp = x.cpu.r[13];
     const uint32_t actual = x.mem.read<uint32_t>(sp + 20);
     if (actual) for (uint32_t i = 0; i < 64; i += 4) x.mem.write<uint32_t>(actual + i, 0);   // AudioTimeStamp: "now"
     x.cpu.r[0] = uint32_t(aq_enqueueBuffer(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]));
 }
-int32_t aq_addPropertyListener(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
-int32_t aq_removePropertyListener(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
+int32_t aq_addPropertyListener(Ctx& x, uint32_t qid, uint32_t prop, uint32_t proc, uint32_t userData) {
+    auto& st = ATS(x);
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end()) return -50;
+    audioTrace("AudioQueueAddPropertyListener", qid, prop);
+    if (!proc) return -50;
+    if (it->second.listeners.size() >= 64) return -108;   // no room: the caller must not wait for a notice that never comes
+    it->second.listeners.push_back({prop, proc, userData});
+    return 0;
+}
+int32_t aq_removePropertyListener(Ctx& x, uint32_t qid, uint32_t prop, uint32_t proc, uint32_t userData) {
+    auto& st = ATS(x);
+    auto it = st.queues.find(qid);
+    if (it == st.queues.end()) return -50;
+    auto& v = it->second.listeners;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const auto& l) { return l.prop == prop && l.proc == proc && l.userData == userData; }), v.end());
+    return 0;
+}
 int32_t aq_getProperty(Ctx& x, uint32_t qid, uint32_t prop, GuestPtr outData, GuestPtr ioSize) {
     if (outData && ioSize) {
         const uint32_t sz = x.mem.read<uint32_t>(ioSize);
-        if (prop == 0x61717275 /* 'aqru' kAudioQueueProperty_IsRunning */ && sz >= 4) {
+        if ((prop == kAqIsRunning || prop == 0x61717275 /* 'aqru', an older spelling here */) && sz >= 4) {
             bool running = false;
             auto& st = ATS(x);
             if (st.queues.count(qid)) running = st.queues[qid].running;
             x.mem.write<uint32_t>(outData, running ? 1 : 0);
         } else if (sz >= 4) {
             x.mem.write<uint32_t>(outData, 0);
+            defaulted(x, "AudioQueueGetProperty(" + code4(prop) + ") answered 0");
         }
     }
     return 0;
@@ -420,7 +548,9 @@ int32_t aq_enqueueBuffer(Ctx& x, uint32_t qid, GuestPtr buf, uint32_t, GuestPtr)
     const uint32_t byteSize = x.mem.read<uint32_t>(buf + 8);
     audioTrace("AudioQueueEnqueueBuffer", qid, byteSize);
     std::vector<int16_t> stereo;
-    if (dataPtr && byteSize > 0) {
+    if (q.mp3) {
+        if (const int rate = decodeMp3Buffer(x, q, buf, stereo)) q.sampleRate = rate;
+    } else if (dataPtr && byteSize > 0) {
         const int bps = std::max(1, q.bitsPerChannel / 8), ch = std::max(1, q.channels);
         const size_t frames = byteSize / size_t(bps * (q.nonInterleaved ? 1 : ch));
         stereo.resize(frames * 2);
@@ -454,7 +584,13 @@ int32_t aq_start(Ctx& x, uint32_t qid, GuestPtr) {
     audioTrace("AudioQueueStart", qid);
     if (!ATS(x).queues.count(qid)) return 0;
     auto& q = ATS(x).queues[qid];
+    const bool wasRunning = q.running;
     q.running = true;
+    // A stop asked for before the start (AudioQueueStop(queue, false) right after the last
+    // buffer, then AudioQueueStart: how Talking Larry plays its answer) still ends the queue
+    // once what is queued has played.
+    if (!q.draining) q.disposeWhenDrained = false;
+    if (!wasRunning) aqNotifyLater(x.proc, qid, kAqIsRunning);
     if (q.input) {
         q.last = std::chrono::steady_clock::now();
         q.dueFrames = 0;
@@ -476,10 +612,20 @@ int32_t aq_pause(Ctx& x, uint32_t qid) {
     MX(x.proc).setPaused(q.voice, true);
     return 0;
 }
-int32_t aq_stop(Ctx& x, uint32_t qid, bool) {
+int32_t aq_stop(Ctx& x, uint32_t qid, bool immediate) {
+    audioTrace("AudioQueueStop", qid, immediate);
     if (!ATS(x).queues.count(qid)) return 0;
     auto& q = ATS(x).queues[qid];
+    // Not immediate: the sound already queued plays to its end, and the queue stops then
+    // (aqPump). Stopping at once cut a Talking game's answer off after its first buffer.
+    if (!immediate && !q.input && !q.offline && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
+        q.draining = true;   // also before the queue has started: it stops after playing what is queued
+        return 0;
+    }
+    const bool wasRunning = q.running;
     q.running = false;
+    q.draining = false;
+    if (wasRunning) aqNotifyLater(x.proc, qid, kAqIsRunning);
     if (q.input) { micRelease(x, q); q.pending.clear(); return 0; }
     if (q.offline) offlineDiscard(q);
     MX(x.proc).stop(q.voice);
@@ -488,6 +634,13 @@ int32_t aq_stop(Ctx& x, uint32_t qid, bool) {
     return 0;
 }
 int32_t aq_flush(Ctx&, uint32_t) { return 0; }
+// The mixer pulls enqueued buffers when it plays them, so there is nothing to decode ahead of Start.
+// Reports no frames prepared, which callers treat as "priming done".
+int32_t aq_prime(Ctx& x, uint32_t qid, uint32_t, GuestPtr outPrepared) {
+    if (!ATS(x).queues.count(qid)) return -50;   // kAudio_ParamError
+    if (outPrepared) x.mem.write<uint32_t>(outPrepared, 0);
+    return 0;
+}
 int32_t aq_reset(Ctx& x, uint32_t qid) {
     if (!ATS(x).queues.count(qid)) return 0;
     auto& q = ATS(x).queues[qid];
@@ -496,15 +649,39 @@ int32_t aq_reset(Ctx& x, uint32_t qid) {
     if (q.offline) offlineDiscard(q);
     return 0;
 }
-int32_t aq_dispose(Ctx& x, uint32_t qid, bool) {
+int32_t aq_dispose(Ctx& x, uint32_t qid, bool immediate) {
+    audioTrace("AudioQueueDispose", qid, immediate);
+    if (std::getenv("HVM_AUDIO_TRACE")) {
+        static int dumps = 0;
+        if (dumps++ < 8) {
+            std::fprintf(stderr, "[audio-trace] Dispose lr=%08x sp=%08x stack",
+                         x.cpu.r[14], x.cpu.r[13]);
+            const uint32_t sp = x.cpu.r[13];
+            for (int i = 0; i < 12; ++i) {
+                const uint32_t addr = sp + uint32_t(i) * 4;
+                if (!x.mem.isMapped(addr)) break;
+                std::fprintf(stderr, " %08x", x.mem.read<uint32_t>(addr));
+            }
+            std::fputc('\n', stderr);
+        }
+    }
     auto& st = ATS(x);
     if (st.queues.count(qid)) {
         auto& q = st.queues[qid];
+        // Not immediate: the queue goes away once what is queued has played.
+        if (!immediate && !q.input && !q.offline && q.running && q.pump && (MX(x.proc).queuedCount(q.voice) != 0 || MX(x.proc).processedCount(q.voice) != 0)) {
+            q.draining = q.disposeWhenDrained = true;
+            return 0;
+        }
         if (q.pump) q.pump->valid = false;
         micRelease(x, q);
         if (q.timeStamp) x.proc.heap().free(q.timeStamp);
         if (q.voice) MX(x.proc).release(q.voice);
-        for (const auto& b : q.buffers) if (b.guestAddr) x.proc.heap().free(b.guestAddr);
+        for (const auto& b : q.buffers) {
+            if (!b.guestAddr) continue;
+            if (const uint32_t descs = x.mem.read<uint32_t>(b.guestAddr + 20)) x.proc.heap().free(descs);   // its packet descriptions
+            x.proc.heap().free(b.guestAddr);
+        }
         st.queues.erase(qid);
     }
     return 0;
@@ -556,6 +733,16 @@ void offlineTake(Ctx& x, AudioQueueInstance& q, uint32_t buf) {
     // The header is guest memory: trust only the capacity recorded at allocation.
     uint32_t capacity = 0;
     for (const auto& b : q.buffers) if (b.guestAddr == buf) capacity = b.capacity;
+    if (q.mp3) {   // MPEG frames: decode, then the same channel mapping as below
+        std::vector<int16_t> stereo;
+        if (const int rate = decodeMp3Buffer(x, q, buf, stereo)) q.sampleRate = rate;
+        for (size_t f = 0; f + 1 < stereo.size(); f += 2) {
+            const float l = float(stereo[f]) / 32768.0f, r = float(stereo[f + 1]) / 32768.0f;
+            if (q.outChannels == 1) { q.offlineSource.push_back(0.5f * (l + r)); continue; }
+            for (int c = 0; c < q.outChannels; ++c) q.offlineSource.push_back(c == 0 ? l : r);
+        }
+        return;
+    }
     const uint32_t data = x.mem.read<uint32_t>(buf + 4), bytes = std::min(x.mem.read<uint32_t>(buf + 8), capacity);
     const int bps = std::max(1, q.bitsPerChannel / 8), ch = std::max(1, q.channels);
     const size_t frames = data ? bytes / size_t(bps * ch) : 0;
@@ -630,6 +817,7 @@ int32_t aq_offlineRender(Ctx& x, uint32_t qid, GuestPtr, GuestPtr buffer, uint32
 }
 
 // AudioFile & AudioUnit stubs
+bool afIndexMp3(AudioFileInstance& af);
 int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile) {
     if (!urlRef || !outFile) return -50;
     const std::string path = Foundation::urlFilePath(x, urlRef);
@@ -640,8 +828,8 @@ int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile)
     AudioFileInstance af;
     af.id = fid;
     af.rawBytes.assign((std::istreambuf_iterator<char>(in)), {});
-    af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
-    if (af.decoded.stereoPcm.empty()) { x.mem.write<uint32_t>(outFile, 0); return 1954115647; }
+    if (!afIndexMp3(af)) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
+    if (!af.mp3 && af.decoded.stereoPcm.empty()) { x.mem.write<uint32_t>(outFile, 0); return 1954115647; }
     st.files[fid] = std::move(af);
     x.mem.write<uint32_t>(outFile, fid);
     return 0;
@@ -650,19 +838,33 @@ int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile)
 // have. Returning 0 without writing leaves the caller's variable as stack garbage (Fruit
 // Ninja then sized a music buffer at 1.7 GB from it).
 constexpr int32_t kAudioFileUnsupportedProperty = 0x7074793F;   // 'pty?'
+// An MP3 source is presented as its packets (one MPEG frame each), not decoded.
+bool afIndexMp3(AudioFileInstance& af) {
+    auto index = std::make_shared<Audio::Mp3Packets>();
+    if (!Audio::indexMp3(af.rawBytes.data(), af.rawBytes.size(), *index)) return false;
+    af.mp3 = std::move(index);
+    return true;
+}
 // The size of each property AudioFileGetProperty answers; 0 for one it does not.
-uint32_t afPropertySize(uint32_t prop) {
+uint32_t afPropertySize(const AudioFileInstance& af, uint32_t prop) {
+    if (af.mp3) switch (prop) {
+    case 0x666C7374: return 48;   // 'flst' one AudioFormatListItem: the stream's format and channel layout tag
+    case 0x646F6666: return 8;    // 'doff' offset of the audio data
+    case 0x62726174: return 4;    // 'brat' bit rate
+    default: break;
+    }
     switch (prop) {
     case 0x64666D74: return 40;   // 'dfmt' AudioStreamBasicDescription
     case 0x706E666F: return 16;   // 'pnfo' AudioFilePacketTableInfo
     case 0x62636E74: case 0x65647572: case 0x70636E74: return 8;   // 'bcnt' 'edur' 'pcnt'
     case 0x70737A65: case 0x706B7562: case 0x66666D74: return 4;   // 'psze' 'pkub' 'ffmt'
+    case 0x6672706B: case 0x706B6672: return 20;   // 'frpk' 'pkfr' AudioFramePacketTranslation (20 bytes on 32-bit)
     default: return 0;
     }
 }
 int32_t af_getPropertyInfo(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr outSize, GuestPtr outWritable) {
     if (!ATS(x).files.count(fid)) return -50;
-    const uint32_t sz = afPropertySize(prop);
+    const uint32_t sz = afPropertySize(ATS(x).files[fid], prop);
     audioTrace("AudioFileGetPropertyInfo", prop, sz);
     if (!sz) return kAudioFileUnsupportedProperty;
     if (outWritable) x.mem.write<uint32_t>(outWritable, 0);
@@ -686,11 +888,87 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
     if (!st.files.count(fid) || !outData || !ioSize) return -50;
     const AudioFileInstance& af = st.files[fid];
     const uint32_t cap = x.mem.read<uint32_t>(ioSize);
-    const uint32_t size = afPropertySize(prop);
+    const uint32_t size = afPropertySize(af, prop);
     audioTrace("AudioFileGetProperty", prop, cap);
     if (!size) return kAudioFileUnsupportedProperty;
     if (cap < size) return 0x2173697A;   // '!siz' kAudioFileBadPropertySizeError
     x.mem.write<uint32_t>(ioSize, size);
+    if (af.mp3) {
+        const Audio::Mp3Packets& m = *af.mp3;
+        const uint64_t frames = m.validFrames ? m.validFrames : uint64_t(m.packets.size()) * m.framesPerPacket;
+        const double seconds = m.sampleRate ? double(frames) / double(m.sampleRate) : 0.0;
+        auto format = [&](GuestPtr at) {   // AudioStreamBasicDescription of a variable-bit-rate compressed stream
+            x.mem.write<double>(at, double(m.sampleRate));
+            x.mem.write<uint32_t>(at + 8, kFormatMp3);
+            x.mem.write<uint32_t>(at + 12, 0);
+            x.mem.write<uint32_t>(at + 16, 0);                  // bytes per packet vary
+            x.mem.write<uint32_t>(at + 20, m.framesPerPacket);
+            x.mem.write<uint32_t>(at + 24, 0);
+            x.mem.write<uint32_t>(at + 28, uint32_t(m.channels));
+            x.mem.write<uint32_t>(at + 32, 0);
+            x.mem.write<uint32_t>(at + 36, 0);
+        };
+        switch (prop) {
+        case 0x64666D74: format(outData); break;                                       // 'dfmt'
+        case 0x666C7374:                                                               // 'flst'
+            format(outData);
+            x.mem.write<uint32_t>(outData + 40, m.channels == 1 ? 0x00640001u : 0x00650002u);   // kAudioChannelLayoutTag_Mono / _Stereo
+            x.mem.write<uint32_t>(outData + 44, 0);
+            break;
+        case 0x706E666F:                                                               // 'pnfo'
+            x.mem.write<uint64_t>(outData, frames);
+            x.mem.write<uint32_t>(outData + 8, uint32_t(m.primingFrames));
+            x.mem.write<uint32_t>(outData + 12, uint32_t(m.remainderFrames));
+            break;
+        case 0x62636E74: x.mem.write<uint64_t>(outData, m.dataBytes); break;           // 'bcnt'
+        case 0x65647572: x.mem.write<double>(outData, seconds); break;                 // 'edur'
+        case 0x70636E74: x.mem.write<uint64_t>(outData, m.packets.size()); break;      // 'pcnt'
+        case 0x70737A65: case 0x706B7562: x.mem.write<uint32_t>(outData, m.maxPacketSize); break;   // 'psze' 'pkub'
+        case 0x66666D74: x.mem.write<uint32_t>(outData, 0x4D504733); break;            // 'ffmt' = 'MPG3'
+        case 0x646F6666: x.mem.write<uint64_t>(outData, m.dataOffset); break;          // 'doff'
+        case 0x62726174: x.mem.write<uint32_t>(outData, seconds > 0 ? uint32_t(double(m.dataBytes) * 8.0 / seconds) : 0); break;   // 'brat'
+        case 0x6672706B: {   // 'frpk' FrameToPacket: mFrame in, mPacket and mFrameOffsetInPacket out
+            const int64_t fpp = int64_t(m.framesPerPacket ? m.framesPerPacket : 1);
+            const int64_t frame = int64_t(x.mem.read<uint64_t>(outData));
+            const int64_t packet = frame / fpp;
+            x.mem.write<uint64_t>(outData + 8, uint64_t(packet));
+            x.mem.write<uint32_t>(outData + 16, uint32_t(frame - packet * fpp));
+            break;
+        }
+        case 0x706B6672: {   // 'pkfr' PacketToFrame: mPacket in, mFrame out
+            const int64_t packet = int64_t(x.mem.read<uint64_t>(outData + 8));
+            x.mem.write<uint64_t>(outData, uint64_t(packet * int64_t(m.framesPerPacket)));
+            x.mem.write<uint32_t>(outData + 16, 0);
+            break;
+        }
+        default: defaulted(x, "AudioFileGetProperty(" + code4(prop) + ") of an MP3 left the output unwritten"); break;
+        }
+        if (std::getenv("HVM_AUDIO_TRACE")) {
+            const char a = char(prop >> 24), b = char(prop >> 16), c = char(prop >> 8), d = char(prop);
+            if (prop == 0x706E666F)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'pnfo' valid=%llu priming=%d remainder=%d\n",
+                             (unsigned long long)x.mem.read<uint64_t>(outData),
+                             int(x.mem.read<uint32_t>(outData + 8)), int(x.mem.read<uint32_t>(outData + 12)));
+            else if (prop == 0x65647572)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'edur' %f\n", x.mem.read<double>(outData));
+            else if (prop == 0x62636E74)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'bcnt' %llu\n", (unsigned long long)x.mem.read<uint64_t>(outData));
+            else if (prop == 0x70636E74)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'pcnt' %llu\n", (unsigned long long)x.mem.read<uint64_t>(outData));
+            else if (prop == 0x70737A65 || prop == 0x706B7562)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty '%c%c%c%c' %u\n", a, b, c, d, x.mem.read<uint32_t>(outData));
+            else if (prop == 0x64666D74)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'dfmt' rate=%g fmt=%08x fpp=%u ch=%u\n",
+                             x.mem.read<double>(outData), x.mem.read<uint32_t>(outData + 8),
+                             x.mem.read<uint32_t>(outData + 20), x.mem.read<uint32_t>(outData + 28));
+            else if (prop == 0x6672706B)
+                std::fprintf(stderr, "[audio-trace] AudioFileGetProperty 'frpk' frame=%llu packet=%llu offset=%u\n",
+                             (unsigned long long)x.mem.read<uint64_t>(outData),
+                             (unsigned long long)x.mem.read<uint64_t>(outData + 8),
+                             x.mem.read<uint32_t>(outData + 16));
+        }
+        return 0;
+    }
     if (prop == 0x706E666F /* 'pnfo' packet table: decoded PCM has no priming or remainder */) {
         noteOnce(x, "AudioFile packet table priming/remainder (reported as 0; the source's are not read)");
         x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
@@ -716,6 +994,14 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<uint32_t>(outData, 2 * afChannels(af));
     } else if (prop == 0x66666D74 /* 'ffmt' file format */ && cap >= 4) {
         x.mem.write<uint32_t>(outData, 0x63616666 /* 'caff' */);
+    } else if (prop == 0x6672706B /* 'frpk' FrameToPacket: decoded PCM is one frame per packet */) {
+        const int64_t frame = int64_t(x.mem.read<uint64_t>(outData));
+        x.mem.write<uint64_t>(outData + 8, uint64_t(frame));
+        x.mem.write<uint32_t>(outData + 16, 0);
+    } else if (prop == 0x706B6672 /* 'pkfr' PacketToFrame */) {
+        const int64_t packet = int64_t(x.mem.read<uint64_t>(outData + 8));
+        x.mem.write<uint64_t>(outData, uint64_t(packet));
+        x.mem.write<uint32_t>(outData + 16, 0);
     }
     return 0;
 }
@@ -723,6 +1009,13 @@ int32_t af_readBytes(Ctx& x, uint32_t fid, bool, int64_t inStartingByte, GuestPt
     auto& st = ATS(x);
     if (!st.files.count(fid) || !ioNumBytes || !outBuffer) return -50;
     const AudioFileInstance& af = st.files[fid];
+    if (af.mp3) {   // bytes of the audio data, counted from its first packet
+        const uint64_t start = std::min<uint64_t>(uint64_t(std::max<int64_t>(0, inStartingByte)), af.mp3->dataBytes);
+        const uint32_t n = uint32_t(std::min<uint64_t>(x.mem.read<uint32_t>(ioNumBytes), af.mp3->dataBytes - start));
+        if (n) x.mem.copyIn(outBuffer, af.rawBytes.data() + af.mp3->dataOffset + start, n);
+        x.mem.write<uint32_t>(ioNumBytes, n);
+        return n ? 0 : -39;   // kAudioFileEndOfFileError
+    }
     const uint32_t bpf = 2 * afChannels(af);
     const uint64_t frames = af.decoded.stereoPcm.size() / 2;
     const uint32_t req = x.mem.read<uint32_t>(ioNumBytes);
@@ -749,7 +1042,7 @@ int32_t af_close(Ctx& x, uint32_t fid) {
 // (32-bit iOS passes the SInt64 position in r1:r2, no register pairing.)
 void af_openWithCallbacks(Ctx& x) {
     const uint32_t client = x.cpu.r[0], readFn = x.cpu.r[1], getSizeFn = x.cpu.r[3];
-    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t sp = x.cpu.r[13];
     const uint32_t outFile = x.mem.read<uint32_t>(sp + 8);
     if (!readFn || !getSizeFn || !outFile) { x.cpu.r[0] = uint32_t(-50); return; }
     const int64_t size = int64_t(x.proc.callGuest(x.cpu, getSizeFn, {client}));
@@ -773,9 +1066,9 @@ void af_openWithCallbacks(Ctx& x) {
     AudioFileInstance af;
     af.id = st.nextFileId++;
     af.rawBytes = std::move(bytes);
-    af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
-    audioTrace("AudioFileOpenWithCallbacks", uint32_t(af.rawBytes.size()), af.decoded.stereoPcm.size() / 2);
-    if (af.decoded.stereoPcm.empty()) { x.cpu.r[0] = uint32_t(1954115647); return; }
+    if (!afIndexMp3(af)) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
+    audioTrace("AudioFileOpenWithCallbacks", uint32_t(af.rawBytes.size()), af.mp3 ? af.mp3->packets.size() : af.decoded.stereoPcm.size() / 2);
+    if (!af.mp3 && af.decoded.stereoPcm.empty()) { x.cpu.r[0] = uint32_t(1954115647); return; }
     x.mem.write<uint32_t>(outFile, af.id);
     st.files[af.id] = std::move(af);
     x.cpu.r[0] = 0;
@@ -784,12 +1077,41 @@ void af_openWithCallbacks(Ctx& x) {
 // ioNumPackets*, outBuffer). Our files present 16-bit stereo LPCM: one packet = one 4-byte frame.
 void af_readPackets(Ctx& x, bool numBytesIsInOut) {
     const uint32_t fid = x.cpu.r[0], ioNumBytes = x.cpu.r[2];
-    const uint32_t sp = x.cpu.r[CPU::kSP];
+    const uint32_t sp = x.cpu.r[13];
     const int64_t start = int64_t((uint64_t(x.mem.read<uint32_t>(sp + 4)) << 32) | x.mem.read<uint32_t>(sp));
     const uint32_t ioNumPackets = x.mem.read<uint32_t>(sp + 8), out = x.mem.read<uint32_t>(sp + 12);
     auto& st = ATS(x);
     if (!st.files.count(fid) || !ioNumPackets || !out) { x.cpu.r[0] = uint32_t(-50); return; }
     const AudioFileInstance& af = st.files[fid];
+    if (af.mp3) {
+        // Whole packets, back to back, with a description of each: its offset in the caller's
+        // buffer and its size. AudioFileReadPacketData stops at the buffer size it was given;
+        // AudioFileReadPackets trusts the caller to have sized the buffer from the packet
+        // size upper bound.
+        const auto& packets = af.mp3->packets;
+        const uint32_t descs = x.cpu.r[3];
+        const uint64_t first = uint64_t(std::max<int64_t>(0, start));
+        const uint32_t want = x.mem.read<uint32_t>(ioNumPackets);
+        const uint64_t room = numBytesIsInOut && ioNumBytes ? x.mem.read<uint32_t>(ioNumBytes) : ~0ull;
+        uint32_t n = 0, bytes = 0;
+        while (n < want && first + n < packets.size()) {
+            const auto& [offset, size] = packets[size_t(first + n)];
+            if (uint64_t(bytes) + size > room) break;
+            x.mem.copyIn(out + bytes, af.rawBytes.data() + offset, size);
+            if (descs) {
+                x.mem.write<uint64_t>(descs + n * 16, bytes);       // mStartOffset
+                x.mem.write<uint32_t>(descs + n * 16 + 8, 0);        // mVariableFramesInPacket
+                x.mem.write<uint32_t>(descs + n * 16 + 12, size);    // mDataByteSize
+            }
+            bytes += size;
+            ++n;
+        }
+        audioTrace("AudioFileReadPackets", uint32_t(first), n);
+        x.mem.write<uint32_t>(ioNumPackets, n);
+        if (ioNumBytes) x.mem.write<uint32_t>(ioNumBytes, bytes);
+        x.cpu.r[0] = 0;
+        return;
+    }
     const uint32_t bpf = 2 * afChannels(af);
     const uint64_t frames = af.decoded.stereoPcm.size() / 2;
     uint64_t want = x.mem.read<uint32_t>(ioNumPackets);
@@ -922,7 +1244,7 @@ int32_t af_createWithURL(Ctx& x, uint32_t url, uint32_t fileType, GuestPtr fmt, 
 // AudioFileWriteBytes(fid, useCache, SInt64 startingByte (r2:r3), UInt32* ioNumBytes, const void* buffer)
 void af_writeBytes(Ctx& x) {
     auto& st = ATS(x);
-    const uint32_t fid = x.cpu.r[0], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fid = x.cpu.r[0], sp = x.cpu.r[13];
     const uint64_t start = (uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2];
     const uint32_t ioNum = x.mem.read<uint32_t>(sp), buf = x.mem.read<uint32_t>(sp + 4);
     auto it = st.files.find(fid);
@@ -934,7 +1256,7 @@ void af_writeBytes(Ctx& x) {
 // AudioFileWritePackets(fid, useCache, numBytes, packetDescs, SInt64 startPacket (stack), UInt32* ioNumPackets, buffer)
 void af_writePackets(Ctx& x) {
     auto& st = ATS(x);
-    const uint32_t fid = x.cpu.r[0], numBytes = x.cpu.r[2], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fid = x.cpu.r[0], numBytes = x.cpu.r[2], sp = x.cpu.r[13];
     const uint64_t startPacket = (uint64_t(x.mem.read<uint32_t>(sp + 4)) << 32) | x.mem.read<uint32_t>(sp);
     const uint32_t ioPackets = x.mem.read<uint32_t>(sp + 8), buf = x.mem.read<uint32_t>(sp + 12);
     auto it = st.files.find(fid);
@@ -956,6 +1278,9 @@ int32_t af_setProperty(Ctx& x, uint32_t fid, uint32_t, uint32_t, GuestPtr) {
 
 struct ExtFile {
     DecodedAudio audio;
+    std::shared_ptr<Audio::AudioSource> source;
+    std::unique_ptr<Audio::SourceWindow> window;
+    uint64_t frames() const { return source ? source->frames() : audio.stereoPcm.size() / 2; }
     Asbd file, client;
     double pos = 0;   // in source frames
     std::shared_ptr<AudioWriter> writer;   // set for a file being written
@@ -973,9 +1298,15 @@ Asbd fileFormatOf(const DecodedAudio& d) {
     return a;
 }
 
-uint32_t newExtFile(Ctx& x, DecodedAudio audio) {
+uint32_t newExtFile(Ctx& x, DecodedAudio audio, std::shared_ptr<Audio::AudioSource> source = {}) {
     ExtFile f;
     f.audio = std::move(audio);
+    if (source) {
+        f.audio.sampleRate = source->sampleRate();
+        f.audio.channels = source->channels();
+        f.source = std::move(source);
+        f.window = std::make_unique<Audio::SourceWindow>();
+    }
     f.file = f.client = fileFormatOf(f.audio);
     auto& st = EAS(x);
     const uint32_t id = st.next++;
@@ -986,6 +1317,10 @@ uint32_t newExtFile(Ctx& x, DecodedAudio audio) {
 int32_t eaf_openURL(Ctx& x, uint32_t url, GuestPtr out) {
     if (!url || !out) return -50;
     const std::string path = Foundation::urlFilePath(x, url);
+    if (auto source = Audio::openStream(path)) {
+        x.mem.write<uint32_t>(out, newExtFile(x, {}, std::move(source)));
+        return 0;
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) return -43;   // fnfErr
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
@@ -1000,7 +1335,18 @@ int32_t eaf_openURL(Ctx& x, uint32_t url, GuestPtr out) {
 int32_t eaf_wrap(Ctx& x, uint32_t afid, bool, GuestPtr out) {
     auto& st = ATS(x);
     if (!st.files.count(afid) || !out) return -50;
-    x.mem.write<uint32_t>(out, newExtFile(x, st.files[afid].decoded));
+    AudioFileInstance& af = st.files[afid];
+    // ExtAudioFile hands out decoded audio. An MP3 AudioFile holds only its packets until now.
+    if (af.mp3 && af.decoded.stereoPcm.empty()) {
+        auto bytes = af.rawBytes;
+        if (auto source = Audio::openStream(bytes)) {
+            x.mem.write<uint32_t>(out, newExtFile(x, {}, std::move(source)));
+            return 0;
+        }
+    }
+    if (af.mp3 && af.decoded.stereoPcm.empty()) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
+    if (af.decoded.stereoPcm.empty()) return 1954115647;   // 'typ?' nothing this file's audio can be decoded to
+    x.mem.write<uint32_t>(out, newExtFile(x, af.decoded));
     return 0;
 }
 int32_t eaf_dispose(Ctx& x, uint32_t id) {
@@ -1071,10 +1417,13 @@ int32_t eaf_getProperty(Ctx& x, uint32_t id, uint32_t prop, GuestPtr ioSize, Gue
         writeAsbd(x, out, prop == kEafFileFormat ? f.file : f.client);
         if (ioSize) x.mem.write<uint32_t>(ioSize, 40);
     } else if (prop == kEafLengthFrames) {
-        x.mem.write<uint64_t>(out, uint64_t(f.audio.stereoPcm.size() / 2));
+        x.mem.write<uint64_t>(out, f.frames());
         if (ioSize) x.mem.write<uint32_t>(ioSize, 8);
     } else if (prop == kEafAudioFile) {
         x.mem.write<uint32_t>(out, 0);
+        if (ioSize) x.mem.write<uint32_t>(ioSize, 4);
+    } else if (prop == 0x61636E76) {   // 'acnv' kExtAudioFileProperty_AudioConverter: the file stands for its converter
+        x.mem.write<uint32_t>(out, id);
         if (ioSize) x.mem.write<uint32_t>(ioSize, 4);
     } else {
         return 0x77686174;   // 'what': kAudioFileUnsupportedPropertyError-ish
@@ -1111,7 +1460,7 @@ int32_t eaf_read(Ctx& x, uint32_t id, GuestPtr ioFrames, GuestPtr abl) {
         const uint32_t cap = x.mem.read<uint32_t>(abl + 4 + b * 12 + 4);
         want = std::min(want, cap / std::max<uint32_t>(1, bps * chPerBuf));
     }
-    const size_t srcFrames = f.audio.stereoPcm.size() / 2;
+    const uint64_t srcFrames = f.frames();
     const double step = double(f.audio.sampleRate) / std::max(1.0, c.sampleRate);
     uint32_t done = 0;
     auto put = [&](uint32_t b, uint32_t index, float v) {
@@ -1126,11 +1475,18 @@ int32_t eaf_read(Ctx& x, uint32_t id, GuestPtr ioFrames, GuestPtr abl) {
         const double sp = f.pos + double(done) * step;
         const size_t i0 = size_t(sp);
         if (i0 >= srcFrames) break;
-        const size_t i1 = std::min(i0 + 1, srcFrames - 1);
+        const uint64_t i1 = std::min<uint64_t>(i0 + 1, srcFrames - 1);
         const float t = float(sp - double(i0));
         float lr[2];
+        int16_t current[2], next[2];
+        if (f.source) {
+            if (!f.window->pair(*f.source, i0, current, next)) break;
+        } else {
+            std::copy_n(f.audio.stereoPcm.data() + i0 * 2, 2, current);
+            std::copy_n(f.audio.stereoPcm.data() + i1 * 2, 2, next);
+        }
         for (int ch = 0; ch < 2; ++ch)
-            lr[ch] = (float(f.audio.stereoPcm[i0 * 2 + ch]) * (1 - t) + float(f.audio.stereoPcm[i1 * 2 + ch]) * t) / 32768.0f;
+            lr[ch] = (float(current[ch]) * (1 - t) + float(next[ch]) * t) / 32768.0f;
         for (uint32_t ch = 0; ch < c.channels; ++ch) {
             const float v = c.channels == 1 ? (lr[0] + lr[1]) * 0.5f : lr[std::min<uint32_t>(ch, 1)];
             if (nonInterleaved) { if (ch < nbuf) put(ch, done, v); }
@@ -1147,7 +1503,9 @@ void eaf_seek(Ctx& x) {
     auto it = EAS(x).files.find(x.cpu.r[0]);
     if (it == EAS(x).files.end()) { x.cpu.r[0] = uint32_t(-50); return; }
     const int64_t frame = int64_t((uint64_t(x.cpu.r[2]) << 32) | x.cpu.r[1]);
-    it->second.pos = double(std::max<int64_t>(0, frame)) * double(it->second.audio.sampleRate) / std::max(1.0, it->second.client.sampleRate);
+    auto& f = it->second;
+    f.pos = double(std::max<int64_t>(0, frame)) * double(f.audio.sampleRate) / std::max(1.0, f.client.sampleRate);
+    if (f.source) f.pos = std::min(f.pos, double(f.frames()));
     x.cpu.r[0] = 0;
 }
 int32_t eaf_tell(Ctx& x, uint32_t id, GuestPtr out) {
@@ -1157,13 +1515,27 @@ int32_t eaf_tell(Ctx& x, uint32_t id, GuestPtr out) {
     return 0;
 }
 
-uint32_t ac_findNext(Ctx&, uint32_t, GuestPtr) { return 1; }
-int32_t ac_instanceNew(Ctx& x, uint32_t, GuestPtr outUnit) {
+// The component handle is 1 + the index of the description asked for, so the unit made
+// from it knows whether it is an output unit or a mixer.
+uint32_t ac_findNext(Ctx& x, uint32_t, GuestPtr desc) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    std::array<uint32_t, 5> d{};
+    if (desc) for (int i = 0; i < 5; ++i) d[size_t(i)] = x.mem.read<uint32_t>(desc + uint32_t(i) * 4);
+    for (size_t i = 0; i < st.components.size(); ++i) if (st.components[i] == d) return uint32_t(i + 1);
+    if (st.components.size() >= 256) return 1;
+    st.components.push_back(d);
+    return uint32_t(st.components.size());
+}
+int32_t ac_instanceNew(Ctx& x, uint32_t component, GuestPtr outUnit) {
     if (!outUnit) return -50;
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     const uint32_t uid = st.nextUnitId++;
     st.units[uid].id = uid;
+    if (component >= 1 && component <= st.components.size())
+        for (int i = 0; i < 5; ++i) st.units[uid].desc[i] = st.components[component - 1][size_t(i)];
+    audioTrace("AudioComponentInstanceNew", uid, (uint64_t(st.units[uid].desc[0]) << 32) | st.units[uid].desc[1]);
     x.mem.write<uint32_t>(outUnit, uid);
     return 0;
 }
@@ -1186,19 +1558,72 @@ int32_t ac_dispose(Ctx& x, uint32_t uid) {
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(uid);
     if (it == st.units.end()) return -50;
+    const std::map<uint32_t, uint32_t> buses = it->second.buses;
     auRelease(x, it->second);
     st.units.erase(it);
+    for (const auto& [element, bus] : buses) {
+        auto b = st.units.find(bus);
+        if (b == st.units.end()) continue;
+        auRelease(x, b->second);
+        st.units.erase(b);
+    }
     return 0;
+}
+// The unit that stands for one input of a mixer, made the first time the input is named.
+AudioUnitInstance& auBus(AudioToolboxState& st, AudioUnitInstance& mixer, uint32_t element) {
+    auto it = mixer.buses.find(element);
+    if (it != mixer.buses.end()) return st.units[it->second];
+    const uint32_t uid = st.nextUnitId++;
+    mixer.buses[element] = uid;   // before st.units grows: `mixer` lives in that map (references stay valid)
+    AudioUnitInstance& b = st.units[uid];
+    b.id = uid;
+    b.busNumber = element;
+    return b;
+}
+Audio::VoiceParams auVoiceParams(const AudioUnitInstance& u) {
+    Audio::VoiceParams p;
+    p.gain = u.gain;
+    p.pan = u.pan;
+    p.pitch = u.rate;
+    return p;
+}
+// The mixer inputs an output unit plays: those of the mixer connected to it.
+std::vector<uint32_t> auSourceBuses(AudioToolboxState& st, const AudioUnitInstance& out) {
+    std::vector<uint32_t> ids;
+    auto src = out.source ? st.units.find(out.source) : st.units.end();
+    if (src != st.units.end()) for (const auto& [element, bus] : src->second.buses) ids.push_back(bus);
+    return ids;
 }
 // Stack of the thread that calls an AudioUnit render callback (CoreAudio I/O thread size).
 constexpr uint32_t kAudioRenderStack = 512u << 10;
 int32_t au_init(Ctx& x, uint32_t uid) {
+    audioTrace("AudioUnitInitialize", uid);
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(uid);
     if (it == st.units.end()) return -50;
     it->second.initialized = true;
     return 0;
+}
+// Pauses the units a mixer renders: its inputs' voices and the units connected to its inputs
+// (converters with queued sound, nested mixers), without starting anything.
+void auPauseFeeders(Ctx& x, AudioToolboxState& st, uint32_t mixer, int depth) {
+    auto m = st.units.find(mixer);
+    if (m == st.units.end() || depth > 3) return;
+    std::vector<uint32_t> buses;
+    for (const auto& [element, bus] : m->second.buses) buses.push_back(bus);
+    for (uint32_t bus : buses) {
+        auto b = st.units.find(bus);
+        if (b == st.units.end()) continue;
+        b->second.running = false;   // an input with its own callback (a nested mixer's inputs too)
+        if (b->second.voice) MX(x.proc).setPaused(b->second.voice, true);
+        if (!b->second.feeder) continue;
+        auto f = st.units.find(b->second.feeder);
+        if (f == st.units.end()) continue;
+        if (f->second.isMixer()) { auPauseFeeders(x, st, f->first, depth + 1); continue; }
+        f->second.running = false;
+        if (f->second.voice) MX(x.proc).setPaused(f->second.voice, true);
+    }
 }
 int32_t au_stop(Ctx& x, uint32_t uid) {
     audioTrace("AudioOutputUnitStop", uid);
@@ -1208,6 +1633,13 @@ int32_t au_stop(Ctx& x, uint32_t uid) {
     if (it == st.units.end()) return -50;
     it->second.running = false;
     if (it->second.voice) MX(x.proc).setPaused(it->second.voice, true);
+    for (uint32_t bus : auSourceBuses(st, it->second)) {
+        AudioUnitInstance& b = st.units[bus];
+        b.running = false;
+        if (b.voice) MX(x.proc).setPaused(b.voice, true);
+    }
+    if (it->second.source) auPauseFeeders(x, st, it->second.source, 0);
+    if (it->second.isMixer()) auPauseFeeders(x, st, uid, 0);
     return 0;
 }
 int32_t au_uninit(Ctx& x, uint32_t uid) {
@@ -1218,6 +1650,17 @@ int32_t au_uninit(Ctx& x, uint32_t uid) {
     au_stop(x, uid);
     it->second.initialized = false;
     return 0;
+}
+// Frames per render call. iOS asks a RemoteIO callback for a power of two (1024 by default,
+// 256-512 with a short preferred I/O duration), and mixers written for it process in blocks
+// that divide it: Minion Rush's mixer loops forever when asked for 441 frames. About 10 ms,
+// rounded up to a power of two; an input played faster or slower is consumed at that rate.
+uint32_t auRenderFrames(double sampleRate, double rate) {
+    const double ideal = sampleRate * 0.01;
+    uint32_t n = 64;
+    while (n < ideal && n < 4096) n <<= 1;
+    if (rate == 1.0) return n;
+    return std::clamp<uint32_t>(uint32_t(std::lround(n * rate)), 1, 4096);
 }
 bool auPrepareBuffers(Ctx& x, AudioUnitInstance& u, uint32_t frames) {
     const bool nonInterleaved = (u.formatFlags & 32) != 0;
@@ -1253,14 +1696,15 @@ void auPump(Process& p, CPU::Cpu& c, uint32_t uid) {
     if (!it->second.running) { audioTrace("AudioUnitPumpStopped", uid); return; }
     if (!it->second.renderCallback) { audioTrace("AudioUnitPumpNoCallback", uid); return; }
     AudioUnitInstance& u = it->second;
-    const uint32_t frames = std::clamp<uint32_t>(uint32_t(std::lround(u.sampleRate * 0.01)), 1, 4096);
+    // A mixer input played faster or slower is consumed at that rate.
+    const uint32_t frames = auRenderFrames(u.sampleRate, double(u.rate));
     Ctx x{p, c, p.mem()};
     if (!auPrepareBuffers(x, u, frames)) { audioTrace("AudioUnitPumpBufferFailure", uid); return; }
     const uint32_t cb = u.renderCallback, ud = u.renderUserData;
     const uint32_t flags = u.actionFlags, ts = u.timeStamp, abl = u.bufferList;
     const bool first = u.sampleTime == 0;
     if (first) audioTrace("AudioUnitRenderBegin", uid, cb);
-    const int32_t status = int32_t(uint32_t(p.callGuest(c, cb, {ud, flags, ts, 0, frames, abl})));
+    const int32_t status = int32_t(uint32_t(p.callGuest(c, cb, {ud, flags, ts, u.busNumber, frames, abl})));
     if (first) audioTrace("AudioUnitRenderEnd", uid, uint32_t(status));
     it = st.units.find(uid); // the callback may stop, uninitialize or dispose the unit
     if (it == st.units.end()) { audioTrace("AudioUnitPumpDisposed", uid); return; }
@@ -1320,20 +1764,105 @@ void auPump(Process& p, CPU::Cpu& c, uint32_t uid) {
     }
     MX(p).enqueue(u.voice, sharePcm(stereo), int(std::lround(u.sampleRate)), u.nextTag++);
 }
+// Plays a mixer's inputs: each enabled input is pulled from its callback, or from the unit
+// connected to it, into a host voice of its own, so the host mixer does the resampling, gain
+// and panning. An input fed by another mixer plays that mixer's inputs.
+void auPumpMixerInputs(Ctx& x, AudioToolboxState& st, uint32_t mixer, int depth) {
+    auto m = st.units.find(mixer);
+    if (m == st.units.end() || depth > 3) return;
+    std::vector<uint32_t> buses;
+    for (const auto& [element, bus] : m->second.buses) buses.push_back(bus);
+    for (uint32_t bus : buses) {
+        auto b = st.units.find(bus);
+        if (b == st.units.end() || !b->second.enabled) continue;
+        if (b->second.renderCallback) {
+            if (!b->second.voice) b->second.voice = MX(x.proc).createStream(auVoiceParams(b->second));
+            if (!b->second.running) { b->second.running = true; MX(x.proc).setPaused(b->second.voice, false); }
+            auPump(x.proc, x.cpu, bus);
+            continue;
+        }
+        auto f = b->second.feeder ? st.units.find(b->second.feeder) : st.units.end();
+        if (f == st.units.end()) continue;
+        if (f->second.isMixer()) { auPumpMixerInputs(x, st, f->first, depth + 1); continue; }
+        if (!f->second.renderCallback) continue;
+        const Audio::VoiceParams params = auVoiceParams(b->second);   // the input's gain and pan
+        if (!f->second.voice) f->second.voice = MX(x.proc).createStream(params);
+        else MX(x.proc).setParams(f->second.voice, params);
+        if (!f->second.running) { f->second.running = true; MX(x.proc).setPaused(f->second.voice, false); }
+        auPump(x.proc, x.cpu, f->first);
+    }
+}
+// The units of an output unit's chain that asked for render notifications: the output unit
+// itself, the mixer feeding it and the mixers feeding that.
+void auChainUnits(AudioToolboxState& st, uint32_t uid, int depth, std::vector<uint32_t>& out) {
+    auto it = st.units.find(uid);
+    if (it == st.units.end() || depth > 4) return;
+    if (!it->second.notifies.empty()) out.push_back(uid);
+    if (it->second.source) auChainUnits(st, it->second.source, depth + 1, out);
+    std::vector<uint32_t> feeders;
+    for (const auto& [element, bus] : it->second.buses) {
+        auto b = st.units.find(bus);
+        if (b != st.units.end() && b->second.feeder) feeders.push_back(b->second.feeder);
+    }
+    for (uint32_t f : feeders) {
+        auto fu = st.units.find(f);
+        if (fu == st.units.end()) continue;
+        if (fu->second.isMixer()) auChainUnits(st, f, depth + 1, out);
+        else if (!fu->second.notifies.empty()) out.push_back(f);
+    }
+}
+// Calls a unit's render notifications: proc(userData, &flags, &timeStamp, bus, frames, buffers),
+// with kAudioUnitRenderAction_PreRender (4) or _PostRender (8) in the flags.
+void auNotify(Ctx& x, AudioToolboxState& st, uint32_t uid, uint32_t action) {
+    auto it = st.units.find(uid);
+    if (it == st.units.end() || it->second.notifies.empty()) return;
+    AudioUnitInstance& u = it->second;
+    const uint32_t frames = auRenderFrames(u.sampleRate);
+    // After a render of the unit's own callback, the post-render notice sees what was rendered
+    // and that render's time stamp: the buffers are left as the render filled them.
+    const bool rendered = action == 8 && u.renderCallback && u.bufferList;
+    if (!rendered && !auPrepareBuffers(x, u, frames)) return;
+    const uint32_t flags = u.actionFlags, ts = u.timeStamp, abl = u.bufferList;
+    if (action == 8 && !u.renderCallback) u.sampleTime += frames;   // a pumped unit's render already advanced it
+    const std::vector<AudioUnitInstance::Notify> list = u.notifies;   // a notification may remove itself
+    for (const auto& n : list) {
+        if (!st.units.count(uid) || x.proc.stopping()) return;
+        x.mem.write<uint32_t>(flags, action);
+        x.proc.callGuest(x.cpu, n.proc, {n.userData, flags, ts, 0, frames, abl});
+    }
+}
 void au_thread(Ctx& x, uint32_t uid) {
+    if (GuestThread* t = x.proc.currentThreadIfGuest()) t->role.store("audio render thread: runs the app's AudioUnit callback");
     // RemoteIO has real-time deadlines independent of the app's main run loop.
     // A guest thread gives its callback a real CPU context without letting a
     // slow Unity/CADisplayLink frame starve music and sound effects.
     auto next = std::chrono::steady_clock::now();
     while (!x.proc.stopping()) {
+        std::chrono::microseconds period(10000);   // one render's worth of the output unit's time
         {
             auto& st = ATS(x);
             std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
             auto it = st.units.find(uid);
             if (it == st.units.end()) return;
-            if (it->second.running) auPump(x.proc, x.cpu, uid);
+            std::vector<uint32_t> notified;
+            if (it->second.sampleRate > 0)
+                period = std::chrono::microseconds(int64_t(1e6 * auRenderFrames(it->second.sampleRate) / it->second.sampleRate));
+            if (it->second.running) auChainUnits(st, uid, 0, notified);
+            for (uint32_t n : notified) auNotify(x, st, n, 4);
+            it = st.units.find(uid);
+            if (it == st.units.end()) return;   // a notification disposed the output unit
+            if (!it->second.running) notified.clear();   // ...or stopped it: no render, no post-render notice
+            if (it->second.running && it->second.renderCallback) auPump(x.proc, x.cpu, uid);
+            else if (it->second.running) {
+                // Fed by a mixer: each enabled input is pulled from its own callback and played as
+                // its own voice, so the host mixer does the resampling, gain and panning.
+                auPumpMixerInputs(x, st, it->second.source, 0);
+                if (st.units.find(uid) == st.units.end()) return;   // a callback disposed the output unit
+            }
+            for (uint32_t n : notified) auNotify(x, st, n, 8);
+            if (st.units.find(uid) == st.units.end()) return;
         }
-        next += std::chrono::milliseconds(10);
+        next += period;
         const auto now = std::chrono::steady_clock::now();
         if (next + std::chrono::milliseconds(50) < now) next = now;
         std::this_thread::sleep_until(next);
@@ -1355,12 +1884,31 @@ int32_t au_start(Ctx& x, uint32_t uid) {
         u.pumpThread = x.proc.startThread(*x.proc.lookupSymbol("__hvm_audio_unit_pump"), uid, kAudioRenderStack, true);
     return 0;
 }
-int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t, uint32_t, GuestPtr data, uint32_t size) {
+int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t scope, uint32_t element, GuestPtr data, uint32_t size) {
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(uid);
+    audioTrace("AudioUnitSetProperty", uid, (uint64_t(propId) << 32) | (uint64_t(scope & 0xFF) << 16) | (element & 0xFFFF));
     if (it == ATS(x).units.end() || !data) return -50;
-    AudioUnitInstance& u = it->second;
+    if (propId == 1 /* kAudioUnitProperty_MakeConnection: {source unit, source output, this input} */) {
+        if (size < 12) return -50;
+        const uint32_t src = x.mem.read<uint32_t>(data);
+        if (it->second.isMixer()) {
+            // One mixer input fed by a unit: a converter with its own callback (Plants vs. Zombies
+            // plays every sound effect this way) or another mixer.
+            if (element >= 64) return -10877;   // kAudioUnitErr_InvalidElement
+            auBus(st, it->second, element).feeder = st.units.count(src) && src != uid ? src : 0;
+            return 0;
+        }
+        it->second.source = st.units.count(src) ? src : 0;
+        return 0;
+    }
+    // A mixer keeps a callback and a stream format per input; its output format is the host mixer's.
+    if (it->second.isMixer() && (propId == 23 || propId == 8)) {
+        if (scope != 1 /* kAudioUnitScope_Input */) return 0;
+        if (element >= 64) return -10877;   // kAudioUnitErr_InvalidElement
+    }
+    AudioUnitInstance& u = it->second.isMixer() && (propId == 23 || propId == 8) ? auBus(st, it->second, element) : it->second;
     if (propId == 23 /* kAudioUnitProperty_SetRenderCallback */) {
         if (size < 8) return -50;
         u.renderCallback = x.mem.read<uint32_t>(data);
@@ -1369,6 +1917,10 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t, uint32_t, Gu
         if (size < 40) return -50;
         const Asbd a = readAsbd(x, data);
         const uint32_t bps = a.bits / 8;
+        // A converter's callback gives audio in its input format; its output format is the
+        // host mixer's business.
+        const bool converter = !u.isMixer() && u.desc[0] == 0x61756663;   // 'aufc'
+        if (converter && scope != 1 && u.inputFormatSet) return 0;
         if (a.formatID != 0x6C70636D || a.framesPerPacket != 1 || !(a.flags & 8) ||
             a.sampleRate < 1000 || a.sampleRate > 192000 || a.channels < 1 || a.channels > 8 ||
             !(a.bits == 8 || a.bits == 16 || a.bits == 24 || a.bits == 32 || ((a.flags & 1) && a.bits == 64)) ||
@@ -1378,11 +1930,13 @@ int32_t au_setProp(Ctx& x, uint32_t uid, uint32_t propId, uint32_t, uint32_t, Gu
         u.bytesPerFrame = a.bytesPerFrame;
         u.channels = a.channels;
         u.bits = a.bits;
+        if (converter && scope == 1) u.inputFormatSet = true;
         auReleaseBuffers(x, u);
     }
     return 0;
 }
 int32_t au_getProp(Ctx& x, uint32_t unit, uint32_t prop, uint32_t scope, uint32_t element, GuestPtr outData, GuestPtr ioDataSize) {
+    audioTrace("AudioUnitGetProperty", unit, (uint64_t(prop) << 32) | (uint64_t(scope & 0xFF) << 16) | (element & 0xFFFF));
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
     auto it = st.units.find(unit);
@@ -1391,7 +1945,9 @@ int32_t au_getProp(Ctx& x, uint32_t unit, uint32_t prop, uint32_t scope, uint32_
     const uint32_t size = x.mem.read<uint32_t>(ioDataSize);
     if (prop == 8 /* kAudioUnitProperty_StreamFormat */) {
         if (size >= 40) {
-            const AudioUnitInstance& u = it->second;
+            // A mixer input reads back the format set on it.
+            const bool input = it->second.isMixer() && scope == 1 && element < 64;
+            const AudioUnitInstance& u = input ? auBus(st, it->second, element) : it->second;
             x.mem.write<double>(outData, u.sampleRate);
             x.mem.write<uint32_t>(outData + 8, 0x6c70636d /* 'lpcm' */);
             x.mem.write<uint32_t>(outData + 12, u.formatFlags);
@@ -1408,11 +1964,47 @@ int32_t au_getProp(Ctx& x, uint32_t unit, uint32_t prop, uint32_t scope, uint32_
             x.mem.write<uint32_t>(outData, 4096);
             x.mem.write<uint32_t>(ioDataSize, 4);
         }
+    } else {
+        defaulted(x, "AudioUnitGetProperty(" + std::to_string(prop) + ", scope " + std::to_string(scope) + ") succeeded without writing");
     }
     return 0;
 }
-int32_t au_setParam(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, float, uint32_t) { return 0; }
-int32_t au_getParam(Ctx& x, uint32_t, uint32_t, uint32_t, uint32_t, GuestPtr out) { if (out) x.mem.write<float>(out, 1.0f); return 0; }
+// Mixer input settings. The 3D mixer ('3dem') takes gain in decibels, an azimuth in degrees and
+// a playback rate; the multichannel mixer ('mcmx') a 0..1 volume and a pan. Distance, elevation
+// and reverb are not applied.
+int32_t au_setParam(Ctx& x, uint32_t uid, uint32_t param, uint32_t scope, uint32_t element, float value, uint32_t) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.units.find(uid);
+    audioTrace("AudioUnitSetParameter", uid, (uint64_t(param) << 32) | (uint64_t(scope & 0xFF) << 16) | (element & 0xFFFF));
+    if (it == st.units.end()) return -50;
+    if (!it->second.isMixer() || scope != 1 /* kAudioUnitScope_Input */ || element >= 64 || !std::isfinite(value)) return 0;
+    const bool threeD = it->second.desc[1] != 0x6D636D78;   // not 'mcmx'
+    AudioUnitInstance& b = auBus(st, it->second, element);
+    if (threeD) {
+        switch (param) {
+            case 0: b.pan = std::clamp(float(std::sin(double(value) * 3.14159265358979 / 180.0)), -1.0f, 1.0f); break;
+            case 3: b.gain = value <= -120.0f ? 0.0f : float(std::pow(10.0, double(std::min(value, 20.0f)) / 20.0)); break;
+            case 4: b.rate = std::clamp(value, 0.25f, 4.0f); break;
+            case 5: b.enabled = value != 0.0f; break;
+            default: return 0;
+        }
+    } else {
+        switch (param) {
+            case 0: b.gain = std::clamp(value, 0.0f, 1.0f); break;
+            case 1: b.enabled = value != 0.0f; break;
+            case 2: b.pan = std::clamp(value, -1.0f, 1.0f); break;
+            default: return 0;
+        }
+    }
+    if (b.voice) MX(x.proc).setParams(b.voice, auVoiceParams(b));
+    return 0;
+}
+int32_t au_getParam(Ctx& x, uint32_t, uint32_t param, uint32_t scope, uint32_t, GuestPtr out) {
+    if (out) x.mem.write<float>(out, 1.0f);
+    defaulted(x, "AudioUnitGetParameter(" + std::to_string(param) + ", scope " + std::to_string(scope) + ") answered 1.0");
+    return 0;
+}
 int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFrames, GuestPtr ioData) {
     if (ioData) {
         const uint32_t nbuf = x.mem.read<uint32_t>(ioData);
@@ -1422,6 +2014,25 @@ int32_t au_render(Ctx& x, uint32_t, GuestPtr, GuestPtr, uint32_t, uint32_t nFram
             if (ptr && sz) std::memset(x.mem.host(ptr), 0, std::min<uint32_t>(sz, nFrames * 8));
         }
     }
+    return 0;
+}
+int32_t au_addRenderNotify(Ctx& x, uint32_t uid, uint32_t proc, uint32_t userData) {
+    audioTrace("AudioUnitAddRenderNotify", uid, proc);
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.units.find(uid);
+    if (it == st.units.end() || !proc) return -50;
+    if (it->second.notifies.size() >= 16) return -10868;   // kAudioUnitErr_TooManyFramesToProcess stands in for "no room"
+    it->second.notifies.push_back({proc, userData});
+    return 0;
+}
+int32_t au_removeRenderNotify(Ctx& x, uint32_t uid, uint32_t proc, uint32_t userData) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.units.find(uid);
+    if (it == st.units.end()) return -50;
+    auto& v = it->second.notifies;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const auto& n) { return n.proc == proc && n.userData == userData; }), v.end());
     return 0;
 }
 int32_t aug_new(Ctx& x, GuestPtr outGraph) {
@@ -1435,8 +2046,6 @@ int32_t aug_new(Ctx& x, GuestPtr outGraph) {
 int32_t aug_ok1(Ctx&, uint32_t) { return 0; }
 int32_t aug_ok2(Ctx&, uint32_t, uint32_t) { return 0; }
 int32_t aug_ok3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
-int32_t aug_ok4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
-int32_t aug_ok5(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t aug_addNode(Ctx& x, uint32_t graph, GuestPtr desc, GuestPtr outNode) {
     auto& st = ATS(x);
     std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
@@ -1460,15 +2069,112 @@ int32_t aug_nodeInfo(Ctx& x, uint32_t, int32_t node, GuestPtr outDesc, GuestPtr 
     if (outUnit) x.mem.write<uint32_t>(outUnit, uid);
     return 0;
 }
-int32_t aug_isRunning(Ctx& x, uint32_t, GuestPtr outRunning) { if (outRunning) x.mem.write<uint8_t>(outRunning, 1); return 0; }
-int32_t aug_update(Ctx& x, uint32_t, GuestPtr outUpdated) { if (outUpdated) x.mem.write<uint8_t>(outUpdated, 1); return 0; }
-
-int32_t aug_getIndNode(Ctx& x, uint32_t, uint32_t, GuestPtr outNode) {
-    if (outNode) x.mem.write<int32_t>(outNode, 1);
+int32_t aug_isRunning(Ctx& x, uint32_t graph, GuestPtr outRunning) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.graphs.find(graph);
+    if (outRunning) x.mem.write<uint8_t>(outRunning, it != st.graphs.end() && it->second.running ? 1 : 0);
     return 0;
 }
-int32_t aug_getNodeCount(Ctx& x, uint32_t, GuestPtr outCount) {
-    if (outCount) x.mem.write<uint32_t>(outCount, 1);
+int32_t aug_isOpen(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint8_t>(out, 1); return 0; }
+// AUGraphSetNodeInputCallback(graph, node, input, AURenderCallbackStruct*): the callback that
+// feeds one input of a node (a mixer input, or the output unit itself).
+int32_t aug_setInputCallback(Ctx& x, uint32_t, uint32_t node, uint32_t input, GuestPtr cb) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.units.find(node);
+    if (it == st.units.end() || !cb) return -50;
+    if (it->second.isMixer() && input >= 64) return -10877;
+    AudioUnitInstance& u = it->second.isMixer() ? auBus(st, it->second, input) : it->second;
+    u.renderCallback = x.mem.read<uint32_t>(cb);
+    u.renderUserData = x.mem.read<uint32_t>(cb + 4);
+    return 0;
+}
+int32_t aug_connect(Ctx& x, uint32_t, uint32_t srcNode, uint32_t, uint32_t dstNode, uint32_t) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto dst = st.units.find(dstNode);
+    if (dst == st.units.end() || !st.units.count(srcNode)) return -10860;   // kAUGraphErr_NodeNotFound
+    if (!dst->second.isMixer()) dst->second.source = srcNode;
+    return 0;
+}
+int32_t aug_disconnect(Ctx& x, uint32_t, uint32_t dstNode, uint32_t) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto dst = st.units.find(dstNode);
+    if (dst != st.units.end()) dst->second.source = 0;
+    return 0;
+}
+// The units a running graph plays through: its nodes that are not mixers.
+std::vector<uint32_t> augOutputs(AudioToolboxState& st, uint32_t graph) {
+    std::vector<uint32_t> out;
+    auto it = st.graphs.find(graph);
+    if (it == st.graphs.end()) return out;
+    std::set<uint32_t> fed;   // units feeding a mixer input: that mixer renders them
+    for (const auto& [uid, unit] : st.units) if (unit.feeder) fed.insert(unit.feeder);
+    for (uint32_t n : it->second.nodes) {
+        auto u = st.units.find(n);
+        if (u != st.units.end() && !u->second.isMixer() && !fed.count(n) && (u->second.renderCallback || u->second.source)) out.push_back(n);
+    }
+    return out;
+}
+int32_t aug_start(Ctx& x, uint32_t graph) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.graphs.find(graph);
+    if (it == st.graphs.end()) return -50;
+    it->second.running = true;
+    for (uint32_t n : augOutputs(st, graph)) au_start(x, n);
+    return 0;
+}
+int32_t aug_stop(Ctx& x, uint32_t graph) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.graphs.find(graph);
+    if (it == st.graphs.end()) return -50;
+    it->second.running = false;
+    for (uint32_t n : augOutputs(st, graph)) au_stop(x, n);
+    return 0;
+}
+int32_t au_converterSetProperty(Ctx&, uint32_t, uint32_t, uint32_t, GuestPtr) { return 0; }
+// AudioConverterGetProperty, for the converter an ExtAudioFile hands out ('acnv'): its input
+// ('acid', the file's format) and output ('acod', the client format) descriptions. Anything else
+// is kAudioConverterErr_PropertyNotSupported, as a real converter answers for what it lacks.
+int32_t au_converterGetProperty(Ctx& x, uint32_t conv, uint32_t prop, GuestPtr ioSize, GuestPtr out) {
+    auto it = EAS(x).files.find(conv);
+    if (it == EAS(x).files.end()) return -50;
+    if ((prop == 0x61636964 || prop == 0x61636F64) && out) {   // 'acid' / 'acod'
+        writeAsbd(x, out, prop == 0x61636964 ? it->second.file : it->second.client);
+        if (ioSize) x.mem.write<uint32_t>(ioSize, 40);
+        return 0;
+    }
+    return 0x70726F70;   // 'prop'
+}
+int32_t aug_dispose(Ctx& x, uint32_t graph) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.graphs.find(graph);
+    if (it == st.graphs.end()) return -50;
+    const std::vector<uint32_t> nodes = it->second.nodes;
+    st.graphs.erase(it);
+    for (uint32_t n : nodes) ac_dispose(x, n);
+    return 0;
+}
+int32_t aug_update(Ctx& x, uint32_t, GuestPtr outUpdated) { if (outUpdated) x.mem.write<uint8_t>(outUpdated, 1); return 0; }
+
+int32_t aug_getIndNode(Ctx& x, uint32_t graph, uint32_t index, GuestPtr outNode) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.graphs.find(graph);
+    if (it == st.graphs.end() || index >= it->second.nodes.size()) return -50;
+    if (outNode) x.mem.write<int32_t>(outNode, int32_t(it->second.nodes[index]));
+    return 0;
+}
+int32_t aug_getNodeCount(Ctx& x, uint32_t graph, GuestPtr outCount) {
+    auto& st = ATS(x);
+    std::lock_guard<std::recursive_mutex> lk(st.unitsMu);
+    auto it = st.graphs.find(graph);
+    if (outCount) x.mem.write<uint32_t>(outCount, it == st.graphs.end() ? 0 : uint32_t(it->second.nodes.size()));
     return 0;
 }
 
@@ -1614,7 +2320,7 @@ uint32_t avs_zero(Ctx&, id, SEL) { return 0; }
 uint32_t avs_two(Ctx&, id, SEL) { return 2; }
 uint32_t avs_one(Ctx&, id, SEL) { return 1; }
 bool avs_yes(Ctx&, id, SEL) { return true; }
-double avs_ioDuration(Ctx&, id, SEL) { return 0.0058; }   // 256 frames at 44.1 kHz
+double avs_ioDuration(Ctx&, id, SEL) { return ioBufferSeconds(); }   // one render callback's frames
 id avs_emptyArray(Ctx& x, id, SEL) { return Foundation::makeArray(x, {}); }
 
 // ============================================================ AVAudioPlayer ===
@@ -1626,7 +2332,8 @@ struct PlayerData : ObjC::HostObject {
     int32_t loops = 0, loopsRemaining = 0;
     double time = 0.0, duration = 0.0;
     uint32_t channels = 2;
-    DecodedAudio decoded;
+    std::shared_ptr<Audio::AudioSource> source;
+    int sampleRate = 44100;
     Audio::Pcm pcm;
     uint32_t voice = 0;      // mixer voice while playing or paused
     bool paused = false;
@@ -1636,16 +2343,29 @@ Audio::VoiceParams playerParams(const PlayerData& d) { return {d.volume, d.pan, 
 PlayerData& PD(Ctx& x, id p) { return rt(x).host<PlayerData>(p); }
 
 void loadPlayerDecoded(Ctx& x, PlayerData& d, const uint8_t* bytes, size_t len) {
-    d.decoded = decodeAudioBytes(x, bytes, len);
-    if (d.decoded.stereoPcm.empty() && len) x.proc.reportMissing("AVAudioPlayer: audio format not supported (plays silence)");
+    d.source.reset();
+    auto decoded = decodeAudioBytes(x, bytes, len);
+    if (decoded.stereoPcm.empty() && len) x.proc.reportMissing("AVAudioPlayer: audio format not supported (plays silence)");
     // The player only reads its samples through pcm: move them, a copy doubles a song's memory.
-    if (!d.decoded.stereoPcm.empty())
-        d.pcm = std::make_shared<const std::vector<int16_t>>(std::move(d.decoded.stereoPcm));
+    if (!decoded.stereoPcm.empty())
+        d.pcm = std::make_shared<const std::vector<int16_t>>(std::move(decoded.stereoPcm));
     else
         d.pcm = nullptr;
-    d.decoded.stereoPcm.clear();
-    d.duration = d.decoded.duration;
-    d.channels = uint32_t(std::max(1, d.decoded.channels));
+    d.sampleRate = decoded.sampleRate;
+    d.duration = decoded.duration;
+    d.channels = uint32_t(std::max(1, decoded.channels));
+}
+
+void loadPlayerSource(PlayerData& d, std::shared_ptr<Audio::AudioSource> source) {
+    d.duration = double(source->frames()) / source->sampleRate();
+    d.channels = uint32_t(source->channels());
+    d.source = std::move(source);
+    d.pcm.reset();
+}
+
+uint32_t playPlayer(Audio::Mixer& mixer, const PlayerData& player, double time) {
+    return player.source ? mixer.playSource(player.source, playerParams(player), time)
+                         : mixer.play(player.pcm, player.sampleRate, playerParams(player), time);
 }
 
 id ap_initURL(Ctx& x, id self, SEL, id url, GuestPtr errOut) {
@@ -1654,6 +2374,10 @@ id ap_initURL(Ctx& x, id self, SEL, id url, GuestPtr errOut) {
     d.url = url ? rt(x).retain(x.cpu, url) : 0;
     if (url) {
         const std::string path = Foundation::urlFilePath(x, url);
+        if (auto source = Audio::openStream(path)) {
+            loadPlayerSource(d, std::move(source));
+            return self;
+        }
         std::ifstream in(path, std::ios::binary);
         if (in) {
             std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
@@ -1667,22 +2391,23 @@ id ap_initData(Ctx& x, id self, SEL, id data, GuestPtr errOut) {
     PlayerData& d = PD(x, self);
     d.data = data ? rt(x).retain(x.cpu, data) : 0;
     if (data) {
-        const auto bytes = Foundation::dataBytes(x, data);
-        loadPlayerDecoded(x, d, bytes.data(), bytes.size());
+        auto bytes = Foundation::dataBytes(x, data);
+        if (auto source = Audio::openStream(bytes)) loadPlayerSource(d, std::move(source));
+        else loadPlayerDecoded(x, d, bytes.data(), bytes.size());
     }
     return self;
 }
 bool ap_play(Ctx& x, id self, SEL) {
     PlayerData& d = PD(x, self);
     audioTrace("AVAudioPlayerPlay", self, d.pcm ? d.pcm->size() : 0);
-    if (!d.pcm) return false;
+    if (!d.source && !d.pcm) return false;
     Audio::Mixer& mx = MX(x.proc);
     if (d.voice && d.paused) {
         mx.setPaused(d.voice, false);
     } else {
         if (d.voice) mx.release(d.voice);
         d.loopsRemaining = d.loops;
-        d.voice = mx.play(d.pcm, d.decoded.sampleRate, playerParams(d), d.time);
+        d.voice = playPlayer(mx, d, d.time);
     }
     d.playing = true;
     d.paused = false;
@@ -1700,7 +2425,7 @@ bool ap_play(Ctx& x, id self, SEL) {
         pd->time = 0;
         if (pd->loopsRemaining > 0) {
             --pd->loopsRemaining;
-            pd->voice = m.play(pd->pcm, pd->decoded.sampleRate, playerParams(*pd), 0);
+            pd->voice = playPlayer(m, *pd, 0);
             return;
         }
         pd->playing = false;
@@ -1725,7 +2450,12 @@ void ap_stop(Ctx& x, id self, SEL) {
     d.paused = false;
     if (d.timer) d.timer->valid = false;
 }
-bool ap_prepare(Ctx&, id, SEL) { return true; }
+bool ap_prepare(Ctx& x, id self, SEL) {
+    const auto& d = PD(x, self);
+    // A format this host cannot decode still prepares (it plays silence): games written for a
+    // device that could decode it stop loading when told no (Age of Defenders on the bench).
+    return d.source || (d.pcm && !d.pcm->empty());
+}
 bool ap_isPlaying(Ctx& x, id self, SEL) { return PD(x, self).playing; }
 float ap_volume(Ctx& x, id self, SEL) { return PD(x, self).volume; }
 void ap_setVolume(Ctx& x, id self, SEL, float v) { PlayerData& d = PD(x, self); d.volume = std::clamp(v, 0.0f, 1.0f); if (d.voice) MX(x.proc).setParams(d.voice, playerParams(d)); }
@@ -1918,6 +2648,7 @@ void al_getBufferi(Ctx& x, uint32_t bid, uint32_t param, GuestPtr val) {
     else if (param == AL_SIZE) v = b.byteSize;
     else if (param == AL_BITS) v = (b.format == AL_FORMAT_MONO8 || b.format == AL_FORMAT_STEREO8) ? 8 : 16;
     else if (param == AL_CHANNELS) v = (b.format == AL_FORMAT_STEREO8 || b.format == AL_FORMAT_STEREO16) ? 2 : 1;
+    else defaulted(x, "alGetBufferi(" + code4(param) + ") answered 0");
     x.mem.write<int32_t>(val, v);
 }
 
@@ -1986,14 +2717,39 @@ void al_sourcei(Ctx& x, uint32_t sid, uint32_t param, int32_t val) {
     if (param == AL_BUFFER) { s.buffer = uint32_t(val); s.queuedBuffers.clear(); }
     else if (param == AL_LOOPING) s.looping = val != 0;
     else if (param == AL_SOURCE_RELATIVE) s.relative = val != 0;
+    audioTrace("alSourcei", sid, (uint64_t(param) << 32) | uint32_t(val));
     alUpdate(x, s);
+}
+// Playback position of a source in seconds, samples (frames) or bytes of its buffer's format:
+// AL_SEC_OFFSET / AL_SAMPLE_OFFSET / AL_BYTE_OFFSET. Rhythm games time their charts to it
+// (Groove Coaster Zero reads AL_SAMPLE_OFFSET as a float; at a constant 0 nothing moved).
+bool alOffset(Ctx& x, const ALSource& s, uint32_t param, double& out) {
+    if (param != 0x1024 && param != 0x1025 && param != 0x1026) return false;
+    out = 0;
+    if (!s.voice) return true;
+    const double secs = MX(x.proc).positionSeconds(s.voice);
+    if (param == 0x1024) { out = secs; return true; }
+    auto& bufs = OAL(x).buffers;
+    const uint32_t bid = s.buffer ? s.buffer : (s.queuedBuffers.empty() ? 0 : s.queuedBuffers.front());
+    const auto it = bufs.find(bid);
+    const int freq = it != bufs.end() ? it->second.freq : 44100;
+    const double frames = std::floor(secs * freq);
+    if (param == 0x1025) { out = frames; return true; }
+    const uint32_t f = it != bufs.end() ? it->second.format : AL_FORMAT_STEREO16;
+    const int bytesPerFrame = f == 0x1100 ? 1 : f == 0x1101 || f == 0x1102 ? 2 : 4;   // mono8, mono16 / stereo8, stereo16
+    out = frames * bytesPerFrame;
+    return true;
 }
 void al_getSourcef(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     if (!val || !OAL(x).sources.count(sid)) return;
-    const ALSource& s = OAL(x).sources[sid];
+    ALSource& s = OAL(x).sources[sid];
+    alRefresh(x, s);
     float v = param == AL_PITCH ? s.pitch : param == AL_GAIN ? s.gain :
               param == AL_MIN_GAIN ? s.minGain : param == AL_MAX_GAIN ? s.maxGain : 0.0f;
-    if (param == 0x1024 /* AL_SEC_OFFSET */ && s.voice) v = float(MX(x.proc).positionSeconds(s.voice));
+    double offset = 0;
+    if (alOffset(x, s, param, offset)) v = float(offset);
+    else if (param != AL_PITCH && param != AL_GAIN && param != AL_MIN_GAIN && param != AL_MAX_GAIN)
+        defaulted(x, "alGetSourcef(" + code4(param) + ") answered 0");
     x.mem.write<float>(val, v);
 }
 void al_getSource3f(Ctx& x, uint32_t sid, uint32_t param, GuestPtr v1, GuestPtr v2, GuestPtr v3) {
@@ -2018,8 +2774,8 @@ void al_getSourcei(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
     else if (param == AL_SOURCE_RELATIVE) v = s.relative ? 1 : 0;
     else if (param == AL_BUFFERS_QUEUED) v = int32_t(s.queuedBuffers.size());
     else if (param == AL_BUFFERS_PROCESSED) v = int32_t(alProcessed(x, s));
-    else if (param == 0x1025 /* AL_SAMPLE_OFFSET */ && s.voice && OAL(x).buffers.count(s.buffer))
-        v = int32_t(MX(x.proc).positionSeconds(s.voice) * OAL(x).buffers[s.buffer].freq);
+    else if (double offset = 0; alOffset(x, s, param, offset)) v = int32_t(offset);
+    else defaulted(x, "alGetSourcei(" + code4(param) + ") answered 0");
     x.mem.write<int32_t>(val, v);
 }
 void al_sourcePlay(Ctx& x, uint32_t sid) {
@@ -2030,7 +2786,34 @@ void al_sourcePlay(Ctx& x, uint32_t sid) {
     Audio::Mixer& mx = MX(x.proc);
     if (s.state == AL_PAUSED && s.voice) { mx.setPaused(s.voice, false); s.state = AL_PLAYING; return; }
     alRelease(x, s);   // playing again restarts from the beginning
-    if (!s.queuedBuffers.empty()) {
+    // A looping source repeats its whole queue and none of its buffers ever finish. The
+    // mixer only repeats a single sound, so the queue is joined into one (Pocket Ants queues
+    // its rain as one looping buffer; played as a stream it stopped after one pass).
+    Audio::Pcm joined;
+    int joinedRate = 0;
+    if (s.looping && !s.queuedBuffers.empty()) {
+        bool sameRate = true;
+        size_t total = 0;
+        for (uint32_t bid : s.queuedBuffers) {
+            if (!st.buffers.count(bid) || !st.buffers[bid].pcm) continue;
+            if (!joinedRate) joinedRate = st.buffers[bid].freq;
+            sameRate = sameRate && st.buffers[bid].freq == joinedRate;
+            total += st.buffers[bid].pcm->size();
+        }
+        if (sameRate && total != 0) {
+            if (s.queuedBuffers.size() == 1) joined = st.buffers[s.queuedBuffers.front()].pcm;
+            else {
+                std::vector<int16_t> all;
+                all.reserve(total);
+                for (uint32_t bid : s.queuedBuffers)
+                    if (st.buffers.count(bid) && st.buffers[bid].pcm) all.insert(all.end(), st.buffers[bid].pcm->begin(), st.buffers[bid].pcm->end());
+                joined = std::make_shared<const std::vector<int16_t>>(std::move(all));
+            }
+        }
+    }
+    if (joined) {
+        s.voice = mx.play(joined, joinedRate, alParams(s));
+    } else if (!s.queuedBuffers.empty()) {
         s.voice = mx.createStream(alParams(s));
         s.streaming = true;
         for (uint32_t bid : s.queuedBuffers)
@@ -2090,7 +2873,10 @@ void al_sourceUnqueueBuffers(Ctx& x, uint32_t sid, int32_t n, GuestPtr bids) {
 void al_listenerf(Ctx& x, uint32_t param, float val) { if (param == AL_GAIN) { OAL(x).listenerGain = val; MX(x.proc).setMasterGain(val); audioTrace("alListenerGain", param, uint64_t(std::lround(val * 1000000.0f))); } }
 void al_listener3f(Ctx&, uint32_t, float, float, float) {}
 void al_listenerfv(Ctx&, uint32_t, GuestPtr) {}
-void al_getListenerf(Ctx& x, uint32_t param, GuestPtr val) { if (val) x.mem.write<float>(val, param == AL_GAIN ? OAL(x).listenerGain : 0.0f); }
+void al_getListenerf(Ctx& x, uint32_t param, GuestPtr val) {
+    if (val) x.mem.write<float>(val, param == AL_GAIN ? OAL(x).listenerGain : 0.0f);
+    if (param != AL_GAIN) defaulted(x, "alGetListenerf(" + code4(param) + ") answered 0");
+}
 void al_getListenerfv(Ctx& x, uint32_t param, GuestPtr val) {
     if (!val) return;
     const uint32_t n = param == 0x100F /* AL_ORIENTATION */ ? 6 : 3;
@@ -2107,6 +2893,7 @@ void al_getSourcefv(Ctx& x, uint32_t sid, uint32_t param, GuestPtr val) {
 uint32_t al_getProcAddress(Ctx& x, GuestPtr name) {
     const std::string n = x.proc.readCString(name);
     if (auto a = x.proc.lookupSymbol("_" + n)) return *a;
+    defaulted(x, "alGetProcAddress(\"" + n + "\") found no such extension (answered NULL)");
     return 0;
 }
 uint32_t alc_getProcAddress(Ctx& x, uint32_t, GuestPtr name) { return al_getProcAddress(x, name); }
@@ -2212,7 +2999,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     // AudioSession & AudioServices
     p.def<&as_init>("_AudioSessionInitialize");
     p.def<&as_setProperty>("_AudioSessionSetProperty");
-    p.def<&as_getProperty>("_AudioSessionGetProperty");
+    supportDef<&as_getProperty>(p, "_AudioSessionGetProperty", SupportStatus::Approx, "fixed device answers: 44.1 kHz, stereo out, mono in, a 512-frame I/O buffer; other properties read 0");
     p.def<&as_getPropertySize>("_AudioSessionGetPropertySize");
     p.def<&as_setActive>("_AudioSessionSetActive");
     p.def<&as_addListener>("_AudioSessionAddPropertyListener");
@@ -2226,7 +3013,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&ss_removeCompletion>("_AudioServicesRemoveSystemSoundCompletion");
 
     // AudioQueue
-    p.def<&aq_newOutput>("_AudioQueueNewOutput");
+    supportDef<&aq_newOutput>(p, "_AudioQueueNewOutput", SupportStatus::Approx, "Plays linear PCM and MP3 queues through the mixer; a queue in another compressed format is reported as missing");
     p.def<&aq_newInput>("_AudioQueueNewInput");
     p.def<&aq_allocateBuffer>("_AudioQueueAllocateBuffer");
     p.def<&aq_allocateBufferWithPacketDescriptions>("_AudioQueueAllocateBufferWithPacketDescriptions");
@@ -2234,21 +3021,22 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aq_enqueueBuffer>("_AudioQueueEnqueueBuffer");
     p.defineFunction("_AudioQueueEnqueueBufferWithParameters", aq_enqueueWithParams);
     p.def<&aq_setProperty>("_AudioQueueSetProperty");
-    p.def<&aq_getProperty>("_AudioQueueGetProperty");
+    supportDef<&aq_getProperty>(p, "_AudioQueueGetProperty", SupportStatus::Approx, "Answers IsRunning; other properties read as zero");
     p.def<&aq_getPropertySize>("_AudioQueueGetPropertySize");
-    p.def<&aq_addPropertyListener>("_AudioQueueAddPropertyListener");
-    p.def<&aq_removePropertyListener>("_AudioQueueRemovePropertyListener");
+    supportDef<&aq_addPropertyListener>(p, "_AudioQueueAddPropertyListener", SupportStatus::Approx, "Listeners are kept; only IsRunning changes are reported");
+    supportDef<&aq_removePropertyListener>(p, "_AudioQueueRemovePropertyListener", SupportStatus::Real, "Removes a kept listener");
     p.def<&aq_createTimeline>("_AudioQueueCreateTimeline");
     p.def<&aq_disposeTimeline>("_AudioQueueDisposeTimeline");
     p.def<&aq_getCurrentTime>("_AudioQueueGetCurrentTime");
-    p.def<&aq_start>("_AudioQueueStart");
+    supportDef<&aq_start>(p, "_AudioQueueStart", SupportStatus::Real, "Starts playback or recording and tells IsRunning listeners");
     p.def<&aq_pause>("_AudioQueuePause");
     supportDef<&aq_stop>(p, "_AudioQueueStop", SupportStatus::Approx,
-                         "Stops the mixer voice; an offline queue drops its queued audio. Buffers are not handed back");
+                         "Stops at once, or after what is queued has played when not immediate; an offline queue drops its queued audio. An immediate stop does not hand buffers back");
     p.def<&aq_flush>("_AudioQueueFlush");
+    supportDef<&aq_prime>(p, "_AudioQueuePrime", SupportStatus::Approx, "nothing is decoded ahead; reports zero frames prepared");
     supportDef<&aq_reset>(p, "_AudioQueueReset", SupportStatus::Approx,
                           "Drops queued audio (mixer voice, recorder or offline queue); buffers are not handed back");
-    p.def<&aq_dispose>("_AudioQueueDispose");
+    supportDef<&aq_dispose>(p, "_AudioQueueDispose", SupportStatus::Real, "Stops the queue and frees its buffers, their packet descriptions and its voice");
     p.def<&aq_setParam>("_AudioQueueSetParameter");
     p.def<&aq_getParam>("_AudioQueueGetParameter");
     p.def<&aq_offlineRender>("_AudioQueueOfflineRender");
@@ -2291,12 +3079,17 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&au_start>("_AudioOutputUnitStart");
     p.def<&au_stop>("_AudioOutputUnitStop");
     p.def<&au_setProp>("_AudioUnitSetProperty");
-    p.def<&au_getProp>("_AudioUnitGetProperty");
+    supportDef<&au_getProp>(p, "_AudioUnitGetProperty", SupportStatus::Approx, "Stream format (per mixer input) and maximum frames per slice; other properties are left untouched");
     p.def<&au_setParam>("_AudioUnitSetParameter");
-    p.def<&au_getParam>("_AudioUnitGetParameter");
+    supportDef<&au_getParam>(p, "_AudioUnitGetParameter", SupportStatus::Approx, "every parameter reads 1.0 (logged as Defaulted)");
     p.def<&au_render>("_AudioUnitRender");
     p.def<&aug_new>("_NewAUGraph");
-    p.def<&aug_ok1>("_DisposeAUGraph");
+    // Tuning of the converter inside an ExtAudioFile (bit rate, quality): accepted, the
+    // runtime's own encoders and decoders have no such settings.
+    supportDef<&au_converterSetProperty>(p, "_AudioConverterSetProperty", SupportStatus::Approx, "Accepted; converter tuning is not applied");
+    supportDef<&au_converterGetProperty>(p, "_AudioConverterGetProperty", SupportStatus::Approx,
+                                         "ExtAudioFile converters: input/output formats; other properties are reported unsupported");
+    p.def<&aug_dispose>("_DisposeAUGraph");
     p.def<&aug_addNode>("_AUGraphAddNode");
     p.def<&aug_ok2>("_AUGraphRemoveNode");
     p.def<&aug_nodeInfo>("_AUGraphNodeInfo");
@@ -2304,23 +3097,21 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aug_ok1>("_AUGraphClose");
     p.def<&aug_ok1>("_AUGraphInitialize");
     p.def<&aug_ok1>("_AUGraphUninitialize");
-    p.def<&aug_ok1>("_AUGraphStart");
-    p.def<&aug_ok1>("_AUGraphStop");
-    p.def<&aug_isRunning>("_AUGraphIsRunning");
-    p.def<&aug_isRunning>("_AUGraphIsOpen");
-    p.def<&aug_isRunning>("_AUGraphIsInitialized");
+    p.def<&aug_start>("_AUGraphStart");
+    p.def<&aug_stop>("_AUGraphStop");
+    supportDef<&aug_isRunning>(p, "_AUGraphIsRunning", SupportStatus::Real, "Follows AUGraphStart and AUGraphStop");
+    supportDef<&aug_isOpen>(p, "_AUGraphIsOpen", SupportStatus::Approx, "Every graph reports open");
+    supportDef<&aug_isOpen>(p, "_AUGraphIsInitialized", SupportStatus::Approx, "Every graph reports initialized");
     p.def<&aug_update>("_AUGraphUpdate");
-    p.def<&aug_ok4>("_AUGraphSetNodeInputCallback");
-    p.def<&aug_ok5>("_AUGraphConnectNodeInput");
-    p.def<&aug_ok3>("_AUGraphDisconnectNodeInput");
+    p.def<&aug_setInputCallback>("_AUGraphSetNodeInputCallback");
+    p.def<&aug_connect>("_AUGraphConnectNodeInput");
+    supportDef<&aug_disconnect>(p, "_AUGraphDisconnectNodeInput", SupportStatus::Real, "Removes the source feeding the node");
     p.def<&aug_ok1>("_AUGraphClearConnections");
-    supportDef<&aug_getIndNode>(p, "_AUGraphGetIndNode", SupportStatus::Stub,
-        "Always writes node 1 without consulting the graph or index");
-    supportDef<&aug_getNodeCount>(p, "_AUGraphGetNodeCount", SupportStatus::Stub,
-        "Always writes one node without consulting graph contents");
-    supportDef<&aug_ok3>(p, "_AudioUnitAddRenderNotify", SupportStatus::Stub,
-        "Returns noErr without registering or invoking the render notification");
-    p.def<&aug_ok3>("_AudioUnitRemoveRenderNotify");
+    p.def<&aug_getIndNode>("_AUGraphGetIndNode");
+    supportDef<&aug_getNodeCount>(p, "_AUGraphGetNodeCount", SupportStatus::Real, "Counts the nodes added to the graph");
+    supportDef<&au_addRenderNotify>(p, "_AudioUnitAddRenderNotify", SupportStatus::Approx,
+        "Called before and after each 10 ms render cycle of a running output chain, with a silent buffer");
+    supportDef<&au_removeRenderNotify>(p, "_AudioUnitRemoveRenderNotify", SupportStatus::Real, "Removes a registered render notification");
 
     // OpenAL
     p.def<&alc_openDevice>("_alcOpenDevice");
@@ -2548,6 +3339,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     defCMTimeConst("_kCMTimePositiveInfinity", 0, 0, 5);
     defCMTimeConst("_kCMTimeNegativeInfinity", 0, 0, 9);
     defCMTimeConst("_kCMTimeIndefinite", 0, 0, 17);
+    registerCoreMediaTime(p);
 
     struct AVAssetData : ObjC::HostObject { id url = 0; };
     ObjC::ClassBuilder avAsset = r.defineClass("AVAsset", "NSObject");
@@ -2725,7 +3517,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     }, "{CGSize=ff}@:");
     avItem.method("seekToTime:", [](Ctx&) {}, "v@:{?=qiIq}");
     avItem.method("seekToTime:completionHandler:", [](Ctx& x) {
-        const uint32_t sp = x.cpu.r[CPU::kSP];
+        const uint32_t sp = x.cpu.r[13];
         const uint32_t handler = x.mem.read<uint32_t>(sp + 16);
         if (handler) ObjC::callBlock(x, handler, {1});
     }, "v@:{?=qiIq}@?");
@@ -2735,6 +3527,7 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         float rate = 0.0f, volume = 1.0f;
         int32_t actionAtItemEnd = 0;
         bool muted = false;
+        uint64_t hostMovie = 0;   // the host is playing this player's video file
     };
     auto notifyFinish = [](Ctx& x, id self) {
         auto* d = rt(x).hostIf<AVPlayerData>(self);
@@ -2779,15 +3572,37 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
         x.cpu.r[0] = d ? d->currentItem : 0;
     }, "@@:");
     avPlayer.method("replaceCurrentItemWithPlayerItem:", [prepareItem](Ctx& x) {
-        auto& d = rt(x).host<AVPlayerData>(x.cpu.r[0]);
-        const id next = x.cpu.r[2] ? rt(x).retain(x.cpu, x.cpu.r[2]) : 0;
+        const id player = x.cpu.r[0], nextItem = x.cpu.r[2];
+        // The video the host is playing belongs to the item being replaced.
+        if (const uint64_t movie = rt(x).host<AVPlayerData>(player).hostMovie) UIKit::stopHostMovie(x, movie);
+        auto& d = rt(x).host<AVPlayerData>(player);
+        const id next = nextItem ? rt(x).retain(x.cpu, nextItem) : 0;
         if (d.currentItem) rt(x).release(x.cpu, d.currentItem);
         d.currentItem = next;
         prepareItem(x,next);
     }, "v@:@");
     avPlayer.method("play", [notifyFinish](Ctx& x) {
         const id self = x.cpu.r[0];
-        rt(x).host<AVPlayerData>(self).rate = 1.0f;
+        auto& d = rt(x).host<AVPlayerData>(self);
+        d.rate = 1.0f;
+        if (d.hostMovie) return;   // already playing on the host
+        // A video file is played by the host, and the item ends when the host says so.
+        std::string hostPath;
+        const id asset = d.currentItem ? id(rt(x).send(x.cpu, d.currentItem, "asset")) : 0;
+        const id url = asset && rt(x).respondsTo(asset, rt(x).sel("URL")) ? id(rt(x).send(x.cpu, asset, "URL")) : 0;
+        if (UIKit::hostMovieFile(x, url, hostPath)) {
+            const id item = rt(x).retain(x.cpu, d.currentItem);
+            rt(x).retain(x.cpu, self);
+            const uint64_t movie = UIKit::startHostMovie(x, hostPath, [self, item](Ctx& cx, bool finished) {
+                if (auto* pd = rt(cx).hostIf<AVPlayerData>(self)) { pd->hostMovie = 0; if (finished) pd->rate = 0.0f; }
+                if (finished) Foundation::postNotification(cx, "AVPlayerItemDidPlayToEndTimeNotification", item);
+                rt(cx).release(cx.cpu, item);
+                rt(cx).release(cx.cpu, self);
+            });
+            if (movie) { rt(x).host<AVPlayerData>(self).hostMovie = movie; return; }
+            rt(x).release(x.cpu, item);
+            rt(x).release(x.cpu, self);
+        }
         notifyFinish(x, self);
     }, "v@:");
     avPlayer.method("pause", [](Ctx& x) { rt(x).host<AVPlayerData>(x.cpu.r[0]).rate = 0.0f; }, "v@:");

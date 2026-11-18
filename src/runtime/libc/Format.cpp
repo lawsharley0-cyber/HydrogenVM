@@ -1,6 +1,8 @@
 #include "Format.hpp"
 #include "loader/Plist.hpp"
 #include <cstdio>
+#include <optional>
+#include <stdexcept>
 
 namespace Hydrogen::Runtime {
 namespace {
@@ -10,12 +12,107 @@ struct FormatState {
     std::function<std::string(uint32_t)> hook;
 };
 
+// Indexed formats need the types of every preceding logical argument before
+// their ARMv7 word offsets can be known. Gather those types, snapshot the
+// values once, then feed an ordinary argument stream to the existing formatter.
+// POSIX requires indexed arguments to be contiguous and forbids mixing indexed
+// and sequential argument consumers. Never guess a missing argument's width.
+std::optional<std::string> positionalFormat(Process& p, const std::string& fmt, ArgReader& args,
+                                          const std::function<std::string(uint32_t)>& hook) {
+    struct Use { uint32_t value, width, precision; bool wide, widthStar, precisionStar, consumes; };
+    std::vector<Use> uses;
+    std::vector<uint8_t> widths(4097,0);
+    uint32_t highest = 0;
+    bool indexed = false;
+    std::string plain;
+    size_t i = 0;
+    auto index = [&]() -> uint32_t {
+        size_t end = i; uint32_t n = 0;
+        while (end < fmt.size() && std::isdigit(uint8_t(fmt[end]))) {
+            n = std::min(4097u,n*10+uint32_t(fmt[end++]-'0'));
+        }
+        if (end == i || end == fmt.size() || fmt[end] != '$') return 0;
+        if (!n || n > 4096) throw std::invalid_argument("invalid positional format index");
+        i = end+1; indexed = true; return n;
+    };
+    auto type = [&](uint32_t n, uint8_t words) {
+        if (!n) return;
+        if (widths[n] && widths[n] != words) throw std::invalid_argument("conflicting positional argument widths");
+        widths[n] = words; highest = std::max(highest,n);
+    };
+    while (i < fmt.size()) {
+        if (fmt[i] != '%') { plain += fmt[i++]; continue; }
+        plain += fmt[i++];
+        if (i < fmt.size() && fmt[i] == '%') { plain += fmt[i++]; continue; }
+        Use use{}; use.value = index();
+        bool widthSeen = false;
+        while (i < fmt.size()) {
+            if (std::strchr("-+ #0'",fmt[i])) plain += fmt[i++];
+            else if (fmt[i] == '*') {
+                if (use.widthStar) throw std::invalid_argument("repeated positional width");
+                use.widthStar = true; plain += fmt[i++]; use.width = index();
+            } else if (std::isdigit(uint8_t(fmt[i])) && !widthSeen) {
+                widthSeen = true;
+                while (i < fmt.size() && std::isdigit(uint8_t(fmt[i]))) plain += fmt[i++];
+            } else break;
+        }
+        if (i < fmt.size() && fmt[i] == '.') {
+            plain += fmt[i++];
+            if (i < fmt.size() && fmt[i] == '*') {
+                use.precisionStar = true; plain += fmt[i++]; use.precision = index();
+            } else while (i < fmt.size() && std::isdigit(uint8_t(fmt[i]))) plain += fmt[i++];
+        }
+        std::string length;
+        while (i < fmt.size() && std::strchr("hlqjztL",fmt[i])) { length += fmt[i]; plain += fmt[i++]; }
+        if (i == fmt.size()) {
+            if (indexed) throw std::invalid_argument("incomplete positional format");
+            return std::nullopt;
+        }
+        const char conv = fmt[i++]; plain += conv;
+        use.consumes = std::strchr("diuoxXDUOcCsSpfFeEgGaA@n",conv) != nullptr;
+        use.wide = std::strchr("fFeEgGaA",conv) || ((length == "ll" || length == "q" || length == "j") && std::strchr("diuoxX",conv));
+        if (!use.consumes && use.value) throw std::invalid_argument("unknown positional conversion");
+        if (use.consumes) type(use.value,use.wide ? 2 : 1);
+        if (use.widthStar) type(use.width,1);
+        if (use.precisionStar) type(use.precision,1);
+        uses.push_back(use);
+    }
+    if (!indexed) return std::nullopt;
+    for (const auto use : uses)
+        if ((use.consumes && !use.value) || (use.widthStar && !use.width) || (use.precisionStar && !use.precision))
+            throw std::invalid_argument("mixed indexed and sequential format arguments");
+    for (uint32_t n=1;n<=highest;++n)
+        if (!widths[n]) throw std::invalid_argument("gap in positional format arguments");
+    auto reader = args;
+    std::vector<uint64_t> values(highest+1);
+    for (uint32_t n=1;n<=highest;++n) values[n] = widths[n] == 2 ? reader.dword() : reader.word();
+    args = reader;
+    std::vector<uint32_t> ordered;
+    for (const auto use : uses) {
+        if (use.widthStar) ordered.push_back(uint32_t(values[use.width]));
+        if (use.precisionStar) ordered.push_back(uint32_t(values[use.precision]));
+        if (use.consumes) {
+            ordered.push_back(uint32_t(values[use.value]));
+            if (use.wide) ordered.push_back(uint32_t(values[use.value]>>32));
+        }
+    }
+    if (ordered.size() > (UINT32_MAX-16)/4) throw std::length_error("positional format is too large");
+    struct Buffer { Process& p; uint32_t address; ~Buffer() { if (address) p.heap().free(address); } };
+    Buffer buffer{p,p.heap().allocZeroed(uint32_t(ordered.size()*4)+16)};
+    if (!buffer.address) throw std::bad_alloc();
+    if (!ordered.empty()) p.mem().copyIn(buffer.address,ordered.data(),ordered.size()*4);
+    ArgReader reordered(p.mem(),buffer.address);
+    return formatGuest(p,plain,reordered,hook);
+}
+
 } // namespace
 
 void setObjectFormatHook(Process& p, std::function<std::string(uint32_t)> hook) { p.service<FormatState>().hook = std::move(hook); }
 const std::function<std::string(uint32_t)>& objectFormatHook(Process& p) { return p.service<FormatState>().hook; }
 
 std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, const std::function<std::string(uint32_t)>& objectHook) {
+    if (fmt.find('$') != std::string::npos)
+        if (auto indexed = positionalFormat(p,fmt,args,objectHook)) return std::move(*indexed);
     std::string out;
     out.reserve(fmt.size() + 16);
     const auto& hook = objectHook ? objectHook : objectFormatHook(p);
@@ -27,7 +124,6 @@ std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, con
         const size_t start = i++;
         if (i < fmt.size() && fmt[i] == '%') { out += '%'; ++i; continue; }
 
-        // Positional arguments (%1$d) are rare in apps; not supported.
         // Flags and width can appear in flexible order (e.g. %10#llx in PLCrashReporter).
         std::string flags;
         int width = -1, prec = -1;
