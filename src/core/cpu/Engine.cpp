@@ -7,9 +7,11 @@
 #include <cstring>
 #include <cerrno>
 #include <unistd.h>   // write() in the host-fault diagnostics
-#include <ucontext.h>
 #if defined(__APPLE__)
+#include <sys/ucontext.h>   // <ucontext.h> needs _XOPEN_SOURCE on Apple
 #include <mach/thread_status.h>
+#else
+#include <ucontext.h>
 #endif
 
 namespace Hydrogen::CPU {
