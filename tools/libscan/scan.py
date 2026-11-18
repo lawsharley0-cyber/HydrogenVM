@@ -1,4 +1,4 @@
-"""Report statically linked libraries in little-endian ARMv7 guest images."""
+"""Report statically linked libraries in little-endian ARM guest images."""
 
 import argparse
 from collections import defaultdict
@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 import struct
 import sys
 import zipfile
+
+from legacy import ARM_SUBTYPES, MACH_FAT, MACH_THIN, legacy_matches, macho_slices
 
 
 @dataclass(frozen=True)
@@ -61,21 +63,14 @@ def elf_code(data):
 
 
 def macho_code(data, universal=True):
-    if universal and data[:4] in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf",
-                                    b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
-        endian = ">" if data[0] == 0xCA else "<"
-        wide = 0xBF in data[:4]
-        fmt = endian + ("IIQQII" if wide else "IIIII")
-        count, = struct.unpack_from(endian + "I", data, 4)
-        table = span(data, 8, struct.calcsize(fmt) * count)
-        for cpu, subtype, offset, size, *_ in struct.iter_unpack(fmt, table):
-            if cpu == 12 and (subtype & 0xFFFFFF) in (0, 9, 10, 11, 12):
-                yield from macho_code(span(data, offset, size), universal=False)
+    if universal and data[:4] in MACH_FAT:
+        for image in macho_slices(data):
+            yield from macho_code(image, universal=False)
         return
-    if data[:4] != b"\xce\xfa\xed\xfe":
+    if data[:4] != MACH_THIN:
         return
     _, cpu, subtype, _, count, command_bytes, _ = struct.unpack_from("<7I", data)
-    if cpu != 12 or (subtype & 0xFFFFFF) not in (0, 9, 10, 11, 12):
+    if cpu != 12 or (subtype & 0xFFFFFF) not in ARM_SUBTYPES:
         return
     commands_end = 28 + len(span(data, 28, command_bytes))
     offset = 28
@@ -114,8 +109,7 @@ def app_executables(path):
     for entry in sorted(path.rglob("*")):
         if entry.is_file() and not entry.is_symlink():
             with entry.open("rb") as stream:
-                if stream.read(4) in (b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf",
-                                      b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
+                if stream.read(4) in (MACH_THIN, *MACH_FAT):
                     stream.seek(0)
                     yield entry.relative_to(path).as_posix(), stream.read()
 
@@ -136,8 +130,7 @@ def package_executables(path):
                 continue
             with archive.open(entry) as stream:
                 header = stream.read(4)
-                if header in (b"\x7fELF", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf",
-                              b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
+                if header in (b"\x7fELF", MACH_THIN, *MACH_FAT):
                     yield str(name), header + stream.read()
 
 
@@ -231,6 +224,19 @@ def scan_binary(data, signatures):
     ]
 
 
+def identify_libraries(data, signatures):
+    matches = scan_binary(data, signatures)
+    # Keep exact byte evidence and its version candidates when both paths
+    # identify the same entry point.
+    def key(hit):
+        return hit["library"], hit["function"], hit["address"], hit["isa"]
+
+    by_address = {key(hit): hit for hit in matches}
+    for hit in legacy_matches(data):
+        by_address.setdefault(key(hit), hit)
+    return [by_address[k] for k in sorted(by_address)]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", type=Path, metavar="IPA|APK|APP|BINARY")
@@ -247,7 +253,7 @@ def main():
         try:
             for name, data in package_executables(path):
                 try:
-                    matches = scan_binary(data, signatures)
+                    matches = identify_libraries(data, signatures)
                     result["binaries"].append({"path": name, "matches": matches})
                 except ValueError as error:
                     result["errors"].append({"path": name, "error": str(error)})

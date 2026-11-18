@@ -38,6 +38,40 @@ def fat(image):
     return struct.pack(">7I", 0xCAFEBABE, 1, 12, 9, 28, len(image), 2) + image
 
 
+def anchored_macho():
+    """ARMv6 fixture with three entry points, PC-relative loads and a direct call."""
+    diagnostics = [
+        b"incorrect header check\0", b"unknown compression method\0",
+        b"invalid distance code\0", b"invalid literal/length code\0",
+        struct.pack("<8I", 0, 0x77073096, 0xEE0E612C, 0x990951BA,
+                    0x076DC419, 0x706AF48F, 0xE963A535, 0x9E6495A3),
+    ]
+    rodata_address = 0x2000
+    constants = b""
+    addresses = []
+    for item in diagnostics:
+        addresses.append(rodata_address + len(constants))
+        constants += item
+    # At 0x1104 the PC is 0x110c and the first literal is at 0x1118.
+    # The BL instructions at 0x110c and 0x1110 target 0x1120 and 0x1140.
+    code = struct.pack(
+        "<24I", 0xE92D4010, 0xE59F000C, 0xE59F100C, 0xEB000003, 0xEB00000A, 0xE8BD8010,
+        addresses[0], addresses[1],
+        0xE92D4010, 0xE59F000C, 0xE59F100C, 0xE8BD8010, 0, 0, addresses[2], addresses[3],
+        0xE92D4010, 0xE59F0008, 0xE0200421, 0xE8BD8010, 0, addresses[4], 0, 0,
+    )
+    segment_size = 56 + 2 * 68
+    offset = 28 + segment_size
+    header = struct.pack("<7I", 0xFEEDFACE, 12, 6, 2, 1, segment_size, 0)
+    segment = struct.pack("<II16s8I", 1, segment_size, b"__TEXT", 0x1000, 0x2000, 0,
+                          offset + len(code) + len(constants), 7, 5, 2, 0)
+    text = struct.pack("<16s16s9I", b"__text", b"__TEXT", 0x1100, len(code), offset,
+                       2, 0, 0, 0x80000400, 0, 0)
+    data = struct.pack("<16s16s9I", b"__const", b"__TEXT", rodata_address, len(constants), offset + len(code),
+                       2, 0, 0, 0, 0, 0)
+    return header + segment + text + data + code + constants, offset
+
+
 class LibraryScanTests(unittest.TestCase):
     def test_arm_signatures_ignore_branch_displacement_and_keep_alignment(self):
         results = scan.scan_binary(elf(CODE), [SIGNATURE])
@@ -65,6 +99,54 @@ class LibraryScanTests(unittest.TestCase):
         self.assertEqual(scan.scan_binary(macho(CODE, flags=0), [SIGNATURE]), [])
         with self.assertRaises(ValueError):
             scan.scan_binary(macho(CODE)[:-1], [SIGNATURE])
+
+    def test_armv6_literal_references_and_direct_calls(self):
+        image, offset = anchored_macho()
+        hits = scan.identify_libraries(image, [])
+        self.assertEqual(
+            {hit["function"]: (hit["address"], hit["isa"], hit["evidence"]) for hit in hits},
+            {"inflate": (0x1100, "arm", "constant-references"),
+             "inflate_fast": (0x1120, "arm", "constant-references"),
+             "crc32": (0x1140, "arm", "constant-references")},
+        )
+        # Strings still present but neither header diagnostic is referenced.
+        unreferenced = image[:offset + 4] + bytes(8) + image[offset + 12:]
+        self.assertEqual(scan.identify_libraries(unreferenced, []), [])
+        # Drop the call but leave the other routine and its error strings in place.
+        disconnected = image[:offset + 12] + bytes(4) + image[offset + 16:]
+        self.assertEqual({hit["function"] for hit in scan.identify_libraries(disconnected, [])},
+                         {"inflate", "crc32"})
+        without_crc_loop = image[:offset + 0x48] + bytes(4) + image[offset + 0x4C:]
+        self.assertEqual({hit["function"] for hit in scan.identify_libraries(without_crc_loop, [])},
+                         {"inflate", "inflate_fast"})
+
+    def test_macho_symbols_require_a_defined_text_entry(self):
+        image = macho(CODE)
+        text_at = len(image) - len(CODE) + 24
+        names = b"\0_inflate\0_crc32\0"
+        symbols = (struct.pack("<IBBHI", 1, 0x0E, 1, 0, 0x1104) +
+                   struct.pack("<IBBHI", 10, 0x01, 0, 0, 0))
+        symtab = struct.pack("<6I", 2, 24, text_at + len(CODE), 2,
+                             text_at + len(CODE) + len(symbols), len(names))
+        data = bytearray(image[:len(image) - len(CODE)] + symtab + CODE + symbols + names)
+        struct.pack_into("<2I", data, 16, 2, 56 + 68 + 24)
+        struct.pack_into("<I", data, 28 + 36, len(data))
+        struct.pack_into("<I", data, 28 + 56 + 40, text_at)
+        hits = scan.identify_libraries(bytes(data), [])
+        self.assertEqual([(h["function"], h["address"], h["evidence"]) for h in hits],
+                         [("inflate", 0x1104, "defined-symbol")])
+
+    def test_thumb_movw_movt_reference_uses_function_start_mode(self):
+        from legacy import Text, function_starts, anchor_hits
+        starts = function_starts(bytes.fromhex("810200"), 0x1000)  # ULEB128 delta 0x101
+        # push {lr}; movw r0, #0x2000; movt r0, #0;
+        # movw r1, #0x2040; movt r1, #0; pop {pc}
+        text = Text(0x1100, bytes.fromhex("00b542f20000c0f2000042f24001c0f2000100bd"))
+        anchors = {0x2000: {"png_header"}, 0x2040: {"png_order"}}
+        hits = anchor_hits(text, starts, anchors)
+        self.assertEqual([(h["function"], h["address"], h["isa"]) for h in hits],
+                         [("png_read_info", 0x1100, "thumb")])
+        self.assertEqual(anchor_hits(text, {0x1100: "arm"}, anchors), [])
 
     def test_package_selection_and_reports(self):
         with tempfile.TemporaryDirectory() as tmp:

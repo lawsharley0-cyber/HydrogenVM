@@ -3,7 +3,7 @@
 `python3 tools/libscan/scan.py Game.ipa Game.apk Game.app` prints one JSON report
 with a match count per input and individual hits per binary. APK scanning selects
 `lib/armeabi-v7a/*.so`. IPA and app scanning examines 32-bit ARMv7 Mach-O
-images, including slices of universal binaries. Bare ELF and Mach-O files are
+and ARMv6 images, including slices of universal binaries. Bare ELF and Mach-O files are
 also accepted. An address is the even virtual address from the image, before
 any loader slide. The `isa` field identifies ARM or Thumb. A version guess can
 include multiple releases whose retained instruction bytes are identical.
@@ -16,10 +16,21 @@ use an ARMv7 iOS 6 target and the Test Lab stub SDK. Prefixes contain up to
 object relocations. Tremor's short synthesis wrapper also needs a hit for
 its branch destination.
 
-A match is evidence of a known compiled code shape. Compiler revisions, LTO,
-architecture-specific implementations, build options and versions can change
-that shape. Use the scanner results to nominate candidates for follow-up
-verification.
+For older Mach-O builds, the scanner also checks defined text symbols and
+instruction references to zlib and libpng constants. It recognizes ARM and
+Thumb PC-relative literal loads and address construction. It ties those
+references to the Mach-O function-start table, or to a nearby frame prologue
+when the table is unavailable. The zlib fast path also needs a direct call
+chain from the identified inflate function. The CRC lookup table is checked
+alongside the loop's XOR/shift instruction and evidence of a bundled inflate
+function.
+
+A defined-symbol hit is high confidence. Constant-reference hits are medium
+confidence and leave the version guess empty. Use those addresses as
+candidates for follow-up inspection. The constant-reference path covers
+zlib and libpng in Mach-O. ELF, libvorbis and Tremor matching still depends
+on the compiled signatures. Compiler revisions, LTO and build options
+can change compiled code shapes.
 
 ## Rebuild and validate
 
