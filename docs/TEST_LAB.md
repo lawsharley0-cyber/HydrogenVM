@@ -531,3 +531,14 @@ disabled location source, without asking for GPS or fabricating coordinates.
 It interrupts on the original missing instance selector and passes after the
 shared compatibility method. AH–AN are reserved by the separate Canabalt #437
 and parked Super Hexagon #438 work; these IDs avoid integration collisions.
+
+
+### TL-AQ — Sequential Core Graphics data provider
+
+Dead Space 1.0.2 stops on an unresolved `CGDataProviderCreateSequential` call.
+An authored seven-byte stream returns at most two bytes per callback. Two
+`CGDataProviderCopyData` calls must deliver the complete stream, including the
+embedded zero. The release callback must receive the original context once,
+after the final provider reference is released. The callback ABI and
+end-of-stream semantics come from Apple's
+[CGDataProvider.h](https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.10.sdk/System/Library/Frameworks/CoreGraphics.framework/Versions/A/Headers/CGDataProvider.h).
