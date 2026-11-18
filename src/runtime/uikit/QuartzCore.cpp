@@ -875,6 +875,7 @@ void runFrame(Ctx& x, double now) {
         compositeFrame(x);
         perf.compositeNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - c0).count());
         perf.notePresented();
+        x.proc.recordFrameCheckpoint(u.framebuffer.rgba.data(), u.framebuffer.width, u.framebuffer.height);
         if (x.proc.config().present) x.proc.config().present(u.framebuffer.rgba.data(), u.framebuffer.width, u.framebuffer.height);
     }
 }

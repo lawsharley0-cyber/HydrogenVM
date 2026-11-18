@@ -360,6 +360,11 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"exitStatus\": " << status << ",\n";
             f << "  \"stillRunning\": " << (timedStop ? "true" : "false") << ",\n";   // reached --run-for without failing
             f << "  \"crashed\": " << (proc.crashed() ? "true" : "false") << ",\n";
+            f << "  \"replayDiverged\": " << (proc.session().firstDivergence() ? "true" : "false") << ",\n";
+            if (const auto div = proc.session().firstDivergence()) {
+                f << "  \"replayDivergenceFrame\": " << div->frame << ",\n";
+                f << "  \"replayDivergence\": \"" << jsonEscape(proc.session().formatDivergence()) << "\",\n";
+            }
             f << "  \"crashReport\": \"" << jsonEscape(proc.crashReport()) << "\",\n";
             f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";

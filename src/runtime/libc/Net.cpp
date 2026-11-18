@@ -1027,7 +1027,19 @@ bool networkInterfaceIoctl(Ctx& x, unsigned int req, unsigned int arg, int& resu
     }
     return false;
 }
-int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
+int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) {
+    if (auto rec = x.proc.session().replayNetAnswer()) {
+        const size_t n = std::min<size_t>(rec->size(), count);
+        if (n > 0) x.mem.copyIn(buffer, rec->data(), n);
+        return int(n);
+    }
+    const int r = n_recv(x, fd, buffer, count, 0);
+    if (r > 0 && x.proc.config().internetAccess) {
+        x.proc.session().recordNetAnswer(x.mem.host(buffer), size_t(r),
+                                           x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    return r;
+}
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
     {
