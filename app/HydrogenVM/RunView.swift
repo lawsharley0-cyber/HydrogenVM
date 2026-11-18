@@ -81,6 +81,12 @@ final class RunModel {
     var crashReport: String?
     var savedCrash: CrashReport?
     var reportSaveError: String?
+    var safeModeRetryOffer: String?
+    @ObservationIgnored private var pendingCrashFields: [String: Any]?
+    @ObservationIgnored private var sessionStartTime: Date?
+    @ObservationIgnored private var activeFallback: String?
+    @ObservationIgnored private var triedFallbackThisRun = false
+    @ObservationIgnored private var lastKeepGoing = false
     @ObservationIgnored private var memoryTimer: Timer?
     @ObservationIgnored private var memorySamples: [[String: Any]] = []
     var exitMessage: String?
@@ -151,16 +157,32 @@ final class RunModel {
         session?.movieFinished(requestId)
     }
 
-    func start(keepGoing: Bool) {
+    func start(keepGoing: Bool, detailedRecording: Bool = false) {
         guard session == nil else { return }
+        lastKeepGoing = keepGoing
+        sessionStartTime = Date()
+        let fallback = activeFallback ?? Self.compatFallback(for: app.info.bundleIdentifier)
+        activeFallback = fallback
         let s = HVMSession(bundlePath: app.info.bundlePath, homePath: app.homeURL.path(percentEncoded: false))
         s.keepGoing = keepGoing
         s.playSession = true
+        s.detailedRecording = detailedRecording
         // GPU rendering unless the player turned it off for this game (or, from
         // older builds, for every game).
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
         s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
         s.unlockFrameRate = Self.unlocksFrameRate(for: app.info.bundleIdentifier)
+        if let fallback {
+            s.safeModeFallback = fallback
+            switch fallback {
+            case "gles1-emulation": s.gles1Emulate = true
+            case "frame-rate-cap": s.unlockFrameRate = false
+            case "internet-off": s.allowInternet = false
+            case "reduced-texture-resolution": s.maxTextureSize = 1024
+            case "extra-memory-headroom": s.memoryBudgetBytes = 2048 * 1024 * 1024
+            default: break
+            }
+        }
         // Taller guest screen and safe-area insets, per game; both are cleared when off.
         let display = UIScreen.main.bounds.size
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -250,7 +272,28 @@ final class RunModel {
                     fields["bundleId"] = self.app.info.bundleIdentifier
                     fields["recordingPath"] = self.session?.recordingPath ?? self.app.homeURL.appending(path: "Library/HydrogenVM/last-session.hvmrec").path(percentEncoded: false)
                     fields["memorySamples"] = self.memorySamples
+                    if let fb = self.activeFallback { fields["safeModeFallback"] = fb }
                     if fields["logs"] == nil { fields["logs"] = self.log.suffix(3000).map(\.text) }
+                    let usedInternet = self.session?.allowInternet ?? false
+                    let usedUnlockFPS = self.session?.unlockFrameRate ?? false
+                    let usedGles1 = self.session?.gles1Emulate ?? false
+                    let usedMaxTex = self.session?.maxTextureSize ?? 0
+                    self.session = nil
+                    let withinWindow = self.sessionStartTime.map { Date().timeIntervalSince($0) <= 180 } ?? false
+                    if withinWindow, !self.triedFallbackThisRun,
+                       let chosen = HVMEngine.chooseFallback(forCrashReport: crash + "\n" + self.logText,
+                                                             internetAccess: usedInternet,
+                                                             unlockFrameRate: usedUnlockFPS,
+                                                             gles1Emulate: usedGles1,
+                                                             maxTextureSize: usedMaxTex) {
+                        if UserDefaults.standard.bool(forKey: "player.safeModeAlwaysRetry") {
+                            self.retryInSafeMode(fallback: chosen)
+                        } else {
+                            self.pendingCrashFields = fields
+                            self.safeModeRetryOffer = chosen
+                        }
+                        return
+                    }
                     do {
                         self.savedCrash = try CrashReport.save(fields, app: self.app.info.bundleIdentifier)
                         CrashReport.clearPending()
@@ -259,6 +302,10 @@ final class RunModel {
                         self.crashReport = crash
                     }
                 } else {
+                    self.session = nil
+                    if let fb = self.activeFallback {
+                        Self.setCompatFallback(fb, for: self.app.info.bundleIdentifier)
+                    }
                     CrashReport.clearPending()
                     if self.userStopped { self.finished = true }
                     else { self.exitMessage = "The app exited (status \(code))." }
@@ -294,6 +341,10 @@ final class RunModel {
                     self.reconcileActivity()
                     if self.inputEnabled && !self.motion.isAccelerometerActive { self.startSensors() }
                 }
+                if self.hasPicture, let fb = self.activeFallback,
+                   let startTime = self.sessionStartTime, Date().timeIntervalSince(startTime) >= 5 {
+                    Self.setCompatFallback(fb, for: self.app.info.bundleIdentifier)
+                }
                 self.fps = presented >= self.lastPresented ? max(Int(presented - self.lastPresented), self.frameCount) : self.frameCount
                 self.lastPresented = presented
                 self.frameCount = 0
@@ -301,6 +352,51 @@ final class RunModel {
                 // orientation here too (landscape games rotate at startup).
                 self.syncOrientation()
             }
+        }
+    }
+
+    nonisolated static func compatFallbackKey(_ bundleID: String) -> String { "compatFallback.\(bundleID)" }
+    nonisolated static func compatFallback(for bundleID: String) -> String? {
+        UserDefaults.standard.string(forKey: compatFallbackKey(bundleID))
+    }
+    nonisolated static func setCompatFallback(_ fallback: String?, for bundleID: String) {
+        if let fallback, !fallback.isEmpty {
+            UserDefaults.standard.set(fallback, forKey: compatFallbackKey(bundleID))
+        } else {
+            UserDefaults.standard.removeObject(forKey: compatFallbackKey(bundleID))
+        }
+    }
+
+    func retryInSafeMode(fallback: String) {
+        safeModeRetryOffer = nil
+        pendingCrashFields = nil
+        CrashReport.clearPending()
+        triedFallbackThisRun = true
+        activeFallback = fallback
+        session = nil
+        let keepGoing = lastKeepGoing
+        let bundleID = app.info.bundleIdentifier
+        append("[hvm] safe-mode retry: relaunching with fallback \(fallback)", .info)
+        Task.detached { [weak self] in
+            _ = HVMEngine.wait(forGuestArenaRelease: 2.0)
+            await MainActor.run {
+                guard let self else { return }
+                Self.setCompatFallback(fallback, for: bundleID)
+                self.start(keepGoing: keepGoing)
+            }
+        }
+    }
+
+    func declineSafeModeRetry() {
+        safeModeRetryOffer = nil
+        guard let fields = pendingCrashFields else { return }
+        pendingCrashFields = nil
+        do {
+            savedCrash = try CrashReport.save(fields, app: app.info.bundleIdentifier)
+            CrashReport.clearPending()
+        } catch {
+            reportSaveError = "Could not save the crash report: \(error.localizedDescription)"
+            crashReport = fields["report"] as? String ?? "Unknown crash"
         }
     }
 
@@ -619,6 +715,7 @@ final class RunModel {
 struct RunView: View {
     let app: InstalledApp
     let keepGoing: Bool
+    let detailedRecording: Bool
     @State private var model: RunModel
     @State private var showLog = false
     @State private var hudExpanded = false
@@ -642,7 +739,8 @@ struct RunView: View {
     @AppStorage private var unlockFrameRate: Bool
     @Environment(\.dismiss) private var dismiss
 
-    init(app: InstalledApp, keepGoing: Bool) {
+    init(app: InstalledApp, keepGoing: Bool, detailedRecording: Bool = false) {
+        self.detailedRecording = detailedRecording
         self.app = app
         self.keepGoing = keepGoing
         _model = State(initialValue: RunModel(app: app))
@@ -787,7 +885,7 @@ struct RunView: View {
         .defersSystemGestures(on: .all)
         .onAppear {
             OrientationLock.shared.lock(hostMask(for: effectiveOrientation), preferring: effectiveOrientation.mask)
-            model.start(keepGoing: keepGoing)
+            model.start(keepGoing: keepGoing, detailedRecording: detailedRecording)
             model.syncVirtualController(effectiveOrientation: effectiveOrientation)
         }
         .onChange(of: effectiveOrientation) { _, orientation in
@@ -828,6 +926,15 @@ struct RunView: View {
                 .interactiveDismissDisabled()
         }
         .sheet(item: $model.savedCrash) { CrashReportView(report: $0) }
+        .alert("Safe-Mode Retry", isPresented: Binding(get: { model.safeModeRetryOffer != nil }, set: { if !$0 { model.declineSafeModeRetry() } })) {
+            if let fb = model.safeModeRetryOffer {
+                let label = HVMEngine.fallbackLabel(forId: fb) ?? fb
+                Button("Retry in Safe Mode (\(label))") { model.retryInSafeMode(fallback: fb) }
+            }
+            Button("Show Crash Report", role: .cancel) { model.declineSafeModeRetry() }
+        } message: {
+            Text("\(app.title) stopped shortly after launch. HydrogenVM can try relaunching once with this compatibility fallback.")
+        }
         .alert("\(app.title) crashed", isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {
             Button("Copy Report") { UIPasteboard.general.string = (model.crashReport ?? "") + "\n\n--- log ---\n" + model.logText; dismiss() }
             Button("Show Log") { showLog = true }

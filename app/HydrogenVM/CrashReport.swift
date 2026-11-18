@@ -12,6 +12,8 @@ struct CrashReport: Identifiable {
     let signature: String
     let app: String
     var recordingPath: String? = nil
+    var privateRecording: URL? = nil
+    var safeModeFallback: String? = nil
 
     static var directory: URL {
         URL.documentsDirectory.appending(path: "HydrogenVM/crashes", directoryHint: .isDirectory)
@@ -61,6 +63,7 @@ struct CrashReport: Identifiable {
     static func save(_ fields: [String: Any], app: String) throws -> CrashReport {
         var fields = fields
         let signature = fields["signature"] as? String ?? String(Insecure.SHA1.hash(data: Data((fields["exceptionKind"] as? String ?? "unknown").utf8)).map { String(format: "%02x", $0) }.joined().prefix(12))
+        let recordingSource = fields.removeValue(forKey: "recordingPath") as? String
         fields["signature"] = signature
         fields["deviceModel"] = deviceModel
         fields["iOSVersion"] = UIDevice.current.systemVersion
@@ -72,15 +75,21 @@ struct CrashReport: Identifiable {
         try data.write(to: file, options: .atomic)
         // The next launch rotates last-session.hvmrec, so keep this crash's recording next to its report.
         var recording: String? = nil
-        if let source = fields["recordingPath"] as? String, FileManager.default.fileExists(atPath: source) {
+        var privateCopy: URL?
+        if let source = recordingSource, FileManager.default.fileExists(atPath: source) {
             let copy = file.deletingPathExtension().appendingPathExtension("hvmrec")
             if (try? FileManager.default.copyItem(atPath: source, toPath: copy.path(percentEncoded: false))) != nil {
                 recording = copy.path(percentEncoded: false)
             }
+            let privateSource = URL(fileURLWithPath: source).appendingPathExtension("private")
+            let target = file.deletingPathExtension().appendingPathExtension("private.hvmrec")
+            if (try? FileManager.default.copyItem(at: privateSource, to: target)) != nil {
+                privateCopy = target
+            }
         }
         return CrashReport(json: String(decoding: data, as: UTF8.self), file: file,
                            summary: fields["summary"] as? String ?? "The previous game session ended unexpectedly. Share this report to help diagnose it.", signature: signature, app: app,
-                           recordingPath: recording)
+                           recordingPath: recording, privateRecording: privateCopy)
     }
 
     static var deviceModel: String {
@@ -147,10 +156,13 @@ struct CrashReportView: View {
                 Text("Report \(report.signature)").font(.caption.monospaced())
                 SendReportButton(make: {
                     var summary = "\(report.summary)\n\n**App:** `\(report.app)` · \(ProblemReporter.deviceLine) · **Report:** `\(report.signature)`"
+                    if let fb = report.safeModeFallback, !fb.isEmpty {
+                        summary += "\n**Compatibility:** launched with fallback \(fb)"
+                    }
                     var parts: [ProblemReport.Part] = [.init(name: "report.json", text: report.json, language: "json")]
                     if let path = report.recordingPath,
                        let recording = try? String(contentsOfFile: path, encoding: .utf8),
-                       !recording.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                       recording.hasPrefix("HVMREC 1 ") {
                         summary += "\n\n**Replay on bench:** `hvm run <game> --phone --gpu --replay session.hvmrec`"
                         parts.append(.init(name: "session.hvmrec", text: recording))
                     }
@@ -158,6 +170,11 @@ struct CrashReportView: View {
                                          summary: summary,
                                          parts: parts)
                 }, fallback: report.issueURL)
+                if let privateRecording = report.privateRecording {
+                    ShareLink(item: privateRecording) {
+                        Label("Share private replay (includes game data)", systemImage: "square.and.arrow.up")
+                    }
+                }
                 Button("Copy report", systemImage: "doc.on.doc") { UIPasteboard.general.string = report.json }
                 ShareLink(item: report.file) { Label("Share", systemImage: "square.and.arrow.up") }
                 Link(destination: report.issueURL) { Label("Report on GitHub", systemImage: "link") }

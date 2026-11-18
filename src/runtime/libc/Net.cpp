@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — BSD sockets, name resolution and network interfaces.
 //
 // By default HydrogenVM runs apps offline (reachability reports no network), so
@@ -80,7 +81,7 @@ bool span(Ctx& x, GuestPtr ptr, uint32_t n, uint8_t prot) {
         if ((x.mem.protAt(uint32_t(a)) & prot) != prot) return false;
     return true;
 }
-bool internet(Ctx& x) { return x.proc.config().internetAccess; }
+bool internet(Ctx& x) { return Compat::internetAccess(x.proc); }
 void tellInternetOnce(Ctx& x) {
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) x.proc.logf(LogLevel::Info, "Internet: allowed for this game (its \"Allow internet\" switch is on)");
@@ -1027,7 +1028,21 @@ bool networkInterfaceIoctl(Ctx& x, unsigned int req, unsigned int arg, int& resu
     }
     return false;
 }
-int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
+int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) {
+    if (x.proc.session().replayingDetails() && internet(x)) {
+        if (count > INT32_MAX || !span(x, buffer, count, Memory::kProtWrite)) return failWith(x, 14);
+        if (auto rec = x.proc.session().replayNetAnswer(count)) {
+            if (!rec->empty()) x.mem.copyIn(buffer, rec->data(), rec->size());
+            return int(rec->size());
+        }
+    }
+    const int r = n_recv(x, fd, buffer, count, 0);
+    if (x.proc.session().recordingDetails() && r > 0 && internet(x)) {
+        x.proc.session().recordNetAnswer(x.mem.host(buffer), size_t(r),
+                                           x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    return r;
+}
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
     {
