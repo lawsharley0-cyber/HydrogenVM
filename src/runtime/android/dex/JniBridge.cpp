@@ -1,4 +1,5 @@
 #include "runtime/android/dex/JniBridge.hpp"
+#include "runtime/android/dex/CoreCollections.hpp"
 #include "runtime/android/dex/GuestScheduler.hpp"
 
 #include <fstream>
@@ -199,6 +200,7 @@ public:
     }
 
     bool hasClass(std::u16string_view descriptor) {
+        if (CoreCollections::hasClass(descriptor)) return true;
         const std::string cls = className(descriptor);
         auto& j = jni(process);
         std::lock_guard lock(j.mu);
@@ -242,6 +244,9 @@ public:
     std::optional<Value> external(std::u16string_view owner, std::u16string_view name,
                                   std::u16string_view signature, bool stat, bool native,
                                   std::span<const Value> args) {
+        if (!native) {
+            if (auto value = collections.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
+        }
         auto& j = jni(process);
         Ctx x{process, process.currentThread().cpu, process.mem()};
         const auto cls = className(owner), method = toMutf8(name), sig = toMutf8(signature);
@@ -278,6 +283,7 @@ public:
     std::recursive_mutex references;
     std::unordered_map<jobject, uint32_t> fromJni;
     std::unordered_map<uint32_t, jobject> toJni;
+    CoreCollections collections;
     std::unique_ptr<Machine> machine;
 };
 

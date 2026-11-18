@@ -186,7 +186,8 @@ bool Arena::assignable(std::u16string_view from, std::u16string_view to) const {
         from == u"Ljava/lang/ArrayIndexOutOfBoundsException;" || from == u"Ljava/lang/ClassCastException;" ||
         from == u"Ljava/lang/NegativeArraySizeException;" || from == u"Ljava/lang/ArrayStoreException;" ||
         from == u"Ljava/lang/IllegalMonitorStateException;" || from == u"Ljava/lang/UnsupportedOperationException;" ||
-        from == u"Ljava/lang/IllegalThreadStateException;")
+        from == u"Ljava/lang/IllegalThreadStateException;" || from == u"Ljava/lang/IndexOutOfBoundsException;" ||
+        from == u"Ljava/lang/IllegalArgumentException;")
         return to == u"Ljava/lang/RuntimeException;" || to == u"Ljava/lang/Exception;" || to == u"Ljava/lang/Throwable;";
     return classAssignable_ && classAssignable_(from, to);
 }

@@ -71,3 +71,35 @@ invoke-virtual Ljava/lang/Thread;->join()V, v1
 sget v0, Ltest/JniWorker;->count:I
 return v0
 .end method
+
+.string item "list value"
+.class Ltest/Collections; 1
+
+.method check()I 9
+.registers 5
+.outs 3
+const/4 v0, 7
+const/4 v1, -2
+const/4 v2, 4
+filled-new-array [I, v0, v1, v2
+move-result-object v3
+invoke-static Ljava/util/Arrays;->sort([I)V, v3
+const/4 v0, 2
+invoke-static Ljava/util/Arrays;->copyOf([II)[I, v3, v0
+move-result-object v3
+const/4 v0, 0
+aget v0, v3, v0
+
+new-instance v1, Ljava/util/ArrayList;
+invoke-direct Ljava/util/ArrayList;-><init>()V, v1
+const-string v2, item
+invoke-interface Ljava/util/List;->add(Ljava/lang/Object;)Z, v1, v2
+invoke-interface Ljava/util/List;->size()I, v1
+move-result v4
+const/4 v3, 0
+invoke-interface Ljava/util/List;->get(I)Ljava/lang/Object;, v1, v3
+move-result-object v2
+check-cast v2, Ljava/lang/String;
+add-int v0, v0, v4
+return v0
+.end method
