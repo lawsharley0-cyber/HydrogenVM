@@ -41,9 +41,20 @@ template <bool DP> using FpT = std::conditional_t<DP, double, float>;
 template <bool DP> inline FpT<DP> rdF(const Cpu* c, uint32_t i) { if constexpr (DP) return rdD(c, i); else return rdS(c, i); }
 template <bool DP> inline void wrF(Cpu* c, uint32_t i, FpT<DP> v) { if constexpr (DP) wrD(c, i, v); else wrS(c, i, v); }
 
-// Flush a denormal to a same-signed zero.
+// Flush a denormal to a same-signed zero. A zero exponent field means zero or denormal; both keep
+// only their sign. Branchless: RunFast (flush-to-zero) is how every iOS thread starts, so this runs
+// on nearly every VFP/NEON operation.
 template <typename T> inline T flushDenorm(T v) {
-    return std::fpclassify(v) == FP_SUBNORMAL ? std::copysign(T(0), v) : v;
+    if constexpr (sizeof(T) == 4) {
+        uint32_t b; std::memcpy(&b, &v, 4);
+        const uint32_t keep = (b & 0x7F800000u) ? ~0u : 0x80000000u;
+        b &= keep; std::memcpy(&v, &b, 4);
+    } else {
+        uint64_t b; std::memcpy(&b, &v, 8);
+        const uint64_t keep = (b & 0x7FF0000000000000ull) ? ~0ull : 0x8000000000000000ull;
+        b &= keep; std::memcpy(&v, &b, 8);
+    }
+    return v;
 }
 template <typename T> inline T defaultNaN() {
     if constexpr (sizeof(T) == 4) { uint32_t b = 0x7FC00000u; T f; std::memcpy(&f, &b, 4); return f; }
@@ -74,7 +85,7 @@ template <int OP, bool DP>
 HVM_H(H_Vfp3) {
     using T = FpT<DP>;
     T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
-    if (__builtin_expect((c->fpscr & (kFpscrFZ | kFpscrDN)) != 0, 0)) {
+    if ((c->fpscr & (kFpscrFZ | kFpscrDN)) != 0) {
         if (c->fpscr & kFpscrFZ) { n = flushDenorm(n); mm = flushDenorm(mm); d = flushDenorm(d); }
         T r = vfp3<OP>(n, mm, d);
         if (c->fpscr & kFpscrFZ) r = flushDenorm(r);
