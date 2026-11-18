@@ -117,6 +117,10 @@ int32_t cacheflush(Process& p, CPU::Cpu& self, uint32_t start, uint32_t end) {
 // The call: number and arguments as the kernel takes them. Returns r0.
 int32_t linuxSyscall(Process& p, CPU::Cpu& c, uint32_t nr, const uint32_t a[6]) {
     Ctx x{p, c, p.mem()};
+    auto bionic = [&](const char* name, std::initializer_list<uint32_t> args) {
+        const int32_t result = int32_t(callIos(x, name, args));
+        return result == -1 ? -takeLinuxErrno(x) : result;
+    };
     switch (nr) {
         case 0xF0002: return cacheflush(p, c, a[0], a[1]);                 // ARM cacheflush
         case 0xF0005: c.tpidrurw = a[0]; return 0;                         // ARM set_tls
@@ -132,6 +136,45 @@ int32_t linuxSyscall(Process& p, CPU::Cpu& c, uint32_t nr, const uint32_t a[6]) 
         case 78: return int32_t(callIos(x, "_gettimeofday", {a[0], a[1]}));   // gettimeofday
         case 238: return -sendSignalToTid(p, c, a[0], int(a[1]));          // tkill
         case 268: return -sendSignalToTid(p, c, a[1], int(a[2]));          // tgkill
+        case 3: return bionic("android:read", {a[0], a[1], a[2]});
+        case 4: return bionic("android:write", {a[0], a[1], a[2]});
+        case 6: return bionic("android:close", {a[0]});
+        case 41: return bionic("android:dup", {a[0]});
+        case 63: return bionic("android:dup2", {a[0], a[1]});
+        case 91: return bionic("android:munmap", {a[0], a[1]});
+        case 168: return bionic("android:poll", {a[0], a[1], a[2]});
+        case 180: return bionic("android:pread64", {a[0], a[1], a[2], a[3], a[4], a[5]});
+        case 181: return bionic("android:pwrite64", {a[0], a[1], a[2], a[3], a[4], a[5]});
+        case 187: return bionic("android:sendfile", {a[0], a[1], a[2], a[3]});
+        case 192: return bionic("android:__mmap2", {a[0], a[1], a[2], a[3], a[4], a[5]});
+        case 239: return bionic("android:sendfile64", {a[0], a[1], a[2], a[3]});
+        case 250: return bionic("android:epoll_create", {a[0]});
+        case 251: return bionic("android:epoll_ctl", {a[0], a[1], a[2], a[3]});
+        case 252: return bionic("android:epoll_wait", {a[0], a[1], a[2], a[3]});
+        case 281: return bionic("android:socket", {a[0], a[1], a[2]});
+        case 282: return bionic("android:bind", {a[0], a[1], a[2]});
+        case 283: return bionic("android:connect", {a[0], a[1], a[2]});
+        case 284: return bionic("android:listen", {a[0], a[1]});
+        case 285: return bionic("android:accept", {a[0], a[1], a[2]});
+        case 286: return bionic("android:getsockname", {a[0], a[1], a[2]});
+        case 287: return bionic("android:getpeername", {a[0], a[1], a[2]});
+        case 288: return bionic("android:socketpair", {a[0], a[1], a[2], a[3]});
+        case 289: return bionic("android:send", {a[0], a[1], a[2], a[3]});
+        case 290: return bionic("android:sendto", {a[0], a[1], a[2], a[3], a[4], a[5]});
+        case 291: return bionic("android:recv", {a[0], a[1], a[2], a[3]});
+        case 292: return bionic("android:recvfrom", {a[0], a[1], a[2], a[3], a[4], a[5]});
+        case 293: return bionic("android:shutdown", {a[0], a[1]});
+        case 294: return bionic("android:setsockopt", {a[0], a[1], a[2], a[3], a[4]});
+        case 295: return bionic("android:getsockopt", {a[0], a[1], a[2], a[3], a[4]});
+        case 346: return bionic("android:epoll_pwait", {a[0], a[1], a[2], a[3], a[4]});
+        case 350: return bionic("android:timerfd_create", {a[0], a[1]});
+        case 351: return bionic("android:__eventfd", {a[0]});
+        case 353: return bionic("android:timerfd_settime", {a[0], a[1], a[2], a[3]});
+        case 354: return bionic("android:timerfd_gettime", {a[0], a[1]});
+        case 356: return bionic("android:eventfd2", {a[0], a[1]});
+        case 357: return bionic("android:epoll_create1", {a[0]});
+        case 359: return bionic("android:pipe2", {a[0], a[1]});
+        case 366: return bionic("android:accept4", {a[0], a[1], a[2], a[3]});
         case 172: return 0;                                                // prctl
         default:
             p.reportDefaulted("Linux system call " + std::to_string(nr) + " -> ENOSYS");

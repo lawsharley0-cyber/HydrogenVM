@@ -204,16 +204,12 @@ int32_t p_ok3(Ctx&, uint32_t, uint32_t, uint32_t) { return 0; }
 int32_t p_eperm(Ctx& x, uint32_t, uint32_t, uint32_t, uint32_t) { setLinuxErrno(x, 1); return -1; }
 int32_t p_eacces(Ctx& x, GuestPtr, GuestPtr, GuestPtr) { setLinuxErrno(x, 13); return -1; }
 int32_t p_enosys(Ctx& x) { setLinuxErrno(x, 38); return -1; }
-int32_t p_epollCreate(Ctx& x, int32_t) { setLinuxErrno(x, 38); return -1; }
-int32_t p_epollCtl(Ctx& x, int32_t, int32_t, int32_t, GuestPtr) { setLinuxErrno(x, 9); return -1; }
-int32_t p_epollWait(Ctx& x, int32_t, GuestPtr, int32_t, int32_t) { setLinuxErrno(x, 9); return -1; }
 uint32_t p_mremap(Ctx& x, GuestPtr, uint32_t, uint32_t, uint32_t) { setLinuxErrno(x, 12); return 0xFFFFFFFFu; }
 int32_t p_clockGetres(Ctx& x, int32_t, GuestPtr ts) {
     if (ts) { x.mem.write<int32_t>(ts, 0); x.mem.write<int32_t>(ts + 4, 1); }
     return 0;
 }
 uint32_t p_null(Ctx&, GuestPtr) { return 0; }
-int32_t p_getnameinfo(Ctx&, GuestPtr, uint32_t, GuestPtr, uint32_t, GuestPtr, uint32_t, int32_t) { return 8; }   // EAI_NONAME
 void p_noop(Ctx&) {}
 
 // System properties: the few games read, as a device of the API level we report.
@@ -352,10 +348,10 @@ int32_t c_fdIssetChk(Ctx& x, int32_t fd, GuestPtr set, uint32_t setsize) {
     return (x.mem.read<uint32_t>(set + uint32_t(fd / 32) * 4) & (1u << (fd & 31))) ? 1 : 0;
 }
 int32_t c_readChk(Ctx& x, int32_t fd, GuestPtr buf, uint32_t count, uint32_t) {
-    return int32_t(callIos(x, "_read", {uint32_t(fd), buf, count}));
+    return int32_t(callIos(x, "android:read", {uint32_t(fd), buf, count}));
 }
 int32_t c_writeChk(Ctx& x, int32_t fd, GuestPtr buf, uint32_t count, uint32_t) {
-    return int32_t(callIos(x, "_write", {uint32_t(fd), buf, count}));
+    return int32_t(callIos(x, "android:write", {uint32_t(fd), buf, count}));
 }
 uint32_t c_freadChk(Ctx& x, GuestPtr buf, uint32_t size, uint32_t count, GuestPtr stream, uint32_t) {
     return uint32_t(callIos(x, "_fread", {buf, size, count, stream}));
@@ -364,7 +360,7 @@ uint32_t c_fwriteChk(Ctx& x, GuestPtr buf, uint32_t size, uint32_t count, GuestP
     return uint32_t(callIos(x, "_fwrite", {buf, size, count, stream}));
 }
 int32_t c_pollChk(Ctx& x, GuestPtr fds, uint32_t nfds, int32_t timeout, uint32_t) {
-    return int32_t(callIos(x, "_poll", {fds, nfds, uint32_t(timeout)}));
+    return int32_t(callIos(x, "android:poll", {fds, nfds, uint32_t(timeout)}));
 }
 
 void m_sincosf(Ctx& x, float a, GuestPtr sOut, GuestPtr cOut) {
@@ -725,15 +721,11 @@ void registerBionicExtra(Process& p) {
     A(p_eacces, "execve", "no child processes: EACCES");
     A(p_eacces, "execvp", "no child processes: EACCES");
     A(p_eacces, "execl", "no child processes: EACCES");
-    A(p_epollCreate, "epoll_create", "no epoll: ENOSYS");
-    A(p_epollCtl, "epoll_ctl", "no epoll: EBADF");
-    A(p_epollWait, "epoll_wait", "no epoll: EBADF");
     A(p_mremap, "mremap", "ENOMEM (callers fall back to a new mapping)");
     A(p_ok3, "setitimer", "accepted, no timer signal");
     A(p_clockGetres, "clock_getres", "1 ns");
     A(p_null, "getgrnam", "no groups");
     A(p_null, "getgrgid", "no groups");
-    A(p_getnameinfo, "getnameinfo", "no Android sockets yet: EAI_NONAME");
     R(p_propertyGet, "__system_property_get", "a fixed Android 4.4 device");
     R(p_condTimedwaitMonotonic, "pthread_cond_timedwait_monotonic_np", "monotonic deadline to realtime");
     R(p_condTimedwaitMonotonic, "pthread_cond_timedwait_monotonic", "monotonic deadline to realtime");

@@ -17,6 +17,18 @@ template <typename R> R failHost(Ctx& x, R r = R(-1)) { setLinuxErrno(x, hostErr
 // Calls the iOS host function bound to `name` (r0-r3, then the stack) and returns r1:r0.
 uint64_t callIos(Ctx& x, const char* name, std::initializer_list<uint32_t> words);
 
+// Android descriptors use the host fd namespace. Makers register descriptors
+// for guest-close and process-teardown handling.
+void registerAndroidNet(Process& p);
+void registerAndroidEvents(Process& p);
+int trackAndroidFd(Process& p, int fd, bool socket = false);
+bool isAndroidHostSocket(Process& p, int fd);
+int pollDescriptor(Process& p, int fd, int events);
+bool guestSpan(Ctx& x, GuestPtr addr, uint32_t size, uint8_t prot);
+inline int32_t linuxFailure(Ctx& x, int error) { setLinuxErrno(x, error); return -1; }
+int takeLinuxErrno(Ctx& x);
+int32_t androidFcntl(Ctx& x, int32_t fd, int32_t cmd, uint32_t arg);
+
 // Registration of the other bionic files.
 void registerBionicExtra(Process& p);
 void registerLibAndroid(Process& p);
