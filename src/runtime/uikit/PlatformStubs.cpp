@@ -1271,6 +1271,9 @@ int32_t af_setProperty(Ctx& x, uint32_t fid, uint32_t, uint32_t, GuestPtr) {
 
 struct ExtFile {
     DecodedAudio audio;
+    std::shared_ptr<Audio::AudioSource> source;
+    std::unique_ptr<Audio::SourceWindow> window;
+    uint64_t frames() const { return source ? source->frames() : audio.stereoPcm.size() / 2; }
     Asbd file, client;
     double pos = 0;   // in source frames
     std::shared_ptr<AudioWriter> writer;   // set for a file being written
@@ -1288,9 +1291,15 @@ Asbd fileFormatOf(const DecodedAudio& d) {
     return a;
 }
 
-uint32_t newExtFile(Ctx& x, DecodedAudio audio) {
+uint32_t newExtFile(Ctx& x, DecodedAudio audio, std::shared_ptr<Audio::AudioSource> source = {}) {
     ExtFile f;
     f.audio = std::move(audio);
+    if (source) {
+        f.audio.sampleRate = source->sampleRate();
+        f.audio.channels = source->channels();
+        f.source = std::move(source);
+        f.window = std::make_unique<Audio::SourceWindow>();
+    }
     f.file = f.client = fileFormatOf(f.audio);
     auto& st = EAS(x);
     const uint32_t id = st.next++;
@@ -1301,6 +1310,10 @@ uint32_t newExtFile(Ctx& x, DecodedAudio audio) {
 int32_t eaf_openURL(Ctx& x, uint32_t url, GuestPtr out) {
     if (!url || !out) return -50;
     const std::string path = Foundation::urlFilePath(x, url);
+    if (auto source = Audio::openStream(path)) {
+        x.mem.write<uint32_t>(out, newExtFile(x, {}, std::move(source)));
+        return 0;
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) return -43;   // fnfErr
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
@@ -1317,6 +1330,13 @@ int32_t eaf_wrap(Ctx& x, uint32_t afid, bool, GuestPtr out) {
     if (!st.files.count(afid) || !out) return -50;
     AudioFileInstance& af = st.files[afid];
     // ExtAudioFile hands out decoded audio. An MP3 AudioFile holds only its packets until now.
+    if (af.mp3 && af.decoded.stereoPcm.empty()) {
+        auto bytes = af.rawBytes;
+        if (auto source = Audio::openStream(bytes)) {
+            x.mem.write<uint32_t>(out, newExtFile(x, {}, std::move(source)));
+            return 0;
+        }
+    }
     if (af.mp3 && af.decoded.stereoPcm.empty()) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
     if (af.decoded.stereoPcm.empty()) return 1954115647;   // 'typ?' nothing this file's audio can be decoded to
     x.mem.write<uint32_t>(out, newExtFile(x, af.decoded));
@@ -1390,7 +1410,7 @@ int32_t eaf_getProperty(Ctx& x, uint32_t id, uint32_t prop, GuestPtr ioSize, Gue
         writeAsbd(x, out, prop == kEafFileFormat ? f.file : f.client);
         if (ioSize) x.mem.write<uint32_t>(ioSize, 40);
     } else if (prop == kEafLengthFrames) {
-        x.mem.write<uint64_t>(out, uint64_t(f.audio.stereoPcm.size() / 2));
+        x.mem.write<uint64_t>(out, f.frames());
         if (ioSize) x.mem.write<uint32_t>(ioSize, 8);
     } else if (prop == kEafAudioFile) {
         x.mem.write<uint32_t>(out, 0);
@@ -1433,7 +1453,7 @@ int32_t eaf_read(Ctx& x, uint32_t id, GuestPtr ioFrames, GuestPtr abl) {
         const uint32_t cap = x.mem.read<uint32_t>(abl + 4 + b * 12 + 4);
         want = std::min(want, cap / std::max<uint32_t>(1, bps * chPerBuf));
     }
-    const size_t srcFrames = f.audio.stereoPcm.size() / 2;
+    const uint64_t srcFrames = f.frames();
     const double step = double(f.audio.sampleRate) / std::max(1.0, c.sampleRate);
     uint32_t done = 0;
     auto put = [&](uint32_t b, uint32_t index, float v) {
@@ -1451,8 +1471,15 @@ int32_t eaf_read(Ctx& x, uint32_t id, GuestPtr ioFrames, GuestPtr abl) {
         const size_t i1 = std::min(i0 + 1, srcFrames - 1);
         const float t = float(sp - double(i0));
         float lr[2];
+        int16_t current[2], next[2];
+        if (f.source) {
+            if (!f.window->pair(*f.source, i0, current, next)) break;
+        } else {
+            std::copy_n(f.audio.stereoPcm.data() + i0 * 2, 2, current);
+            std::copy_n(f.audio.stereoPcm.data() + i1 * 2, 2, next);
+        }
         for (int ch = 0; ch < 2; ++ch)
-            lr[ch] = (float(f.audio.stereoPcm[i0 * 2 + ch]) * (1 - t) + float(f.audio.stereoPcm[i1 * 2 + ch]) * t) / 32768.0f;
+            lr[ch] = (float(current[ch]) * (1 - t) + float(next[ch]) * t) / 32768.0f;
         for (uint32_t ch = 0; ch < c.channels; ++ch) {
             const float v = c.channels == 1 ? (lr[0] + lr[1]) * 0.5f : lr[std::min<uint32_t>(ch, 1)];
             if (nonInterleaved) { if (ch < nbuf) put(ch, done, v); }
@@ -1469,7 +1496,9 @@ void eaf_seek(Ctx& x) {
     auto it = EAS(x).files.find(x.cpu.r[0]);
     if (it == EAS(x).files.end()) { x.cpu.r[0] = uint32_t(-50); return; }
     const int64_t frame = int64_t((uint64_t(x.cpu.r[2]) << 32) | x.cpu.r[1]);
-    it->second.pos = double(std::max<int64_t>(0, frame)) * double(it->second.audio.sampleRate) / std::max(1.0, it->second.client.sampleRate);
+    auto& f = it->second;
+    f.pos = double(std::max<int64_t>(0, frame)) * double(f.audio.sampleRate) / std::max(1.0, f.client.sampleRate);
+    if (f.source) f.pos = std::min(f.pos, double(f.frames()));
     x.cpu.r[0] = 0;
 }
 int32_t eaf_tell(Ctx& x, uint32_t id, GuestPtr out) {
@@ -2296,7 +2325,8 @@ struct PlayerData : ObjC::HostObject {
     int32_t loops = 0, loopsRemaining = 0;
     double time = 0.0, duration = 0.0;
     uint32_t channels = 2;
-    DecodedAudio decoded;
+    std::shared_ptr<Audio::AudioSource> source;
+    int sampleRate = 44100;
     Audio::Pcm pcm;
     uint32_t voice = 0;      // mixer voice while playing or paused
     bool paused = false;
@@ -2306,16 +2336,29 @@ Audio::VoiceParams playerParams(const PlayerData& d) { return {d.volume, d.pan, 
 PlayerData& PD(Ctx& x, id p) { return rt(x).host<PlayerData>(p); }
 
 void loadPlayerDecoded(Ctx& x, PlayerData& d, const uint8_t* bytes, size_t len) {
-    d.decoded = decodeAudioBytes(x, bytes, len);
-    if (d.decoded.stereoPcm.empty() && len) x.proc.reportMissing("AVAudioPlayer: audio format not supported (plays silence)");
+    d.source.reset();
+    auto decoded = decodeAudioBytes(x, bytes, len);
+    if (decoded.stereoPcm.empty() && len) x.proc.reportMissing("AVAudioPlayer: audio format not supported (plays silence)");
     // The player only reads its samples through pcm: move them, a copy doubles a song's memory.
-    if (!d.decoded.stereoPcm.empty())
-        d.pcm = std::make_shared<const std::vector<int16_t>>(std::move(d.decoded.stereoPcm));
+    if (!decoded.stereoPcm.empty())
+        d.pcm = std::make_shared<const std::vector<int16_t>>(std::move(decoded.stereoPcm));
     else
         d.pcm = nullptr;
-    d.decoded.stereoPcm.clear();
-    d.duration = d.decoded.duration;
-    d.channels = uint32_t(std::max(1, d.decoded.channels));
+    d.sampleRate = decoded.sampleRate;
+    d.duration = decoded.duration;
+    d.channels = uint32_t(std::max(1, decoded.channels));
+}
+
+void loadPlayerSource(PlayerData& d, std::shared_ptr<Audio::AudioSource> source) {
+    d.duration = double(source->frames()) / source->sampleRate();
+    d.channels = uint32_t(source->channels());
+    d.source = std::move(source);
+    d.pcm.reset();
+}
+
+uint32_t playPlayer(Audio::Mixer& mixer, const PlayerData& player, double time) {
+    return player.source ? mixer.playSource(player.source, playerParams(player), time)
+                         : mixer.play(player.pcm, player.sampleRate, playerParams(player), time);
 }
 
 id ap_initURL(Ctx& x, id self, SEL, id url, GuestPtr errOut) {
@@ -2324,6 +2367,10 @@ id ap_initURL(Ctx& x, id self, SEL, id url, GuestPtr errOut) {
     d.url = url ? rt(x).retain(x.cpu, url) : 0;
     if (url) {
         const std::string path = Foundation::urlFilePath(x, url);
+        if (auto source = Audio::openStream(path)) {
+            loadPlayerSource(d, std::move(source));
+            return self;
+        }
         std::ifstream in(path, std::ios::binary);
         if (in) {
             std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
@@ -2337,22 +2384,23 @@ id ap_initData(Ctx& x, id self, SEL, id data, GuestPtr errOut) {
     PlayerData& d = PD(x, self);
     d.data = data ? rt(x).retain(x.cpu, data) : 0;
     if (data) {
-        const auto bytes = Foundation::dataBytes(x, data);
-        loadPlayerDecoded(x, d, bytes.data(), bytes.size());
+        auto bytes = Foundation::dataBytes(x, data);
+        if (auto source = Audio::openStream(bytes)) loadPlayerSource(d, std::move(source));
+        else loadPlayerDecoded(x, d, bytes.data(), bytes.size());
     }
     return self;
 }
 bool ap_play(Ctx& x, id self, SEL) {
     PlayerData& d = PD(x, self);
     audioTrace("AVAudioPlayerPlay", self, d.pcm ? d.pcm->size() : 0);
-    if (!d.pcm) return false;
+    if (!d.source && !d.pcm) return false;
     Audio::Mixer& mx = MX(x.proc);
     if (d.voice && d.paused) {
         mx.setPaused(d.voice, false);
     } else {
         if (d.voice) mx.release(d.voice);
         d.loopsRemaining = d.loops;
-        d.voice = mx.play(d.pcm, d.decoded.sampleRate, playerParams(d), d.time);
+        d.voice = playPlayer(mx, d, d.time);
     }
     d.playing = true;
     d.paused = false;
@@ -2370,7 +2418,7 @@ bool ap_play(Ctx& x, id self, SEL) {
         pd->time = 0;
         if (pd->loopsRemaining > 0) {
             --pd->loopsRemaining;
-            pd->voice = m.play(pd->pcm, pd->decoded.sampleRate, playerParams(*pd), 0);
+            pd->voice = playPlayer(m, *pd, 0);
             return;
         }
         pd->playing = false;
@@ -2399,7 +2447,7 @@ bool ap_prepare(Ctx& x, id self, SEL) {
     const auto& d = PD(x, self);
     // A format this host cannot decode still prepares (it plays silence): games written for a
     // device that could decode it stop loading when told no (Age of Defenders on the bench).
-    return d.pcm && !d.pcm->empty();
+    return d.source || (d.pcm && !d.pcm->empty());
 }
 bool ap_isPlaying(Ctx& x, id self, SEL) { return PD(x, self).playing; }
 float ap_volume(Ctx& x, id self, SEL) { return PD(x, self).volume; }
