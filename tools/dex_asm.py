@@ -201,11 +201,15 @@ TWO = {"move": 0x01, "move-wide": 0x04, "move-object": 0x07, "array-length": 0x2
        "add-int/2addr": 0xb0, "sub-int/2addr": 0xb1, "mul-int/2addr": 0xb2, "div-int/2addr": 0xb3}
 THREE = {"add-int": 0x90, "sub-int": 0x91, "mul-int": 0x92, "div-int": 0x93, "rem-int": 0x94,
          "add-long": 0x9b, "sub-long": 0x9c, "add-float": 0xa6, "add-double": 0xab,
-         "aget": 0x44, "aput": 0x4b, "aget-object": 0x46, "aput-object": 0x4d}
+         "aget": 0x44, "aput": 0x4b, "aget-object": 0x46, "aput-object": 0x4d,
+         "aget-byte": 0x48, "aput-byte": 0x4f}
 CONSTS = {"const/16": (0x13, 1), "const": (0x14, 2), "const-wide/16": (0x16, 1),
           "const-wide/32": (0x17, 2), "const-wide": (0x18, 4)}
 BRANCHES = {"if-eqz": 0x38, "if-nez": 0x39, "if-ltz": 0x3a, "if-gez": 0x3b,
             "if-gtz": 0x3c, "if-lez": 0x3d}
+
+
+TYPE_OPS = {"check-cast": 0x1f, "instance-of": 0x20, "new-array": 0x23}
 
 
 def width(op, args):
@@ -214,13 +218,17 @@ def width(op, args):
         return len(args)
     if op in CONSTS:
         return 1 + CONSTS[op][1]
+    if op == "fill-array-data":
+        return 3
+    if op in TYPE_OPS:
+        return 2
     if op in THREE or op in BRANCHES or op in ("goto/16", "const-string"):
         return 2
     require(op in ONE or op in TWO or op in ("return-void", "nop", "const/4", "goto"), f"unknown opcode: {op}")
     return 1
 
 
-def instruction(op, args, pc, labels, strings, registers):
+def instruction(op, args, pc, labels, strings, types, registers):
     def reg(text, max_value):
         require(re.fullmatch(r"v[0-9]+", text), f"expected v-register: {text}")
         value = int(text[1:])
@@ -257,6 +265,19 @@ def instruction(op, args, pc, labels, strings, registers):
         dest, alias = args
         require(alias in strings and strings[alias] < 65536, "unknown or oversized string alias")
         return [0x1a | reg(dest, 255) << 8, strings[alias]]
+    if op in TYPE_OPS:
+        if op == "check-cast":
+            dest, typ = args
+            regs = reg(dest, 255)
+        else:
+            dest, source, typ = args
+            regs = reg(dest, 15) | reg(source, 15) << 4
+        require(typ in types, "invalid type operand")
+        return [TYPE_OPS[op] | regs << 8, types[typ]]
+    if op == "fill-array-data":
+        dest, label = args
+        delta = offset(label, 32)
+        return [0x26 | reg(dest, 255) << 8, delta & 65535, delta >> 16]
     if op in BRANCHES:
         source, label = args
         return [BRANCHES[op] | reg(source, 255) << 8, offset(label, 16)]
@@ -270,7 +291,7 @@ def instruction(op, args, pc, labels, strings, registers):
     return [0x0e if op == "return-void" else 0]
 
 
-def code_item(method, strings):
+def code_item(method, strings, types):
     require(method.registers is not None and method.incoming <= method.registers,
             f"missing or invalid register count for {method.name}")
     labels, instructions = {}, []
@@ -285,7 +306,7 @@ def code_item(method, strings):
     require(pc > 0, "empty code item")
     words = []
     for pos, op, args in instructions:
-        words.extend(instruction(op, args, pos, labels, strings, method.registers))
+        words.extend(instruction(op, args, pos, labels, strings, types, method.registers))
     groups = {}
     for exception, start, end, target in method.catches:
         positions = [labels.get(label, -1) for label in (start, end, target)]
@@ -376,6 +397,10 @@ def assemble(text):
             protos.add(m.proto)
             types.update((m.proto[0], *m.proto[1]))
             types.update(t for t, *_ in m.catches if t != "*")
+            for op, args in m.lines:
+                if op in TYPE_OPS:
+                    require(args and re.fullmatch(TYPE, args[-1]), "invalid type operand")
+                    types.add(args[-1])
             strings.update((m.name, shorty(m.proto)))
     require(len(set(fields)) == len(fields) and len(set(methods)) == len(methods), "duplicate member")
     require(len(types) <= 65535 and len(protos) <= 65535, "type or prototype table too large")
@@ -451,7 +476,7 @@ def assemble(text):
         code_offsets[method_ids[(cls.type, method.name, method.proto)]] = len(image)
         resolved = Method(method.name, method.proto, method.flags, method.registers, method.outgoing,
                           method.lines, [(type_ids[t] if t != "*" else t, a, b, h) for t,a,b,h in method.catches])
-        image.extend(code_item(resolved, alias_ids))
+        image.extend(code_item(resolved, alias_ids, type_ids))
     require(all(not (m.lines or m.catches or m.registers is not None)
                 for c in classes for m in c.methods if m.flags & 0x500), "code on native or abstract method")
 
