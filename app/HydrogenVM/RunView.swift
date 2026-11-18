@@ -598,8 +598,12 @@ final class RunModel {
         controllerObserver = NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect, object: nil, queue: .main
         ) { [weak self] note in
-            guard let c = note.object as? GCController else { return }
-            MainActor.assumeIsolated { self?.attachController(c) }
+            // Read the controller inside the main-actor region (queue: .main) so it is never sent
+            // across isolation, which Swift 6 rejects as a possible data race.
+            MainActor.assumeIsolated {
+                guard let c = note.object as? GCController else { return }
+                self?.attachController(c)
+            }
         }
     }
 
