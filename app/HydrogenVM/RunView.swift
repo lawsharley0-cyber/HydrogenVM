@@ -597,12 +597,12 @@ final class RunModel {
         for c in GCController.controllers() { attachController(c) }
         controllerObserver = NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect, object: nil, queue: .main
-        ) { [weak self] note in
-            // Read the controller inside the main-actor region (queue: .main) so it is never sent
-            // across isolation, which Swift 6 rejects as a possible data race.
-            MainActor.assumeIsolated {
-                guard let c = note.object as? GCController else { return }
-                self?.attachController(c)
+        ) { [weak self] _ in
+            // Re-scan instead of reading note.object: neither the Notification nor the controller
+            // is Sendable, and Swift 6 rejects passing them into the main actor. Attaching sets the
+            // gamepad's handler, so attaching an already attached controller again is harmless.
+            Task { @MainActor in
+                for c in GCController.controllers() { self?.attachController(c) }
             }
         }
     }
