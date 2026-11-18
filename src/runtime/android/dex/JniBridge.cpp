@@ -206,13 +206,17 @@ public:
     bool hasClass(std::u16string_view descriptor) {
         const std::string cls = className(descriptor);
         auto& j = jni(process);
-        std::lock_guard lock(j.mu);
-        if (j.superclasses.contains(cls)) return true;
-        const std::string prefix = cls + ".";
-        const auto method = j.impls.lower_bound(prefix);
-        const auto field = j.staticFields.lower_bound(prefix);
-        return (method != j.impls.end() && method->first.starts_with(prefix)) ||
-               (field != j.staticFields.end() && field->first.starts_with(prefix));
+        {
+            std::lock_guard lock(j.mu);
+            if (j.superclasses.contains(cls)) return true;
+            const std::string prefix = cls + ".";
+            const auto method = j.impls.lower_bound(prefix);
+            const auto field = j.staticFields.lower_bound(prefix);
+            if ((method != j.impls.end() && method->first.starts_with(prefix)) ||
+                (field != j.staticFields.end() && field->first.starts_with(prefix))) return true;
+        }
+        process.reportMissing("DEX class " + cls);
+        return false;
     }
 
     std::optional<Value> externalField(std::u16string_view owner, std::u16string_view name,
@@ -247,6 +251,41 @@ public:
     std::optional<Value> external(std::u16string_view owner, std::u16string_view name,
                                   std::u16string_view signature, bool stat, bool native,
                                   std::span<const Value> args) {
+        auto& heap = machine->heap();
+        if (!native && stat && owner == u"Ljava/lang/System;" && name == u"getProperty" &&
+            signature == u"(Ljava/lang/String;)Ljava/lang/String;") {
+            if (!args.front().bits) throw JavaException{u"Ljava/lang/NullPointerException;"};
+            const auto key = heap.string(uint32_t(args.front().bits));
+            if (key.empty()) throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
+            constexpr std::pair<std::u16string_view, std::u16string_view> properties[] = {
+                {u"java.runtime.name", u"Android Runtime"},
+                {u"java.vm.name", u"Dalvik"},
+                {u"java.vendor", u"The Android Project"},
+                {u"os.name", u"Linux"},
+                {u"os.arch", u"armv7l"},
+                {u"file.separator", u"/"},
+                {u"path.separator", u":"},
+                {u"line.separator", u"\n"},
+            };
+            for (const auto& [name, value] : properties)
+                if (key == name) return Value{ValueKind::Reference, heap.newString(std::u16string(value))};
+            return Value{ValueKind::Reference, 0};
+        }
+        const bool contains = name == u"contains" && signature == u"(Ljava/lang/CharSequence;)Z";
+        const bool prefix = name == u"startsWith" && signature == u"(Ljava/lang/String;)Z";
+        const bool equals = name == u"equals" && signature == u"(Ljava/lang/Object;)Z";
+        if (!native && !stat && owner == u"Ljava/lang/String;" && (contains || prefix || equals)) {
+            const auto other = uint32_t(args[1].bits);
+            if (!other && !equals) throw JavaException{u"Ljava/lang/NullPointerException;"};
+            if (other && heap.typeOf(other) == u"Ljava/lang/String;") {
+                const auto text = heap.string(uint32_t(args.front().bits));
+                const auto operand = heap.string(other);
+                const bool matched = contains ? text.find(operand) != std::u16string::npos
+                                   : prefix ? text.starts_with(operand) : text == operand;
+                return Value{ValueKind::Word, matched};
+            }
+            if (equals) return Value{ValueKind::Word, 0};
+        }
         auto& j = jni(process);
         Ctx x{process, process.currentThread().cpu, process.mem()};
         const auto cls = className(owner), method = toMutf8(name), sig = toMutf8(signature);
@@ -268,7 +307,10 @@ public:
                     }
                 }
             }
-            if (!target) return std::nullopt;
+            if (!target) {
+                process.reportMissing("DEX " + cls + "." + method + sig);
+                return std::nullopt;
+            }
             result = target(j, x, self, values);
         }
         auto& exception = pendingException(process);
@@ -316,6 +358,24 @@ bool invokeFromJni(Jni& j, Ctx& context, const Jni::MethodInfo& method, jobject 
         result = 0;
     } else {
         result = bridge.toNative(j, std::get<Value>(execution));
+    }
+    return true;
+}
+
+bool invokeActivity(Jni& j, Ctx& context, const std::string& type, jobject receiver,
+                    const std::string& name, const std::string& signature, const std::vector<JValue>& args) {
+    auto& pending = pendingException(context.proc);
+    JValue result = 0;
+    if (!invokeFromJni(j, context, {type, name, signature, false}, receiver, args, type,
+                       name == "<init>", result)) return false;
+    const auto exception = std::exchange(pending, 0u);
+    if (exception) {
+        std::string description = "unknown Java exception";
+        {
+            std::lock_guard lock(j.mu);
+            if (const auto* value = j.get(exception)) description = value->cls;
+        }
+        throw std::runtime_error("DEX activity " + type + "." + name + signature + " raised " + description);
     }
     return true;
 }

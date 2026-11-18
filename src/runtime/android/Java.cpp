@@ -82,6 +82,13 @@ void registerJavaPlatform(Jni& j) {
         {"android/view/KeyEvent", "android/view/InputEvent"},
         {"java/io/FileInputStream", "java/io/InputStream"},
     };
+    // The base Activity uses the launcher object allocated by the activity driver.
+    j.method("android/app/Activity", "onCreate", "(Landroid/os/Bundle;)V",
+             [](Jni& j, Ctx&, jobject self, const auto&) {
+                 std::lock_guard lock(j.mu);
+                 j.staticFields["hvm.activity"] = self;
+                 return JValue(0);
+             });
     // Context / Activity. Method lookup falls back to these classes for any activity class
     // (Jni::invoke), so they serve com.foo.GameActivity, NativeActivity and the rest alike.
     for (const char* ctx : {"android/content/Context", "android/app/Activity"}) {

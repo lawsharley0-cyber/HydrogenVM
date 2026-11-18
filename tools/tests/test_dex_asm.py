@@ -16,7 +16,7 @@ class DexAssemblerTest(unittest.TestCase):
         fixtures = ROOT / "tests/android/java"
         for name, classes, methods in (("classes", 2, 4), ("classes2", 1, 1), ("arithmetic", 1, 12), ("objects", 1, 7),
                                        ("linkage-base", 2, 5), ("linkage-child", 3, 23), ("jni", 3, 16),
-                                       ("native-driver", 1, 1)):
+                                       ("native-driver", 1, 1), ("activity", 1, 12)):
             with self.subTest(fixture=name):
                 data = assemble((fixtures / f"{name}.smali").read_text())
                 self.assertEqual(data, (fixtures / f"{name}.dex").read_bytes())

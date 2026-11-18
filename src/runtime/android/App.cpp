@@ -2,6 +2,7 @@
 // lifecycle and frame loop a GLSurfaceView would drive. See Android.hpp.
 #include "runtime/android/BionicInternal.hpp"
 #include "runtime/android/Jni.hpp"
+#include "runtime/android/dex/JniBridge.hpp"
 #include "runtime/android/Surface.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/gl/HostGL.hpp"
@@ -676,6 +677,7 @@ struct Driver {
     virtual bool key(Ctx&, int32_t /*keyCode*/, bool /*down*/) { return false; }
     virtual void pause(Ctx&) {}
     virtual void resume(Ctx&) {}
+    virtual void destroy(Ctx&) {}
     virtual bool wantsExit(Ctx&) { return false; }
     // The engine sets up EGL on the window itself and presents with eglSwapBuffers (Egl.cpp);
     // otherwise HydrogenVM makes the GL context and presents after each frame, as GLSurfaceView.
@@ -1381,6 +1383,55 @@ struct GameMakerDriver final : Driver {
     }
 };
 
+struct DexActivityDriver final : Driver {
+    Jni& j;
+    std::string launcher;
+    jobject activity = 0;
+
+    DexActivityDriver(Jni& jni, std::string type) : j(jni), launcher(std::move(type)) {}
+    const char* name() const override { return "libGDX (DEX activity)"; }
+
+    void require(Ctx& x, const char* method, const char* signature, const std::vector<JValue>& args) {
+        if (!Dex::invokeActivity(j, x, launcher, activity, method, signature, args))
+            throw std::runtime_error("DEX launcher " + launcher + " is missing " + method + signature);
+    }
+
+    void lifecycle(Ctx& x, const char* method) {
+        Dex::invokeActivity(j, x, launcher, activity, method, "()V", {});
+    }
+
+    void create(Ctx& x) override {
+        activity = j.newObject(launcher);
+        {
+            std::lock_guard lock(j.mu);
+            j.staticFields["hvm.activity"] = activity;
+        }
+        require(x, "<init>", "()V", {});
+        require(x, "onCreate", "(Landroid/os/Bundle;)V", {0});
+        lifecycle(x, "onStart");
+        lifecycle(x, "onResume");
+    }
+
+    void pause(Ctx& x) override {
+        if (x.proc.stopping()) return;
+        lifecycle(x, "onPause");
+        lifecycle(x, "onStop");
+    }
+    void resume(Ctx& x) override {
+        lifecycle(x, "onRestart");
+        lifecycle(x, "onStart");
+        lifecycle(x, "onResume");
+    }
+    void destroy(Ctx& x) override {
+        if (!x.proc.stopping()) lifecycle(x, "onDestroy");
+    }
+
+    // Java's view and rendering backends own their callbacks and EGL context.
+    void frame(Ctx&) override {}
+    void touch(Ctx&, TouchPhase, float, float, uint32_t, uint32_t) override {}
+    bool ownsGl() const override { return true; }
+};
+
 std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
     const auto& lib = p.service<Library>();
     if (EaBlastDriver::matches(lib)) return std::make_unique<EaBlastDriver>(j);
@@ -1395,7 +1446,18 @@ std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
     if (Cocos2dxDriver::matches(lib)) return std::make_unique<Cocos2dxDriver>(j);
     if (GameMakerDriver::matches(lib)) return std::make_unique<GameMakerDriver>(j);
     if (NativeActivityDriver::matches(lib)) return std::make_unique<NativeActivityDriver>(j);
-    return nullptr;
+    const bool libgdx = std::any_of(lib.libs.begin(), lib.libs.end(), [](const auto& library) {
+        return library->name == "libgdx.so";
+    });
+    if (!libgdx) return nullptr;
+    const auto* info = p.infoPlist();
+    const auto* key = info ? info->get("HydrogenVMAndroidLauncherActivity") : nullptr;
+    if (!key || key->type != Plist::Value::Type::String || key->s.empty())
+        throw std::runtime_error("libGDX APK has no imported launcher activity; re-import the matching APK");
+    std::string launcher = key->s;
+    std::replace(launcher.begin(), launcher.end(), '.', '/');
+    j.interpretsDex.store(true, std::memory_order_relaxed);
+    return std::make_unique<DexActivityDriver>(j, std::move(launcher));
 }
 
 } // namespace
@@ -1425,6 +1487,14 @@ int runActivity(Process& p, CPU::Cpu& c) {
     if (!driver) throw std::runtime_error("This Android game's engine isn't supported yet (" + lib.name +
                                           " has no Java activity HydrogenVM knows how to play)");
     p.logf(LogLevel::Info, "Android: %s (%s), surface %dx%d", lib.name.c_str(), driver->name(), s.width, s.height);
+    const bool interpreted = j.interpretsDex.load(std::memory_order_relaxed);
+    if (interpreted) {
+        p.setLifecycleHandler([&p](Process::Lifecycle event) {
+            // The activity thread consumes the lifecycle flags. Wake it to destroy a stopped activity.
+            if (event == Process::Lifecycle::Terminate && p.backgrounded()) p.setBackgrounded(false);
+        });
+    }
+    const auto stopActivity = [&] { return p.stopping() || (interpreted && p.gracefulStopRequested()); };
 
     // System.loadLibrary of each library calls its JNI_OnLoad, once, in load order.
     std::vector<std::pair<std::string, uint32_t>> onLoads;
@@ -1453,6 +1523,16 @@ int runActivity(Process& p, CPU::Cpu& c) {
     struct KeyEv { int32_t code; bool down; };
     std::deque<Ev> events;
     std::deque<KeyEv> keyEvents;
+    struct ClearActivityInput {
+        Process& process;
+        ~ClearActivityInput() {
+            setCurrentSurface(nullptr);
+            process.setTouchHandler({});
+            process.setAccelerationHandler({});
+            process.setKeyHandler({});
+            process.setJoystickHandler({});
+        }
+    } clearInput{p};
     const float portraitW = float(p.config().screenWidth);
     p.setTouchHandler([&, portraitW](TouchPhase phase, float tx, float ty, uint32_t finger) {
         std::lock_guard<std::mutex> lk(inMu);
@@ -1473,7 +1553,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
     using clock = std::chrono::steady_clock;
     auto next = clock::now();
     bool paused = false;
-    while (!p.stopping()) {
+    while (!stopActivity()) {
         if (p.backgroundRequested() && !paused) {
             p.mixer().setAllPaused(true);
             driver->pause(x);
@@ -1482,7 +1562,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
         }
         if (paused) {
             p.waitWhileBackgrounded();
-            if (p.stopping()) break;
+            if (stopActivity()) break;
             driver->resume(x);
             p.mixer().setAllPaused(false);
             paused = false;
@@ -1531,11 +1611,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
         else if (now - next > 100ms) next = now;
     }
     if (!paused) driver->pause(x);
-    setCurrentSurface(nullptr);
-    p.setTouchHandler({});
-    p.setAccelerationHandler({});
-    p.setKeyHandler({});
-    p.setJoystickHandler({});
+    driver->destroy(x);
     return 0;
 }
 
