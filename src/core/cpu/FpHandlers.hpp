@@ -100,6 +100,13 @@ inline T vfp3(T n, T m, T d) {
     else return std::fma(n, m, -d);   // VFNMS
 }
 
+// True when a NaN result came from a NaN operand (which ARM propagates) rather than from an invalid
+// operation on numbers. The multiply-accumulate forms also read d.
+template <int OP, typename T>
+inline bool invalidFromNaN(T n, T m, T d) {
+    return n != n || m != m || (OP >= kVMla && d != d);
+}
+
 // Anything but plain IEEE or exactly RunFast: another rounding mode, or FZ without DN and the
 // like. A separate handler reached by tail call, so the common handler stays a leaf (a call would
 // make every path set up a stack frame).
@@ -113,7 +120,7 @@ template <int OP, bool DP>
     T r = rmode ? withRounding(rmode, [=] { volatile T vn = n, vm = mm, vd = d; volatile T vr = vfp3<OP>(T(vn), T(vm), T(vd)); return T(vr); })
                 : vfp3<OP>(n, mm, d);
     if (fpscr & kFpscrFZ) r = flushDenorm(r);
-    if ((fpscr & kFpscrDN) && r != r) r = defaultNaN<T>();
+    if (r != r && ((fpscr & kFpscrDN) || !invalidFromNaN<OP>(n, mm, d))) r = defaultNaN<T>();
     wrF<DP>(c, op->a, r);
     HVM_NEXT();
 }
@@ -125,7 +132,12 @@ HVM_H(H_Vfp3) {
     using T = FpT<DP>;
     const uint32_t mode = c->fpscr & (kFpscrFZ | kFpscrDN | kFpscrRMode);
     if (__builtin_expect(mode == 0, 1)) {
-        wrF<DP>(c, op->a, vfp3<OP>(rdF<DP>(c, op->b), rdF<DP>(c, op->c), rdF<DP>(c, op->a)));
+        const T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
+        T r = vfp3<OP>(n, mm, d);
+        // An invalid operation (inf - inf, 0 * inf) gives ARM's positive default NaN; x86 makes a
+        // negative one. A NaN operand is propagated instead, so only fix NaNs made from numbers.
+        if (__builtin_expect(r != r, 0) && !invalidFromNaN<OP>(n, mm, d)) r = defaultNaN<T>();
+        wrF<DP>(c, op->a, r);
         HVM_NEXT();
     }
     if (mode == (kFpscrFZ | kFpscrDN)) {
@@ -146,7 +158,7 @@ template <bool DP>
     if (c->fpscr & kFpscrFZ) v = flushDenorm(v);
     const uint32_t rmode = (c->fpscr >> kFpscrRModeShift) & 3;
     T r = withRounding(rmode, [=] { volatile T vv = v; volatile T vr = std::sqrt(T(vv)); return T(vr); });
-    if ((c->fpscr & kFpscrDN) && r != r) r = defaultNaN<T>();
+    if (r != r && ((c->fpscr & kFpscrDN) || v == v)) r = defaultNaN<T>();   // sqrt(negative): ARM's positive default NaN
     wrF<DP>(c, op->a, r);
     HVM_NEXT();
 }
@@ -175,7 +187,9 @@ HVM_H(H_Vfp2) {
         T m = rdF<DP>(c, op->c);
         if (c->fpscr & kFpscrFZ) m = flushDenorm(m);
         T r = std::sqrt(m);
-        if ((c->fpscr & kFpscrDN) && std::isnan(r)) r = defaultNaN<T>();
+        // sqrt of a negative number is ARM's positive default NaN (x86 makes a negative one); a NaN
+        // operand propagates unless DN is set.
+        if (std::isnan(r) && ((c->fpscr & kFpscrDN) || !std::isnan(m))) r = defaultNaN<T>();
         wrF<DP>(c, op->a, r);
     }
     HVM_NEXT();
