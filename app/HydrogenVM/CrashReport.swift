@@ -70,8 +70,17 @@ struct CrashReport: Identifiable {
         let name = app.map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "_" }
         let file = directory.appending(path: "\(date)-\(String(name))-\(UUID().uuidString).json")
         try data.write(to: file, options: .atomic)
+        // The next launch rotates last-session.hvmrec, so keep this crash's recording next to its report.
+        var recording: String? = nil
+        if let source = fields["recordingPath"] as? String, FileManager.default.fileExists(atPath: source) {
+            let copy = file.deletingPathExtension().appendingPathExtension("hvmrec")
+            if (try? FileManager.default.copyItem(atPath: source, toPath: copy.path(percentEncoded: false))) != nil {
+                recording = copy.path(percentEncoded: false)
+            }
+        }
         return CrashReport(json: String(decoding: data, as: UTF8.self), file: file,
-                           summary: fields["summary"] as? String ?? "The previous game session ended unexpectedly. Share this report to help diagnose it.", signature: signature, app: app)
+                           summary: fields["summary"] as? String ?? "The previous game session ended unexpectedly. Share this report to help diagnose it.", signature: signature, app: app,
+                           recordingPath: recording)
     }
 
     static var deviceModel: String {
