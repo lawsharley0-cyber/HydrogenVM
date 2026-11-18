@@ -47,10 +47,7 @@ std::string assetPath(Process& p, std::string name) {
 }
 
 uint32_t m_fromJava(Ctx& x, GuestPtr, GuestPtr) {
-    auto& a = A(x);
-    std::lock_guard<std::mutex> lk(a.mu);
-    if (!a.manager) a.manager = x.proc.allocStatic(16);
-    return a.manager;
+    return assetManagerHandle(x.proc);
 }
 uint32_t m_open(Ctx& x, GuestPtr, GuestPtr nameP, int32_t) {
     const std::string name = x.proc.readCString(nameP, 1024);
@@ -225,7 +222,18 @@ int32_t c_zero(Ctx&, GuestPtr) { return 0; }
 void c_language(Ctx& x, GuestPtr, GuestPtr out) { x.mem.write<uint8_t>(out, 'e'); x.mem.write<uint8_t>(out + 1, 'n'); }
 void c_country(Ctx& x, GuestPtr, GuestPtr out) { x.mem.write<uint8_t>(out, 'U'); x.mem.write<uint8_t>(out + 1, 'S'); }
 
+void na_finish(Ctx& x, GuestPtr) { x.proc.requestStop(); }
+void na_noop2(Ctx&, GuestPtr, uint32_t) {}
+void na_noop3(Ctx&, GuestPtr, uint32_t, uint32_t) {}
+
 } // namespace
+
+uint32_t assetManagerHandle(Process& p) {
+    auto& a = p.service<Assets>();
+    std::lock_guard<std::mutex> lk(a.mu);
+    if (!a.manager) a.manager = p.allocStatic(16);
+    return a.manager;
+}
 
 void registerLibAndroid(Process& p) {
 #define R(F, NAME, WHAT) supportDef<&F>(p, std::string("android:") + NAME, SupportStatus::Real, WHAT)
@@ -265,8 +273,14 @@ void registerLibAndroid(Process& p) {
     A(c_zero, "AConfiguration_getMnc", "0");
     A(c_language, "AConfiguration_getLanguage", "en");
     A(c_country, "AConfiguration_getCountry", "US");
+    R(na_finish, "ANativeActivity_finish", "stops the activity");
+    A(na_noop2, "ANativeActivity_setWindowFormat", "window format is fixed");
+    A(na_noop3, "ANativeActivity_setWindowFlags", "window flags are fixed");
+    A(na_noop2, "ANativeActivity_showSoftInput", "soft input not shown");
+    A(na_noop2, "ANativeActivity_hideSoftInput", "soft input not shown");
 #undef R
 #undef A
+    registerAAudio(p);
 }
 
 } // namespace Hydrogen::Runtime::Android

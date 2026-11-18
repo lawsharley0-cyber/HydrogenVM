@@ -161,14 +161,17 @@ Per-game options, as files next to the game with the same name:
   at 10 s.
 - `<game>.skip`: leave the game out.
 
-**Schedule it** (Task Scheduler on Windows): create a basic task, daily at 03:00, action
-"Start a program":
-- Program: `wsl.exe`
-- Arguments: `-e bash -lc "~/HydrogenVM/tools/nightly/run_nightly.sh /mnt/c/Users/<you>/Desktop/test_ipa --publish"`
+**Schedule it** (Task Scheduler on Windows, one command in PowerShell):
 
-Tick "Run whether user is logged on or not" and "Wake the computer to run this task". `--publish`
-needs `gh auth login` done once inside WSL. Build prerequisites are the same as for
-`tools/local_test.sh`.
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\nightly\install_windows_task.ps1
+```
+
+This registers `HydrogenVM Nightly` daily at `03:17` with Wake-to-Run enabled, running
+`tools/nightly/run_nightly.sh` via `wsl.exe -e bash -lc ...` over both Desktop `IPA` and `APK`
+folders with `--publish`. `--publish` uses `gh auth login` inside WSL (no tokens are stored in
+the repository). Build prerequisites are the same as for `tools/local_test.sh`; see
+`tools/nightly/README.md` for the `status.json` schema and options.
 
 ## Verification and current game limit
 

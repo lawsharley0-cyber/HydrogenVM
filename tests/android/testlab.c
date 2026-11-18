@@ -306,7 +306,135 @@ static void test_bionic_gaps(void) {
           "canary0", (long)fenv_frame.canary[0]);
 }
 
+/* --------------------------------------------------------------- audio --- */
+
+#ifndef O_WRONLY
+#define O_WRONLY 1
+#define O_CREAT 0x40
+#define O_TRUNC 0x200
+#endif
+
+static void write_u16(unsigned char* p, unsigned short v) { p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; }
+static void write_u32(unsigned char* p, unsigned int v) {
+    p[0] = v & 0xff; p[1] = (v >> 8) & 0xff; p[2] = (v >> 16) & 0xff; p[3] = (v >> 24) & 0xff;
+}
+
+static int write_test_wav(const char* path) {
+    unsigned char hdr[44] = {0};
+    const unsigned int frames = 4410;
+    const unsigned int dataBytes = frames * 2;
+    hdr[0]='R'; hdr[1]='I'; hdr[2]='F'; hdr[3]='F';
+    write_u32(hdr + 4, 36 + dataBytes);
+    hdr[8]='W'; hdr[9]='A'; hdr[10]='V'; hdr[11]='E';
+    hdr[12]='f'; hdr[13]='m'; hdr[14]='t'; hdr[15]=' ';
+    write_u32(hdr + 16, 16);
+    write_u16(hdr + 20, 1); /* PCM */
+    write_u16(hdr + 22, 1); /* mono */
+    write_u32(hdr + 24, 44100);
+    write_u32(hdr + 28, 44100 * 2);
+    write_u16(hdr + 32, 2);
+    write_u16(hdr + 34, 16);
+    hdr[36]='d'; hdr[37]='a'; hdr[38]='t'; hdr[39]='a';
+    write_u32(hdr + 40, dataBytes);
+    const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return -1;
+    write(fd, hdr, 44);
+    short pcm[256];
+    for (int i = 0; i < 256; i++) pcm[i] = (i & 16) ? 12000 : -12000;
+    unsigned int rem = frames;
+    while (rem > 0) {
+        const unsigned int chunk = rem > 256 ? 256 : rem;
+        write(fd, pcm, chunk * 2);
+        rem -= chunk;
+    }
+    close(fd);
+    return 0;
+}
+
+static void test_audio_apis(JNIEnv* env) {
+    const char* wavPath = "/tmp/testlab_tone.wav";
+    const int w_ok = write_test_wav(wavPath);
+    check("test WAV file created", w_ok == 0, "open/write failed", w_ok);
+
+    jobject (*find_cls)(JNIEnv*, const char*) = JNI_FN(env, JNI_FindClass, jobject (*)(JNIEnv*, const char*));
+    jmethodID (*get_mid)(JNIEnv*, jobject, const char*, const char*) = JNI_FN(env, JNI_GetMethodID, jmethodID (*)(JNIEnv*, jobject, const char*, const char*));
+    jobject (*new_obj)(JNIEnv*, jobject, jmethodID, const jvalue*) = JNI_FN(env, JNI_NewObjectA, jobject (*)(JNIEnv*, jobject, jmethodID, const jvalue*));
+    void (*call_void)(JNIEnv*, jobject, jmethodID, const jvalue*) = JNI_FN(env, JNI_CallVoidMethodA, void (*)(JNIEnv*, jobject, jmethodID, const jvalue*));
+    int (*call_int)(JNIEnv*, jobject, jmethodID, const jvalue*) = JNI_FN(env, JNI_CallIntMethodA, int (*)(JNIEnv*, jobject, jmethodID, const jvalue*));
+    int (*call_bool)(JNIEnv*, jobject, jmethodID, const jvalue*) = JNI_FN(env, JNI_CallBooleanMethodA, int (*)(JNIEnv*, jobject, jmethodID, const jvalue*));
+    jobject (*new_str)(JNIEnv*, const char*) = JNI_FN(env, JNI_NewStringUTF, jobject (*)(JNIEnv*, const char*));
+
+    /* MediaPlayer */
+    jobject mpCls = find_cls(env, "android/media/MediaPlayer");
+    jobject mp = new_obj(env, mpCls, get_mid(env, mpCls, "<init>", "()V"), 0);
+    jvalue pathArg = {.l = new_str(env, wavPath)};
+    call_void(env, mp, get_mid(env, mpCls, "setDataSource", "(Ljava/lang/String;)V"), &pathArg);
+    call_void(env, mp, get_mid(env, mpCls, "prepare", "()V"), 0);
+    const int dur = call_int(env, mp, get_mid(env, mpCls, "getDuration", "()I"), 0);
+    call_void(env, mp, get_mid(env, mpCls, "start", "()V"), 0);
+    const int playing = call_bool(env, mp, get_mid(env, mpCls, "isPlaying", "()Z"), 0);
+    jvalue seekArg = {.i = 50};
+    call_void(env, mp, get_mid(env, mpCls, "seekTo", "(I)V"), &seekArg);
+    const int pos = call_int(env, mp, get_mid(env, mpCls, "getCurrentPosition", "()I"), 0);
+    call_void(env, mp, get_mid(env, mpCls, "stop", "()V"), 0);
+    call_void(env, mp, get_mid(env, mpCls, "release", "()V"), 0);
+    check("MediaPlayer loads 100ms WAV, plays, and seeks",
+          mp != 0 && dur >= 90 && dur <= 110 && playing == 1 && pos >= 40, "dur", dur);
+
+    /* SoundPool */
+    jobject spCls = find_cls(env, "android/media/SoundPool");
+    jvalue spInit[3] = {{.i = 4}, {.i = 3}, {.i = 0}};
+    jobject sp = new_obj(env, spCls, get_mid(env, spCls, "<init>", "(III)V"), spInit);
+    jvalue loadArgs[2] = {{.l = new_str(env, wavPath)}, {.i = 1}};
+    const int sndId = call_int(env, sp, get_mid(env, spCls, "load", "(Ljava/lang/String;I)I"), loadArgs);
+    jvalue playArgs[6] = {{.i = sndId}, {.f = 1.0f}, {.f = 1.0f}, {.i = 1}, {.i = 0}, {.f = 1.0f}};
+    const int streamId = call_int(env, sp, get_mid(env, spCls, "play", "(IFFIIF)I"), playArgs);
+    jvalue stopArg = {.i = streamId};
+    call_void(env, sp, get_mid(env, spCls, "stop", "(I)V"), &stopArg);
+    jvalue unloadArg = {.i = sndId};
+    const int unloaded = call_bool(env, sp, get_mid(env, spCls, "unload", "(I)Z"), &unloadArg);
+    call_void(env, sp, get_mid(env, spCls, "release", "()V"), 0);
+    check("SoundPool loads, plays, stops, and unloads WAV",
+          sndId > 0 && streamId > 0 && unloaded == 1, "sndId", sndId);
+
+    /* AAudio */
+    int (*aa_create)(void**) = (int (*)(void**))dlsym(RTLD_DEFAULT, "AAudio_createStreamBuilder");
+    void (*aa_rate)(void*, int) = (void (*)(void*, int))dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setSampleRate");
+    void (*aa_ch)(void*, int) = (void (*)(void*, int))dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setChannelCount");
+    void (*aa_fmt)(void*, int) = (void (*)(void*, int))dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setFormat");
+    int (*aa_open)(void*, void**) = (int (*)(void*, void**))dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_openStream");
+    int (*aa_del)(void*) = (int (*)(void*))dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_delete");
+    int (*aa_start)(void*) = (int (*)(void*))dlsym(RTLD_DEFAULT, "AAudioStream_requestStart");
+    int (*aa_stop)(void*) = (int (*)(void*))dlsym(RTLD_DEFAULT, "AAudioStream_requestStop");
+    int (*aa_close)(void*) = (int (*)(void*))dlsym(RTLD_DEFAULT, "AAudioStream_close");
+    int (*aa_state)(void*) = (int (*)(void*))dlsym(RTLD_DEFAULT, "AAudioStream_getState");
+    int (*aa_get_rate)(void*) = (int (*)(void*))dlsym(RTLD_DEFAULT, "AAudioStream_getSampleRate");
+    int (*aa_write)(void*, const void*, int, long long) = (int (*)(void*, const void*, int, long long))dlsym(RTLD_DEFAULT, "AAudioStream_write");
+    long long (*aa_written)(void*) = (long long (*)(void*))dlsym(RTLD_DEFAULT, "AAudioStream_getFramesWritten");
+    void* builder = 0;
+    void* stream = 0;
+    int aa_ok = 0;
+    if (aa_create && aa_open && aa_create(&builder) == 0 && builder) {
+        if (aa_rate) aa_rate(builder, 44100);
+        if (aa_ch) aa_ch(builder, 2);
+        if (aa_fmt) aa_fmt(builder, 1);
+        if (aa_open(builder, &stream) == 0 && stream) {
+            aa_start(stream);
+            short frames[256 * 2];
+            for (int i = 0; i < 256 * 2; i++) frames[i] = 1000;
+            const int w = aa_write(stream, frames, 256, 0);
+            aa_ok = aa_state(stream) == 3 && aa_get_rate(stream) == 44100 && w == 256 && aa_written(stream) == 256;
+            aa_stop(stream);
+            aa_close(stream);
+        }
+        if (aa_del) aa_del(builder);
+    }
+    check("AAudio builder/stream opens, starts, writes 256 frames, and closes", aa_ok, "ok", aa_ok);
+}
+
 /* ------------------------------------------------------------------- main --- */
+
+static void test_phase_b3(void);
 
 int hvm_test_main(JNIEnv* env, void* vm) {
     (void)vm;
@@ -321,6 +449,167 @@ int hvm_test_main(JNIEnv* env, void* vm) {
     test_code_rewrite();
     test_jni(env);
     test_bionic_gaps();
+    test_phase_b3();
+    test_audio_apis(env);
     say("done: "); num(failures); say(" failure(s)\n");
     return failures;
+}
+
+/* Linux socket(2), ip(7), ipv6(7) and bionic netdb.h. The byte arrays are in network order. */
+static void test_b3_sockets(void) {
+    enum { inet = 2, inet6 = 10, stream = 1, dgram = 2, nonblock = 0x800, cloexec = 0x80000 };
+    struct b3_sockaddr loop = {inet, {0, 0, 127, 0, 0, 1}};
+    unsigned length = sizeof loop;
+    const int listener = socket(inet, stream | cloexec, 0);
+    const int client = socket(inet, stream, 0);
+    const int reuse = 1;
+    int value = 0;
+    unsigned optlen = sizeof value;
+    check("socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC",
+          listener >= 0 && fcntl(listener, 1, 0) == 1 &&
+          setsockopt(listener, 1, 2, &reuse, sizeof reuse) == 0 &&
+          getsockopt(listener, 1, 2, &value, &optlen) == 0 && value == 1 &&
+          optlen == sizeof value, "errno", errno);
+    const int connected = listener >= 0 && client >= 0 &&
+        bind(listener, &loop, sizeof loop) == 0 && listen(listener, 1) == 0 &&
+        getsockname(listener, &loop, &length) == 0 && loop.family == inet &&
+        length == sizeof loop && (loop.bytes[0] || loop.bytes[1]) &&
+        connect(client, &loop, length) == 0;
+    const int server = connected ? accept4(listener, 0, 0, nonblock | cloexec) : -1;
+    check("IPv4 loopback TCP and accept4 descriptor flags",
+          server >= 0 && fcntl(server, 1, 0) == 1 && (fcntl(server, 3, 0) & nonblock),
+          "errno", errno);
+    char data = 0;
+    check("MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN",
+          server >= 0 && send(client, "Q", 1, 0x4000) == 1 &&
+          recv(server, &data, 1, 2) == 1 && data == 'Q' &&
+          recv(server, &data, 1, 0) == 1 && data == 'Q' &&
+          recv(server, &data, 1, 0x40) == -1 && errno == 11, "errno", errno);
+    if (server >= 0) close(server);
+    if (client >= 0) close(client);
+    if (listener >= 0) close(listener);
+
+    struct b3_sockaddr external = {inet, {0, 9, 192, 0, 2, 1}};
+    const int udp = socket(inet, dgram | nonblock, 0);
+    check("offline IPv4 connect and sendto return ENETUNREACH",
+          udp >= 0 && connect(udp, &external, sizeof external) == -1 && errno == 101 &&
+          sendto(udp, "Q", 1, 0, &external, sizeof external) == -1 && errno == 101,
+          "errno", errno);
+    if (udp >= 0) close(udp);
+
+    struct b3_sockaddr6 ipv6 = {inet6, {0}};
+    ipv6.port_flow_addr_scope[21] = 1; /* ::1 */
+    const int udp6 = socket(inet6, dgram, 0);
+    length = sizeof ipv6;
+    check("IPv6 loopback uses the 28-byte Linux sockaddr_in6",
+          udp6 >= 0 && bind(udp6, &ipv6, sizeof ipv6) == 0 &&
+          getsockname(udp6, &ipv6, &length) == 0 && length == sizeof ipv6 &&
+          ipv6.family == inet6 && ipv6.port_flow_addr_scope[21] == 1, "errno", errno);
+    if (udp6 >= 0) close(udp6);
+
+    struct b3_addrinfo hints = {.flags = 4 | 8, .family = inet6, .type = stream};
+    struct b3_addrinfo* result = 0;
+    int rc = getaddrinfo("::1", "80", &hints, &result);
+    check("bionic numeric getaddrinfo places ai_addr after ai_canonname",
+          rc == 0 && result && result->addr && !result->canonname &&
+          result->family == inet6 && result->addrlen == sizeof ipv6 &&
+          result->addr->family == inet6 && result->addr->bytes[1] == 80,
+          "EAI", rc);
+    if (result) freeaddrinfo(result);
+    result = 0;
+    rc = getaddrinfo("invalid.test", "80", &hints, &result);
+    check("AI_NUMERICHOST failure returns bionic EAI_NONAME (8)", rc == 8 && !result, "EAI", rc);
+    rc = getaddrinfo("::1", "http", &hints, &result);
+    check("bionic AI_NUMERICSERV value 8 rejects a named service", rc == 8 && !result, "EAI", rc);
+}
+
+/* Linux eventfd(2), timerfd_create(2), pipe2(2), poll(2), epoll_ctl(2). */
+static void test_b3_descriptors(void) {
+    enum { nonblock = 0x800, cloexec = 0x80000, readable = 1, edge_oneshot = 0xc0000000u };
+    const int counter = eventfd(2, nonblock | cloexec | 1);
+    unsigned long long value = 0;
+    check("eventfd semaphore returns one per read and EAGAIN at zero",
+          counter >= 0 && fcntl(counter, 1, 0) == 1 &&
+          read(counter, &value, 8) == 8 && value == 1 &&
+          read(counter, &value, 8) == 8 && value == 1 &&
+          read(counter, &value, 8) == -1 && errno == 11, "errno", errno);
+    value = 7;
+    check("eventfd write updates poll readability", counter >= 0 && write(counter, &value, 8) == 8 &&
+          poll(&(struct b3_pollfd){counter, readable, 0}, 1, 0) == 1, "errno", errno);
+
+    int ends[2] = {-1, -1};
+    const int made_pipe = pipe2(ends, nonblock | cloexec);
+    const int queue = epoll_create1(cloexec);
+    struct b3_epoll_event event = {readable | edge_oneshot, 0x0123456789abcdefULL};
+    struct { struct b3_epoll_event event; unsigned tail; } seen = {{0, 0}, 0x11223344};
+    check("pipe2 descriptors inherit both requested flags",
+          made_pipe == 0 && fcntl(ends[0], 1, 0) == 1 && (fcntl(ends[1], 3, 0) & nonblock),
+          "errno", errno);
+    check("epoll ARM EABI payload and EPOLLONESHOT disable/rearm",
+          queue >= 0 && made_pipe == 0 && epoll_ctl(queue, 1, ends[0], &event) == 0 &&
+          write(ends[1], "x", 1) == 1 && epoll_wait(queue, &seen.event, 1, 100) == 1 &&
+          seen.event.events == readable && seen.event.data == event.data && seen.tail == 0x11223344 &&
+          epoll_wait(queue, &seen.event, 1, 0) == 0 &&
+          epoll_ctl(queue, 3, ends[0], &event) == 0 && epoll_wait(queue, &seen.event, 1, 100) == 1,
+          "errno", errno);
+    if (counter >= 0) close(counter);
+    if (queue >= 0) close(queue);
+    if (made_pipe == 0) { close(ends[0]); close(ends[1]); }
+
+    const int timer = timerfd_create(1, nonblock);
+    struct b3_itimerspec spec = {{0, 0}, {0, 10000000}}, remaining = {{-1,-1},{-1,-1}};
+    struct b3_pollfd poll_timer = {timer, readable, 0};
+    check("timerfd one-shot awakens poll and reports one expiration",
+          timer >= 0 && timerfd_settime(timer, 0, &spec, 0) == 0 &&
+          timerfd_gettime(timer, &remaining) == 0 && remaining.interval.tv_sec == 0 &&
+          remaining.interval.tv_nsec == 0 &&
+          poll(&poll_timer, 1, 300) == 1 && poll_timer.revents == readable &&
+          read(timer, &value, 8) == 8 && value == 1 &&
+          timerfd_gettime(timer, &remaining) == 0 && remaining.value.tv_sec == 0 &&
+          remaining.value.tv_nsec == 0, "errno", errno);
+    if (timer >= 0) close(timer);
+}
+
+/* POSIX positional I/O and Linux mmap(2), mmap2(2), sendfile(2). */
+static void test_b3_files(void) {
+    const char* path = "/tmp/b3-positional.tmp";
+    const int fd = open(path, 2 | 0x40 | 0x200, 0600);
+    check("open Android scratch file for positional I/O", fd >= 0, "errno", errno);
+    if (fd < 0) return;
+    const long long sparse = 0x100000008LL;
+    char low = 0, high = 0;
+    check("pread/pwrite and aligned 64-bit offsets preserve the descriptor position",
+          lseek(fd, 3, 0) == 3 && pwrite(fd, "A", 1, 4096) == 1 &&
+          pwrite64(fd, "B", 1, sparse) == 1 && pread(fd, &low, 1, 4096) == 1 &&
+          pread64(fd, &high, 1, sparse) == 1 && low == 'A' && high == 'B' &&
+          lseek(fd, 0, 1) == 3, "errno", errno);
+    char* private_page = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 4096);
+    if (private_page != MAP_FAILED) private_page[0] = 'Z';
+    check("MAP_PRIVATE writes are isolated and mmap offset selects a file page",
+          private_page != MAP_FAILED && private_page[0] == 'Z' &&
+          pread(fd, &low, 1, 4096) == 1 && low == 'A', "errno", errno);
+    if (private_page != MAP_FAILED) munmap(private_page, 4096);
+    char* readonly = (char*)syscall(192, 0, 4096, PROT_READ, MAP_PRIVATE, fd, 1);
+    check("ARM mmap2 takes a 4096-byte page index",
+          readonly != MAP_FAILED && readonly[0] == 'A' && munmap(readonly, 4096) == 0, "errno", errno);
+
+    int ends[2];
+    if (pipe2(ends, 0) == 0) {
+        off_t offset = 4096;
+        check("sendfile updates its offset pointer while leaving input position unchanged",
+              sendfile(ends[1], fd, &offset, 1) == 1 && offset == 4097 &&
+              read(ends[0], &low, 1) == 1 && low == 'A' && lseek(fd, 0, 1) == 3, "errno", errno);
+        close(ends[0]);
+        close(ends[1]);
+    } else {
+        check("sendfile pipe setup", 0, "errno", errno);
+    }
+    close(fd);
+    unlink(path);
+}
+
+static void test_phase_b3(void) {
+    test_b3_sockets();
+    test_b3_descriptors();
+    test_b3_files();
 }

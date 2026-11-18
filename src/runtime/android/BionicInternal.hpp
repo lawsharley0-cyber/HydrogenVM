@@ -17,6 +17,18 @@ template <typename R> R failHost(Ctx& x, R r = R(-1)) { setLinuxErrno(x, hostErr
 // Calls the iOS host function bound to `name` (r0-r3, then the stack) and returns r1:r0.
 uint64_t callIos(Ctx& x, const char* name, std::initializer_list<uint32_t> words);
 
+// Android descriptors use the host fd namespace. Makers register descriptors
+// for guest-close and process-teardown handling.
+void registerAndroidNet(Process& p);
+void registerAndroidEvents(Process& p);
+int trackAndroidFd(Process& p, int fd, bool socket = false);
+bool isAndroidHostSocket(Process& p, int fd);
+int pollDescriptor(Process& p, int fd, int events);
+bool guestSpan(Ctx& x, GuestPtr addr, uint32_t size, uint8_t prot);
+inline int32_t linuxFailure(Ctx& x, int error) { setLinuxErrno(x, error); return -1; }
+int takeLinuxErrno(Ctx& x);
+int32_t androidFcntl(Ctx& x, int32_t fd, int32_t cmd, uint32_t arg);
+
 // Registration of the other bionic files.
 void registerBionicExtra(Process& p);
 void registerLibAndroid(Process& p);
@@ -27,16 +39,22 @@ void registerSyscalls(Process& p);
 void registerSignals(Process& p);
 void registerFmodBridge(Process& p);
 void registerLooper(Process& p);
+void registerAAudio(Process& p);
 // Generated files for guest paths under /proc (ProcFs.cpp).
 void installProcFs(Process& p);
 // Placeholders from tools/android_gaps.py (Placeholders.cpp); registered after everything real.
 void registerNativePlaceholders(Process& p);
-// The AInputQueue a NativeActivity gets, and a touch delivered through it (Looper.cpp).
+// The AInputQueue a NativeActivity gets, and a touch/key/joystick/accel delivered through it (Looper.cpp).
 uint32_t inputQueue(Process& p);
 void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown);
+void pushKeyEvent(Process& p, int32_t keyCode, bool down, int32_t deviceId = 1, int32_t source = 0x101);
+void pushJoystickEvent(Process& p, float lx, float ly, float rx, float ry, float hatX, float hatY, int32_t deviceId = 2);
+void setAndroidAcceleration(Process& p, float gx, float gy, float gz);
 // Sends a Linux signal to the guest thread with Linux thread id `tid` (tkill). 0 or a Linux errno.
 int sendSignalToTid(Process& p, CPU::Cpu& self, uint32_t tid, int sig);
 // The screen's ANativeWindow, for drivers that hand one to the game (Egl.cpp).
 uint32_t screenNativeWindow(Process& p);
+// The AAssetManager* handle for NativeActivity (LibAndroid.cpp).
+uint32_t assetManagerHandle(Process& p);
 
 } // namespace Hydrogen::Runtime::Android

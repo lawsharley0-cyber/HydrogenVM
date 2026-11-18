@@ -597,6 +597,68 @@ vfp_rounding_modes:
 @ VFP in RunFast mode (FPSCR.FZ + FPSCR.DN), how every iOS thread starts: denormal inputs and
 @ results become a zero of the same sign, normal arithmetic is unchanged, NaN results are the
 @ default NaN. (ARM ARM: FPSCR.FZ flush-to-zero, FPSCR.DN default NaN.)
+@ TEST vfp_invalid_default_nan
+@ IEEE mode (DN clear): an invalid operation on numbers gives the positive default NaN
+@ (ARM ARM FPDefaultNaN); a quiet NaN operand propagates with its sign and payload.
+@ EXPECT r0=0x7FC00000 r1=0x7FC00000 r2=0x00000000 r3=0x7FF80000 r4=0xFFC00001 r5=0x7FC00000
+    .global vfp_invalid_default_nan
+vfp_invalid_default_nan:
+    mov     r0, #0
+    vmsr    fpscr, r0
+    vmov.f32 s0, #-1.0
+    vsqrt.f32 s1, s0                @ sqrt(-1)
+    ldr     r0, =0x7F800000         @ +inf
+    vmov    s2, r0
+    vsub.f32 s3, s2, s2             @ inf - inf
+    mov     r0, #0
+    ldr     r1, =0x7FF00000
+    vmov    d4, r0, r1              @ +inf (double)
+    vmov    d5, r0, r0              @ +0.0
+    vmul.f64 d6, d4, d5             @ inf * 0
+    ldr     r0, =0xFFC00001         @ negative quiet NaN with a payload
+    vmov    s14, r0
+    vmov.f32 s15, #1.0
+    vadd.f32 s16, s14, s15          @ propagates the operand
+    vmov.f32 s17, #1.0
+    vmla.f32 s17, s2, s10           @ s10 is the low half of d5 = 0: 1 + inf*0
+    vmov    r0, s1
+    vmov    r1, s3
+    vmov    r2, r3, d6
+    vmov    r4, s16
+    vmov    r5, s17
+    bx      lr
+    .ltorg
+
+@ TEST vfp_fldmx_writeback
+@ FLDMIAX/FSTMDBX (odd imm8 with doubles): two doubles move, and writeback covers the format
+@ word too (imm8 = 5 words = 20 bytes), per the ARM ARM FLDMX/FSTMX description.
+@ EXPECT r0=20 r1=0x11111111 r2=0x22222222 r3=0x33333333 r4=0x44444444 r5=20
+    .global vfp_fldmx_writeback
+vfp_fldmx_writeback:
+    push    {r6, r7, lr}
+    sub     sp, sp, #48
+    mov     r7, sp
+    ldr     r0, =0x11111111
+    str     r0, [r7]
+    ldr     r0, =0x22222222
+    str     r0, [r7, #4]
+    ldr     r0, =0x33333333
+    str     r0, [r7, #8]
+    ldr     r0, =0x44444444
+    str     r0, [r7, #12]
+    mov     r0, r7
+    .word   0xECB00B05              @ fldmiax r0!, {d0-d1}
+    sub     r0, r0, r7              @ 20
+    vmov    r1, r2, d0
+    vmov    r3, r4, d1
+    add     r6, r7, #48
+    .word   0xED260B05              @ fstmdbx r6!, {d0-d1}
+    add     r5, r7, #48
+    sub     r5, r5, r6              @ 20
+    add     sp, sp, #48
+    pop     {r6, r7, pc}
+    .ltorg
+
 @ TEST vfp_runfast_flush
 @ EXPECT r0=0x00000000 r1=0x80000000 r2=0x00000000 r3=0x40700000 r4=0x00000000 r6=0x7FC00000
     .global vfp_runfast_flush

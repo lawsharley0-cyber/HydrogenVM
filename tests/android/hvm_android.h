@@ -112,6 +112,12 @@ typedef const void* const* JNIEnv;
 #define JNI_FromReflectedMethod 7
 #define JNI_ToReflectedMethod 9
 #define JNI_ExceptionClear 17
+#define JNI_NewObjectA 30
+#define JNI_GetMethodID 33
+#define JNI_CallObjectMethodA 36
+#define JNI_CallBooleanMethodA 39
+#define JNI_CallIntMethodA 51
+#define JNI_CallVoidMethodA 63
 #define JNI_GetStaticMethodID 113
 #define JNI_CallStaticObjectMethodA 116
 #define JNI_NewStringUTF 167
@@ -119,3 +125,47 @@ typedef const void* const* JNIEnv;
 #define JNI_NewDirectByteBuffer 229
 #define JNI_GetDirectBufferAddress 230
 #define JNI_GetDirectBufferCapacity 231
+
+/* Linux ARM EABI UAPI and bionic netdb.h. */
+struct b3_sockaddr { unsigned short family; unsigned char bytes[14]; };
+struct b3_sockaddr6 { unsigned short family; unsigned char port_flow_addr_scope[26]; };
+struct b3_addrinfo {
+    int flags, family, type, protocol;
+    unsigned addrlen;
+    char* canonname;
+    struct b3_sockaddr* addr;
+    struct b3_addrinfo* next;
+};
+struct b3_pollfd { int fd; short events, revents; };
+struct b3_epoll_event { unsigned events; unsigned long long data; };
+struct b3_itimerspec { timespec_t interval, value; };
+int socket(int, int, int);
+int bind(int, const void*, unsigned);
+int listen(int, int);
+int connect(int, const void*, unsigned);
+int accept4(int, void*, unsigned*, int);
+int getsockname(int, void*, unsigned*);
+int getsockopt(int, int, int, void*, unsigned*);
+int setsockopt(int, int, int, const void*, unsigned);
+ssize_t send(int, const void*, size_t, int);
+ssize_t sendto(int, const void*, size_t, int, const void*, unsigned);
+ssize_t recv(int, void*, size_t, int);
+int getaddrinfo(const char*, const char*, const struct b3_addrinfo*, struct b3_addrinfo**);
+void freeaddrinfo(struct b3_addrinfo*);
+int fcntl(int, int, ...);
+int eventfd(unsigned, int);
+int timerfd_create(int, int);
+int timerfd_settime(int, int, const struct b3_itimerspec*, struct b3_itimerspec*);
+int timerfd_gettime(int, struct b3_itimerspec*);
+int epoll_create1(int);
+int epoll_ctl(int, int, int, struct b3_epoll_event*);
+int epoll_wait(int, struct b3_epoll_event*, int, int);
+int poll(struct b3_pollfd*, unsigned, int);
+int pipe2(int[2], int);
+off_t lseek(int, off_t, int);
+ssize_t pread(int, void*, size_t, off_t);
+ssize_t pwrite(int, const void*, size_t, off_t);
+ssize_t pread64(int, void*, size_t, long long);
+ssize_t pwrite64(int, const void*, size_t, long long);
+ssize_t sendfile(int, int, off_t*, size_t);
+int unlink(const char*);

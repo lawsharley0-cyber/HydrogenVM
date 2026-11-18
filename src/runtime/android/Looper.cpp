@@ -39,7 +39,9 @@ struct Event {
     int64_t downTime = 0, eventTime = 0;
     std::vector<int32_t> ids;
     std::vector<float> xs, ys;
+    float joyX = 0, joyY = 0, joyZ = 0, joyRz = 0, joyHatX = 0, joyHatY = 0;
 };
+struct ActivePointer { int32_t id; float x, y; };
 struct SensorQueue {
     uint32_t looper = 0;
     bool accelEnabled = false;
@@ -55,8 +57,10 @@ struct Plumbing {
     std::unordered_map<std::thread::id, uint32_t> threadLooper;
     std::unordered_map<uint32_t, Event> events;                   // AInputEvent* -> contents
     std::deque<uint32_t> inputQueue;                              // events not yet taken
+    std::vector<ActivePointer> activePointers;
     uint32_t inputQueueHandle = 0, sensorManager = 0, accelerometer = 0, sensorList = 0;
     std::unordered_map<uint32_t, SensorQueue> sensorQueues;
+    float accelX = 0.0f, accelY = 0.0f, accelZ = 9.80665f;
 };
 Plumbing& P(Process& p) { return p.service<Plumbing>(); }
 int64_t nowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count(); }
@@ -233,7 +237,20 @@ float e_zeroF(Ctx&, GuestPtr, uint32_t) { return 0.0f; }
 float e_precision(Ctx&, GuestPtr) { return 1.0f; }
 float e_zeroF1(Ctx&, GuestPtr) { return 0.0f; }
 float e_axis(Ctx& x, GuestPtr ev, int32_t axis, uint32_t i) {
-    return axis == 0 ? e_x(x, ev, i) : axis == 1 ? e_y(x, ev, i) : 0.0f;
+    return withEvent(x, ev, [axis, i](const Event& e) {
+        if (e.source == 0x1000010) {   // AINPUT_SOURCE_JOYSTICK
+            switch (axis) {
+                case 0: return e.joyX;      // AMOTION_EVENT_AXIS_X
+                case 1: return e.joyY;      // AMOTION_EVENT_AXIS_Y
+                case 11: return e.joyZ;     // AMOTION_EVENT_AXIS_Z
+                case 14: return e.joyRz;    // AMOTION_EVENT_AXIS_RZ
+                case 15: return e.joyHatX;  // AMOTION_EVENT_AXIS_HAT_X
+                case 16: return e.joyHatY;  // AMOTION_EVENT_AXIS_HAT_Y
+                default: return 0.0f;
+            }
+        }
+        return axis == 0 ? (i < e.xs.size() ? e.xs[i] : 0.0f) : axis == 1 ? (i < e.ys.size() ? e.ys[i] : 0.0f) : 0.0f;
+    });
 }
 uint32_t e_historySize(Ctx&, GuestPtr) { return 0; }
 int64_t e_historicalTime(Ctx& x, GuestPtr ev, uint32_t) { return e_eventTime(x, ev); }
@@ -330,9 +347,9 @@ int32_t s_getEvents(Ctx& x, GuestPtr q, GuestPtr out, uint32_t count) {
     x.mem.write<int32_t>(out + 4, 1);
     x.mem.write<int32_t>(out + 8, 1);
     x.mem.write<int64_t>(out + 16, nowNs());
-    x.mem.write<float>(out + 24, 0.0f);
-    x.mem.write<float>(out + 28, 0.0f);
-    x.mem.write<float>(out + 32, 9.80665f);   // lying flat, screen up
+    x.mem.write<float>(out + 24, s.accelX);
+    x.mem.write<float>(out + 28, s.accelY);
+    x.mem.write<float>(out + 32, s.accelZ);
     return 1;
 }
 int32_t s_type(Ctx& x, GuestPtr sensor) { return sensor ? x.mem.read<int32_t>(sensor) : 0; }
@@ -360,18 +377,86 @@ uint32_t inputQueue(Process& p) {
     return s.inputQueueHandle;
 }
 
-void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown) {
-    Event e;
-    switch (phase) {
-        case TouchPhase::Began: e.action = pointersDown <= 1 ? 0 : 5; break;   // DOWN / POINTER_DOWN (index 0)
-        case TouchPhase::Moved: e.action = 2; break;
-        case TouchPhase::Cancelled: e.action = 3; break;
-        default: e.action = pointersDown <= 1 ? 1 : 6; break;                   // UP / POINTER_UP
+void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id, uint32_t) {
+    const uint32_t h = p.heap().allocZeroed(16);
+    inputQueue(p);
+    auto& s = P(p);
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        auto findIdx = [&](int32_t pid) -> int {
+            for (size_t i = 0; i < s.activePointers.size(); ++i)
+                if (s.activePointers[i].id == pid) return int(i);
+            return -1;
+        };
+        int idx = findIdx(int32_t(id));
+        if (phase == TouchPhase::Began) {
+            if (idx < 0) {
+                s.activePointers.push_back({int32_t(id), x, y});
+                idx = int(s.activePointers.size() - 1);
+            } else {
+                s.activePointers[idx].x = x;
+                s.activePointers[idx].y = y;
+            }
+        } else if (phase == TouchPhase::Moved) {
+            if (idx < 0) {
+                s.activePointers.push_back({int32_t(id), x, y});
+                idx = int(s.activePointers.size() - 1);
+            } else {
+                s.activePointers[idx].x = x;
+                s.activePointers[idx].y = y;
+            }
+        } else {
+            if (idx < 0) {
+                s.activePointers.push_back({int32_t(id), x, y});
+                idx = int(s.activePointers.size() - 1);
+            } else {
+                s.activePointers[idx].x = x;
+                s.activePointers[idx].y = y;
+            }
+        }
+
+        Event e;
+        e.type = 2;
+        e.source = 0x1002;
+        e.downTime = e.eventTime = nowNs();
+        switch (phase) {
+            case TouchPhase::Began:
+                e.action = s.activePointers.size() <= 1 ? 0 : (5 | (idx << 8));
+                break;
+            case TouchPhase::Moved:
+                e.action = 2;
+                break;
+            case TouchPhase::Cancelled:
+                e.action = 3;
+                break;
+            default:
+                e.action = s.activePointers.size() <= 1 ? 1 : (6 | (idx << 8));
+                break;
+        }
+        for (const auto& pt : s.activePointers) {
+            e.ids.push_back(pt.id);
+            e.xs.push_back(pt.x);
+            e.ys.push_back(pt.y);
+        }
+        if (phase == TouchPhase::Cancelled) {
+            s.activePointers.clear();
+        } else if (phase == TouchPhase::Ended) {
+            s.activePointers.erase(s.activePointers.begin() + idx);
+        }
+        s.events[h] = std::move(e);
+        s.inputQueue.push_back(h);
     }
+    s.cv.notify_all();
+}
+
+void pushKeyEvent(Process& p, int32_t keyCode, bool down, int32_t deviceId, int32_t source) {
+    Event e;
+    e.type = 1; // AINPUT_EVENT_TYPE_KEY
+    e.action = down ? 0 : 1; // AKEY_EVENT_ACTION_DOWN / UP
+    e.source = source;
+    e.deviceId = deviceId;
+    e.keyCode = keyCode;
     e.downTime = e.eventTime = nowNs();
-    e.ids = {int32_t(id)};
-    e.xs = {x};
-    e.ys = {y};
     const uint32_t h = p.heap().allocZeroed(16);
     inputQueue(p);
     auto& s = P(p);
@@ -381,6 +466,43 @@ void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id,
         s.inputQueue.push_back(h);
     }
     s.cv.notify_all();
+}
+
+void pushJoystickEvent(Process& p, float lx, float ly, float rx, float ry, float hatX, float hatY, int32_t deviceId) {
+    Event e;
+    e.type = 2; // AINPUT_EVENT_TYPE_MOTION
+    e.action = 2; // AMOTION_EVENT_ACTION_MOVE
+    e.source = 0x1000010; // AINPUT_SOURCE_JOYSTICK
+    e.deviceId = deviceId;
+    e.downTime = e.eventTime = nowNs();
+    e.ids = {0};
+    e.xs = {lx};
+    e.ys = {ly};
+    e.joyX = lx;
+    e.joyY = ly;
+    e.joyZ = rx;
+    e.joyRz = ry;
+    e.joyHatX = hatX;
+    e.joyHatY = hatY;
+    const uint32_t h = p.heap().allocZeroed(16);
+    inputQueue(p);
+    auto& s = P(p);
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.events[h] = std::move(e);
+        s.inputQueue.push_back(h);
+    }
+    s.cv.notify_all();
+}
+
+void setAndroidAcceleration(Process& p, float gx, float gy, float gz) {
+    constexpr float kG = 9.80665f;
+    auto& s = P(p);
+    std::lock_guard<std::mutex> lk(s.mu);
+    // CoreMotion UIAcceleration is in g (screen up => z = -1g); Android sensor is in m/s^2 (screen up => +9.81).
+    s.accelX = -gx * kG;
+    s.accelY = -gy * kG;
+    s.accelZ = -gz * kG;
 }
 
 void registerLooper(Process& p) {
@@ -415,7 +537,7 @@ void registerLooper(Process& p) {
     R(e_precision, "AMotionEvent_getYPrecision", "1");
     R(e_zeroF1, "AMotionEvent_getXOffset", "0");
     R(e_zeroF1, "AMotionEvent_getYOffset", "0");
-    R(e_pointerCount, "AMotionEvent_getPointerCount", "one pointer per event");
+    R(e_pointerCount, "AMotionEvent_getPointerCount", "all active pointers");
     R(e_pointerId, "AMotionEvent_getPointerId", "the finger");
     R(e_toolType, "AMotionEvent_getToolType", "finger");
     R(e_x, "AMotionEvent_getX", "surface pixels");
@@ -429,7 +551,7 @@ void registerLooper(Process& p) {
     R(e_touchSize, "AMotionEvent_getToolMajor", "20 px");
     R(e_touchSize, "AMotionEvent_getToolMinor", "20 px");
     R(e_zeroF, "AMotionEvent_getOrientation", "0");
-    R(e_axis, "AMotionEvent_getAxisValue", "x and y");
+    R(e_axis, "AMotionEvent_getAxisValue", "x, y, and joystick axes");
     R(e_historySize, "AMotionEvent_getHistorySize", "no history");
     R(e_historicalTime, "AMotionEvent_getHistoricalEventTime", "event time");
     R(e_historical, "AMotionEvent_getHistoricalX", "current x");
@@ -454,7 +576,7 @@ void registerLooper(Process& p) {
     R(s_disable, "ASensorEventQueue_disableSensor", "stops them");
     R(s_setRate, "ASensorEventQueue_setEventRate", "at most 100 Hz");
     R(s_hasEvents, "ASensorEventQueue_hasEvents", "one per period");
-    A(s_getEvents, "ASensorEventQueue_getEvents", "device lying flat");
+    R(s_getEvents, "ASensorEventQueue_getEvents", "accelerometer events from host");
     R(s_type, "ASensor_getType", "accelerometer");
     R(s_name, "ASensor_getName", "fixed");
     R(s_vendor, "ASensor_getVendor", "fixed");

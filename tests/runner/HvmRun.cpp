@@ -213,7 +213,9 @@ int hvmRunMain(int argc, char** argv) {
         target = info.bundlePath;
         home.clear();
     }
-    if (target.size() > 4 && target.compare(target.size() - 4, 4, ".apk") == 0) {
+    std::string targetExt = fs::path(target).extension().string();
+    for (char& c : targetExt) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (targetExt == ".apk" || targetExt == ".xapk" || targetExt == ".apks" || targetExt == ".apkm") {
         const std::string root = home.empty() ? (fs::temp_directory_path() / "hvm-apps").string() : home;
         auto info = Loader::importApk(target, root);
         if (!info.runnable) { std::fprintf(stderr, "can't run: %s\n", info.problem.c_str()); return 3; }

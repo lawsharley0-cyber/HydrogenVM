@@ -1,5 +1,6 @@
 // In-process Mach facilities for startup code. No host ports or exception delivery.
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "MachPorts.hpp"
 #include <deque>
 #include <chrono>
@@ -106,6 +107,42 @@ int32_t exceptionPorts(Ctx& x, uint32_t target, uint32_t, uint32_t port, int32_t
     x.proc.reportMissing("Mach exception delivery (unavailable; setup accepted)");
     return 0;
 }
+// task_get_exception_ports / thread_get_exception_ports: no handlers are ever installed (Mach
+// exceptions aren't delivered), so the list is empty. Super Hexagon checks it at start (#537).
+int32_t getExceptionPorts(Ctx& x, uint32_t target, uint32_t, GuestPtr, GuestPtr count, GuestPtr, GuestPtr, GuestPtr) {
+    if (!task(x, target) && !(target >= 0x1000 && hasMachSendRight(x.proc, target) && x.proc.findThreadById(target - 0x1000))) return 4;
+    if (!range(x, count, 4, Memory::kProtWrite)) return 1;
+    x.mem.write<uint32_t>(count, 0);
+    return 0;
+}
+
+// Clock services (Terraria #547): host_get_clock_service(host, id, &clock) then
+// clock_get_time(clock, &mach_timespec{unsigned sec; int nsec}). SYSTEM_CLOCK (0) counts from
+// boot like mach_absolute_time; CALENDAR_CLOCK (1) is the wall clock the guest sees.
+constexpr uint32_t kClockPortBase = 0x00C10000u;
+int32_t hostGetClockService(Ctx& x, uint32_t, int32_t id, GuestPtr out) {
+    if (id != 0 && id != 1 && id != 2) return 4;                   // KERN_INVALID_ARGUMENT
+    if (!range(x, out, 4, Memory::kProtWrite)) return 1;
+    x.mem.write<uint32_t>(out, kClockPortBase + uint32_t(id == 2 ? 0 : id));   // REALTIME_CLOCK == SYSTEM
+    return 0;
+}
+int32_t clockGetTime(Ctx& x, uint32_t clock, GuestPtr out) {
+    if (clock != kClockPortBase && clock != kClockPortBase + 1) return 4;
+    if (!range(x, out, 8, Memory::kProtWrite)) return 1;
+    int64_t ns;
+    if (clock == kClockPortBase + 1) ns = x.proc.wallNowNs();
+    else ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    x.mem.write<uint32_t>(out, uint32_t(ns / 1000000000));
+    x.mem.write<int32_t>(out + 4, int32_t(ns % 1000000000));
+    return 0;
+}
+int32_t clockGetRes(Ctx& x, uint32_t clock, int32_t, GuestPtr out, GuestPtr count) {
+    if (clock != kClockPortBase && clock != kClockPortBase + 1) return 4;
+    if (!range(x, out, 4, Memory::kProtWrite) || !range(x, count, 4, Memory::kProtWrite)) return 1;
+    x.mem.write<int32_t>(out, clock == kClockPortBase ? 1 : 1000);   // ns: nanosecond uptime, microsecond calendar
+    x.mem.write<uint32_t>(count, 1);
+    return 0;
+}
 int32_t map(Ctx& x, uint32_t owner, GuestPtr out, uint32_t size, uint32_t mask, uint32_t flags,
             uint32_t object, uint64_t, bool, uint32_t current, uint32_t maximum, uint32_t) {
     if (!task(x, owner)) return 16;
@@ -138,6 +175,12 @@ void registerStartupMach(Process& p) {
     p.def<&exceptionPorts>("_thread_swap_exception_ports");
     p.def<&setExceptionPorts>("_task_set_exception_ports");
     p.def<&setExceptionPorts>("_thread_set_exception_ports");
+    p.def<&getExceptionPorts>("_task_get_exception_ports");
+    p.def<&getExceptionPorts>("_thread_get_exception_ports");
+    p.def<&hostGetClockService>("_host_get_clock_service");
+    p.def<&clockGetTime>("_clock_get_time");
+    supportDef<&clockGetRes>(p, "_clock_get_attributes", SupportStatus::Real,
+                             "the clocks' fixed resolutions: 1 ns uptime, 1 us calendar");
     p.def<&map>("_vm_map");
     p.def<&protect>("_vm_protect");
 }

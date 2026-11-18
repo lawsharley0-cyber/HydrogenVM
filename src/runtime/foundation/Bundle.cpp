@@ -676,6 +676,15 @@ id b_executablePath(Ctx& x, id self, SEL) {
 id b_privateFrameworksPath(Ctx& x, id self, SEL) { return kept(x, self, "privateFrameworksPath", [&](BundleData* d) { return makeString(x, d->path + "/Frameworks"); }); }
 id b_builtInPlugInsPath(Ctx& x, id self, SEL) { return kept(x, self, "builtInPlugInsPath", [&](BundleData* d) { return makeString(x, d->path + "/PlugIns"); }); }
 id b_bundleURL(Ctx& x, id self, SEL) { return kept(x, self, "bundleURL", [&](BundleData* d) { return newURL(x, fileURLString(x.proc.guestPath(d->path), true), 0); }); }
+// iOS 7: where the App Store receipt lives, StoreKit/receipt beside the .app in the bundle
+// container (Terraria 1.2 #547). A sideloaded app has no receipt, so the file doesn't exist,
+// which games treat as "no receipt yet", as on a phone without an App Store purchase.
+id b_appStoreReceiptURL(Ctx& x, id self, SEL) {
+    return kept(x, self, "appStoreReceiptURL", [&](BundleData* d) {
+        const std::string container = fs::path(d->path).parent_path().string();
+        return newURL(x, fileURLString(x.proc.guestPath(container + "/StoreKit/receipt"), false), 0);
+    });
+}
 id b_executableURL(Ctx& x, id self, SEL s) {
     const id p = b_executablePath(x, self, s);
     return p ? kept(x, self, "executableURL", [&](BundleData*) { return newURL(x, fileURLString(utf8(x, p), false), 0); }) : 0;
@@ -1423,7 +1432,7 @@ void registerBundle(Process& p, ObjC::Runtime& r) {
        .cm<&b_preferredLocalizations>("preferredLocalizationsFromArray:");
     bun.m<&b_initWithPath>("initWithPath:").m<&b_bundlePath>("bundlePath").m<&b_resourcePath>("resourcePath")
        .m<&b_executablePath>("executablePath").m<&b_privateFrameworksPath>("privateFrameworksPath")
-       .m<&b_builtInPlugInsPath>("builtInPlugInsPath").m<&b_bundleURL>("bundleURL").m<&b_bundleURL>("resourceURL")
+       .m<&b_builtInPlugInsPath>("builtInPlugInsPath").m<&b_appStoreReceiptURL>("appStoreReceiptURL").m<&b_bundleURL>("bundleURL").m<&b_bundleURL>("resourceURL")
        .m<&b_executableURL>("executableURL").m<&b_identifier>("bundleIdentifier").m<&b_infoDictionary>("infoDictionary")
        .m<&b_localizedInfo>("localizedInfoDictionary").m<&b_objectForInfoKey>("objectForInfoDictionaryKey:")
        .m<&b_pathForResource>("pathForResource:ofType:").m<&b_pathForResourceDir>("pathForResource:ofType:inDirectory:")

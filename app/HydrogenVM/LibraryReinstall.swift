@@ -88,7 +88,7 @@ struct VerificationResult {
 
 func verifyAppFiles(appBundleURL: URL, ipaURL: URL) throws -> VerificationResult {
     let entries = try readZipEntries(from: ipaURL)
-    let isAPK = ipaURL.pathExtension.lowercased() == "apk"
+    let isAPK = ["apk", "xapk", "apks", "apkm"].contains(ipaURL.pathExtension.lowercased())
 
     // An .ipa: the files in Payload/*.app/. An .apk: its lib/ and assets/, which the import
     // copies into the bundle at the same paths.

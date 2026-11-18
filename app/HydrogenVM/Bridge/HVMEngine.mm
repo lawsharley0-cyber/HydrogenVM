@@ -523,6 +523,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if ((self = [super init])) {
         _bundlePath = [bundlePath copy];
         _homePath = [homePath copy];
+        _recordingPath = [[homePath stringByAppendingPathComponent:@"Library/HydrogenVM/last-session.hvmrec"] copy];
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
@@ -563,10 +564,22 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 
     core->logFile = openRunLog(bundle, playSession);
 
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *recDir = [_homePath stringByAppendingPathComponent:@"Library/HydrogenVM"];
+    [fm createDirectoryAtPath:recDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *lastRec = [recDir stringByAppendingPathComponent:@"last-session.hvmrec"];
+    NSString *prevRec = [recDir stringByAppendingPathComponent:@"previous-session.hvmrec"];
+    if ([fm fileExistsAtPath:lastRec]) {
+        [fm removeItemAtPath:prevRec error:nil];
+        [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
+    }
+    const std::string recordPath = lastRec.UTF8String;
+
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
+        cfg.recordPath = recordPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
@@ -962,6 +975,26 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         p = _core->proc;
     }
     if (p) p->setAcceleration(float(x), float(y), float(z));
+}
+
+- (void)sendAndroidKey:(int32_t)keyCode down:(BOOL)down {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectKey(keyCode, down != NO);
+}
+
+- (void)sendJoystickLX:(float)lx ly:(float)ly rx:(float)rx ry:(float)ry hatX:(float)hatX hatY:(float)hatY {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectJoystick(lx, ly, rx, ry, hatX, hatY);
 }
 
 @end
