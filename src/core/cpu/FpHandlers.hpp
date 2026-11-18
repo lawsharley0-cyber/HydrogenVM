@@ -65,7 +65,8 @@ template <typename T> inline T defaultNaN() {
 
 // VFP arithmetic in a rounding mode other than round-to-nearest (FPSCR.RMode: 0 RN, 1 RP, 2 RM,
 // 3 RZ). Games almost never change it, so the host's rounding mode is switched only for those
-// operations, inside a function the optimizer can't move floating-point work across.
+// operations. The operands are read and the result written through volatiles so the compiler
+// can't move the arithmetic (it has no side effects) outside the switched window.
 inline int hostRounding(uint32_t rmode) {
     static const int kModes[4] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
     return kModes[rmode & 3];
@@ -99,21 +100,54 @@ inline T vfp3(T n, T m, T d) {
     else return std::fma(n, m, -d);   // VFNMS
 }
 
-// a = d, b = n, c = m
+// Anything but plain IEEE or exactly RunFast: another rounding mode, or FZ without DN and the
+// like. A separate handler reached by tail call, so the common handler stays a leaf (a call would
+// make every path set up a stack frame).
+template <int OP, bool DP>
+[[gnu::noinline]] HVM_H(H_Vfp3General) {
+    using T = FpT<DP>;
+    T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
+    const uint32_t fpscr = c->fpscr;
+    if (fpscr & kFpscrFZ) { n = flushDenorm(n); mm = flushDenorm(mm); d = flushDenorm(d); }
+    const uint32_t rmode = (fpscr >> kFpscrRModeShift) & 3;
+    T r = rmode ? withRounding(rmode, [=] { volatile T vn = n, vm = mm, vd = d; volatile T vr = vfp3<OP>(T(vn), T(vm), T(vd)); return T(vr); })
+                : vfp3<OP>(n, mm, d);
+    if (fpscr & kFpscrFZ) r = flushDenorm(r);
+    if ((fpscr & kFpscrDN) && r != r) r = defaultNaN<T>();
+    wrF<DP>(c, op->a, r);
+    HVM_NEXT();
+}
+
+// a = d, b = n, c = m. Two inline paths: IEEE (Android's default) and RunFast (FZ + DN, round to
+// nearest: how every iOS thread starts).
 template <int OP, bool DP>
 HVM_H(H_Vfp3) {
     using T = FpT<DP>;
-    T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
-    if ((c->fpscr & (kFpscrFZ | kFpscrDN | kFpscrRMode)) != 0) {
-        if (c->fpscr & kFpscrFZ) { n = flushDenorm(n); mm = flushDenorm(mm); d = flushDenorm(d); }
-        const uint32_t rmode = (c->fpscr >> kFpscrRModeShift) & 3;
-        T r = rmode ? withRounding(rmode, [=] { return vfp3<OP>(n, mm, d); }) : vfp3<OP>(n, mm, d);
-        if (c->fpscr & kFpscrFZ) r = flushDenorm(r);
-        if ((c->fpscr & kFpscrDN) && std::isnan(r)) r = defaultNaN<T>();
+    const uint32_t mode = c->fpscr & (kFpscrFZ | kFpscrDN | kFpscrRMode);
+    if (__builtin_expect(mode == 0, 1)) {
+        wrF<DP>(c, op->a, vfp3<OP>(rdF<DP>(c, op->b), rdF<DP>(c, op->c), rdF<DP>(c, op->a)));
+        HVM_NEXT();
+    }
+    if (mode == (kFpscrFZ | kFpscrDN)) {
+        const T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
+        T r = flushDenorm(vfp3<OP>(flushDenorm(n), flushDenorm(mm), flushDenorm(d)));
+        if (r != r) r = defaultNaN<T>();
         wrF<DP>(c, op->a, r);
         HVM_NEXT();
     }
-    wrF<DP>(c, op->a, vfp3<OP>(n, mm, d));
+    HVM_MUSTTAIL return H_Vfp3General<OP, DP>(c, op, m);
+}
+
+// VSQRT in a rounding mode other than round-to-nearest (see withRounding).
+template <bool DP>
+[[gnu::noinline]] HVM_H(H_VsqrtRounded) {
+    using T = FpT<DP>;
+    T v = rdF<DP>(c, op->c);
+    if (c->fpscr & kFpscrFZ) v = flushDenorm(v);
+    const uint32_t rmode = (c->fpscr >> kFpscrRModeShift) & 3;
+    T r = withRounding(rmode, [=] { volatile T vv = v; volatile T vr = std::sqrt(T(vv)); return T(vr); });
+    if ((c->fpscr & kFpscrDN) && r != r) r = defaultNaN<T>();
+    wrF<DP>(c, op->a, r);
     HVM_NEXT();
 }
 
@@ -137,10 +171,10 @@ HVM_H(H_Vfp2) {
             wrSu(c, op->a, OP == kVAbs ? (v & 0x7FFFFFFFu) : (v ^ 0x80000000u));
         }
     } else {
+        if (__builtin_expect((c->fpscr & kFpscrRMode) != 0, 0)) { HVM_MUSTTAIL return H_VsqrtRounded<DP>(c, op, m); }
         T m = rdF<DP>(c, op->c);
         if (c->fpscr & kFpscrFZ) m = flushDenorm(m);
-        const uint32_t rmode = (c->fpscr >> kFpscrRModeShift) & 3;
-        T r = rmode ? withRounding(rmode, [=] { return std::sqrt(m); }) : std::sqrt(m);
+        T r = std::sqrt(m);
         if ((c->fpscr & kFpscrDN) && std::isnan(r)) r = defaultNaN<T>();
         wrF<DP>(c, op->a, r);
     }
