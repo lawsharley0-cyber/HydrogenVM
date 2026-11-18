@@ -1,29 +1,29 @@
-# HydrogenVM report — debe027
+# HydrogenVM report — f26918c
 
-2026-11-18T05:26:49+00:00 · AMD EPYC 7763 64-Core Processor (x86_64, Linux 7.0.0-1017-azure)
+2026-11-18T06:25:52+00:00 · Intel(R) Xeon(R) 6975P-C (x86_64, Linux 7.0.0-1014-aws)
 
 **All tests passed.**
 
 | Suite | Passed | Failed | Skipped | Time |
 |---|---:|---:|---:|---:|
-| build | 1 | 0 | 0 | 430.6s |
-| tools | 1 | 0 | 0 | 7.0s |
-| cpu | 15 | 0 | 0 | 0.7s |
-| ios | 6 | 0 | 0 | 2.2s |
-| bench | 5 | 0 | 0 | 24.4s |
+| build | 1 | 0 | 0 | 247.4s |
+| tools | 1 | 0 | 0 | 5.4s |
+| cpu | 15 | 0 | 0 | 0.4s |
+| ios | 6 | 0 | 0 | 2.1s |
+| bench | 5 | 0 | 0 | 18.7s |
 
 ## Speed
 
-CoreMark **1733.1** iterations/s (579.4 guest MIPS)
+CoreMark **2797.6** iterations/s (936.4 guest MIPS)
 
 | Original device | CPU | Device CoreMark (est.) | Emulator | Effective clock |
 |---|---|---:|---:|---:|
-| iPhone 3GS | Cortex-A8 | 1440 | **120.4%** | 722 MHz |
-| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **90.3%** | 722 MHz |
-| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **72.2%** | 578 MHz |
-| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **38.1%** | 495 MHz |
+| iPhone 3GS | Cortex-A8 | 1440 | **194.3%** | 1166 MHz |
+| iPhone 4 | Apple A4 (Cortex-A8) | 1920 | **145.7%** | 1166 MHz |
+| iPhone 4S | Apple A5 (Cortex-A9) | 2400 | **116.6%** | 933 MHz |
+| iPhone 5 ← goal | Apple A6 (Swift) | 4550 | **61.5%** | 799 MHz |
 
-Raw interpreter speed (CPU test programs): ctests_thumb 470 MIPS, ctests_arm 491 MIPS, ftests_vfp_thumb_softfp 405 MIPS, ftests_neon_thumb 414 MIPS
+Raw interpreter speed (CPU test programs): ctests_thumb 628 MIPS, ctests_arm 654 MIPS, ftests_vfp_thumb_softfp 672 MIPS, ftests_neon_thumb 673 MIPS
 
 | App | Wall | Frames | Avg frame | Max frame | Slow frames |
 |---|---:|---:|---:|---:|---:|
@@ -31,19 +31,18 @@ Raw interpreter speed (CPU test programs): ctests_thumb 470 MIPS, ctests_arm 491
 | CTestLegacy | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | BinPlist | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
 | ObjCTest | 0.06s | 0 | 0.00 ms | 0.00 ms | 0 |
-| FoundationTest | 0.67s | 0 | 0.00 ms | 0.00 ms | 0 |
-| UIKitTest | 1.04s | 61 | 0.43 ms | 7.09 ms | 0 |
+| FoundationTest | 0.66s | 0 | 0.00 ms | 0.00 ms | 0 |
+| UIKitTest | 1.03s | 61 | 0.23 ms | 4.14 ms | 0 |
 
-## Problems (53)
+## Problems (52)
 
 ### Below speed goal (1)
 
-- **bench / coremark**: 38.1% of iPhone 5 single-core speed (goal: 100%)
+- **bench / coremark**: 61.5% of iPhone 5 single-core speed (goal: 100%)
 
-### Warnings (52)
+### Warnings (51)
 
 - **build / compiler**: src/loader/MachO.cpp:213:31: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
-- **build / compiler**: src/runtime/android/BionicExtra.cpp:204:9: warning: unused function 'p_enosys' [-Wunused-function]
 - **build / compiler**: src/runtime/android/Looper.cpp:31:35: warning: unused variable 'kPollCallback' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/android/OpenSLES.cpp:35:85: warning: unused variable 'kLocatorOutputMix' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/foundation/CompatibilityClasses.cpp:229:42: warning: missing field 'retained' initializer [-Wmissing-field-initializers]
@@ -93,5 +92,5 @@ Raw interpreter speed (CPU test programs): ctests_thumb 470 MIPS, ctests_arm 491
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:14:60: warning: unused variable 'kP' [-Wunused-const-variable]
 - **build / compiler**: src/runtime/uikit/UIControls.cpp:17:4: warning: unused function 'allocInit' [-Wunused-function]
 - **build / compiler**: src/runtime/uikit/UIView.cpp:14:17: warning: unused variable 'kPi' [-Wunused-const-variable]
-- **build / compiler**: tests/runner/TestRunner.cpp:12859:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
+- **build / compiler**: tests/runner/TestRunner.cpp:12922:29: warning: 'atomic_load<Hydrogen::Loader::MethodSymbols>' is deprecated: use 'std::atomic<std::shared_ptr<T>>' instead [-Wdeprecated-declarations]
 
