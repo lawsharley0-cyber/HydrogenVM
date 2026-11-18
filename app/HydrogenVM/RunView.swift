@@ -232,6 +232,7 @@ final class RunModel {
                     fields["summary"] = fields["summary"] ?? crash.components(separatedBy: "\n").first
                     fields["report"] = crash
                     fields["bundleId"] = self.app.info.bundleIdentifier
+                    fields["recordingPath"] = self.session?.recordingPath ?? self.app.homeURL.appending(path: "Library/HydrogenVM/last-session.hvmrec").path(percentEncoded: false)
                     fields["memorySamples"] = self.memorySamples
                     if fields["logs"] == nil { fields["logs"] = self.log.suffix(3000).map(\.text) }
                     do {
@@ -357,7 +358,9 @@ final class RunModel {
         memorySamples.append(["utc": ISO8601DateFormatter().string(from: Date()),
                               "availableBytes": HVMCrashJournal.availableMemory()])
         if memorySamples.count > 120 { memorySamples.removeFirst() }
+        let recPath = session?.recordingPath ?? app.homeURL.appending(path: "Library/HydrogenVM/last-session.hvmrec").path(percentEncoded: false)
         let fields: [String: Any] = ["bundleId": app.info.bundleIdentifier, "appVersion": app.info.version,
+                                     "recordingPath": recPath,
                                      "deviceModel": CrashReport.deviceModel,
                                      "iOSVersion": UIDevice.current.systemVersion,
                                      "host": ["pageSize": getpagesize()],

@@ -110,6 +110,8 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic) BOOL glTrace;
 /// glTrace: the first distinct GL errors, "call -> 0xCODE [main|worker]".
 @property (nonatomic, readonly, copy) NSArray<NSString *> *glErrorLog;
+/// Path to the current session's input/seed recording (`last-session.hvmrec`).
+@property (nonatomic, readonly, copy, nullable) NSString *recordingPath;
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line, HVMLogLevel level);
 /// exitCode is the guest's exit status; crashReport is non-nil when it crashed (or failed to load).
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);

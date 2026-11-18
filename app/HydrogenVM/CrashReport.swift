@@ -11,6 +11,7 @@ struct CrashReport: Identifiable {
     let summary: String
     let signature: String
     let app: String
+    var recordingPath: String? = nil
 
     static var directory: URL {
         URL.documentsDirectory.appending(path: "HydrogenVM/crashes", directoryHint: .isDirectory)
@@ -136,9 +137,17 @@ struct CrashReportView: View {
                 Text(report.summary)
                 Text("Report \(report.signature)").font(.caption.monospaced())
                 SendReportButton(make: {
-                    ProblemReport(title: "[\(report.signature)] \(report.app): \(report.summary.prefix(90))",
-                                  summary: "\(report.summary)\n\n**App:** `\(report.app)` · \(ProblemReporter.deviceLine) · **Report:** `\(report.signature)`",
-                                  parts: [.init(name: "report.json", text: report.json, language: "json")])
+                    var summary = "\(report.summary)\n\n**App:** `\(report.app)` · \(ProblemReporter.deviceLine) · **Report:** `\(report.signature)`"
+                    var parts: [ProblemReport.Part] = [.init(name: "report.json", text: report.json, language: "json")]
+                    if let path = report.recordingPath,
+                       let recording = try? String(contentsOfFile: path, encoding: .utf8),
+                       !recording.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        summary += "\n\n**Replay on bench:** `hvm run <game> --phone --gpu --replay session.hvmrec`"
+                        parts.append(.init(name: "session.hvmrec", text: recording))
+                    }
+                    return ProblemReport(title: "[\(report.signature)] \(report.app): \(report.summary.prefix(90))",
+                                         summary: summary,
+                                         parts: parts)
                 }, fallback: report.issueURL)
                 Button("Copy report", systemImage: "doc.on.doc") { UIPasteboard.general.string = report.json }
                 ShareLink(item: report.file) { Label("Share", systemImage: "square.and.arrow.up") }

@@ -523,6 +523,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if ((self = [super init])) {
         _bundlePath = [bundlePath copy];
         _homePath = [homePath copy];
+        _recordingPath = [[homePath stringByAppendingPathComponent:@"Library/HydrogenVM/last-session.hvmrec"] copy];
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
@@ -567,6 +568,17 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
+        {
+            std::error_code recEc;
+            const std::filesystem::path recDir = std::filesystem::path(home) / "Library" / "HydrogenVM";
+            std::filesystem::create_directories(recDir, recEc);
+            const std::filesystem::path lastRec = recDir / "last-session.hvmrec";
+            const std::filesystem::path prevRec = recDir / "previous-session.hvmrec";
+            if (std::filesystem::exists(lastRec, recEc)) {
+                std::filesystem::rename(lastRec, prevRec, recEc);
+            }
+            cfg.recordPath = lastRec.string();
+        }
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
