@@ -41,13 +41,13 @@ void sleepFor(Ctx& x, std::chrono::nanoseconds d) {
 }
 
 int32_t t_time(Ctx& x, GuestPtr out) {
-    const int32_t t = int32_t(x.proc.wallNowNs() / 1'000'000'000);
+    const int32_t t = int32_t(x.proc.wallNowNs() / 1000000000);
     if (out) x.mem.write<int32_t>(out, t);
     return t;
 }
 int32_t t_gettimeofday(Ctx& x, GuestPtr tv, GuestPtr tz) {
     const int64_t now = x.proc.wallNowNs();
-    if (tv) { x.mem.write<int32_t>(tv, int32_t(now / 1'000'000'000)); x.mem.write<int32_t>(tv + 4, int32_t(now / 1000 % 1'000'000)); }
+    if (tv) { x.mem.write<int32_t>(tv, int32_t(now / 1000000000)); x.mem.write<int32_t>(tv + 4, int32_t(now / 1000 % 1000000)); }
     if (tz) { x.mem.write<int32_t>(tz, 0); x.mem.write<int32_t>(tz + 4, 0); }
     return 0;
 }
@@ -72,7 +72,7 @@ int32_t t_nanosleep(Ctx& x, GuestPtr req, GuestPtr rem) {
 int32_t t_clock_gettime(Ctx& x, uint32_t clk, GuestPtr ts) {
     timespec v;
     ::clock_gettime(clk == 0 ? CLOCK_REALTIME : CLOCK_MONOTONIC, &v);
-    if (clk == 0) { const int64_t now = x.proc.wallNowNs(); v.tv_sec = time_t(now / 1'000'000'000); v.tv_nsec = long(now % 1'000'000'000); }
+    if (clk == 0) { const int64_t now = x.proc.wallNowNs(); v.tv_sec = time_t(now / 1000000000); v.tv_nsec = long(now % 1000000000); }
     x.mem.write<int32_t>(ts, int32_t(v.tv_sec));
     x.mem.write<int32_t>(ts + 4, int32_t(v.tv_nsec));
     return 0;
