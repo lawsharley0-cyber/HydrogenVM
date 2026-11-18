@@ -131,6 +131,9 @@ def main() -> int:
         work = Path(tmp)
         app = build_bundle(work)
         na_app = build_bundle(work, NA_SRC, NA_LIB, "NativeActivityTest.app", "NativeActivity")
+        java = ROOT / "tests/android/java"
+        bridge_app = build_bundle(work, java / "JniRoundTrip.c", LIB, "JniRoundTrip.app")
+        shutil.copyfile(java / "jni.dex", bridge_app / "classes.dex")
         runs = [
             run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
             run_java_check(work, args.timeout, "DexExecution", "Dalvik execution"),
@@ -140,6 +143,11 @@ def main() -> int:
             home = work / ("home-phone" if phone else "home")
             home.mkdir()
             runs.append(run_once(args.hvm, app, home, phone, args.timeout))
+            bridge_home = work / ("jni-home-phone" if phone else "jni-home")
+            bridge_home.mkdir()
+            runs.append(run_once(args.hvm, bridge_app, bridge_home, phone, args.timeout,
+                                 mode_suffix=" (DEX JNI round-trip)"))
+            runs[-1]["group"] = "java"
             na_home = work / ("na-home-phone" if phone else "na-home")
             na_home.mkdir()
             runs.append(run_once(args.hvm, na_app, na_home, phone, args.timeout,
