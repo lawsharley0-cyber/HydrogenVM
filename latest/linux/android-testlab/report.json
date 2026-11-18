@@ -1,0 +1,260 @@
+{
+  "runs": [
+    {
+      "mode": "desktop",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "sigaction(SIGUSR1=10) installs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "raise(10) runs the SIGUSR1 handler",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "blocked signal is held",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sigpending reports it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "unblocking delivers it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pthread_kill reaches another thread",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "recursive mutex (type 1) relocks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "errorcheck mutex (type 2) reports EDEADLK",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wait times out with ETIMEDOUT",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wake with no waiters returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sched_setaffinity succeeds",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps exists",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps lists mappings",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/cpuinfo reports neon",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "auxv AT_HWCAP has NEON (bit 12)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "generated code runs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "cacheflush returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "rewritten code runs the new version",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "FindClass of an unknown plugin class",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "GetStaticMethodID on the plugin",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "plugin call returns an object, no exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ToReflectedMethod/FromReflectedMethod round-trip",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its address",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its capacity",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\ndone: 0 failure(s)\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 23 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
+    },
+    {
+      "mode": "phone",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "sigaction(SIGUSR1=10) installs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "raise(10) runs the SIGUSR1 handler",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "blocked signal is held",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sigpending reports it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "unblocking delivers it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pthread_kill reaches another thread",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "recursive mutex (type 1) relocks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "errorcheck mutex (type 2) reports EDEADLK",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wait times out with ETIMEDOUT",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wake with no waiters returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sched_setaffinity succeeds",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps exists",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps lists mappings",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/cpuinfo reports neon",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "auxv AT_HWCAP has NEON (bit 12)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "generated code runs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "cacheflush returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "rewritten code runs the new version",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "FindClass of an unknown plugin class",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "GetStaticMethodID on the plugin",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "plugin call returns an object, no exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ToReflectedMethod/FromReflectedMethod round-trip",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its address",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its capacity",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\ndone: 0 failure(s)\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/48178E4C-31E4-217C1C7C\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 23 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
+    }
+  ]
+}
