@@ -25,7 +25,7 @@ class VisionTests(unittest.TestCase):
             self.assertEqual(answer.call_count, expected)
 
     def test_invalid_replies_spend_slot_and_fall_back(self):
-        for reply in [(float('nan'), 0), (-1, 0), ('1', 0), (1, 0), (True, 0), ()]:
+        for reply in [(float('nan'), 0), (-1, 0), ('1', 0), (1, 0), (True, 0), (10**400, 0), ()]:
             policy = Vision('test', 'play', 1, lambda *args: reply)
             for _ in range(4):
                 point, reason = policy.consider(frame((10, 10, 10)))

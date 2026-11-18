@@ -3,7 +3,6 @@ import base64
 import http.client
 import io
 import json
-import math
 import os
 import queue
 import threading
@@ -53,7 +52,7 @@ class Vision:
             x, y = self.respond(frame, self.model, self.goal)
         except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as err:
             return None, f'vision unavailable ({type(err).__name__})'
-        if not all(type(v) in (int, float) and math.isfinite(v) and 0 <= v < 1 for v in (x, y)):
+        if not all(type(v) in (int, float) and 0 <= v < 1 for v in (x, y)):
             return None, 'vision returned an invalid point'
         return [(x, y)], 'vision'
 
