@@ -457,13 +457,14 @@ Block* Engine::enterBlock(Cpu* c, uint32_t key) {
     const uint64_t g = gen_.load(std::memory_order_acquire);
     if (__builtin_expect(c->fast_gen != g, 0)) {
         if (!c->fast) c->fast.reset(new FastEntry[kFastSize]);
-        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {0xFFFFFFFFu, nullptr, nullptr};
+        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {kFastEmpty, nullptr, nullptr};
         c->fast_gen = g;
     }
     FastEntry& fe = c->fast[fastIndex(key)];
     if (fe.key == key) return fe.block;
     Block* b = lookupOrDecode(key);
-    fe.key = key; fe.block = b; fe.first = b ? b->ops.data() : nullptr;
+    // Never cache a miss: the handlers' fast path follows `first` without checking it.
+    if (b) { fe.key = key; fe.block = b; fe.first = b->ops.data(); }
     return b;
 }
 
@@ -498,7 +499,7 @@ void Engine::flushCache() {
 
 void Engine::resetFastCache(Cpu& c) {
     if (!c.fast) return;
-    for (size_t i = 0; i < kFastSize; ++i) c.fast[i] = {0xFFFFFFFFu, nullptr, nullptr};
+    for (size_t i = 0; i < kFastSize; ++i) c.fast[i] = {kFastEmpty, nullptr, nullptr};
     c.fast_gen = gen_.load(std::memory_order_acquire);
 }
 

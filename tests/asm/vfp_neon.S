@@ -781,3 +781,24 @@ t_neon_vclt_zero:
     vmov    r3, s19
     pop     {r4-r7, pc}
     .ltorg
+
+    .arm
+@ NEON VCVT float -> fixed that overflows saturates and raises Invalid Operation (FPSCR.IOC,
+@ bit 0); it must not set QC (bit 27), which only the saturating integer instructions set.
+@ TEST neon_cvt_fixed_overflow_ioc
+@ EXPECT r0=0x7FFFFFFF r1=0x00000001
+    .global neon_cvt_fixed_overflow_ioc
+neon_cvt_fixed_overflow_ioc:
+    mov     r2, #0
+    vmsr    fpscr, r2
+    ldr     r0, =0x447A0000         @ 1000.0
+    vdup.32 d1, r0
+    vcvt.s32.f32 d0, d1, #24        @ 1000 * 2^24 > INT32_MAX -> 0x7FFFFFFF
+    vmov    r0, s0
+    vmrs    r1, fpscr
+    ldr     r2, =0x08000001         @ QC | IOC
+    and     r1, r1, r2
+    mov     r2, #0
+    vmsr    fpscr, r2
+    bx      lr
+    .ltorg

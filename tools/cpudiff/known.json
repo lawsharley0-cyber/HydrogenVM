@@ -1,0 +1,4 @@
+{
+    "mnemonics": [],
+    "_comment": "Mnemonics whose differences from Unicorn are understood and accepted (e.g. Unicorn is wrong, or the behaviour is UNPREDICTABLE). Each needs a reason in docs/research/cpudiff.md."
+}

@@ -301,7 +301,7 @@ HVM_H(H_Stale) {
     c->thumb = key & 1;
     if (c->fast) {
         FastEntry& fe = c->fast[fastIndex(key)];
-        if (fe.first == op) fe.key = 0xFFFFFFFFu;
+        if (fe.first == op) fe.key = kFastEmpty;
     }
     Block* nb = hvmEnterBlock(c, key);
     if (!nb) return;

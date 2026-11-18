@@ -86,6 +86,9 @@ enum class Exit : uint32_t {
 // Per-thread direct-mapped cache in front of the engine's block map. `first`
 // is the block's first op, so indirect branches can jump without touching the Block.
 struct FastEntry { uint32_t key; Block* block; const Op* first; };
+// An empty FastEntry. Keys are `target | thumb`: ARM targets have bits 1:0 clear and Thumb keys
+// have bit 0 set, so bits 1:0 = 0b10 never occur. (0xFFFFFFFF does: a Thumb jump to 0xFFFFFFFE.)
+inline constexpr uint32_t kFastEmpty = 0xFFFFFFFEu;
 inline constexpr size_t kFastSize = 1u << 14;
 inline size_t fastIndex(uint32_t key) { return ((key >> 1) ^ (key >> 15)) & (kFastSize - 1); }
 
