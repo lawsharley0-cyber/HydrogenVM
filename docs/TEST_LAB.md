@@ -533,7 +533,7 @@ shared compatibility method. AH–AN are reserved by the separate Canabalt #437
 and parked Super Hexagon #438 work; these IDs avoid integration collisions.
 
 
-### TL-AQ — Sequential Core Graphics data provider
+### TL-AR — Sequential Core Graphics data provider
 
 Dead Space 1.0.2 stops on an unresolved `CGDataProviderCreateSequential` call.
 An authored seven-byte stream returns at most two bytes per callback. Two
