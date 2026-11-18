@@ -39,13 +39,17 @@ void registerSyscalls(Process& p);
 void registerSignals(Process& p);
 void registerFmodBridge(Process& p);
 void registerLooper(Process& p);
+void registerAAudio(Process& p);
 // Generated files for guest paths under /proc (ProcFs.cpp).
 void installProcFs(Process& p);
 // Placeholders from tools/android_gaps.py (Placeholders.cpp); registered after everything real.
 void registerNativePlaceholders(Process& p);
-// The AInputQueue a NativeActivity gets, and a touch delivered through it (Looper.cpp).
+// The AInputQueue a NativeActivity gets, and a touch/key/joystick/accel delivered through it (Looper.cpp).
 uint32_t inputQueue(Process& p);
 void pushTouchEvent(Process& p, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown);
+void pushKeyEvent(Process& p, int32_t keyCode, bool down, int32_t deviceId = 1, int32_t source = 0x101);
+void pushJoystickEvent(Process& p, float lx, float ly, float rx, float ry, float hatX, float hatY, int32_t deviceId = 2);
+void setAndroidAcceleration(Process& p, float gx, float gy, float gz);
 // Sends a Linux signal to the guest thread with Linux thread id `tid` (tkill). 0 or a Linux errno.
 int sendSignalToTid(Process& p, CPU::Cpu& self, uint32_t tid, int sig);
 // The screen's ANativeWindow, for drivers that hand one to the game (Egl.cpp).

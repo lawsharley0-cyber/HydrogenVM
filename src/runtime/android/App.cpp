@@ -673,6 +673,7 @@ struct Driver {
     virtual void surfaceReady(Ctx&, const Surface&) {}                 // GL context current, surface sized
     virtual void frame(Ctx&) = 0;
     virtual void touch(Ctx&, TouchPhase, float x, float y, uint32_t id, uint32_t activeCount) = 0;
+    virtual bool key(Ctx&, int32_t /*keyCode*/, bool /*down*/) { return false; }
     virtual void pause(Ctx&) {}
     virtual void resume(Ctx&) {}
     virtual bool wantsExit(Ctx&) { return false; }
@@ -1444,16 +1445,26 @@ int runActivity(Process& p, CPU::Cpu& c) {
     }
     driver->surfaceReady(x, s);
 
-    // Touches: the host's are in portrait screen points; the surface is in pixels.
+    // Touches, keys, joystick, and accelerometer: the host's touches are in portrait screen points; the surface is in pixels.
     std::mutex inMu;
     std::deque<Pointer> pending;
     struct Ev { TouchPhase phase; float x, y; uint32_t id; };
+    struct KeyEv { int32_t code; bool down; };
     std::deque<Ev> events;
+    std::deque<KeyEv> keyEvents;
     const float portraitW = float(p.config().screenWidth);
     p.setTouchHandler([&, portraitW](TouchPhase phase, float tx, float ty, uint32_t finger) {
         std::lock_guard<std::mutex> lk(inMu);
         if (s.portrait) events.push_back({phase, tx * s.scale, ty * s.scale, finger});
         else events.push_back({phase, ty * s.scale, (portraitW - tx) * s.scale, finger});
+    });
+    p.setAccelerationHandler([&](float gx, float gy, float gz) { setAndroidAcceleration(p, gx, gy, gz); });
+    p.setKeyHandler([&](int32_t code, bool down) {
+        std::lock_guard<std::mutex> lk(inMu);
+        keyEvents.push_back({code, down});
+    });
+    p.setJoystickHandler([&](float lx, float ly, float rx, float ry, float hatX, float hatY) {
+        pushJoystickEvent(p, lx, ly, rx, ry, hatX, hatY);
     });
     std::set<uint32_t> down;
     std::map<uint32_t, uint32_t> pointers;   // host finger id -> Android pointer id
@@ -1463,6 +1474,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
     bool paused = false;
     while (!p.stopping()) {
         if (p.backgroundRequested() && !paused) {
+            p.mixer().setAllPaused(true);
             driver->pause(x);
             paused = true;
             p.setBackgrounded(true);
@@ -1471,13 +1483,19 @@ int runActivity(Process& p, CPU::Cpu& c) {
             p.waitWhileBackgrounded();
             if (p.stopping()) break;
             driver->resume(x);
+            p.mixer().setAllPaused(false);
             paused = false;
             next = clock::now();
         }
         std::deque<Ev> batch;
+        std::deque<KeyEv> keyBatch;
         {
             std::lock_guard<std::mutex> lk(inMu);
             batch.swap(events);
+            keyBatch.swap(keyEvents);
+        }
+        for (const auto& k : keyBatch) {
+            if (!driver->key(x, k.code, k.down)) pushKeyEvent(p, k.code, k.down);
         }
         // Android numbers pointers from 0 (the first finger down is 0, the next free number for
         // each later one); engines treat pointer 0 as the primary touch (Unity's taps and mouse
@@ -1511,8 +1529,12 @@ int runActivity(Process& p, CPU::Cpu& c) {
         if (next > now) std::this_thread::sleep_until(next);
         else if (now - next > 100ms) next = now;
     }
+    if (!paused) driver->pause(x);
     setCurrentSurface(nullptr);
     p.setTouchHandler({});
+    p.setAccelerationHandler({});
+    p.setKeyHandler({});
+    p.setJoystickHandler({});
     return 0;
 }
 

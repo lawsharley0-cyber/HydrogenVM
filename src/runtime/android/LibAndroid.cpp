@@ -280,6 +280,7 @@ void registerLibAndroid(Process& p) {
     A(na_noop2, "ANativeActivity_hideSoftInput", "soft input not shown");
 #undef R
 #undef A
+    registerAAudio(p);
 }
 
 } // namespace Hydrogen::Runtime::Android

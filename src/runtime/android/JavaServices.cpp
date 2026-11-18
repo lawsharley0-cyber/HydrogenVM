@@ -9,6 +9,7 @@
 #include "runtime/android/Jni.hpp"
 #include "runtime/android/BionicInternal.hpp"
 #include "runtime/android/Surface.hpp"
+#include "runtime/audio/Audio.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -17,11 +18,45 @@
 #include <sstream>
 #include <system_error>
 #include <thread>
+#include <unistd.h>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
 namespace Hydrogen::Runtime::Android {
 namespace {
+
+std::vector<uint8_t> readHostBytes(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), {});
+}
+
+std::vector<uint8_t> readFdBytes(int fd, int64_t offset, int64_t length) {
+    if (fd < 0) return {};
+    const off_t saved = ::lseek(fd, 0, SEEK_CUR);
+    const off_t total = ::lseek(fd, 0, SEEK_END);
+    if (total < 0) {
+        if (saved >= 0) ::lseek(fd, saved, SEEK_SET);
+        return {};
+    }
+    const int64_t start = std::max<int64_t>(0, offset);
+    int64_t count = length >= 0 ? length : (int64_t(total) - start);
+    if (start + count > int64_t(total)) count = std::max<int64_t>(0, int64_t(total) - start);
+    std::vector<uint8_t> out(size_t(count), 0);
+    if (count > 0) {
+        ::lseek(fd, off_t(start), SEEK_SET);
+        size_t got = 0;
+        while (got < size_t(count)) {
+            const ssize_t n = ::read(fd, out.data() + got, size_t(count) - got);
+            if (n <= 0) break;
+            got += size_t(n);
+        }
+        out.resize(got);
+    }
+    if (saved >= 0) ::lseek(fd, saved, SEEK_SET);
+    return out;
+}
 
 std::string packageName(Process& p) {
     const auto* info = p.infoPlist();
@@ -713,6 +748,610 @@ void registerJavaServices(Jni& j) {
             return JValue(b);
         });
     }
+
+    // android.media.MediaPlayer: streams long files on the shared mixer, decodes short ones.
+    struct MediaPlayerState {
+        std::mutex mu;
+        uint32_t voice = 0;
+        std::shared_ptr<Audio::AudioSource> source;
+        Audio::Pcm pcm;
+        int sampleRate = 44100;
+        double durationSec = 0.0;
+        double positionSec = 0.0;
+        float leftVol = 1.0f, rightVol = 1.0f;
+        bool looping = false;
+        bool prepared = false;
+        bool playing = false;
+        std::string dataPath;
+        int fd = -1;
+        int64_t fdOffset = 0, fdLength = -1;
+        jobject onPrepared = 0, onCompletion = 0, onError = 0, onSeekComplete = 0;
+        ~MediaPlayerState() {
+            if (fd >= 0) ::close(fd);
+        }
+        Audio::VoiceParams params() const {
+            Audio::VoiceParams vp;
+            vp.gain = 0.5f * (leftVol + rightVol);
+            const float sum = leftVol + rightVol;
+            vp.pan = sum > 0.0f ? std::clamp((rightVol - leftVol) / sum, -1.0f, 1.0f) : 0.0f;
+            vp.loop = looping;
+            return vp;
+        }
+    };
+    auto mpState = [](Jni& j, jobject self) -> std::shared_ptr<MediaPlayerState> {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        JObject* o = j.get(self);
+        if (!o) return nullptr;
+        auto* s = std::any_cast<std::shared_ptr<MediaPlayerState>>(&o->host);
+        return s ? *s : nullptr;
+    };
+    auto mpLoad = [](Process& proc, MediaPlayerState& mp) -> bool {
+        if (mp.prepared) return true;
+        mp.source.reset();
+        mp.pcm.reset();
+        mp.durationSec = 0.0;
+        if (!mp.dataPath.empty()) {
+            std::string path = mp.dataPath;
+            if (path.rfind("file://", 0) == 0) path.erase(0, 7);
+            std::string host = proc.hostPath(path);
+            if (!fs::exists(host)) {
+                const std::string asset = proc.config().bundlePath + "/assets/" + path;
+                if (fs::exists(asset)) host = asset;
+            }
+            if (auto src = Audio::openStream(host)) {
+                mp.source = std::move(src);
+                mp.sampleRate = mp.source->sampleRate();
+                mp.durationSec = mp.sampleRate > 0 ? double(mp.source->frames()) / mp.sampleRate : 0.0;
+                mp.prepared = true;
+                return true;
+            }
+            std::vector<uint8_t> bytes = readHostBytes(host);
+            if (!bytes.empty()) {
+                Audio::DecodedAudio dec = Audio::decode(bytes.data(), bytes.size());
+                if (!dec.stereoPcm.empty()) {
+                    mp.pcm = std::make_shared<std::vector<int16_t>>(std::move(dec.stereoPcm));
+                    mp.sampleRate = dec.sampleRate > 0 ? dec.sampleRate : 44100;
+                    mp.durationSec = dec.duration > 0.0 ? dec.duration : double(mp.pcm->size() / 2) / mp.sampleRate;
+                    mp.prepared = true;
+                    return true;
+                }
+            }
+        } else if (mp.fd >= 0) {
+            std::vector<uint8_t> bytes = readFdBytes(mp.fd, mp.fdOffset, mp.fdLength);
+            if (!bytes.empty()) {
+                if (auto src = Audio::openStream(bytes)) {
+                    mp.source = std::move(src);
+                    mp.sampleRate = mp.source->sampleRate();
+                    mp.durationSec = mp.sampleRate > 0 ? double(mp.source->frames()) / mp.sampleRate : 0.0;
+                    mp.prepared = true;
+                    return true;
+                }
+                Audio::DecodedAudio dec = Audio::decode(bytes.data(), bytes.size());
+                if (!dec.stereoPcm.empty()) {
+                    mp.pcm = std::make_shared<std::vector<int16_t>>(std::move(dec.stereoPcm));
+                    mp.sampleRate = dec.sampleRate > 0 ? dec.sampleRate : 44100;
+                    mp.durationSec = dec.duration > 0.0 ? dec.duration : double(mp.pcm->size() / 2) / mp.sampleRate;
+                    mp.prepared = true;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    const std::string kMP = "android/media/MediaPlayer";
+    j.method(kMP, "<init>", "()V", [](Jni& j, Ctx&, jobject self, const auto&) {
+        auto mp = std::make_shared<MediaPlayerState>();
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) { o->host = mp; o->permanent = true; }
+        return JValue(0);
+    });
+    j.method(kMP, "setDataSource", "(Ljava/lang/String;)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        const std::string path = str(j, a[0]);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        mp->dataPath = path;
+        if (mp->fd >= 0) { ::close(mp->fd); mp->fd = -1; }
+        mp->prepared = false;
+        return JValue(0);
+    });
+    j.method(kMP, "setDataSource", "(Ljava/io/FileDescriptor;)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        int rawFd = -1;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* f = j.get(jobject(a[0]))) rawFd = int(f->fields["descriptor"]);
+        }
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (mp->fd >= 0) ::close(mp->fd);
+        mp->fd = rawFd >= 0 ? ::dup(rawFd) : -1;
+        mp->fdOffset = 0;
+        mp->fdLength = -1;
+        mp->dataPath.clear();
+        mp->prepared = false;
+        return JValue(0);
+    });
+    j.method(kMP, "setDataSource", "(Ljava/io/FileDescriptor;JJ)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        int rawFd = -1;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* f = j.get(jobject(a[0]))) rawFd = int(f->fields["descriptor"]);
+        }
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (mp->fd >= 0) ::close(mp->fd);
+        mp->fd = rawFd >= 0 ? ::dup(rawFd) : -1;
+        mp->fdOffset = int64_t(a[1]);
+        mp->fdLength = int64_t(a[2]);
+        mp->dataPath.clear();
+        mp->prepared = false;
+        return JValue(0);
+    });
+    j.method(kMP, "setDataSource", "(Landroid/content/res/AssetFileDescriptor;)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        int rawFd = -1;
+        int64_t len = -1;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* afd = j.get(jobject(a[0]))) {
+                len = int64_t(afd->fields["hvm.length"]);
+                if (JObject* f = j.get(jobject(afd->fields["hvm.fd"]))) rawFd = int(f->fields["descriptor"]);
+            }
+        }
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (mp->fd >= 0) ::close(mp->fd);
+        mp->fd = rawFd >= 0 ? ::dup(rawFd) : -1;
+        mp->fdOffset = 0;
+        mp->fdLength = len;
+        mp->dataPath.clear();
+        mp->prepared = false;
+        return JValue(0);
+    });
+    j.method(kMP, "prepare", "()V", [mpState, mpLoad](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        mpLoad(x.proc, *mp);
+        return JValue(0);
+    });
+    j.method(kMP, "prepareAsync", "()V", [mpState, mpLoad](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        jobject listener = 0;
+        bool ok = false;
+        {
+            std::lock_guard<std::mutex> lk(mp->mu);
+            ok = mpLoad(x.proc, *mp);
+            listener = mp->onPrepared;
+        }
+        if (ok && listener) {
+            const uint32_t mid = j.methodId("android/media/MediaPlayer$OnPreparedListener", "onPrepared", "(Landroid/media/MediaPlayer;)V", false);
+            j.invoke(x, mid, listener, {self});
+        }
+        return JValue(0);
+    });
+    j.method(kMP, "start", "()V", [mpState, mpLoad](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (!mp->prepared) mpLoad(x.proc, *mp);
+        auto& mixer = x.proc.mixer();
+        if (mp->voice != 0) {
+            if (mixer.playing(mp->voice) || mp->positionSec < mp->durationSec) {
+                mixer.setParams(mp->voice, mp->params());
+                mixer.setPaused(mp->voice, false);
+                mp->playing = true;
+                return JValue(0);
+            }
+            mixer.release(mp->voice);
+            mp->voice = 0;
+        }
+        if (mp->source) {
+            mp->voice = mixer.playSource(mp->source, mp->params(), mp->positionSec);
+            mp->playing = mp->voice != 0;
+        } else if (mp->pcm && !mp->pcm->empty()) {
+            mp->voice = mixer.play(mp->pcm, mp->sampleRate, mp->params(), mp->positionSec, false);
+            mp->playing = mp->voice != 0;
+        }
+        return JValue(0);
+    });
+    j.method(kMP, "pause", "()V", [mpState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (mp->voice != 0) {
+            mp->positionSec = x.proc.mixer().positionSeconds(mp->voice);
+            x.proc.mixer().setPaused(mp->voice, true);
+        }
+        mp->playing = false;
+        return JValue(0);
+    });
+    j.method(kMP, "stop", "()V", [mpState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (mp->voice != 0) {
+            x.proc.mixer().stop(mp->voice);
+            x.proc.mixer().release(mp->voice);
+            mp->voice = 0;
+        }
+        mp->playing = false;
+        mp->positionSec = 0.0;
+        return JValue(0);
+    });
+    j.method(kMP, "reset", "()V", [mpState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (mp->voice != 0) {
+            x.proc.mixer().stop(mp->voice);
+            x.proc.mixer().release(mp->voice);
+            mp->voice = 0;
+        }
+        mp->source.reset();
+        mp->pcm.reset();
+        mp->playing = false;
+        mp->prepared = false;
+        mp->looping = false;
+        mp->positionSec = 0.0;
+        mp->durationSec = 0.0;
+        mp->dataPath.clear();
+        if (mp->fd >= 0) { ::close(mp->fd); mp->fd = -1; }
+        return JValue(0);
+    });
+    j.method(kMP, "release", "()V", [mpState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        if (mp->voice != 0) {
+            x.proc.mixer().stop(mp->voice);
+            x.proc.mixer().release(mp->voice);
+            mp->voice = 0;
+        }
+        mp->source.reset();
+        mp->pcm.reset();
+        mp->playing = false;
+        mp->prepared = false;
+        if (mp->fd >= 0) { ::close(mp->fd); mp->fd = -1; }
+        return JValue(0);
+    });
+    j.method(kMP, "seekTo", "(I)V", [mpState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        jobject listener = 0;
+        {
+            std::lock_guard<std::mutex> lk(mp->mu);
+            mp->positionSec = std::max(0.0, double(int32_t(a[0])) / 1000.0);
+            if (mp->voice != 0) x.proc.mixer().seekSeconds(mp->voice, mp->positionSec);
+            listener = mp->onSeekComplete;
+        }
+        if (listener) {
+            const uint32_t mid = j.methodId("android/media/MediaPlayer$OnSeekCompleteListener", "onSeekComplete", "(Landroid/media/MediaPlayer;)V", false);
+            j.invoke(x, mid, listener, {self});
+        }
+        return JValue(0);
+    });
+    j.method(kMP, "setLooping", "(Z)V", [mpState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        mp->looping = (uint32_t(a[0]) & 0xFF) != 0;
+        if (mp->voice != 0) x.proc.mixer().setParams(mp->voice, mp->params());
+        return JValue(0);
+    });
+    j.method(kMP, "isLooping", "()Z", [mpState](Jni& j, Ctx&, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        return JValue(mp->looping ? 1 : 0);
+    });
+    j.method(kMP, "setVolume", "(FF)V", [mpState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        mp->leftVol = std::clamp(asFloat(a[0]), 0.0f, 1.0f);
+        mp->rightVol = std::clamp(asFloat(a[1]), 0.0f, 1.0f);
+        if (mp->voice != 0) x.proc.mixer().setParams(mp->voice, mp->params());
+        return JValue(0);
+    });
+    j.method(kMP, "isPlaying", "()Z", [mpState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        jobject completion = 0;
+        bool nowPlaying = false;
+        {
+            std::lock_guard<std::mutex> lk(mp->mu);
+            if (mp->playing && mp->voice != 0) {
+                if (x.proc.mixer().playing(mp->voice)) {
+                    nowPlaying = true;
+                } else {
+                    mp->playing = false;
+                    completion = mp->onCompletion;
+                }
+            }
+        }
+        if (completion) {
+            const uint32_t mid = j.methodId("android/media/MediaPlayer$OnCompletionListener", "onCompletion", "(Landroid/media/MediaPlayer;)V", false);
+            j.invoke(x, mid, completion, {self});
+        }
+        return JValue(nowPlaying ? 1 : 0);
+    });
+    j.method(kMP, "getCurrentPosition", "()I", [mpState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        const double sec = mp->voice != 0 ? x.proc.mixer().positionSeconds(mp->voice) : mp->positionSec;
+        return JValue(int32_t(sec * 1000.0));
+    });
+    j.method(kMP, "getDuration", "()I", [mpState](Jni& j, Ctx&, jobject self, const auto&) {
+        auto mp = mpState(j, self);
+        if (!mp) return JValue(0);
+        std::lock_guard<std::mutex> lk(mp->mu);
+        return JValue(int32_t(mp->durationSec * 1000.0));
+    });
+    j.method(kMP, "setAudioStreamType", "(I)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method(kMP, "setWakeMode", "(Landroid/content/Context;I)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method(kMP, "setScreenOnWhilePlaying", "(Z)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method(kMP, "setOnPreparedListener", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        if (auto mp = mpState(j, self)) { std::lock_guard<std::mutex> lk(mp->mu); mp->onPrepared = jobject(a[0]); }
+        return JValue(0);
+    });
+    j.method(kMP, "setOnCompletionListener", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        if (auto mp = mpState(j, self)) { std::lock_guard<std::mutex> lk(mp->mu); mp->onCompletion = jobject(a[0]); }
+        return JValue(0);
+    });
+    j.method(kMP, "setOnErrorListener", "(Landroid/media/MediaPlayer$OnErrorListener;)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        if (auto mp = mpState(j, self)) { std::lock_guard<std::mutex> lk(mp->mu); mp->onError = jobject(a[0]); }
+        return JValue(0);
+    });
+    j.method(kMP, "setOnSeekCompleteListener", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", [mpState](Jni& j, Ctx&, jobject self, const auto& a) {
+        if (auto mp = mpState(j, self)) { std::lock_guard<std::mutex> lk(mp->mu); mp->onSeekComplete = jobject(a[0]); }
+        return JValue(0);
+    });
+
+    // android.media.SoundPool & SoundPool$Builder
+    struct SoundPoolState {
+        struct Sound { int id = 0; Audio::Pcm pcm; int rate = 44100; };
+        struct Stream {
+            uint32_t voice = 0;
+            int soundId = 0;
+            float left = 1.0f, right = 1.0f, rate = 1.0f;
+            int loop = 0;
+            int priority = 0;
+            Audio::VoiceParams params() const {
+                Audio::VoiceParams vp;
+                vp.gain = 0.5f * (left + right);
+                const float sum = left + right;
+                vp.pan = sum > 0.0f ? std::clamp((right - left) / sum, -1.0f, 1.0f) : 0.0f;
+                vp.pitch = std::clamp(rate, 0.5f, 2.0f);
+                vp.loop = loop != 0;
+                return vp;
+            }
+        };
+        std::mutex mu;
+        int nextSoundId = 1;
+        int nextStreamId = 1;
+        std::unordered_map<int, Sound> sounds;
+        std::unordered_map<int, Stream> streams;
+        jobject onLoadComplete = 0;
+    };
+    auto spState = [](Jni& j, jobject self) -> std::shared_ptr<SoundPoolState> {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        JObject* o = j.get(self);
+        if (!o) return nullptr;
+        auto* s = std::any_cast<std::shared_ptr<SoundPoolState>>(&o->host);
+        return s ? *s : nullptr;
+    };
+    auto spStoreDecoded = [](Jni& j, Ctx& x, jobject self, SoundPoolState& sp, const std::vector<uint8_t>& bytes) -> int {
+        if (bytes.empty()) return 0;
+        Audio::DecodedAudio dec = Audio::decode(bytes.data(), bytes.size());
+        if (dec.stereoPcm.empty()) return 0;
+        int sid = 0;
+        jobject listener = 0;
+        {
+            std::lock_guard<std::mutex> lk(sp.mu);
+            sid = sp.nextSoundId++;
+            SoundPoolState::Sound snd;
+            snd.id = sid;
+            snd.pcm = std::make_shared<std::vector<int16_t>>(std::move(dec.stereoPcm));
+            snd.rate = dec.sampleRate > 0 ? dec.sampleRate : 44100;
+            sp.sounds[sid] = std::move(snd);
+            listener = sp.onLoadComplete;
+        }
+        if (listener) {
+            const uint32_t mid = j.methodId("android/media/SoundPool$OnLoadCompleteListener", "onLoadComplete", "(Landroid/media/SoundPool;II)V", false);
+            j.invoke(x, mid, listener, {self, uint32_t(sid), 0});
+        }
+        return sid;
+    };
+    const std::string kSP = "android/media/SoundPool";
+    j.method(kSP, "<init>", "(III)V", [](Jni& j, Ctx&, jobject self, const auto&) {
+        auto sp = std::make_shared<SoundPoolState>();
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) { o->host = sp; o->permanent = true; }
+        return JValue(0);
+    });
+    j.method(kSP, "load", "(Ljava/lang/String;I)I", [spState, spStoreDecoded](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::string path = str(j, a[0]);
+        std::string host = x.proc.hostPath(path);
+        if (!fs::exists(host)) {
+            const std::string asset = x.proc.config().bundlePath + "/assets/" + path;
+            if (fs::exists(asset)) host = asset;
+        }
+        return JValue(spStoreDecoded(j, x, self, *sp, readHostBytes(host)));
+    });
+    j.method(kSP, "load", "(Landroid/content/Context;II)I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method(kSP, "load", "(Landroid/content/res/AssetFileDescriptor;I)I", [spState, spStoreDecoded](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        int rawFd = -1;
+        int64_t len = -1;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* afd = j.get(jobject(a[0]))) {
+                len = int64_t(afd->fields["hvm.length"]);
+                if (JObject* f = j.get(jobject(afd->fields["hvm.fd"]))) rawFd = int(f->fields["descriptor"]);
+            }
+        }
+        return JValue(spStoreDecoded(j, x, self, *sp, readFdBytes(rawFd, 0, len)));
+    });
+    j.method(kSP, "load", "(Ljava/io/FileDescriptor;JJI)I", [spState, spStoreDecoded](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        int rawFd = -1;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* f = j.get(jobject(a[0]))) rawFd = int(f->fields["descriptor"]);
+        }
+        return JValue(spStoreDecoded(j, x, self, *sp, readFdBytes(rawFd, int64_t(a[1]), int64_t(a[2]))));
+    });
+    j.method(kSP, "play", "(IFFIIF)I", [spState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        const int soundId = int(int32_t(a[0]));
+        const float left = std::clamp(asFloat(a[1]), 0.0f, 1.0f);
+        const float right = std::clamp(asFloat(a[2]), 0.0f, 1.0f);
+        const int priority = int(int32_t(a[3]));
+        const int loop = int(int32_t(a[4]));
+        const float rate = asFloat(a[5]);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->sounds.find(soundId);
+        if (it == sp->sounds.end() || !it->second.pcm || it->second.pcm->empty()) return JValue(0);
+        SoundPoolState::Stream st;
+        st.soundId = soundId;
+        st.left = left;
+        st.right = right;
+        st.priority = priority;
+        st.loop = loop;
+        st.rate = rate > 0.0f ? rate : 1.0f;
+        st.voice = x.proc.mixer().play(it->second.pcm, it->second.rate, st.params(), 0.0, loop == 0);
+        if (st.voice == 0) return JValue(0);
+        const int streamId = sp->nextStreamId++;
+        sp->streams[streamId] = st;
+        return JValue(streamId);
+    });
+    j.method(kSP, "stop", "(I)V", [spState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->streams.find(int(int32_t(a[0])));
+        if (it != sp->streams.end()) {
+            x.proc.mixer().stop(it->second.voice);
+            x.proc.mixer().release(it->second.voice);
+            sp->streams.erase(it);
+        }
+        return JValue(0);
+    });
+    j.method(kSP, "pause", "(I)V", [spState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->streams.find(int(int32_t(a[0])));
+        if (it != sp->streams.end()) x.proc.mixer().setPaused(it->second.voice, true);
+        return JValue(0);
+    });
+    j.method(kSP, "resume", "(I)V", [spState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->streams.find(int(int32_t(a[0])));
+        if (it != sp->streams.end()) x.proc.mixer().setPaused(it->second.voice, false);
+        return JValue(0);
+    });
+    j.method(kSP, "autoPause", "()V", [spState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        for (const auto& [_, st] : sp->streams) x.proc.mixer().setPaused(st.voice, true);
+        return JValue(0);
+    });
+    j.method(kSP, "autoResume", "()V", [spState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        for (const auto& [_, st] : sp->streams) x.proc.mixer().setPaused(st.voice, false);
+        return JValue(0);
+    });
+    j.method(kSP, "setVolume", "(IFF)V", [spState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->streams.find(int(int32_t(a[0])));
+        if (it != sp->streams.end()) {
+            it->second.left = std::clamp(asFloat(a[1]), 0.0f, 1.0f);
+            it->second.right = std::clamp(asFloat(a[2]), 0.0f, 1.0f);
+            x.proc.mixer().setParams(it->second.voice, it->second.params());
+        }
+        return JValue(0);
+    });
+    j.method(kSP, "setRate", "(IF)V", [spState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->streams.find(int(int32_t(a[0])));
+        if (it != sp->streams.end()) {
+            it->second.rate = asFloat(a[1]);
+            x.proc.mixer().setParams(it->second.voice, it->second.params());
+        }
+        return JValue(0);
+    });
+    j.method(kSP, "setLoop", "(II)V", [spState](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->streams.find(int(int32_t(a[0])));
+        if (it != sp->streams.end()) {
+            it->second.loop = int(int32_t(a[1]));
+            x.proc.mixer().setParams(it->second.voice, it->second.params());
+        }
+        return JValue(0);
+    });
+    j.method(kSP, "setPriority", "(II)V", [spState](Jni& j, Ctx&, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        auto it = sp->streams.find(int(int32_t(a[0])));
+        if (it != sp->streams.end()) it->second.priority = int(int32_t(a[1]));
+        return JValue(0);
+    });
+    j.method(kSP, "unload", "(I)Z", [spState](Jni& j, Ctx&, jobject self, const auto& a) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        return JValue(sp->sounds.erase(int(int32_t(a[0]))) ? 1 : 0);
+    });
+    j.method(kSP, "release", "()V", [spState](Jni& j, Ctx& x, jobject self, const auto&) {
+        auto sp = spState(j, self);
+        if (!sp) return JValue(0);
+        std::lock_guard<std::mutex> lk(sp->mu);
+        for (const auto& [_, st] : sp->streams) {
+            x.proc.mixer().stop(st.voice);
+            x.proc.mixer().release(st.voice);
+        }
+        sp->streams.clear();
+        sp->sounds.clear();
+        return JValue(0);
+    });
+    j.method(kSP, "setOnLoadCompleteListener", "(Landroid/media/SoundPool$OnLoadCompleteListener;)V", [spState](Jni& j, Ctx&, jobject self, const auto& a) {
+        if (auto sp = spState(j, self)) { std::lock_guard<std::mutex> lk(sp->mu); sp->onLoadComplete = jobject(a[0]); }
+        return JValue(0);
+    });
+    const std::string kSPB = "android/media/SoundPool$Builder";
+    j.method(kSPB, "<init>", "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method(kSPB, "setMaxStreams", "(I)Landroid/media/SoundPool$Builder;", [](Jni&, Ctx&, jobject self, const auto&) { return JValue(self); });
+    j.method(kSPB, "setAudioAttributes", "(Landroid/media/AudioAttributes;)Landroid/media/SoundPool$Builder;", [](Jni&, Ctx&, jobject self, const auto&) { return JValue(self); });
+    j.method(kSPB, "build", "()Landroid/media/SoundPool;", [](Jni& j, Ctx&, jobject, const auto&) {
+        const jobject pool = j.newObject("android/media/SoundPool");
+        auto sp = std::make_shared<SoundPoolState>();
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(pool)) { o->host = sp; o->permanent = true; }
+        return JValue(pool);
+    });
 }
 
 } // namespace Hydrogen::Runtime::Android

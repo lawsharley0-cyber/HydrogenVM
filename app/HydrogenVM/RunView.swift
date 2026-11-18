@@ -1,5 +1,6 @@
 import Darwin
 import CoreMotion
+import GameController
 import SwiftUI
 import UIKit
 
@@ -539,9 +540,76 @@ final class RunModel {
                 self.session?.setAccelerationX(mapped.0, y: mapped.1, z: mapped.2)
             }
         }
+        startControllers()
     }
 
-    private func stopSensors() { motion.stopAccelerometerUpdates() }
+    private func stopSensors() {
+        motion.stopAccelerometerUpdates()
+        stopControllers()
+    }
+
+    func pressBackButton() {
+        guard app.info.isAndroid, running, !closing else { return }
+        session?.sendAndroidKey(4, down: true) // KEYCODE_BACK = 4
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            self?.session?.sendAndroidKey(4, down: false)
+        }
+    }
+
+    @ObservationIgnored private var controllerObserver: NSObjectProtocol?
+
+    private func attachController(_ controller: GCController) {
+        guard app.info.isAndroid, let gp = controller.extendedGamepad else { return }
+        gp.valueChangedHandler = { [weak self] pad, element in
+            MainActor.assumeIsolated {
+                guard let self, self.inputEnabled, let session = self.session else { return }
+                if element === pad.leftThumbstick || element === pad.rightThumbstick || element === pad.dpad {
+                    session.sendJoystickLX(pad.leftThumbstick.xAxis.value,
+                                           ly: -pad.leftThumbstick.yAxis.value,
+                                           rx: pad.rightThumbstick.xAxis.value,
+                                           ry: -pad.rightThumbstick.yAxis.value,
+                                           hatX: pad.dpad.xAxis.value,
+                                           hatY: -pad.dpad.yAxis.value)
+                } else if element === pad.buttonA {
+                    session.sendAndroidKey(96, down: pad.buttonA.isPressed)   // KEYCODE_BUTTON_A
+                } else if element === pad.buttonB {
+                    session.sendAndroidKey(97, down: pad.buttonB.isPressed)   // KEYCODE_BUTTON_B
+                } else if element === pad.buttonX {
+                    session.sendAndroidKey(99, down: pad.buttonX.isPressed)   // KEYCODE_BUTTON_X
+                } else if element === pad.buttonY {
+                    session.sendAndroidKey(100, down: pad.buttonY.isPressed)  // KEYCODE_BUTTON_Y
+                } else if element === pad.leftShoulder {
+                    session.sendAndroidKey(102, down: pad.leftShoulder.isPressed) // KEYCODE_BUTTON_L1
+                } else if element === pad.rightShoulder {
+                    session.sendAndroidKey(103, down: pad.rightShoulder.isPressed) // KEYCODE_BUTTON_R1
+                } else if element === pad.buttonMenu {
+                    session.sendAndroidKey(108, down: pad.buttonMenu.isPressed) // KEYCODE_BUTTON_START
+                } else if element === pad.buttonOptions {
+                    session.sendAndroidKey(109, down: pad.buttonOptions?.isPressed ?? false) // KEYCODE_BUTTON_SELECT
+                }
+            }
+        }
+    }
+
+    private func startControllers() {
+        guard app.info.isAndroid, controllerObserver == nil else { return }
+        for c in GCController.controllers() { attachController(c) }
+        controllerObserver = NotificationCenter.default.addObserver(
+            forName: .GCControllerDidConnect, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let c = note.object as? GCController else { return }
+            MainActor.assumeIsolated { self?.attachController(c) }
+        }
+    }
+
+    private func stopControllers() {
+        if let obs = controllerObserver {
+            NotificationCenter.default.removeObserver(obs)
+            controllerObserver = nil
+        }
+        for c in GCController.controllers() { c.extendedGamepad?.valueChangedHandler = nil }
+    }
 }
 
 struct RunView: View {
@@ -860,6 +928,19 @@ struct RunView: View {
                         .controlSize(.small)
                         .disabled(!model.running || model.closing)
                         .accessibilityIdentifier("player-pause")
+
+                        if app.info.isAndroid {
+                            Button {
+                                model.pressBackButton()
+                            } label: {
+                                Label("Back", systemImage: "arrow.uturn.backward")
+                                    .font(.caption.weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!model.running || model.closing)
+                            .accessibilityIdentifier("player-android-back")
+                        }
 
                         // Manual Orientation Toggle
                         Button {

@@ -182,6 +182,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger;
 /// Accelerometer in g, device axes (portrait), like UIAcceleration.
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z;
+/// Android key event (e.g. KEYCODE_BACK = 4, controller buttons).
+- (void)sendAndroidKey:(int32_t)keyCode down:(BOOL)down;
+/// Android joystick axes (-1...1).
+- (void)sendJoystickLX:(float)lx ly:(float)ly rx:(float)rx ry:(float)ry hatX:(float)hatX hatY:(float)hatY;
 @end
 
 @interface HVMCrashJournal : NSObject

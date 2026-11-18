@@ -510,6 +510,12 @@ public:
         noteInput(SessionEvent::input(SessionEvent::Kind::Accel, 0, 0, x, y, z));
         accelHandler_(x, y, z);
     }
+    void injectKey(int32_t keyCode, bool down) {
+        if (keyHandler_) keyHandler_(keyCode, down);
+    }
+    void injectJoystick(float lx, float ly, float rx, float ry, float hatX, float hatY) {
+        if (joystickHandler_) joystickHandler_(lx, ly, rx, ry, hatX, hatY);
+    }
     bool acceptsTouches() const { return bool(touchHandler_); }
     // Session recording and replay (runtime/Session.hpp): the seed every random source draws
     // from and the wall clock the guest sees go through here.
@@ -520,6 +526,8 @@ public:
     void noteInput(SessionEvent e);
     void setTouchHandler(std::function<void(TouchPhase, float, float, uint32_t)> h) { touchHandler_ = std::move(h); }
     void setAccelerationHandler(std::function<void(float, float, float)> h) { accelHandler_ = std::move(h); }
+    void setKeyHandler(std::function<void(int32_t, bool)> h) { keyHandler_ = std::move(h); }
+    void setJoystickHandler(std::function<void(float, float, float, float, float, float)> h) { joystickHandler_ = std::move(h); }
     // Screen actually used by the app (UIKit picks 3.5" vs 4" from the bundle).
     void setScreenSize(uint32_t w, uint32_t h) { cfg_.screenWidth = w; cfg_.screenHeight = h; }
 
@@ -646,6 +654,8 @@ private:
     Session session_;
     std::function<void(TouchPhase, float, float, uint32_t)> touchHandler_;
     std::function<void(float, float, float)> accelHandler_;
+    std::function<void(int32_t, bool)> keyHandler_;
+    std::function<void(float, float, float, float, float, float)> joystickHandler_;
 
     // diagnostics
     mutable std::mutex memorySamplesMu_;
