@@ -368,10 +368,13 @@ void decodePvrtc1(const uint8_t* data, int w, int h, BlockGrid grid, const Forma
     const int paddedWidth = grid.columns * f.blockWidth, paddedHeight = grid.rows * 4;
     const auto wrap = [](int position, int dimension) { return position & (dimension - 1); };
     std::vector<PvWord> words(size_t(grid.columns) * grid.rows);
-    for (size_t i = 0; i < words.size(); ++i) words[i] = pvWord(data + i * 8);
+    // Untwiddle once, then use constant-time neighbors for each output texel.
+    for (int y = 0; y < grid.rows; ++y)
+        for (int x = 0; x < grid.columns; ++x)
+            words[size_t(y) * grid.columns + x] = pvWord(data + pvMorton(x, y, grid) * 8);
     auto wordAt = [&](int x, int y) -> const PvWord& {
-        return words[pvMorton(unsigned(wrap(x, paddedWidth) / f.blockWidth),
-                              unsigned(wrap(y, paddedHeight) / 4), grid)];
+        const int column = wrap(x, paddedWidth) / f.blockWidth, row = wrap(y, paddedHeight) / 4;
+        return words[size_t(row) * grid.columns + column];
     };
     auto storedWeight = [&](int x, int y) {
         return pvStoredWeight(wordAt(x, y), wrap(x, 8), wrap(y, 4));
