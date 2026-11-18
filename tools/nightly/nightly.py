@@ -53,6 +53,39 @@ def find_games(fixtures: Path) -> list:
     return games
 
 
+def find_all_games(fixture_dirs: list) -> list:
+    """Collect (path, unique_game_name, shot_stem) across one or more fixture folders."""
+    raw = []
+    name_counts = {}
+    stem_counts = {}
+    for folder in fixture_dirs:
+        for path in find_games(folder):
+            raw.append((folder, path))
+            name_counts[path.name] = name_counts.get(path.name, 0) + 1
+            stem_counts[path.stem] = stem_counts.get(path.stem, 0) + 1
+    out = []
+    seen_names = set()
+    seen_stems = set()
+    for folder, path in raw:
+        game_name = path.name if name_counts[path.name] == 1 else f"{folder.name}/{path.name}"
+        if game_name in seen_names:
+            idx = 2
+            while f"{folder.name}#{idx}/{path.name}" in seen_names:
+                idx += 1
+            game_name = f"{folder.name}#{idx}/{path.name}"
+        seen_names.add(game_name)
+
+        shot_stem = path.stem if stem_counts[path.stem] == 1 else f"{folder.name}_{path.stem}"
+        if shot_stem in seen_stems:
+            idx = 2
+            while f"{shot_stem}_{idx}" in seen_stems:
+                idx += 1
+            shot_stem = f"{shot_stem}_{idx}"
+        seen_stems.add(shot_stem)
+        out.append((path, game_name, shot_stem))
+    return out
+
+
 def tap_args(game: Path) -> list:
     taps = game.with_suffix(".taps")
     if not taps.exists():
@@ -66,12 +99,13 @@ def tap_args(game: Path) -> list:
     return args
 
 
-def run_game(hvm: str, game: Path, shots: Path, seconds: int) -> dict:
+def run_game(hvm: str, game: Path, shots: Path, seconds: int,
+             game_name: str = "", shot_stem: str = "") -> dict:
     with tempfile.TemporaryDirectory(prefix="hvm-nightly-") as tmp:
         home = Path(tmp) / "home"
         home.mkdir()
         report = Path(tmp) / "report.json"
-        shot = shots / (game.stem + ".png")
+        shot = shots / ((shot_stem or game.stem) + ".png")
         cmd = [hvm, "run", str(game), "--phone", "--home", str(home), "--run-for", str(seconds),
                "--screenshot", str(shot), "--report", str(report), "--quiet"]
         if game.suffix.lower() == ".apk":
@@ -89,7 +123,7 @@ def run_game(hvm: str, game: Path, shots: Path, seconds: int) -> dict:
             except ValueError:
                 data = {}
     result = compare.classify(data, exit_code, tail)
-    result["game"] = game.name
+    result["game"] = game_name or game.name
     result["platform"] = "Android" if game.suffix.lower() == ".apk" else "iOS"
     result["screenshot"] = str(shot) if shot.exists() else ""
     return result
@@ -110,7 +144,8 @@ def publish(summary: dict, markdown: str, repo: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="HydrogenVM nightly corpus run")
-    ap.add_argument("--fixtures", required=True, help="folder holding the .ipa and .apk files")
+    ap.add_argument("--fixtures", action="append", required=True,
+                    help="folder holding .ipa and/or .apk files (repeatable)")
     ap.add_argument("--hvm", default=str(ROOT / "build" / "hvm"))
     ap.add_argument("--state", default=os.path.expanduser("~/.hvm-nightly"))
     ap.add_argument("--seconds", type=int, default=DEFAULT_SECONDS)
@@ -119,17 +154,18 @@ def main() -> int:
     ap.add_argument("--repo", default="lawsharley0-cyber/HydrogenVM")
     args = ap.parse_args()
 
-    fixtures = Path(args.fixtures)
-    if not fixtures.is_dir():
-        print(f"[nightly] fixtures folder not found: {fixtures}", file=sys.stderr)
-        return 2
+    fixture_dirs = [Path(f) for f in args.fixtures]
+    for fixtures in fixture_dirs:
+        if not fixtures.is_dir():
+            print(f"[nightly] fixtures folder not found: {fixtures}", file=sys.stderr)
+            return 2
     if not Path(args.hvm).exists():
         print(f"[nightly] hvm not found: {args.hvm}", file=sys.stderr)
         return 2
-    games = find_games(fixtures)
+    games = find_all_games(fixture_dirs)
     if args.only:
         wanted = {n.strip() for n in args.only.split(",")}
-        games = [g for g in games if g.name in wanted]
+        games = [(p, name, stem) for (p, name, stem) in games if p.name in wanted or name in wanted]
     if not games:
         print("[nightly] no .ipa or .apk files to run", file=sys.stderr)
         return 2
@@ -142,9 +178,9 @@ def main() -> int:
     previous = compare.load(state / "latest.json")
 
     results = []
-    for game in games:
-        print(f"[nightly] {game.name} ...", flush=True)
-        r = run_game(args.hvm, game, shots, args.seconds)
+    for game, game_name, shot_stem in games:
+        print(f"[nightly] {game_name} ...", flush=True)
+        r = run_game(args.hvm, game, shots, args.seconds, game_name=game_name, shot_stem=shot_stem)
         print(f"[nightly]   {r['status']}" + (f" — {r['detail']}" if r["detail"] else ""), flush=True)
         results.append(r)
 
