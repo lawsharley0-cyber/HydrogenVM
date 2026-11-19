@@ -82,7 +82,9 @@ final class RunModel {
     var savedCrash: CrashReport?
     var reportSaveError: String?
     var safeModeRetryOffer: String?
-    @ObservationIgnored private var pendingCrashFields: [String: Any]?
+    @ObservationIgnored private var retryReport: CrashReport?
+    @ObservationIgnored private var retryAfter: TimeInterval?
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var sessionStartTime: Date?
     @ObservationIgnored private var activeFallback: String?
     @ObservationIgnored private var triedFallbackThisRun = false
@@ -280,32 +282,31 @@ final class RunModel {
                     let usedMaxTex = self.session?.maxTextureSize ?? 0
                     self.session = nil
                     let withinWindow = self.sessionStartTime.map { Date().timeIntervalSince($0) <= 180 } ?? false
-                    if withinWindow, !self.triedFallbackThisRun,
+                    do {
+                        self.retryReport = try CrashReport.save(fields, app: self.app.info.bundleIdentifier)
+                        CrashReport.clearPending()
+                    } catch {
+                        self.reportSaveError = "Could not save the crash report: \(error.localizedDescription)"
+                        self.crashReport = crash
+                        return
+                    }
+                    if withinWindow, !self.triedFallbackThisRun, !self.userStopped,
                        let chosen = HVMEngine.chooseFallback(forCrashReport: crash + "\n" + self.logText,
                                                              internetAccess: usedInternet,
                                                              unlockFrameRate: usedUnlockFPS,
                                                              gles1Emulate: usedGles1,
                                                              maxTextureSize: usedMaxTex) {
+                        self.retryAfter = self.sessionStartTime.map { Date().timeIntervalSince($0) }
                         if UserDefaults.standard.bool(forKey: "player.safeModeAlwaysRetry") {
                             self.retryInSafeMode(fallback: chosen)
                         } else {
-                            self.pendingCrashFields = fields
                             self.safeModeRetryOffer = chosen
                         }
                         return
                     }
-                    do {
-                        self.savedCrash = try CrashReport.save(fields, app: self.app.info.bundleIdentifier)
-                        CrashReport.clearPending()
-                    } catch {
-                        self.reportSaveError = "Could not save the crash report: \(error.localizedDescription)"
-                        self.crashReport = crash
-                    }
+                    self.declineSafeModeRetry()
                 } else {
                     self.session = nil
-                    if let fb = self.activeFallback {
-                        Self.setCompatFallback(fb, for: self.app.info.bundleIdentifier)
-                    }
                     CrashReport.clearPending()
                     if self.userStopped { self.finished = true }
                     else { self.exitMessage = "The app exited (status \(code))." }
@@ -341,9 +342,12 @@ final class RunModel {
                     self.reconcileActivity()
                     if self.inputEnabled && !self.motion.isAccelerometerActive { self.startSensors() }
                 }
-                if self.hasPicture, let fb = self.activeFallback,
-                   let startTime = self.sessionStartTime, Date().timeIntervalSince(startTime) >= 5 {
+                if let fb = self.activeFallback, let start = self.sessionStartTime,
+                   let prior = self.retryAfter, self.triedFallbackThisRun,
+                   Self.retrySucceeded(previousLifetime: prior, elapsed: Date().timeIntervalSince(start),
+                                       hasPicture: self.hasPicture) {
                     Self.setCompatFallback(fb, for: self.app.info.bundleIdentifier)
+                    self.retryAfter = nil
                 }
                 self.fps = presented >= self.lastPresented ? max(Int(presented - self.lastPresented), self.frameCount) : self.frameCount
                 self.lastPresented = presented
@@ -367,36 +371,41 @@ final class RunModel {
         }
     }
 
+    nonisolated static func retrySucceeded(previousLifetime: TimeInterval, elapsed: TimeInterval,
+                                           hasPicture: Bool) -> Bool {
+        hasPicture && elapsed >= 5 && elapsed > previousLifetime
+    }
+
     func retryInSafeMode(fallback: String) {
+        guard !triedFallbackThisRun, let report = retryReport else { return }
         safeModeRetryOffer = nil
-        pendingCrashFields = nil
-        CrashReport.clearPending()
+        retryReport = nil
         triedFallbackThisRun = true
         activeFallback = fallback
-        session = nil
-        let keepGoing = lastKeepGoing
-        let bundleID = app.info.bundleIdentifier
-        append("[hvm] safe-mode retry: relaunching with fallback \(fallback)", .info)
-        Task.detached { [weak self] in
-            _ = HVMEngine.wait(forGuestArenaRelease: 2.0)
-            await MainActor.run {
-                guard let self else { return }
-                Self.setCompatFallback(fallback, for: bundleID)
-                self.start(keepGoing: keepGoing)
+        append("[hvm] safe-mode retry: waiting for the previous game to stop", .info)
+        retryTask = Task { [weak self] in
+            let released = await Task.detached { HVMEngine.wait(forGuestArenaRelease: 2.0) }.value
+            guard !Task.isCancelled, let self else { return }
+            guard released else {
+                self.append("[hvm] Safe Mode could not start because the previous game is still stopping.", .error)
+                self.savedCrash = report
+                return
             }
+            self.frame = nil
+            self.glLayer = nil
+            self.gpuPresenting = false
+            self.lastPresented = 0
+            self.frameCount = 0
+            self.append("[hvm] safe-mode retry: relaunching with fallback \(fallback)", .info)
+            self.start(keepGoing: self.lastKeepGoing)
         }
     }
 
     func declineSafeModeRetry() {
         safeModeRetryOffer = nil
-        guard let fields = pendingCrashFields else { return }
-        pendingCrashFields = nil
-        do {
-            savedCrash = try CrashReport.save(fields, app: app.info.bundleIdentifier)
-            CrashReport.clearPending()
-        } catch {
-            reportSaveError = "Could not save the crash report: \(error.localizedDescription)"
-            crashReport = fields["report"] as? String ?? "Unknown crash"
+        if let report = retryReport {
+            savedCrash = report
+            retryReport = nil
         }
     }
 
@@ -520,6 +529,7 @@ final class RunModel {
     }
 
     func teardown() {
+        retryTask?.cancel()
         stop()
         virtualController?.disconnect()
         virtualController = nil
@@ -538,6 +548,7 @@ final class RunModel {
     /// HydrogenVM itself going to the background: pass it on so the game saves, and keep
     /// HydrogenVM awake long enough for that (the game is then paused, using no CPU).
     private func observeHostLifecycle() {
+        guard lifecycleObservers.isEmpty else { return }
         let nc = NotificationCenter.default
         lifecycleObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
