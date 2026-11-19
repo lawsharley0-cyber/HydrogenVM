@@ -68,7 +68,15 @@ ApkManifest parseManifest(const std::vector<uint8_t>& d) {
     ApkManifest m;
     Reader r{d};
     std::vector<std::string> strings;
-    bool inApplication = false, sawActivity = false;
+    struct Element {
+        std::string tag;
+        std::string activity;
+        bool enabled = true;
+        bool main = false;
+        bool launcher = false;
+    };
+    std::vector<Element> elements;
+    bool sawActivity = false;
     for (size_t at = 8; at + 8 <= d.size();) {
         const uint32_t type = r.u16(at), size = r.u32(at + 4);
         if (size < 8 || at + size > d.size()) break;
@@ -77,12 +85,25 @@ ApkManifest parseManifest(const std::vector<uint8_t>& d) {
             const uint32_t nameIdx = r.u32(at + 20);
             const std::string name = nameIdx < strings.size() ? strings[nameIdx] : "";
             const uint32_t attrStart = r.u16(at + 24), attrSize = r.u16(at + 26), attrCount = r.u16(at + 28);
-            if (name == "application") inApplication = true;
+            if (size < 36 || attrStart < 20 || attrSize < 20 ||
+                uint64_t(16) + attrStart + uint64_t(attrCount) * attrSize > size) break;
+            Element element;
+            element.tag = name;
             for (uint32_t i = 0; i < attrCount; ++i) {
                 const size_t a = at + 16 + attrStart + size_t(i) * attrSize;
                 const uint32_t an = r.u32(a + 4), raw = r.u32(a + 8), dataType = r.u8(a + 15), data = r.u32(a + 16);
                 const std::string attr = an < strings.size() ? strings[an] : "";
-                const std::string rawStr = raw < strings.size() ? strings[raw] : "";
+                const auto value = raw < strings.size() ? raw : dataType == 3 ? data : UINT32_MAX;
+                const std::string rawStr = value < strings.size() ? strings[value] : "";
+                if (attr == "enabled" && (dataType == 0x12 || rawStr == "false"))
+                    element.enabled = dataType == 0x12 ? data != 0 : false;
+                if ((name == "activity" && attr == "name") ||
+                    (name == "activity-alias" && attr == "targetActivity"))
+                    element.activity = rawStr;
+                if (!elements.empty() && elements.back().tag == "intent-filter" && attr == "name") {
+                    if (name == "action" && rawStr == "android.intent.action.MAIN") elements.back().main = true;
+                    if (name == "category" && rawStr == "android.intent.category.LAUNCHER") elements.back().launcher = true;
+                }
                 if (name == "manifest" && attr == "package") m.package = rawStr;
                 if (name == "manifest" && attr == "versionName") m.versionName = rawStr;
                 if (name == "application" && attr == "label") { if (dataType == 1) m.labelRes = data; else m.label = rawStr; }
@@ -95,9 +116,26 @@ ApkManifest parseManifest(const std::vector<uint8_t>& d) {
                 }
             }
             if (name == "activity") sawActivity = true;
-            (void)inApplication;
+            elements.push_back(std::move(element));
+        } else if (type == 0x0103 && size >= 24 && !elements.empty()) {
+            const uint32_t nameIdx = r.u32(at + 20);
+            if (nameIdx >= strings.size() || elements.back().tag != strings[nameIdx]) break;
+            const auto& ended = elements.back();
+            if (m.launcherActivity.empty() && ended.tag == "intent-filter" && ended.main && ended.launcher &&
+                elements.size() == 4 && elements[0].tag == "manifest" && elements[1].tag == "application") {
+                const auto& candidate = elements[2];
+                if (elements[1].enabled && candidate.enabled && !candidate.activity.empty()) {
+                    m.launcherActivity = candidate.activity;
+                }
+            }
+            elements.pop_back();
         }
         at += size;
+    }
+    if (!m.launcherActivity.empty() && !m.package.empty()) {
+        if (m.launcherActivity.front() == '.') m.launcherActivity = m.package + m.launcherActivity;
+        else if (m.launcherActivity.find('.') == std::string::npos)
+            m.launcherActivity = m.package + "." + m.launcherActivity;
     }
     return m;
 }
@@ -440,6 +478,8 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
           << "\t<key>CFBundleShortVersionString</key><string>" << xmlEscape(m.versionName) << "</string>\n"
           << "\t<key>CFBundleExecutable</key><string>" << xmlEscape(lib) << "</string>\n"
           << "\t<key>HydrogenVMAndroidLibrary</key><string>" << xmlEscape(lib) << "</string>\n"
+          << (m.launcherActivity.empty() ? "" :
+              "\t<key>HydrogenVMAndroidLauncherActivity</key><string>" + xmlEscape(m.launcherActivity) + "</string>\n")
           << "\t<key>HydrogenVMAndroidEngine</key><string>" << xmlEscape(engine.name) << "</string>\n"
           << "\t<key>HydrogenVMAndroidEngineSupport</key><string>" << xmlEscape(engine.support) << "</string>\n"
           << "\t<key>MinimumOSVersion</key><string>Android</string>\n"

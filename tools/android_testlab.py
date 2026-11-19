@@ -12,9 +12,11 @@ Exit status: 0 all cases passed, 1 a case failed, 2 the run itself broke (no cla
 import argparse
 import json
 import os
+import plistlib
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -93,12 +95,58 @@ def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int, extra_a
             "cases": cases, "log": out[-20000:]}
 
 
+def launcher_manifest() -> bytes:
+    """Binary XML for a launcher alias preceded by misleading intent filters."""
+    strings: list[str] = []
+
+    def string(value: str) -> int:
+        if value not in strings:
+            strings.append(value)
+        return strings.index(value)
+
+    def node(kind: int, payload: bytes) -> bytes:
+        return struct.pack("<HHIII", kind, 16, 16 + len(payload), 1, 0xffffffff) + payload
+
+    def element(tag: str, attrs=None, children=()) -> bytes:
+        name = string(tag)
+        attrs = attrs or {}
+        start = struct.pack("<IIHHHHHH", 0xffffffff, name, 20, 20, len(attrs), 0, 0, 0)
+        for key, value in attrs.items():
+            attr_name = string(key)
+            attr_value = string(value) if isinstance(value, str) else 0xffffffff
+            kind, data = (3, attr_value) if isinstance(value, str) else (0x12, int(value))
+            start += struct.pack("<IIIHBBI", 0xffffffff, attr_name, attr_value, 8, 0, kind, data)
+        return node(0x0102, start) + b"".join(children) + node(0x0103, struct.pack("<II", 0xffffffff, name))
+
+    action = element("action", {"name": "android.intent.action.MAIN"})
+    category = element("category", {"name": "android.intent.category.LAUNCHER"})
+    launcher = element("intent-filter", children=(action, category))
+    app = element("application", children=(
+        element("activity", {"name": ".SplitFilters"}, (
+            element("intent-filter", children=(action,)), element("intent-filter", children=(category,)))),
+        element("activity", {"name": ".Disabled", "enabled": False}, (launcher,)),
+        element("activity", {"name": ".Play"}),
+        element("activity-alias", {"name": ".FromHome", "targetActivity": ".Play"}, (launcher,)),
+    ))
+    body = element("manifest", {"package": "com.example.launcher"}, (app,))
+    values = bytearray()
+    offsets = []
+    for value in strings:
+        offsets.append(len(values))
+        values += struct.pack("<H", len(value)) + value.encode("utf-16-le") + b"\0\0"
+    values += b"\0" * (-len(values) % 4)
+    start = 28 + 4 * len(offsets)
+    pool = struct.pack("<HHIIIIII", 1, 28, start + len(values), len(offsets), 0, 0, start, 0)
+    pool += struct.pack(f"<{len(offsets)}I", *offsets) + values
+    return struct.pack("<HHI", 3, 8, 8 + len(pool) + len(body)) + pool + body
+
+
 def run_import_check(hvm: str, work: Path, timeout: int) -> dict:
     fixtures = ROOT / "tests/android/java"
     images = [(fixtures / name).read_bytes() for name in ("classes.dex", "classes2.dex", "jni.dex")]
     base, feature = work / "base.apk", work / "feature.apk"
     with zipfile.ZipFile(base, "w", zipfile.ZIP_DEFLATED) as apk:
-        apk.writestr("AndroidManifest.xml", bytes.fromhex("0300080008000000"))
+        apk.writestr("AndroidManifest.xml", launcher_manifest())
         apk.writestr("classes2.dex", images[1])
         apk.writestr("classes.dex", images[0])
         for invalid in ("nested/classes.dex", "classes01.dex", "classes1.dex", "classesExtra.dex"):
@@ -131,6 +179,13 @@ def run_import_check(hvm: str, work: Path, timeout: int) -> dict:
         actual = {str(p.relative_to(bundles[0])): p.read_bytes() for p in bundles[0].rglob("*.dex")} if len(bundles) == 1 else {}
         wanted = dict(zip(("classes.dex", "classes2.dex", "classes3.dex"), expected))
         passed = run.returncode == 0 and actual == wanted
+        if len(bundles) == 1:
+            info = plistlib.loads((bundles[0] / "Info.plist").read_bytes())
+            activity = info.get("HydrogenVMAndroidLauncherActivity")
+        else:
+            activity = None
+        cases.append({"name": f"import {source.suffix} retains the enabled MAIN/LAUNCHER alias target",
+                      "passed": activity == "com.example.launcher.Play", "detail": str(activity or "")})
         cases.append({"name": f"import {source.suffix} preserves canonical DEX images in order",
                       "passed": passed, "detail": "" if passed else run.stderr + repr(list(actual))})
     return {"mode": "APK import", "group": "java", "exitCode": 0, "finished": True,
