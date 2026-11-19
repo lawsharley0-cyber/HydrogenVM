@@ -113,15 +113,23 @@ def find_app(apps_dir, folder):
     return None
 
 
-def run_game(hvm, app, seconds, tap=None):
+def build_cmd(hvm, app, home, seconds, report_path, shot, tap=None, device=None):
+    """The `hvm run` command for one must-launch check (no process started)."""
+    cmd = [hvm, "run", app, "--home", home, "--keep-going", "--run-for", str(seconds),
+           "--gpu", "--report", report_path, "--screenshot", shot, "--quiet"]
+    if tap:
+        cmd += ["--tap", tap]
+    if device:
+        cmd += ["--device", device]
+    return cmd
+
+
+def run_game(hvm, app, seconds, tap=None, device=None):
     work = tempfile.mkdtemp(prefix="must_launch_")
     try:
         report_path = os.path.join(work, "report.json")
         shot = os.path.join(work, "shot.png")
-        cmd = [hvm, "run", app, "--home", os.path.join(work, "home"), "--keep-going", "--run-for", str(seconds),
-               "--gpu", "--report", report_path, "--screenshot", shot, "--quiet"]
-        if tap:
-            cmd += ["--tap", tap]
+        cmd = build_cmd(hvm, app, os.path.join(work, "home"), seconds, report_path, shot, tap, device)
         try:
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=seconds + 90, check=False)
         except subprocess.TimeoutExpired:
@@ -187,7 +195,7 @@ def main(argv=None):
             if app is None:
                 results[g["folder"]] = "skipped"
                 continue
-            futures[pool.submit(run_game, args.hvm, app, g.get("seconds", default_seconds), g.get("tap"))] = g
+            futures[pool.submit(run_game, args.hvm, app, g.get("seconds", default_seconds), g.get("tap"), g.get("device"))] = g
         for fut in concurrent.futures.as_completed(futures):
             results[futures[fut]["folder"]] = fut.result()
 
@@ -202,7 +210,7 @@ def main(argv=None):
             app = find_app(args.apps, g["folder"])
             if app is None:
                 continue
-            again = run_game(args.hvm, app, g.get("seconds", default_seconds) * 2, g.get("tap"))
+            again = run_game(args.hvm, app, g.get("seconds", default_seconds) * 2, g.get("tap"), g.get("device"))
             if not evaluate(g, again):
                 retried.append(g["name"])
                 print("retry %s passed on its own (first run: %s)" % (g["name"], "; ".join(evaluate(g, got))))
