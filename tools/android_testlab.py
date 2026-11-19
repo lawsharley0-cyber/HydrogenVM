@@ -201,6 +201,7 @@ def run_java_check(work: Path, timeout: int, source: str, label: str) -> dict:
         build = subprocess.run(
             [*compiler, "-std=c++20", "-O2", "-pthread", "-I", str(ROOT / "src"),
              str(fixtures / (source + ".cpp")), str(ROOT / "src/runtime/android/dex/DexFile.cpp"),
+             str(ROOT / "src/runtime/android/dex/CoreMath.cpp"),
              str(ROOT / "src/runtime/android/dex/CoreRandom.cpp"),
              str(ROOT / "src/runtime/android/dex/Interpreter.cpp"), str(ROOT / "src/runtime/android/dex/Heap.cpp"),
              str(ROOT / "src/runtime/android/dex/Machine.cpp"),
@@ -248,6 +249,7 @@ def main() -> int:
             run_java_check(work, args.timeout, "DexExecution", "Dalvik execution"),
             run_java_check(work, args.timeout, "DexLinkage", "Dalvik class linkage and threads"),
             run_java_check(work, args.timeout, "DexRandom", "java.util.Random"),
+            run_java_check(work, args.timeout, "DexMath", "java.lang.Math"),
         ]
         for phone in ([False, True] if args.phone else [False]):
             home = work / ("home-phone" if phone else "home")
