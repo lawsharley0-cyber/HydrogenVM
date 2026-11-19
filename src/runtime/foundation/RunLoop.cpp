@@ -135,7 +135,8 @@ bool RunLoop::runModeOnce(CPU::Cpu& c, double until, const std::string& mode) {
 }
 
 bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
-    if (proc.terminating() || proc.stopping()) return false;
+    if (proc.stopping()) return false;
+    const bool term = proc.terminating();
     struct Active {
         RunLoop& rl; std::string previous;
         Active(RunLoop& l, const std::string& m) : rl(l) { std::lock_guard<std::mutex> lk(rl.mu); previous = rl.activeMode; rl.activeMode = m; }
@@ -151,13 +152,6 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
         std::unique_lock<std::mutex> lk(mu);
         double t = now();
         nextDeadline = t + maxWait;
-        timers.erase(std::remove_if(timers.begin(), timers.end(), [](auto& tm) { return !tm->valid; }), timers.end());
-        for (auto& tm : timers) {
-            if (!inMode(tm->modes, mode)) continue;
-            if (tm->fireAt <= t) due.push_back(tm);
-            else nextDeadline = std::min(nextDeadline, tm->fireAt);
-        }
-        // Signalled sources: claiming one clears its flag, so a source shared by two loops performs once.
         const auto claimSources = [&] {
             sources.erase(std::remove_if(sources.begin(), sources.end(), [](auto& s) { return !s->valid.load(); }), sources.end());
             for (auto& s : sources) {
@@ -165,20 +159,30 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
                 if (s->signalled.exchange(false) && std::find(ready.begin(), ready.end(), s) == ready.end()) ready.push_back(s);
             }
         };
-        if (!sources.empty()) claimSources();
-        if (!frameHooks.empty()) nextDeadline = std::min(nextDeadline, nextFrameAt);
-        if (queue.empty() && due.empty() && ready.empty() && nextDeadline > t) {
-            cv.wait_for(lk, std::chrono::duration<double>(std::min(nextDeadline - t, 0.05)));
-            if (queue.empty()) {
-                t = now();
-                for (auto& tm : timers) if (tm->valid && tm->fireAt <= t && inMode(tm->modes, mode) && std::find(due.begin(), due.end(), tm) == due.end()) due.push_back(tm);
+        if (!term) {
+            timers.erase(std::remove_if(timers.begin(), timers.end(), [](auto& tm) { return !tm->valid; }), timers.end());
+            for (auto& tm : timers) {
+                if (!inMode(tm->modes, mode)) continue;
+                if (tm->fireAt <= t) due.push_back(tm);
+                else nextDeadline = std::min(nextDeadline, tm->fireAt);
             }
             if (!sources.empty()) claimSources();
+            if (!frameHooks.empty()) nextDeadline = std::min(nextDeadline, nextFrameAt);
+        }
+        if (queue.empty() && due.empty() && ready.empty() && nextDeadline > t) {
+            cv.wait_for(lk, std::chrono::duration<double>(std::min(nextDeadline - t, 0.05)));
+            if (!term) {
+                if (queue.empty()) {
+                    t = now();
+                    for (auto& tm : timers) if (tm->valid && tm->fireAt <= t && inMode(tm->modes, mode) && std::find(due.begin(), due.end(), tm) == due.end()) due.push_back(tm);
+                }
+                if (!sources.empty()) claimSources();
+            }
         }
         std::stable_sort(ready.begin(), ready.end(), [](auto& a, auto& b) { return a->order < b->order; });
         work.swap(queue);
         t = now();
-        if (!frameHooks.empty() && t >= nextFrameAt) {
+        if (!term && !frameHooks.empty() && t >= nextFrameAt) {
             frameDue = true;
             hooks = frameHooks;
             // 60 Hz cadence; if we fell behind, don't try to catch up with a burst of frames.
@@ -202,7 +206,7 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
     } turnPool(proc,c,autoreleasePerTurn);
     bool ran = !work.empty();
     for (auto& fn : work) {
-        if (proc.terminating() || proc.stopping()) return ran;
+        if (proc.stopping()) return ran;
         fn(c);
     }
     for (auto& s : ready) {
@@ -237,7 +241,6 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
 void RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
     for (;;) {
         if (proc.stopping()) throw ProcessExit(0, "stopping");
-        if (proc.terminating()) return;
         {
             std::lock_guard<std::mutex> lk(mu);
             if (stopFlag) { stopFlag = false; return; }

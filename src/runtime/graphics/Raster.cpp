@@ -578,19 +578,20 @@ void drawImage(Surface& dst, const Image& img, const Affine& m, const Clip& clip
             uint8_t* row = dst.data + size_t(y) * size_t(dst.stride);
             const float sy = inv.apply({0.5f, float(y) + 0.5f}).y;
             if (sy < 0 || sy >= float(ih)) continue;
+            const float fy = sy - 0.5f;
+            const int iy = int(std::floor(fy));
+            const int wy = int((fy - float(iy)) * 256.0f + 0.5f);
+            const uint8_t* r0 = bilinear ? src + size_t(std::clamp(iy, 0, ih - 1)) * size_t(iw) * 4 : nullptr;
+            const uint8_t* r1 = bilinear ? src + size_t(std::clamp(iy + 1, 0, ih - 1)) * size_t(iw) * 4 : nullptr;
+            const uint8_t* srow = copyable ? src + size_t(std::min(int(sy), ih - 1)) * size_t(iw) * 4 : nullptr;
             for (int x = x0; x < x1; ++x) {
-                const uint8_t cm = clip.at(x, y);
+                const uint8_t cm = clip.mask ? clip.at(x, y) : 255;
                 if (!cm) continue;
                 const float sx = sxs[size_t(x - x0)];
                 if (sx < 0 || sx >= float(iw)) continue;
                 uint8_t* p = row + size_t(x) * 4;
                 if (bilinear) {
                     const size_t i = size_t(x - x0);
-                    const float fy = sy - 0.5f;
-                    const int iy = int(std::floor(fy));
-                    const int wy = int((fy - float(iy)) * 256.0f + 0.5f);
-                    const uint8_t* r0 = src + size_t(std::clamp(iy, 0, ih - 1)) * size_t(iw) * 4;
-                    const uint8_t* r1 = src + size_t(std::clamp(iy + 1, 0, ih - 1)) * size_t(iw) * 4;
                     const uint8_t *a = r0 + size_t(cx0[i]) * 4, *b = r0 + size_t(cx1[i]) * 4;
                     const uint8_t *c = r1 + size_t(cx0[i]) * 4, *d = r1 + size_t(cx1[i]) * 4;
                     const int wx = cw[i];
@@ -610,7 +611,7 @@ void drawImage(Surface& dst, const Image& img, const Affine& m, const Clip& clip
                     continue;
                 }
                 if (copyable && cm == 255) {
-                    const uint8_t* q = src + (size_t(std::min(int(sy), ih - 1)) * size_t(iw) + size_t(std::min(int(sx), iw - 1))) * 4;
+                    const uint8_t* q = srow + size_t(std::min(int(sx), iw - 1)) * 4;
                     p[ro] = q[0]; p[go] = q[1]; p[bo] = q[2]; p[ao] = 255;
                     continue;
                 }

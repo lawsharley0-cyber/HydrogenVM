@@ -168,8 +168,8 @@ public:
     void runSafepoint(Cpu& c) { if (safepointHook_ && c.async_pending.load(std::memory_order_acquire)) safepointHook_(c); }
 
     // Called from IR handlers.
-    Block* enterBlock(Cpu* c, uint32_t key);
-    void   callHle(Cpu* c, uint32_t index);
+    const Op* enterBlock(Cpu* c, uint32_t key);
+    void      callHle(Cpu* c, uint32_t index);
 
     // Per host thread; Process clears it before running and reads it after a failure.
     static FaultSnapshot& lastFault();

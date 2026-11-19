@@ -94,6 +94,32 @@ class Measure(unittest.TestCase):
         self.assertEqual((got["frames"], got["audibleFrames"], got["crashed"]), (0, 0, False))
 
 
+class BuildCmd(unittest.TestCase):
+    def test_device_is_passed_to_hvm(self):
+        cmd = must_launch.build_cmd("hvm", "/app", "/home", 30, "/r.json", "/s.png", device="iPhone4,1")
+        self.assertEqual(cmd[cmd.index("--device") + 1], "iPhone4,1")
+
+    def test_no_device_flag_when_the_entry_has_none(self):
+        cmd = must_launch.build_cmd("hvm", "/app", "/home", 30, "/r.json", "/s.png")
+        self.assertNotIn("--device", cmd)
+
+    def test_tap_and_device_can_be_combined(self):
+        cmd = must_launch.build_cmd("hvm", "/app", "/home", 30, "/r.json", "/s.png",
+                                    tap="169.5,217.0@8", device="iPhone4,1")
+        self.assertEqual(cmd[cmd.index("--tap") + 1], "169.5,217.0@8")
+        self.assertEqual(cmd[cmd.index("--device") + 1], "iPhone4,1")
+
+
+class RecordDevice(unittest.TestCase):
+    def test_recording_keeps_a_device_entry(self):
+        old = {"name": "G", "folder": "g", "frames": 80, "picture": True, "sound": True, "device": "iPhone4,1"}
+        new = must_launch.expectation(old, run(frames=200, audible=9))
+        self.assertEqual(new["device"], "iPhone4,1")
+        self.assertGreaterEqual(new["frames"], 80)
+
+
+
+
 if __name__ == "__main__":
     unittest.main()
 
