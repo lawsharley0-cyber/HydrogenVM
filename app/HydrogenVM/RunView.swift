@@ -874,6 +874,7 @@ struct RunView: View {
             if showDebugOverlay || overlay.visible {
                 floatingHUDPill
                     .padding(.top, 16)
+                    .padding(.bottom, hudExpanded ? 16 : 0)
                     .padding(.trailing, 16)
             }
         }
@@ -977,20 +978,18 @@ struct RunView: View {
         }
     }
 
-    private var floatingHUDPill: some View {
-        Group {
-            if hudExpanded {
-                VStack(alignment: .leading, spacing: 14) {
-                    // Header Bar with Title, FPS & Frame Time, Collapse Button
-                    HStack(spacing: 8) {
-                        Image(systemName: "gamecontroller.fill")
-                            .foregroundStyle(.tint)
-                        Text(app.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
+    private var expandedHUDContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Header Bar with Title, FPS & Frame Time, Collapse Button
+            HStack(spacing: 8) {
+                Image(systemName: "gamecontroller.fill")
+                    .foregroundStyle(.tint)
+                Text(app.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
 
-                        Spacer(minLength: 8)
+                Spacer(minLength: 8)
 
                         // FPS & Frame-time Badge
                         HStack(spacing: 4) {
@@ -1224,6 +1223,17 @@ struct RunView: View {
                                 .foregroundStyle(.red)
                         }
                         .accessibilityIdentifier("player-quit")
+                    }
+                }
+    }
+
+    private var floatingHUDPill: some View {
+        Group {
+            if hudExpanded {
+                ViewThatFits(in: .vertical) {
+                    expandedHUDContent
+                    ScrollView(.vertical, showsIndicators: true) {
+                        expandedHUDContent
                     }
                 }
                 .padding(14)
