@@ -5,6 +5,7 @@ struct HarnessAppInfo {
     let bundlePath: String
     let bundleIdentifier = "com.hvm.player-harness"
     let version = "1"
+    let isAndroid = false
 }
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
@@ -16,6 +17,35 @@ enum HVMCrashJournal {
     static func openSignalFile(_ path: String) {}
     static func closeSignalFile() {}
     static func availableMemory() -> UInt64 { UInt64(os_proc_available_memory()) }
+}
+
+enum HVMEngine {
+    static func liveGuestArenaCount() -> UInt { 0 }
+    static func wait(forGuestArenaRelease timeout: TimeInterval) -> Bool { true }
+    static func chooseFallback(forCrashReport crashReport: String,
+                               internetAccess: Bool,
+                               unlockFrameRate: Bool,
+                               gles1Emulate: Bool,
+                               maxTextureSize: UInt32) -> String? { nil }
+    static func fallbackLabel(forId fallbackId: String) -> String? { nil }
+}
+
+struct GlossToggleRow: View {
+    let title: String
+    let hint: String
+    @Binding var isOn: Bool
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Gloss.ink)
+                Text(hint).font(.system(size: 12)).foregroundStyle(Gloss.inkSoft).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+enum AppIcon {
+    static func load(_ path: String) -> UIImage? { UIImage(contentsOfFile: path) }
 }
 
 @Observable @MainActor
@@ -71,6 +101,15 @@ final class HVMSession {
     static let emulatorCommit = "harness"
     var keepGoing = false
     var useGPU = false
+    var playSession = false
+    var detailedRecording = false
+    var allowInternet = false
+    var unlockFrameRate = false
+    var safeModeFallback: String?
+    var gles1Emulate = false
+    var maxTextureSize: UInt32 = 0
+    var memoryBudgetBytes: UInt64 = 0
+    var recordingPath: String?
     var onFrame: ((CGImage) -> Void)?
     var onGLLayer: ((CALayer?) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
@@ -139,6 +178,8 @@ final class HVMSession {
         PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x.rounded())),\(Int(y.rounded())):\(finger)"
     }
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
+    func sendAndroidKey(_ keyCode: Int32, down: Bool) {}
+    func sendJoystickLX(_ lx: Float, ly: Float, rx: Float, ry: Float, hatX: Float, hatY: Float) {}
     func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {}
     func submitDocument(_ path: String?, requestId: UInt64) {}
     func movieFinished(_ requestId: UInt64) {}
