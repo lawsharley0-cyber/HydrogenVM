@@ -54,6 +54,12 @@ move-result v0
 return v0
 .end method
 
+.method secret()I 2
+.registers 2
+const/16 v0, 99
+return v0
+.end method
+
 .method readOrder()I 9
 .registers 1
 sget v0, Ltest/Child;->seen:I
@@ -147,5 +153,47 @@ invoke-virtual Ljava/lang/Thread;->start()V, v1
 invoke-virtual Ljava/lang/Thread;->join()V, v0
 invoke-virtual Ljava/lang/Thread;->join()V, v1
 sget v0, Ltest/Worker;->count:I
+return v0
+.end method
+
+.method startThroughSubclass()I 9
+.registers 2
+.outs 1
+new-instance v0, Ltest/Worker;
+invoke-direct Ltest/Worker;-><init>()V, v0
+invoke-virtual Ltest/Worker;->start()V, v0
+invoke-virtual Ltest/Worker;->join()V, v0
+sget v0, Ltest/Worker;->count:I
+return v0
+.end method
+
+.class Ltest/PlatformChild; 1
+.super Landroid/app/Activity;
+
+.method <init>()V 0x10001
+.registers 1
+.outs 1
+invoke-direct Ljava/lang/Object;-><init>()V, v0
+return-void
+.end method
+
+.method callInherited()I 9
+.registers 3
+.outs 1
+new-instance v0, Ltest/PlatformChild;
+invoke-direct Ltest/PlatformChild;-><init>()V, v0
+invoke-virtual Ltest/PlatformChild;->getFilesDir()I, v0
+move-result v1
+invoke-virtual Ltest/PlatformChild;->callSuper()I, v0
+move-result v2
+add-int v0, v1, v2
+return v0
+.end method
+
+.method callSuper()I 1
+.registers 2
+.outs 1
+invoke-super Ltest/PlatformChild;->onCreate()I, v1
+move-result v0
 return v0
 .end method
