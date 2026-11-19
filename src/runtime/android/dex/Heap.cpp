@@ -253,6 +253,7 @@ bool Arena::assignable(std::u16string_view from, std::u16string_view to) const {
         {u"Ljava/lang/UnsatisfiedLinkError;", u"Ljava/lang/LinkageError;"},
         {u"Ljava/lang/UnsupportedOperationException;", u"Ljava/lang/RuntimeException;"},
         {u"Ljava/lang/VirtualMachineError;", u"Ljava/lang/Error;"},
+        {u"Ljava/util/regex/PatternSyntaxException;", u"Ljava/lang/IllegalArgumentException;"},
     };
     auto type = from;
     while (true) {

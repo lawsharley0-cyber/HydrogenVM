@@ -42,8 +42,8 @@ target_link_libraries(hvm_core PUBLIC ZLIB::ZLIB SQLite::SQLite3 Threads::Thread
 # Apple hosts; FFmpeg (M4A) and OpenSSL (CCCrypt) elsewhere, both optional.
 if(APPLE)
   enable_language(OBJCXX)
-  target_sources(hvm_core PRIVATE src/runtime/foundation/HostPredicateRegexApple.mm)
-  set_source_files_properties(src/runtime/foundation/HostPredicateRegexApple.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  target_sources(hvm_core PRIVATE src/runtime/foundation/HostPredicateRegexApple.mm src/runtime/android/dex/CoreRegexApple.mm)
+  set_source_files_properties(src/runtime/foundation/HostPredicateRegexApple.mm src/runtime/android/dex/CoreRegexApple.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(hvm_core PUBLIC "-framework Foundation" "-framework CoreFoundation")
   target_link_libraries(hvm_core PUBLIC "-framework AudioToolbox")
   target_link_libraries(hvm_core PUBLIC "-framework Security")   # SecCertificate / SecKey / SecTrust

@@ -3,6 +3,7 @@
 #include "runtime/android/dex/CoreLang.hpp"
 #include "runtime/android/dex/CoreMath.hpp"
 #include "runtime/android/dex/CoreRandom.hpp"
+#include "runtime/android/dex/CoreRegex.hpp"
 #include "runtime/android/dex/GuestScheduler.hpp"
 
 #include <fstream>
@@ -209,7 +210,8 @@ public:
 
     bool hasClass(std::u16string_view descriptor) {
         if (CoreCollections::hasClass(descriptor) || CoreLang::hasClass(descriptor) ||
-            CoreMath::hasClass(descriptor) || CoreRandom::hasClass(descriptor)) return true;
+            CoreMath::hasClass(descriptor) || CoreRandom::hasClass(descriptor) ||
+            CoreRegex::hasClass(descriptor)) return true;
         const std::string cls = className(descriptor);
         auto& j = jni(process);
         {
@@ -262,6 +264,7 @@ public:
             if (auto value = lang.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
             if (auto value = CoreMath::invoke(owner, name, signature, stat, args)) return value;
             if (auto value = random.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
+            if (auto value = regex.invoke(machine->heap(), lang, owner, name, signature, stat, args)) return value;
         }
         auto& j = jni(process);
         Ctx x{process, process.currentThread().cpu, process.mem()};
@@ -305,6 +308,7 @@ public:
     CoreCollections collections;
     CoreLang lang;
     CoreRandom random;
+    CoreRegex regex;
     std::unique_ptr<Machine> machine;
 };
 

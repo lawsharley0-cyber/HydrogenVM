@@ -198,14 +198,17 @@ def run_java_check(work: Path, timeout: int, source: str, label: str) -> dict:
     executable = work / source
     compiler = shlex.split(os.environ.get("CXX", "c++"))
     try:
+        extra_sources = [str(ROOT / "src/runtime/android/dex/CoreRegexApple.mm")] if sys.platform == "darwin" else []
+        extra_flags = ["-fobjc-arc", "-framework", "Foundation"] if sys.platform == "darwin" else ["-licui18n", "-licuuc"]
         build = subprocess.run(
             [*compiler, "-std=c++20", "-O2", "-pthread", "-I", str(ROOT / "src"),
              str(fixtures / (source + ".cpp")), str(ROOT / "src/runtime/android/dex/DexFile.cpp"),
              str(ROOT / "src/runtime/android/dex/CoreLang.cpp"),
              str(ROOT / "src/runtime/android/dex/CoreMath.cpp"),
              str(ROOT / "src/runtime/android/dex/CoreRandom.cpp"),
+             str(ROOT / "src/runtime/android/dex/CoreRegex.cpp"), *extra_sources,
              str(ROOT / "src/runtime/android/dex/Interpreter.cpp"), str(ROOT / "src/runtime/android/dex/Heap.cpp"),
-             str(ROOT / "src/runtime/android/dex/Machine.cpp"),
+             str(ROOT / "src/runtime/android/dex/Machine.cpp"), *extra_flags,
              "-o", str(executable)], capture_output=True, text=True, timeout=timeout,
         )
         run = subprocess.run([str(executable), str(fixtures)], capture_output=True, text=True,
@@ -252,6 +255,7 @@ def main() -> int:
             run_java_check(work, args.timeout, "DexRandom", "java.util.Random"),
             run_java_check(work, args.timeout, "DexMath", "java.lang.Math"),
             run_java_check(work, args.timeout, "DexLang", "java.lang core"),
+            run_java_check(work, args.timeout, "DexRegex", "java.util.regex and Locale"),
         ]
         for phone in ([False, True] if args.phone else [False]):
             home = work / ("home-phone" if phone else "home")
