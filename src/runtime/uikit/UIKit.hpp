@@ -53,6 +53,11 @@ struct LayerData : ObjC::HostObject {
     G::Color background{0, 0, 0, 0}, border{0, 0, 0, 1};
     G::ImagePtr backgroundPattern;
     id contents = 0;                 // retained (CGImage)
+    // CAGradientLayer: colors/locations as the app set them (retained arrays), the stops built
+    // from them, and the axis in unit coordinates of the bounds.
+    id gradientColors = 0, gradientLocations = 0;
+    std::vector<std::pair<float, G::Color>> gradientStops;
+    G::Point gradientStart{0.5f, 0.0f}, gradientEnd{0.5f, 1.0f};
     G::Rect contentsRect{0, 0, 1, 1}, contentsCenter{0, 0, 1, 1};
     int gravity = kGravityResize;
     bool magnifyNearest = false;
@@ -95,11 +100,17 @@ struct VCData : ObjC::HostObject {
     std::vector<id> children;        // retained
     id navigationItem = 0, tabBarItem = 0;     // retained
     id storyboard = 0;               // retained; set by the storyboard that loaded it
+    id segueTemplates = 0;           // retained NSArray of UIStoryboardSegueTemplate, from the nib
+    id externalObjects = 0;          // retained: a storyboard view nib's UpstreamPlaceholder-N objects
     bool appeared = false, wantsFullScreen = false;
+    int32_t legacyOrientation = 1;   // what rotateLegacyControllers last laid this controller out for
     int32_t modalStyle = 0;
 };
 
 struct TextInputRequest;
+struct PhotoPickerRequest;
+struct DocumentPickerRequest;
+struct MovieRequest;
 
 // Per-process UIKit state.
 struct UIState {
@@ -121,6 +132,15 @@ struct UIState {
     int32_t statusBarOrientation = 1;   // UIInterfaceOrientationPortrait
     int32_t initialOrientation = 1;
     bool orientationSetByApp = false;   // the app chose one with setStatusBarOrientation:
+    // Info.plist lists only landscape orientations. Such an app is never shown in portrait
+    // (iOS 6+ intersects the app's list with what a view controller accepts).
+    bool plistLandscapeOnly = false;
+    // Info.plist MinimumOSVersion is below 3.0: the app predates automatic rotation of a
+    // launch-landscape view (rotateLegacyControllers).
+    bool builtForIOS2 = false;
+    // beginGeneratingDeviceOrientationNotifications was called: on the next frame, post the
+    // UIDeviceOrientationDidChangeNotification iOS sends once the device's orientation is known.
+    bool deviceOrientationNotePending = false;
     // framebuffer
     G::Image framebuffer;
     double lastFrame = 0;
@@ -130,6 +150,7 @@ struct UIState {
     // display links
     struct Link { id obj; id target; SEL sel; int interval; bool paused; int counter; };
     std::vector<Link> links;
+    bool unlockLogged = false;   // "Unlock frame rate" said once that it overrode an interval
     // touches
     struct TouchRec { id touch; id view; uint32_t hostId; };
     std::vector<TouchRec> activeTouches;
@@ -138,6 +159,7 @@ struct UIState {
     std::deque<HostTouch> pendingTouches;
     // accelerometer
     float accel[3] = {0, 0, -1};
+    bool accelFromHost = false;   // until the host reports, gravity follows the interface orientation
     id firstResponder = 0;
     std::unordered_map<std::string, id> imageCache;   // imageNamed: (retained)
     id ignoringEvents = 0;
@@ -145,13 +167,25 @@ struct UIState {
     std::vector<id> eaglLayers;
     // on-screen keyboard (#303)
     std::function<void(const TextInputRequest&)> textInputObserver;   // guarded by inputMu
+    std::function<void(const PhotoPickerRequest&)> photoPickerObserver; // guarded by inputMu
+    std::function<void(const DocumentPickerRequest&)> documentPickerObserver;
+    id activeDocumentPicker = 0;
+    uint64_t documentRequestId = 0;
+    bool documentResultDelivered = false;
+    // Host video playback (HostMovie.cpp). All guarded by inputMu.
+    std::function<void(const MovieRequest&)> movieObserver;
+    uint64_t activeMovieId = 0;
+    std::function<void(Ctx&, bool)> movieOnEnd;
+    id activePhotoPicker = 0; // retained until dismissal
+    uint64_t photoRequestId = 0;
+    bool photoResultDelivered = false;
     uint64_t textFocusId = 0;   // bumped each time a text field becomes first responder
     uint64_t textAckSeq = 0;    // the host edit sequence number the guest has processed
 };
 UIState& ui(Process& p);
 
 // ---- on-screen keyboard. A focused UITextField/UITextView publishes a TextInputRequest to the host (which shows
-// a native keyboard); the host sends edits back with submitTextInput, which runs on the guest's main run loop.
+// a native keyboard); custom UIKeyInput responders use incremental events. submitTextInput runs on the guest's main run loop.
 struct TextInputRequest {
     bool active = false;                   // false = the keyboard should be dismissed
     uint64_t focusId = 0;                  // which focus this request belongs to; events must echo it
@@ -159,15 +193,52 @@ struct TextInputRequest {
     std::string text, placeholder;
     int32_t keyboardType = 0, returnKeyType = 0, autocapitalization = 0, autocorrection = 0;
     bool secure = false, multiline = false;
+    // Custom UIKeyInput responders own their text/caret. Send incremental
+    // protocol messages rather than replacing a UIKit TextFieldData string.
+    bool keyInput = false, hasText = false;
 };
 struct TextInputEvent {
-    enum Kind { SetText, Return, Dismiss } kind;
-    std::string text;                      // SetText: the field's full new text
+    enum Kind { SetText, Return, Dismiss, InsertText, DeleteBackward } kind;
+    std::string text;                      // SetText: full field text; InsertText: original protocol payload
     uint64_t focusId = 0;                  // from the request being answered; events for an older focus are dropped
     uint64_t seq = 0;                      // host edit counter, echoed back as TextInputRequest::ackSeq
 };
 void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&)> observer);
 void submitTextInput(Process& p, TextInputEvent ev);
+void customKeyboardFocus(Ctx& x, id responder, bool active);
+// Import-only document selection. Host paths are copied into the guest sandbox.
+struct DocumentPickerRequest { bool active = false; uint64_t requestId = 0; std::vector<std::string> types; };
+void setDocumentPickerObserver(Process& p, std::function<void(const DocumentPickerRequest&)> observer);
+void submitDocumentPickerResult(Process& p, uint64_t requestId, std::string sourcePath);
+bool presentDocumentPicker(Ctx& x, id controller);
+void dismissDocumentPicker(Ctx& x, id controller);
+void registerDocumentPicker(Process& p, ObjC::Runtime& r);
+
+// Native photo selection; callbacks carry an epoch unique across process instances.
+struct PhotoPickerRequest { bool active = false; uint64_t requestId = 0; };
+void setPhotoPickerObserver(Process& p, std::function<void(const PhotoPickerRequest&)> observer);
+void submitPhotoPickerResult(Process& p, uint64_t requestId, std::vector<uint8_t> imageData);
+bool presentPhotoPicker(Ctx& x, id controller);
+void dismissPhotoPicker(Ctx& x, id controller);
+void registerPhotoPicker(Process& p, ObjC::Runtime& r);
+// Video. The runtime decodes no video itself: a movie the guest plays (MPMoviePlayerController,
+// or an AVPlayer on a video file) is handed to the host, which shows it over the game and says
+// when it ended. With no host observer, or a file the host cannot see, the caller keeps its old
+// behaviour (the movie "finishes" at once).
+struct MovieRequest { bool active = false; uint64_t requestId = 0; std::string hostPath; };
+void setMovieObserver(Process& p, std::function<void(const MovieRequest&)> observer);
+// The host finished (or could not play, or the player skipped) the movie it was given.
+void movieFinished(Process& p, uint64_t requestId);
+// Asks the host to play a file. Returns the request id, or 0 if the host cannot play it. onEnd
+// runs exactly once, on the guest's main thread, however the movie ends: with true when the host
+// reports the end, with false when the guest stopped it or another movie replaced it. Whatever
+// the caller keeps alive for the movie is released there.
+uint64_t startHostMovie(Ctx& x, const std::string& hostPath, std::function<void(Ctx&, bool finished)> onEnd);
+// The guest stopped the movie itself: the host removes it, and onEnd(false) runs before this returns.
+void stopHostMovie(Ctx& x, uint64_t requestId);
+// Whether a guest file URL names a video file the host could play; fills its host path.
+bool hostMovieFile(Ctx& x, id url, std::string& hostPath);
+
 inline UIState& ui(Ctx& x) { return ui(x.proc); }
 
 // ---- layers (QuartzCore.cpp)
@@ -254,6 +325,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r);
 void registerUIWidgets(Process& p, ObjC::Runtime& r);
 void registerGameKit(Process& p, ObjC::Runtime& r);
 void registerMiscFrameworks(Process& p, ObjC::Runtime& r);
+void registerLegacySdks(Process& p, ObjC::Runtime& r);
+void applyLegacySdkOverrides(Process& p, ObjC::Runtime& r);
 
 // NIB loading (Nib.cpp): returns the top-level objects (autoreleased array) or 0.
 id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObjects);
@@ -263,7 +336,15 @@ id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObje
 // `rotation` is true for +attemptRotationToDeviceOrientation, which (unlike the
 // one-time settle after launch) respects a controller's shouldAutorotate == NO.
 void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation = false);
+// iOS 3-5 apps without a rootViewController: the controller whose view is a window's first
+// subview rotates (with willRotate/didRotate callbacks) to the interface orientation.
+void rotateLegacyControllers(Ctx& x, const char* cause);
+// What UIAccelerometer reports: the host's reading, or until there is one, gravity for a
+// device held upright in the current interface orientation.
+std::array<double, 3> restingGravity(const UIState& u);
 int32_t orientationFromString(const std::string& name);   // Info.plist name -> UIInterfaceOrientation
 bool nibExists(Ctx& x, const std::string& name);
+// "<name>.storyboardc/" for a UIStoryboard (where its controllers' view nibs live), or "".
+std::string storyboardNibDir(Ctx& x, id storyboard);
 
 } // namespace Hydrogen::Runtime::UIKit

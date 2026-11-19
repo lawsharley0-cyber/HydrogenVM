@@ -5,6 +5,7 @@
 // programs, uniforms, vertex attributes, VBOs, FBOs, textures) state tracker
 // and software rasterizer wired into CAEAGLLayer via LayerData::externalContents.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/MobileShaderSource.hpp"
 #include "runtime/Support.hpp"
 #include "UIKit.hpp"
 #include "runtime/graphics/Pvrtc.hpp"
@@ -848,6 +849,7 @@ void noteLayerPresented(Ctx& x, id layer) {
 void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height);
 
 bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
+    x.proc.perf().gameSwaps++;
     (void)target;
     if (HostGL::isHostContext(x.proc, self)) {
         uint32_t layer = 0;
@@ -960,6 +962,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
     // An opaque layer (what GL games use) ignores the renderbuffer's alpha, as Core Animation does:
     // blending leaves alpha < 1 in places, which must not let the views behind show through.
     const bool opaqueLayer = layerData(x, rb.drawableLayer).opaque;
+    bool allOpaque = true;
     // Debugging aid: HVM_DUMP_RB=<file> keeps overwriting <file> with the latest presented renderbuffer (raw RGBA, GL row order).
     if (const char* f = std::getenv("HVM_DUMP_RB")) {
         if (std::FILE* fp = std::fopen(f, "wb")) {
@@ -977,6 +980,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
             const uint8_t g = srcRow[px * 4 + 1];
             const uint8_t b = srcRow[px * 4 + 2];
             const uint8_t a = opaqueLayer ? 255 : srcRow[px * 4 + 3];
+            allOpaque &= a == 255;
             if (a == 255) {
                 dstRow[px * 4 + 0] = r;
                 dstRow[px * 4 + 1] = g;
@@ -990,6 +994,7 @@ void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, in
             }
         }
     }
+    img->opaque = allOpaque;
     EAGLLayerData& ed = rt(x).host<EAGLLayerData>(rb.drawableLayer);
     ed.frontBuffer = img;
     LayerData& ld = layerData(x, rb.drawableLayer);
@@ -1021,15 +1026,22 @@ GuestPtr gl_getString(Ctx& x, uint32_t name) {
         case GL_RENDERER: return x.proc.internCString("Apple A6 GPU (HydrogenVM)");
         case GL_VERSION: return x.proc.internCString(api == 1 ? "OpenGL ES-CM 1.1 Apple A6" : "OpenGL ES 2.0 Apple A6");
         case GL_SHADING_LANGUAGE_VERSION: return x.proc.internCString("OpenGL ES GLSL ES 1.00");
-        case GL_EXTENSIONS:
-            return x.proc.internCString(
+        case GL_EXTENSIONS: {
+            std::string list =
                 "GL_OES_framebuffer_object GL_OES_rgb8_rgba8 GL_OES_texture_npot "
                 "GL_EXT_texture_format_BGRA8888 GL_OES_vertex_array_object "
                 "GL_OES_mapbuffer GL_OES_draw_texture GL_OES_point_sprite "
                 "GL_OES_point_size_array GL_IMG_texture_compression_pvrtc "
                 "GL_APPLE_framebuffer_multisample GL_EXT_discard_framebuffer "
                 "GL_OES_depth24 GL_OES_stencil8 GL_OES_packed_depth_stencil "
-                "GL_OES_standard_derivatives");
+                "GL_OES_standard_derivatives";
+            // Depth textures, as every iPhone GPU of the era offers, when the host driver draws
+            // (the software renderer has none). A game that finds no depth texture support
+            // may have no other way to build a render target: Minion Rush's intro scene, which
+            // renders into one, stayed an empty box.
+            if (HostGL::enabled(x.proc)) list += " GL_OES_depth_texture";
+            return x.proc.internCString(list);
+        }
         default: return 0;
     }
 }
@@ -1069,8 +1081,75 @@ bool gl_isEnabled(Ctx& x, uint32_t cap) {
     }
 }
 
+// Grow a CAEAGLLayer drawable (and matching depth/stencil renderbuffers) when
+// the guest's glViewport is larger than the backing. presentRenderbuffer then
+// hands the full frame to the compositor, whose default gravity (resize) scales
+// it into the layer bounds. A pre-iPhone-5 app without Default-568h already
+// runs at 320x480 points @2x; this fallback is for games that still pick a
+// design-sized viewport (Rayman Origins demo: 1024x682 into a 1x 480x320
+// drawable on iPhone5,2) and would otherwise clip to a corner.
+constexpr int kMaxDrawableFallback = 4096;
+
+void resizeRenderbuffer(Renderbuffer& rb, int nw, int nh) {
+    if (nw == rb.width && nh == rb.height) return;
+    const int ow = rb.width, oh = rb.height;
+    const int cw = std::min(ow, nw), ch = std::min(oh, nh);
+    auto copyRows = [&](auto& dst, const auto& src, auto fill, int comps) {
+        using T = typename std::decay_t<decltype(dst)>::value_type;
+        std::vector<T> next(size_t(nw) * size_t(nh) * size_t(comps), fill);
+        if (!src.empty() && cw > 0 && ch > 0) {
+            for (int y = 0; y < ch; ++y)
+                std::memcpy(next.data() + (size_t(y) * size_t(nw) * size_t(comps)),
+                            src.data() + (size_t(y) * size_t(ow) * size_t(comps)),
+                            size_t(cw) * size_t(comps) * sizeof(T));
+        }
+        dst.swap(next);
+    };
+    if (!rb.rgba.empty() || rb.drawableLayer) copyRows(rb.rgba, rb.rgba, uint8_t(0), 4);
+    if (!rb.depth.empty()) copyRows(rb.depth, rb.depth, 1.0f, 1);
+    if (!rb.stencil.empty()) copyRows(rb.stencil, rb.stencil, uint8_t(0), 1);
+    rb.width = nw;
+    rb.height = nh;
+}
+
+void maybeGrowDrawableForViewport(Ctx& x, int32_t vw, int32_t vh) {
+    if (vw <= 0 || vh <= 0 || vw > kMaxDrawableFallback || vh > kMaxDrawableFallback) return;
+    ContextData* c = currentCtx(x);
+    SharegroupData* sg = currentSg(x, c);
+    if (!c || !sg) return;
+    Renderbuffer* color = nullptr;
+    Framebuffer* fb = nullptr;
+    if (c->framebuffer != 0) {
+        auto it = sg->framebuffers.find(c->framebuffer);
+        if (it == sg->framebuffers.end()) return;
+        fb = &it->second;
+        if (fb->colorAttachmentType != GL_RENDERBUFFER || fb->colorAttachmentId == 0) return;
+        auto rit = sg->renderbuffers.find(fb->colorAttachmentId);
+        if (rit != sg->renderbuffers.end()) color = &rit->second;
+    } else if (c->renderbuffer != 0) {
+        auto rit = sg->renderbuffers.find(c->renderbuffer);
+        if (rit != sg->renderbuffers.end()) color = &rit->second;
+    }
+    if (!color || !color->drawableLayer) return;   // offscreen targets keep OpenGL's clip
+    if (vw <= color->width && vh <= color->height) return;
+    const int nw = std::max(color->width, int(vw));
+    const int nh = std::max(color->height, int(vh));
+    resizeRenderbuffer(*color, nw, nh);
+    if (!fb) return;
+    auto growAtt = [&](uint32_t type, uint32_t id) {
+        if (type != GL_RENDERBUFFER || id == 0 || id == color->id) return;
+        auto it = sg->renderbuffers.find(id);
+        if (it != sg->renderbuffers.end()) resizeRenderbuffer(it->second, nw, nh);
+    };
+    growAtt(fb->depthAttachmentType, fb->depthAttachmentId);
+    growAtt(fb->stencilAttachmentType, fb->stencilAttachmentId);
+}
+
 void gl_viewport(Ctx& x, int32_t vx, int32_t vy, int32_t vw, int32_t vh) {
-    if (auto* c = currentCtx(x)) { c->viewport[0] = vx; c->viewport[1] = vy; c->viewport[2] = vw; c->viewport[3] = vh; }
+    if (auto* c = currentCtx(x)) {
+        maybeGrowDrawableForViewport(x, vw, vh);
+        c->viewport[0] = vx; c->viewport[1] = vy; c->viewport[2] = vw; c->viewport[3] = vh;
+    }
 }
 void gl_scissor(Ctx& x, int32_t sx, int32_t sy, int32_t sw, int32_t sh) {
     if (auto* c = currentCtx(x)) { c->scissor[0] = sx; c->scissor[1] = sy; c->scissor[2] = sw; c->scissor[3] = sh; }
@@ -1232,7 +1311,11 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
     ContextData* c = currentCtx(x);
     auto wr = [&](int32_t v, int idx = 0) { x.mem.write<int32_t>(params + uint32_t(idx * 4), v); };
     switch (pname) {
-        case GL_MAX_TEXTURE_SIZE: case GL_MAX_RENDERBUFFER_SIZE: wr(4096); break;
+        case GL_MAX_TEXTURE_SIZE: case GL_MAX_RENDERBUFFER_SIZE: {
+            const uint32_t cap = x.proc.config().maxTextureSize;
+            wr(cap ? int32_t(cap) : 4096);
+            break;
+        }
         case GL_MAX_VIEWPORT_DIMS: wr(4096, 0); wr(4096, 1); break;
         case GL_MAX_TEXTURE_UNITS: case GL_MAX_TEXTURE_IMAGE_UNITS: case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS: wr(8); break;
         case GL_MAX_VERTEX_ATTRIBS: wr(16); break;
@@ -1900,6 +1983,12 @@ void gl_texSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xoffset, i
     Texture2D& tx = sg->textures[tid];
     std::vector<uint8_t> sub;
     unpackPixelsToRGBA(x, width, height, format, type, c->unpackAlignment, pixels, sub);
+    if (const char* dir = std::getenv("HVM_DUMP_TEX")) {   // as glTexImage2D: each update as raw RGBA
+        static int n = 0;
+        char name[512];
+        std::snprintf(name, sizeof name, "%s/sub%03d_tex%u_%dx%d_at%d,%d.rgba", dir, n++, tid, width, height, xoffset, yoffset);
+        if (std::FILE* f = std::fopen(name, "wb")) { std::fwrite(sub.data(), 1, sub.size(), f); std::fclose(f); }
+    }
     for (int y = 0; y < height; ++y) {
         const int dy = yoffset + y;
         if (dy < 0 || dy >= tx.height) continue;
@@ -2202,7 +2291,7 @@ void gl_shaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings, G
 void gl_compileShader(Ctx& x, uint32_t shader) {
     if (auto* sg = currentSg(x, currentCtx(x)); sg && sg->shaders.count(shader)) {
         auto& sh = sg->shaders[shader];
-        sh.compiled = sh.executable.compile(sh.source, sh.type == GL_VERTEX_SHADER);
+        sh.compiled = sh.executable.compile(Shader::normalizeMobileSource(sh.source), sh.type == GL_VERTEX_SHADER);
         sh.infoLog = sh.compiled && !sh.executable.warnings.empty() ? sh.executable.warnings : sh.executable.error;
         if (!sh.compiled) x.proc.logf(LogLevel::Warning, "GLSL shader %u: %s", shader, sh.infoLog.c_str());
     }

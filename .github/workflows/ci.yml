@@ -1,7 +1,7 @@
 name: CI
 
-# Linux runs on every push. The macOS job (Apple-toolchain engine build + speed
-# on Apple Silicon, Xcode device/simulator builds, simulator run) costs 10x the
+# Linux runs on every push. The macOS jobs (Apple-toolchain engine build + speed
+# on Apple Silicon, parallel device package, simulator builds/run) cost 10x the
 # Actions minutes on a private repo, so it runs when a commit message contains
 # "[mac]", when a pull request is labelled "mac" or its title contains "[mac]",
 # on manual dispatch, or once a week. The pull-request opt-in exists so the
@@ -33,9 +33,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
+        # 2026-10-26: this step hung for 30+ minutes on a hosted runner while
+        # the same step takes ~30 s normally. Bound the hang with a step
+        # timeout and retry transient apt failures with backoff.
+        timeout-minutes: 25
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema
+          # Ubuntu mirrors sometimes stall mid-download: bounded attempts with retries and a
+          # connection timeout instead of one install that runs into the step limit.
+          APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for attempt in 1 2 3; do
+            timeout 300 sudo apt-get $APT update -q && timeout 420 sudo apt-get $APT install -yq libicu-dev clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema python3-pil && break
+            echo "apt attempt $attempt failed; retrying on another mirror"; sleep 10
+            # The runner's regional mirror has stalled for whole attempts (2026-11-18); try the
+            # other one GitHub-hosted runners use instead of the same mirror again.
+            if [ "$attempt" = 1 ]; then MIRROR=http://azure.archive.ubuntu.com/ubuntu; else MIRROR=http://archive.ubuntu.com/ubuntu; fi
+            # GitHub's images list mirrors in /etc/apt/apt-mirrors.txt (sources use mirror+file:);
+            # older ones name the mirror in the sources files. Point both at the new mirror.
+            if [ -f /etc/apt/apt-mirrors.txt ]; then echo "$MIRROR" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null; fi
+            sudo sed -i -E "s#http://[a-zA-Z0-9.-]*archive\.ubuntu\.com/ubuntu/?#$MIRROR/#g" /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+          done
+          dpkg -s clang cmake ninja-build >/dev/null
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
@@ -76,10 +93,19 @@ jobs:
         run: python3 -m unittest discover -s tools/tests
       - name: Support registration tests
         run: build/hvm_support_tests
+      - name: Android Test Lab (desktop and phone mode)
+        # Android games run on the GPU renderer, which needs host OpenGL ES (Mesa, headless).
+        run: |
+          sudo apt-get install -yq libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri
+          python3 tools/android_testlab.py --phone --out report/android-testlab
       - name: Guest termination watchdog is a failed run
         run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime
         run: build/hvm_gl_lifetime_tests
+      - name: Offline backend and package checks
+        run: |
+          build/hvm_clash_state_tests > report/clash-state.txt
+          build/hvm_clash_tests > report/clash-offline.txt
       - name: Host AAC decoder comparison
         run: python3 tools/test_m4a_audio.py --hvm-tests build/hvm_tests --out report/m4a.json
       - name: Upload report and test apps
@@ -97,10 +123,12 @@ jobs:
           name: ios-test-apps
           path: build/ios/*.app
 
-  macos:
-    name: macOS — Apple Silicon speed, Xcode build, simulator run
+  # Build-only artifacts are available without waiting for runtime reports.
+  # All Linux, Apple runtime and simulator gates remain separate jobs.
+  device-package:
+    name: iPhone — unsigned package (build only)
     runs-on: macos-26
-    needs: linux
+    timeout-minutes: 30
     if: >-
       github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
       contains(github.event.head_commit.message, '[mac]') ||
@@ -109,18 +137,8 @@ jobs:
         contains(github.event.pull_request.title, '[mac]')))
     steps:
       - uses: actions/checkout@v4
-      - name: Install tools
-        run: brew install cmake ninja llvm lld xcodegen
-      - uses: actions/download-artifact@v4
-        with:
-          name: ios-test-apps
-          path: build/ios
-      - name: Test + performance report (Apple clang, Apple Silicon)
-        run: |
-          export CC_GUEST="$(brew --prefix llvm)/bin/clang"
-          export PATH="$(brew --prefix lld)/bin:$PATH"
-          xcodebuild -version
-          python3 tools/hvm_report.py --prebuilt-apps --out report
+      - name: Install project generator
+        run: brew install xcodegen
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen
@@ -148,7 +166,7 @@ jobs:
           python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
       - name: Upload validated unsigned device package
         # Right after packaging, so the .ipa can be downloaded while the
-        # simulator diagnostics below are still running.
+        # independent runtime/simulator diagnostics are still running.
         uses: actions/upload-artifact@v4
         with:
           name: HydrogenVM-device-ipa
@@ -157,6 +175,50 @@ jobs:
             app/HydrogenVM-unsigned.ipa
             app/HydrogenVM-unsigned.manifest.json
             app/HydrogenVM-unsigned.manifest.sha256
+      - name: Upload device build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-build-log
+          path: app/device-build.log
+          if-no-files-found: warn
+
+  macos:
+    name: macOS — Apple Silicon speed, Xcode build, simulator run
+    runs-on: macos-26
+    needs: linux
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
+      contains(github.event.head_commit.message, '[mac]') ||
+      (github.event_name == 'pull_request' &&
+       (contains(github.event.pull_request.labels.*.name, 'mac') ||
+        contains(github.event.pull_request.title, '[mac]')))
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install cmake ninja llvm lld xcodegen
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-test-apps
+          path: build/ios
+      - name: Test + performance report (Apple clang, Apple Silicon)
+        run: |
+          export CC_GUEST="$(brew --prefix llvm)/bin/clang"
+          export PATH="$(brew --prefix lld)/bin:$PATH"
+          xcodebuild -version
+          python3 tools/hvm_report.py --prebuilt-apps --out report
+      - name: Apple offline backend and ARMv7 math ABI checks
+        run: |
+          clang -fobjc-arc tests/native/FoundationLocale.m -framework Foundation -o build/native-locale
+          build/native-locale > report/locale-native.txt
+          build/hvm_clash_state_tests > report/clash-state.txt
+          build/hvm_clash_tests > report/clash-offline.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-math-test -- --run TL-O > report/clash-math-abi.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-predicate-test -- --run TL-P > report/clash-predicate.txt
+          build/hvm run build/ios/TestLab.app --home build/apple-language-test -- --run TL-Q > report/clash-language.txt
+      - name: Generate Xcode project
+        working-directory: app
+        run: xcodegen
       - name: Build for simulator
         working-directory: app
         run: |
@@ -223,13 +285,22 @@ jobs:
         if: always()
         run: |
           mkdir -p report/xcode report/simulator
-          cp app/device-build.log app/sim-build.log report/xcode/ 2>/dev/null || true
-          grep -E "error:|warning:" app/device-build.log app/sim-build.log 2>/dev/null | sort -u | head -300 > report/xcode/diagnostics.txt || true
+          cp app/sim-build.log report/xcode/ 2>/dev/null || true
+          grep -E "error:|warning:" app/sim-build.log 2>/dev/null | sort -u | head -300 > report/xcode/diagnostics.txt || true
           cp -R sim-out/. report/simulator/ 2>/dev/null || true
           mkdir -p report/simulator-gl && cp -R sim-gl-out/. report/simulator-gl/ 2>/dev/null || true
           mkdir -p report/simulator-gl-emu && cp -R sim-gl-emu-out/. report/simulator-gl-emu/ 2>/dev/null || true
           mkdir -p report/simulator-gl-landscape && cp -R sim-gl-landscape-out/. report/simulator-gl-landscape/ 2>/dev/null || true
           mkdir -p report/simulator-batch && cp -R sim-batch-out/. report/simulator-batch/ 2>/dev/null || true
+          # Cold-start URL handoff: text logs, markers and the screenshot only (no
+          # .xcresult bundles), so a failure on main can be read from ci-reports.
+          mkdir -p report/cold-start
+          cp build/cold-start-build.log build/cold-start-prompt-build.log report/cold-start/ 2>/dev/null || true
+          if [ -d build/cold-start-diagnostics ]; then
+            find build/cold-start-diagnostics -maxdepth 1 -type f \
+              \( -name '*.log' -o -name '*.txt' -o -name '*.png' -o -name 'cold-start-*' \) \
+              -exec cp {} report/cold-start/ \;
+          fi
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -237,7 +308,6 @@ jobs:
           name: macos-results
           path: |
             report/
-            app/device-build.log
             app/sim-build.log
             sim-out/
             build/cold-start-build.log

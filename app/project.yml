@@ -50,12 +50,19 @@ targetTemplates:
       - sdk: libsqlite3.tbd
       - sdk: libiconv.tbd                          # iconv forwarded to the host (System.cpp)
       - sdk: CoreText.framework
+      - sdk: CoreFoundation.framework
       - sdk: ImageIO.framework
+      - sdk: PhotosUI.framework                     # selection-only system photo picker
       - sdk: CoreMotion.framework
+      - sdk: Intents.framework                      # Add to Home Screen via Shortcuts (AddToHomeScreen.swift)
+      - sdk: IntentsUI.framework
       - sdk: AudioToolbox.framework
       - sdk: AVFoundation.framework
       - sdk: OpenGLES.framework                    # GLES on the GPU (Bridge/HostGLEAGL.mm)
       - sdk: QuartzCore.framework
+      - sdk: Security.framework                    # TLS bridge for games allowed online (Bridge/TlsBridgeApple.mm)
+      - sdk: GameController.framework              # On-screen GCVirtualController (VirtualController.swift)
+      - sdk: BackgroundTasks.framework             # Continued background imports (LibraryView.swift)
     settings:
       configs:
         Release:
@@ -64,7 +71,6 @@ targetTemplates:
         PRODUCT_BUNDLE_IDENTIFIER: com.lfull.HydrogenVM
         PRODUCT_NAME: HydrogenVM
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"                 # iPhone only
         SUPPORTED_PLATFORMS: "iphoneos"            # device only: the 4 GB arena needs real hardware
         ARCHS: arm64

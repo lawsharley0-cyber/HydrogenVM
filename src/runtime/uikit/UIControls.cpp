@@ -848,7 +848,7 @@ void buildAlertWindow(Ctx& x, id self) {
     r.send(x.cpu, root, "setBackgroundColor:", {makeUIColor(x, {0, 0, 0, 0})});
     if (landscape) {
         LayerData& l = layerData(x, viewLayer(x, root));
-        l.transform = from2D(G::Affine::rotate(u.statusBarOrientation == 4 ? 3.14159265f / 2 : -3.14159265f / 2));
+        l.transform = from2D(G::Affine::rotate(u.statusBarOrientation == 3 ? 3.14159265f / 2 : -3.14159265f / 2));   // 3 = LandscapeRight
         l.position = {u.screenW / 2, u.screenH / 2};
     }
     r.send(x.cpu, win, "addSubview:", {root});

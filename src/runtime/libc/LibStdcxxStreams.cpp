@@ -22,6 +22,7 @@
 // Our stringbuf keeps no get/put area (all six pointers null), so the app's
 // inline sputc/sgetc always fall through to the virtuals, which hold the
 // contents on the host side.
+#include "runtime/Support.hpp"
 #include "runtime/Process.hpp"
 #include <cinttypes>
 #include <cstdio>
@@ -43,6 +44,56 @@ int32_t hvmFilebufUnget(Ctx& x, uint32_t sb, int32_t c);
 int32_t hvmFilebufRead(Ctx& x, uint32_t sb, uint32_t buf, int32_t n);
 int32_t hvmFilebufWrite(Ctx& x, uint32_t sb, const char* data, uint32_t n);
 int64_t hvmFilebufSeek(Ctx& x, uint32_t sb, int64_t off, uint32_t dir);
+
+// Formats an integer the way num_put does for these fmtflags (the values are the same in
+// libstdc++ and libc++). `prefix` is how much of the result precedes internal padding.
+std::string hvmIosFormatInt(uint32_t fl, int64_t v, bool isSigned, int bits, size_t& prefix) {
+    constexpr uint32_t fDec = 2, fHex = 8, fOct = 64, fShowbase = 512, fShowpos = 2048, fUppercase = 16384;
+    const uint32_t base = fl & (fDec | fOct | fHex);
+    char buf[80];
+    std::string pre, digits;
+    if (base == fHex || base == fOct) {
+        const uint64_t u = bits == 64 ? uint64_t(v) : uint64_t(uint32_t(v));
+        std::snprintf(buf, sizeof buf, base == fHex ? ((fl & fUppercase) ? "%" PRIX64 : "%" PRIx64) : "%" PRIo64, u);
+        digits = buf;
+        if ((fl & fShowbase) && u) pre = base == fOct ? "0" : (fl & fUppercase) ? "0X" : "0x";
+        if (base == fOct && pre == "0") { digits = "0" + digits; pre.clear(); }
+    } else if (isSigned) {
+        std::snprintf(buf, sizeof buf, "%" PRId64, v);
+        digits = buf;
+        if (v < 0) { pre = "-"; digits.erase(0, 1); }
+        else if (fl & fShowpos) pre = "+";
+    } else {
+        std::snprintf(buf, sizeof buf, "%" PRIu64, uint64_t(v));
+        digits = buf;
+    }
+    prefix = pre.size();
+    return pre + digits;
+}
+
+std::string hvmIosFormatDouble(uint32_t fl, int prec, double d, size_t& prefix) {
+    constexpr uint32_t fFixed = 4, fScientific = 256, fShowpoint = 1024, fShowpos = 2048, fUppercase = 16384;
+    std::string f = "%";
+    if (fl & fShowpos) f += '+';
+    if (fl & fShowpoint) f += '#';
+    const uint32_t ff = fl & (fFixed | fScientific);
+    const bool up = fl & fUppercase;
+    if (ff == (fFixed | fScientific)) f += up ? "A" : "a";
+    else {
+        if (prec < 0) prec = 6;
+        f += ".*";
+        f += ff == fFixed ? (up ? "F" : "f") : ff == fScientific ? (up ? "E" : "e") : (up ? "G" : "g");
+    }
+    // Sized from snprintf's own answer: fixed notation with a large precision is long.
+    const bool hexfloat = ff == (fFixed | fScientific);
+    const int need = hexfloat ? std::snprintf(nullptr, 0, f.c_str(), d) : std::snprintf(nullptr, 0, f.c_str(), prec, d);
+    std::string out(size_t(need < 0 ? 0 : need) + 1, '\0');
+    if (hexfloat) std::snprintf(out.data(), out.size(), f.c_str(), d);
+    else std::snprintf(out.data(), out.size(), f.c_str(), prec, d);
+    out.pop_back();
+    prefix = (!out.empty() && (out[0] == '-' || out[0] == '+')) ? 1 : 0;
+    return out;
+}
 
 namespace {
 
@@ -68,6 +119,8 @@ struct State {
     std::unordered_map<uint32_t, Buf> bufs;    // our stringbufs, by address
     uint32_t sbVptr = 0, baseSbVptr = 0, libcxxSbVptr = 0;       // our stringbuf / std::basic_streambuf vtables (+8)
     uint32_t locImpl = 0, ctype = 0, facet = 0;
+    uint32_t idCounter = 0, vtCodecvtW = 0;   // locale::id::_S_refcount; codecvt<wchar_t> vptr
+    uint32_t codecvtWId = 0, defaultCodecvtW = 0;
     uint32_t vtIs = 0, vtOss = 0, vtIss = 0, vtSs = 0, vtSsOut = 0; // stream primary vptrs
     uint32_t vtIos8 = 0, vtIos44 = 0, vtIos48 = 0, vtIos52 = 0;    // basic_ios vptrs per offset
 };
@@ -158,48 +211,16 @@ uint32_t emit(Ctx& x, uint32_t os, std::string s, size_t prefix = 0) {
 
 // Integer formatting per the stream's flags. `bits` is the type's width (hex/oct print it unsigned).
 uint32_t putInt(Ctx& x, uint32_t os, int64_t v, bool isSigned, int bits) {
-    const uint32_t fl = rd(x, iosOf(x, os) + kFlags);
-    const uint32_t base = fl & (fDec | fOct | fHex);
-    char buf[80];
-    std::string pre, digits;
-    if (base == fHex || base == fOct) {
-        const uint64_t u = bits == 64 ? uint64_t(v) : uint64_t(uint32_t(v));
-        std::snprintf(buf, sizeof buf, base == fHex ? ((fl & fUppercase) ? "%" PRIX64 : "%" PRIx64) : "%" PRIo64, u);
-        digits = buf;
-        if ((fl & fShowbase) && u) pre = base == fOct ? "0" : (fl & fUppercase) ? "0X" : "0x";
-        if (base == fOct && pre == "0") { digits = "0" + digits; pre.clear(); }
-    } else if (isSigned) {
-        std::snprintf(buf, sizeof buf, "%" PRId64, v);
-        digits = buf;
-        if (v < 0) { pre = "-"; digits.erase(0, 1); }
-        else if (fl & fShowpos) pre = "+";
-    } else {
-        std::snprintf(buf, sizeof buf, "%" PRIu64, uint64_t(v));
-        digits = buf;
-    }
-    return emit(x, os, pre + digits, pre.size());
+    size_t prefix = 0;
+    std::string text = hvmIosFormatInt(rd(x, iosOf(x, os) + kFlags), v, isSigned, bits, prefix);
+    return emit(x, os, std::move(text), prefix);
 }
 
 uint32_t putDouble(Ctx& x, uint32_t os, double d) {
     const uint32_t ios = iosOf(x, os);
-    const uint32_t fl = rd(x, ios + kFlags);
-    int prec = int32_t(rd(x, ios + kPrecision));
-    std::string f = "%";
-    if (fl & fShowpos) f += '+';
-    if (fl & fShowpoint) f += '#';
-    const uint32_t ff = fl & (fFixed | fScientific);
-    const bool up = fl & fUppercase;
-    if (ff == (fFixed | fScientific)) f += up ? "A" : "a";
-    else {
-        if (prec < 0) prec = 6;
-        f += ".*";
-        f += ff == fFixed ? (up ? "F" : "f") : ff == fScientific ? (up ? "E" : "e") : (up ? "G" : "g");
-    }
-    char buf[512];
-    if (ff == (fFixed | fScientific)) std::snprintf(buf, sizeof buf, f.c_str(), d);
-    else std::snprintf(buf, sizeof buf, f.c_str(), prec, d);
-    const size_t prefix = (buf[0] == '-' || buf[0] == '+') ? 1 : 0;
-    return emit(x, os, buf, prefix);
+    size_t prefix = 0;
+    std::string text = hvmIosFormatDouble(rd(x, ios + kFlags), int32_t(rd(x, ios + kPrecision)), d, prefix);
+    return emit(x, os, std::move(text), prefix);
 }
 
 // A 64-bit argument after `this`: r1:r2 (iOS armv7 passes arguments APCS-style, no register pairing).
@@ -271,9 +292,153 @@ uint32_t is_ctorSb2(Ctx& x, GuestPtr self, GuestPtr vtt, GuestPtr sb) {
     iosInit(x, ios, sb);
     return self;
 }
+// std::locale is { _Impl* }. Every default locale shares one _Impl (St::locImpl);
+// a locale built with locale(const locale&, Facet*) gets its own (inline code:
+// new _Impl(*other._M_impl, 1), then _M_install_facet), and copies share it.
+// _Impl (libstdc++ 4.2): { refcount, facet** facets, size_t size, facet** caches, char** names }.
+// facet: { vptr, refcount }.
+constexpr uint32_t kImplFacets = 64;
+uint32_t implOf(Ctx& x, GuestPtr loc) {
+    const uint32_t impl = loc ? rd(x, loc) : 0;
+    return impl ? impl : St(x).locImpl;
+}
+void implAddRef(Ctx& x, uint32_t impl) {
+    if (impl && impl != St(x).locImpl) wr(x, impl, rd(x, impl) + 1);
+}
 void locCtor(Ctx& x, GuestPtr loc) { wr(x, loc, St(x).locImpl); }
-void locCopy(Ctx& x, GuestPtr loc, GuestPtr) { wr(x, loc, St(x).locImpl); }
-uint32_t locAssign(Ctx& x, GuestPtr loc, GuestPtr) { wr(x, loc, St(x).locImpl); return loc; }
+void locCopy(Ctx& x, GuestPtr loc, GuestPtr other) {
+    const uint32_t impl = implOf(x, other);
+    implAddRef(x, impl);
+    wr(x, loc, impl);
+}
+uint32_t locAssign(Ctx& x, GuestPtr loc, GuestPtr other) {
+    const uint32_t impl = implOf(x, other);
+    implAddRef(x, impl);
+    wr(x, loc, impl);   // the old _Impl keeps its reference: _Impls are never freed here
+    return loc;
+}
+// _Impl::_Impl(const _Impl& other, size_t refs)
+uint32_t implCopyCtor(Ctx& x, GuestPtr self, GuestPtr other, uint32_t refs) {
+    const uint32_t src = other ? other : St(x).locImpl;
+    const uint32_t srcFacets = rd(x, src + 4);
+    const uint32_t srcSize = srcFacets ? std::min<uint32_t>(rd(x, src + 8), 4096) : 0;
+    const uint32_t size = std::max(srcSize, kImplFacets);
+    const uint32_t facets = x.proc.heap().allocZeroed(size * 4);
+    const uint32_t caches = x.proc.heap().allocZeroed(size * 4);
+    for (uint32_t i = 0; i < srcSize; ++i) {
+        const uint32_t f = rd(x, srcFacets + i * 4);
+        if (!f) continue;
+        wr(x, facets + i * 4, f);
+        wr(x, f + 4, rd(x, f + 4) + 1);
+    }
+    wr(x, self, refs);
+    wr(x, self + 4, facets);
+    wr(x, self + 8, size);
+    wr(x, self + 12, caches);
+    wr(x, self + 16, rd(x, src + 16));   // names: shared, never freed
+    return self;
+}
+// locale::id::_M_id(): ids are handed out from locale::id::_S_refcount, as the
+// inline libstdc++ 4.2 code does, so both agree on a facet's index.
+uint32_t localeIdIndex(Ctx& x, GuestPtr id) {
+    uint32_t v = rd(x, id);
+    if (!v) {
+        const uint32_t counter = St(x).idCounter;
+        const uint32_t n = rd(x, counter);
+        wr(x, counter, n + 1);
+        v = n + 1;
+        wr(x, id, v);
+    }
+    return v - 1;
+}
+uint32_t localeIdM(Ctx& x, GuestPtr id) { return id ? localeIdIndex(x, id) : 0; }
+// _Impl::_M_install_facet(const locale::id*, const facet*)
+void implInstallFacet(Ctx& x, GuestPtr self, GuestPtr id, GuestPtr f) {
+    if (!self || !id || !f) return;
+    const uint32_t index = localeIdIndex(x, id);
+    if (index >= 4096) return;
+    uint32_t size = rd(x, self + 8);
+    if (index >= size || !rd(x, self + 4)) {
+        const uint32_t grown = std::max(index + 1, std::max(size * 2, kImplFacets));
+        const uint32_t facets = x.proc.heap().allocZeroed(grown * 4);
+        const uint32_t caches = x.proc.heap().allocZeroed(grown * 4);
+        const uint32_t oldFacets = rd(x, self + 4), oldCaches = rd(x, self + 12);
+        for (uint32_t i = 0; i < size && oldFacets; ++i) {
+            wr(x, facets + i * 4, rd(x, oldFacets + i * 4));
+            if (oldCaches) wr(x, caches + i * 4, rd(x, oldCaches + i * 4));
+        }
+        wr(x, self + 4, facets);
+        wr(x, self + 8, grown);
+        wr(x, self + 12, caches);
+        size = grown;
+    }
+    wr(x, f + 4, rd(x, f + 4) + 1);
+    const uint32_t old = rd(x, rd(x, self + 4) + index * 4);
+    if (old && old != f) wr(x, old + 4, rd(x, old + 4) - 1);   // never deleted here
+    wr(x, rd(x, self + 4) + index * 4, f);
+    if (const uint32_t caches = rd(x, self + 12)) wr(x, caches + index * 4, 0);
+}
+// codecvt<wchar_t, char, mbstate_t>::codecvt(size_t refs) and locale::facet's state.
+uint32_t codecvtCtor(Ctx& x, GuestPtr self, uint32_t refs) {
+    wr(x, self, St(x).vtCodecvtW);
+    wr(x, self + 4, refs ? 1 : 0);
+    wr(x, self + 8, 0);   // _M_c_locale_codecvt: the "C" locale
+    return self;
+}
+uint32_t facetDtor(Ctx&, GuestPtr self) { return self; }
+uint32_t facetDtorDelete(Ctx& x, GuestPtr self) { if (self) x.proc.heap().free(self); return self; }
+uint32_t codecvtError(Ctx&) { return 2; }   // codecvt_base::error
+// The default codecvt<wchar_t, char, mbstate_t> ("C" locale): one byte per
+// character, characters above 0xFF do not convert.
+// do_out(this, state, from, from_end, from_next&, to, to_end, to_next&)
+void cvOut(Ctx& x) {
+    const uint32_t from = x.cpu.r[2], fromEnd = x.cpu.r[3], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fromNext = rd(x, sp), to = rd(x, sp + 4), toEnd = rd(x, sp + 8), toNext = rd(x, sp + 12);
+    uint32_t f = from, t = to, res = 0;
+    for (; f < fromEnd; f += 4) {
+        if (t >= toEnd) { res = 1; break; }
+        const uint32_t c = rd(x, f);
+        if (c > 0xFF) { res = 2; break; }
+        x.mem.write<uint8_t>(t++, uint8_t(c));
+    }
+    if (fromNext) wr(x, fromNext, f);
+    if (toNext) wr(x, toNext, t);
+    x.cpu.r[0] = res;
+}
+// do_in(this, state, from, from_end, from_next&, to, to_end, to_next&)
+void cvIn(Ctx& x) {
+    const uint32_t from = x.cpu.r[2], fromEnd = x.cpu.r[3], sp = x.cpu.r[CPU::kSP];
+    const uint32_t fromNext = rd(x, sp), to = rd(x, sp + 4), toEnd = rd(x, sp + 8), toNext = rd(x, sp + 12);
+    uint32_t f = from, t = to, res = 0;
+    for (; f < fromEnd; ++f, t += 4) {
+        if (t >= toEnd) { res = 1; break; }
+        wr(x, t, x.mem.read<uint8_t>(f));
+    }
+    if (fromNext) wr(x, fromNext, f);
+    if (toNext) wr(x, toNext, t);
+    x.cpu.r[0] = res;
+}
+uint32_t cvUnshift(Ctx& x, GuestPtr, GuestPtr, GuestPtr to, GuestPtr, GuestPtr toNext) {
+    if (toNext) wr(x, toNext, to);
+    return 3;   // noconv
+}
+uint32_t cvOne(Ctx&, GuestPtr) { return 1; }
+uint32_t cvFalse(Ctx&, GuestPtr) { return 0; }
+// do_length(this, state, from, end, max)
+uint32_t cvLength(Ctx&, GuestPtr, GuestPtr, GuestPtr from, GuestPtr end, uint32_t max) {
+    return end > from ? std::min(end - from, max) : 0;
+}
+// use_facet<codecvt<wchar_t, char, mbstate_t> >(locale): the installed facet (an
+// app's derived codecvt shares codecvt<wchar_t>::id), else the default.
+uint32_t useFacetCodecvtW(Ctx& x, GuestPtr loc) {
+    State& s = St(x);
+    const uint32_t impl = implOf(x, loc);
+    const uint32_t index = localeIdIndex(x, s.codecvtWId);
+    const uint32_t facets = rd(x, impl + 4);
+    if (facets && index < rd(x, impl + 8))
+        if (const uint32_t f = rd(x, facets + index * 4)) return f;
+    return s.defaultCodecvtW;
+}
 void nop1(Ctx&, GuestPtr) {}
 void nop2(Ctx&, GuestPtr, GuestPtr) {}
 
@@ -322,6 +487,39 @@ uint32_t o_ptr(Ctx& x, GuestPtr os, uint32_t v) {
     std::snprintf(buf, sizeof buf, v ? "0x%x" : "0", v);
     return emit(x, os, buf, v ? 2 : 0);
 }
+// GCC 4.0-era libstdc++ exports each operator<< as a member (later ones go through
+// _M_insert<T>). Stubs returned 0, so a chained `os << a << b` handed the next call a NULL
+// stream: Temple Run faulted saving its game (3,263 manipulator calls in one minute).
+uint32_t o_uint(Ctx& x, GuestPtr os, uint32_t v) { return putInt(x, os, int64_t(v), false, 32); }
+uint32_t o_ushort(Ctx& x, GuestPtr os, uint32_t v) { return putInt(x, os, int64_t(uint16_t(v)), false, 32); }
+uint32_t o_float(Ctx& x, GuestPtr os, uint32_t bits) { float f; std::memcpy(&f, &bits, 4); return putDouble(x, os, f); }
+// os << manip: call manip(os) (std::endl, std::flush, ...) and return what it returns.
+uint32_t o_manip(Ctx& x, GuestPtr os, uint32_t fn) { return fn ? x.proc.callGuest(x.cpu, fn, {os}) : os; }
+// os << manip for ios_base& (*)(ios_base&) (std::hex, std::fixed, ...): applied to the ios_base.
+uint32_t o_iosManip(Ctx& x, GuestPtr os, uint32_t fn) { if (fn) x.proc.callGuest(x.cpu, fn, {iosOf(x, os)}); return os; }
+// The std::setw / setprecision / setfill structs arrive by value in r1.
+uint32_t o_setw(Ctx& x, GuestPtr os, int32_t n) { wr(x, iosOf(x, os) + kWidth, uint32_t(n)); return os; }
+uint32_t o_setprecision(Ctx& x, GuestPtr os, int32_t n) { wr(x, iosOf(x, os) + kPrecision, uint32_t(n)); return os; }
+uint32_t o_setfill(Ctx& x, GuestPtr os, uint32_t c) {
+    const uint32_t ios = iosOf(x, os);
+    x.mem.write<uint8_t>(ios + kFill, uint8_t(c));
+    x.mem.write<uint8_t>(ios + kFillInit, 1);
+    return os;
+}
+// basic_ios<char> state queries; `self` is the basic_ios itself.
+uint32_t ios_voidp(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & (kBad | kFail)) ? 0 : self; }
+bool ios_not(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & (kBad | kFail)) != 0; }
+bool ios_good(Ctx& x, GuestPtr self) { return rd(x, self + kState) == 0; }
+bool ios_eof(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & kEof) != 0; }
+bool ios_fail(Ctx& x, GuestPtr self) { return (rd(x, self + kState) & (kBad | kFail)) != 0; }
+uint32_t ios_rdbuf(Ctx& x, GuestPtr self) { return rd(x, self + kBuf); }
+uint32_t ios_fill(Ctx& x, GuestPtr self, uint32_t c) {
+    const uint32_t old = uint8_t(fillOf(x, self));
+    x.mem.write<uint8_t>(self + kFill, uint8_t(c));
+    return old;
+}
+void ios_exceptions(Ctx& x, GuestPtr self, uint32_t mask) { wr(x, self + kExceptions, mask); }
+
 uint32_t o_put(Ctx& x, GuestPtr os, uint32_t c) {
     const uint32_t ios = iosOf(x, os);
     if (!rd(x, ios + kState)) osWrite(x, os, std::string(1, char(c)));
@@ -436,8 +634,11 @@ int32_t sb_pbackfail(Ctx& x, GuestPtr sb, int32_t c) {
         return int32_t(uint8_t(b.s[b.g]));
     });
 }
+// libstdc++ basic_stringbuf::showmanyc: egptr() - gptr() when open for input (so 0 once
+// everything has been read), -1 only when the buffer is not readable. Games check
+// `in_avail() == 0` after `iss >> number` to see that the whole string was a number.
 int32_t sb_showmanyc(Ctx& x, GuestPtr sb) {
-    return withBuf(x, sb, [](Buf& b) { return b.g < b.s.size() ? int32_t(b.s.size() - b.g) : -1; });
+    return withBuf(x, sb, [](Buf& b) { return (b.mode & mIn) ? int32_t(b.g < b.s.size() ? b.s.size() - b.g : 0) : -1; });
 }
 void writePos(Ctx& x, uint32_t ret, int64_t pos) {
     x.mem.write<uint64_t>(ret, uint64_t(pos));
@@ -475,6 +676,12 @@ int32_t bs_eof2(Ctx&, GuestPtr, int32_t) { return kEofChar; }
 uint32_t bs_setbuf(Ctx&, GuestPtr sb, GuestPtr, int32_t) { return sb; }
 void bs_imbue(Ctx&, GuestPtr, GuestPtr) {}
 void bs_badpos(Ctx& x) { writePos(x, x.cpu.r[0], -1); }
+// libc++'s fpos keeps the 128-byte conversion state first and the offset after it.
+void libcxx_badpos(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0];
+    for (uint32_t i = 0; i < 128; i += 4) wr(x, ret + i, 0);
+    x.mem.write<uint64_t>(ret + 128, uint64_t(int64_t(-1)));
+}
 int32_t bs_uflow(Ctx& x, GuestPtr sb) {
     if (vcall(x, sb, sUnderflow, {}) == kEofChar) return kEofChar;
     const uint32_t g = rd(x, sb + 8);
@@ -900,6 +1107,20 @@ void registerLibStdcxxStreams(Process& p) {
     State& s = p.service<State>();
     s.locImpl = p.defineDataBlock("hvm_locale_impl", 64);
     s.facet = p.defineDataBlock("hvm_locale_facet", 64);
+    {
+        // The shared default _Impl: no facets installed, names = { "C" }.
+        const uint32_t facets = p.allocStatic(kImplFacets * 4, 4), caches = p.allocStatic(kImplFacets * 4, 4);
+        const uint32_t names = p.allocStatic(6 * 4, 4);
+        p.mem().write<uint32_t>(names, p.allocCString("C"));
+        p.mem().write<uint32_t>(s.locImpl, 0x40000000u);
+        p.mem().write<uint32_t>(s.locImpl + 4, facets);
+        p.mem().write<uint32_t>(s.locImpl + 8, kImplFacets);
+        p.mem().write<uint32_t>(s.locImpl + 12, caches);
+        p.mem().write<uint32_t>(s.locImpl + 16, names);
+        // Facet ids the guest assigns start above the standard facets' range.
+        s.idCounter = p.defineDataBlock("__ZNSt6locale2id11_S_refcountE", 4);
+        p.mem().write<uint32_t>(s.idCounter, 32);
+    }
     // A ctype<char> whose inline widen()/narrow() find ready tables (identity).
     s.ctype = p.defineDataBlock("hvm_ctype_char", 576);
     p.mem().write<uint8_t>(s.ctype + 28, 1);
@@ -1141,6 +1362,42 @@ void registerLibStdcxxStreams(Process& p) {
     p.def<&is_ignoreN>("__ZNSi6ignoreEi");
     p.def<&is_ignore1>("__ZNSi6ignoreEv");
     for (const char* v : {"D0Ev", "D1Ev", "D2Ev"}) p.def<&nop1>(std::string("__ZNSt9basic_iosIcSt11char_traitsIcEE") + v);
+    p.def<&implCopyCtor>("__ZNSt6locale5_ImplC1ERKS0_m");
+    p.def<&implCopyCtor>("__ZNSt6locale5_ImplC2ERKS0_m");
+    for (const char* v : {"D1Ev", "D2Ev"}) p.def<&facetDtor>(std::string("__ZNSt6locale5_Impl") + v);
+    p.def<&implInstallFacet>("__ZNSt6locale5_Impl16_M_install_facetEPKNS_2idEPKNS_5facetE");
+    p.def<&localeIdM>("__ZNKSt6locale2id5_M_idEv");
+    for (const char* v : {"D1Ev", "D2Ev"}) p.def<&facetDtor>(std::string("__ZNSt6locale5facet") + v);
+    p.def<&facetDtorDelete>("__ZNSt6locale5facetD0Ev");
+    {
+        // codecvt<wchar_t, char, mbstate_t>: the base of facets apps derive (boost's
+        // utf8_codecvt_facet). vtable: [0][typeinfo] D1 D0 do_out do_unshift do_in
+        // do_encoding do_always_noconv do_length do_max_length.
+        const std::string cv = "__ZNSt7codecvtIwc11__mbstate_tE";
+        p.def<&codecvtCtor>(cv + "C1Em");
+        p.def<&codecvtCtor>(cv + "C2Em");
+        const uint32_t d1 = p.def<&facetDtor>(cv + "D1Ev");
+        p.def<&facetDtor>(cv + "D2Ev");
+        const uint32_t d0 = p.def<&facetDtorDelete>(cv + "D0Ev");
+        (void)p.def<&codecvtError>("hvm_codecvt_error");
+        const uint32_t vt = p.defineDataBlock("__ZTVSt7codecvtIwc11__mbstate_tE", 4 * 11);
+        if (auto ti = p.lookupSymbol("__ZTISt7codecvtIwc11__mbstate_tE")) p.mem().write<uint32_t>(vt + 4, *ti);
+        // The do_* members are const: __ZNK... is what a derived facet calling the base imports.
+        const std::string cvk = "__ZNKSt7codecvtIwc11__mbstate_tE";
+        const uint32_t slots[] = {d1, d0, p.defineFunction(cvk + "6do_outERS0_PKwS4_RS4_PcS6_RS6_", cvOut),
+                                  p.def<&cvUnshift>(cvk + "10do_unshiftERS0_PcS3_RS3_"),
+                                  p.defineFunction(cvk + "5do_inERS0_PKcS4_RS4_PwS6_RS6_", cvIn),
+                                  p.def<&cvOne>(cvk + "11do_encodingEv"), p.def<&cvFalse>(cvk + "16do_always_noconvEv"),
+                                  p.def<&cvLength>(cvk + "9do_lengthERS0_PKcS4_m"), p.def<&cvOne>(cvk + "13do_max_lengthEv")};
+        for (uint32_t i = 0; i < 9; ++i) p.mem().write<uint32_t>(vt + 8 + i * 4, slots[i]);
+        s.vtCodecvtW = vt + 8;
+        s.codecvtWId = p.defineDataBlock("__ZNSt7codecvtIwc11__mbstate_tE2idE", 4);
+        s.defaultCodecvtW = p.allocStatic(16, 4);
+        p.mem().write<uint32_t>(s.defaultCodecvtW, s.vtCodecvtW);
+        p.mem().write<uint32_t>(s.defaultCodecvtW + 4, 1);
+        p.def<&useFacetCodecvtW>("__ZSt9use_facetISt7codecvtIwc11__mbstate_tEERKT_RKSt6locale");
+        p.defineDataBlock("__ZNSt7codecvtIcc11__mbstate_tE2idE", 4);
+    }
     p.def<&locCtor>("__ZNSt6localeC1Ev");
     p.def<&locCtor>("__ZNSt6localeC2Ev");
     p.def<&locCopy>("__ZNSt6localeC1ERKS_");
@@ -1167,6 +1424,32 @@ void registerLibStdcxxStreams(Process& p) {
     p.defineFunction("__ZNSo9_M_insertIdEERSoT_", [](Ctx& x) { x.cpu.r[0] = putDouble(x, x.cpu.r[0], argDouble(x)); });
     p.defineFunction("__ZNSo9_M_insertIeEERSoT_", [](Ctx& x) { x.cpu.r[0] = putDouble(x, x.cpu.r[0], argDouble(x)); });
     p.def<&o_put>("__ZNSo3putEc");
+    p.def<&o_bool>("__ZNSolsEb");
+    p.def<&o_long>("__ZNSolsEl");
+    p.def<&o_ulong>("__ZNSolsEm");
+    p.def<&o_uint>("__ZNSolsEj");
+    p.def<&o_ushort>("__ZNSolsEt");
+    p.def<&o_float>("__ZNSolsEf");
+    p.def<&o_ptr>("__ZNSolsEPKv");
+    p.defineFunction("__ZNSolsEd", [](Ctx& x) { x.cpu.r[0] = putDouble(x, x.cpu.r[0], argDouble(x)); });
+    p.defineFunction("__ZNSolsEx", [](Ctx& x) { x.cpu.r[0] = putInt(x, x.cpu.r[0], arg64(x), true, 64); });
+    p.defineFunction("__ZNSolsEy", [](Ctx& x) { x.cpu.r[0] = putInt(x, x.cpu.r[0], arg64(x), false, 64); });
+    p.def<&o_manip>("__ZNSolsEPFRSoS_E");
+    p.def<&o_iosManip>("__ZNSolsEPFRSt8ios_baseS0_E");
+    p.def<&o_setw>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St5_Setw");
+    p.def<&o_setprecision>("__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St13_Setprecision");
+    supportDef<&o_setfill>(p, "__ZStlsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_St8_SetfillIS3_E", SupportStatus::Real,
+                           "Stores the fill character in the stream's basic_ios, as libstdc++ does");
+    p.def<&o_char>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_h");
+    p.def<&o_cstr>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_PKh");
+    p.def<&ios_voidp>("__ZNKSt9basic_iosIcSt11char_traitsIcEEcvPvEv");
+    p.def<&ios_not>("__ZNKSt9basic_iosIcSt11char_traitsIcEEntEv");
+    p.def<&ios_good>("__ZNKSt9basic_iosIcSt11char_traitsIcEE4goodEv");
+    p.def<&ios_eof>("__ZNKSt9basic_iosIcSt11char_traitsIcEE3eofEv");
+    p.def<&ios_fail>("__ZNKSt9basic_iosIcSt11char_traitsIcEE4failEv");
+    p.def<&ios_rdbuf>("__ZNKSt9basic_iosIcSt11char_traitsIcEE5rdbufEv");
+    p.def<&ios_fill>("__ZNSt9basic_iosIcSt11char_traitsIcEE4fillEc");
+    p.def<&ios_exceptions>("__ZNSt9basic_iosIcSt11char_traitsIcEE10exceptionsESt12_Ios_Iostate");
     p.def<&o_flush>("__ZNSo5flushEv");
     p.def<&o_endl>("__ZSt4endlIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_");
     p.def<&o_ends>("__ZSt4endsIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_");
@@ -1196,8 +1479,8 @@ void registerLibStdcxxStreams(Process& p) {
     const uint32_t lcD0 = p.def<&os_dtorDelete>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEED0Ev");
     const uint32_t lcImbue = p.def<&bs_imbue>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE5imbueERKNS_6localeE");
     const uint32_t lcSetbuf = p.def<&bs_setbuf>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6setbufEPci");
-    const uint32_t lcSeekoff = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekoffExNS_8ios_base7seekdirEj", bs_badpos);
-    const uint32_t lcSeekpos = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", bs_badpos);
+    const uint32_t lcSeekoff = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekoffExNS_8ios_base7seekdirEj", libcxx_badpos);
+    const uint32_t lcSeekpos = p.defineFunction("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE7seekposENS_4fposI11__mbstate_tEEj", libcxx_badpos);
     const uint32_t lcSync = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE4syncEv");
     const uint32_t lcShow = p.def<&bs_zero>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE9showmanycEv");
     const uint32_t lcXsgetn = p.def<&libcxx_xsgetn>("__ZNSt3__115basic_streambufIcNS_11char_traitsIcEEE6xsgetnEPci");

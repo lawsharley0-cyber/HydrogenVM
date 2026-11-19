@@ -1,0 +1,2476 @@
+{
+  "schema": 1,
+  "compilers": {
+    "clang-elf": "Debian clang version 19.1.7 (3+b1)",
+    "gcc-elf": "arm-linux-gnueabihf-gcc-14 (Debian 14.2.0-19) 14.2.0",
+    "clang-ios": "Debian clang version 19.1.7 (3+b1)"
+  },
+  "signatures": [
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "10402de90b30d0e504e090e5070083e2000053e3a0c1a0e10000000a0c30a0e10100d2e4013053e20040d1e5a00084e00100c1e40000001a0c005ee11080bd0800006ee200c06ce20ce0d1e7010080e20130d2e40040d1e500005ce103308ee0a33084e00030c1e5011081e20000001a1080bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "30402de9014041e204e090e50b30d0e5073083e2c3c1a0e1a3e14ee0a30182e0000052e10000001a0c2081e00030a0e30e0053e13080bd0803c0d0e70340d1e70c4084e002c0d3e7a4c08ce002c0c3e7013083e2000000ea0150d2e40130f4e5a53083e00030c4e5000000ea",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "30402de9044090e50be0d0e507e08ee2cee1a0e10e4044e000005ee30000000a010041e20e5082e001c0d2e40130f0e5050052e1ac3083e00030c0e50000001a0e1081e0000054e33080bd080ee0e0e101c041e2044082e00e1081e00100d2e401e0f1e50130fce5040052e10e0080e0a03083e00030cce50000001a3080bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "80402de90d70a0e10b30d0e504c090e5070083e2000053e3a091a0e10000000a0930a0e101e0d2e4013053e20000d1e5ae0080e00100c1e40000001a09005ce18080bd0800006ce2009069e209c0d1e7010080e20130d2e400e0d1e5000059e103308ce0a3308ee00030c1e5011081e20000001a8080bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "10b5c37ad0f804e0d81d4fead00c03b1634612f8010b013b0c7804eb500001f8010b00d1e64508bf10bdcef10000ccf1000c11f80ce0013012f8013b0c788445734404eb53030b7001f1010100d110bd",
+      "mask": "ffffffffffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "30b54468c57a0735ed10641b05b1481e02eb050e12f801cb10f8013f724503eb5c03037000d1294404b1ed4301f1ff3c1444294412f8010b11f801ef1cf8013fa242704403eb50038cf8003000d130bd",
+      "mask": "ffffffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffffffffffff00ffffff07fdffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "80b56f46c37ad0f804c0d81d4fead00903b14b4612f801eb013b087800eb5e0001f8010b00d1cc4508bf80bdccf10000c9f1000911f809c0013012f8013b91f800e0814563440eeb53030b7001f1010100d180bd",
+      "mask": "ffffffffffffffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_avg",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "f0b54e1e4568c37a0733dc10a5ebd30502ebd300824200d10a190023ab4200d1f0bd12f8017b16f8013f03eb5703337000e0c45cce5c26449c5c04eb56049c54013300e0",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffff00ffffffffffffffffffffffffffffffffff00f8ffffffffffffffffffffffffffffffff00f8"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "0030d1e5f0402de904e090e50100d2e40ee081e0003083e00130c1e40e0051e1f080bd280140d2e47330efe6007043e000c044e0c75f27e0cc6f2ce0c75f45e0cc6f46e007c08ce000005ce300c06cb2050056e10650a0d10430a0c10c0055e10300a0d10030d1e5003083e00400a0e10130c1e4000000ea",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f0402de90250a0e104c090e50100a0e10130d1e401e0d5e40e3083e00c30c0e6000051e1f080bd280c7082e00e00a0e17320efe601e0d5e4003042e000c04ee0c34f23e0c34f44e00c3083e0cc6f2ce0000053e3cc6f46e0003063b2060054e100c0d1e50640a0a10e20a0b1040053e10200a0a1070055e100308ce00130c1e40000001af080bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2046090e50190a0e10030d2e50000d1e5020056e3030080e00600c9e6000000ba01c082e2011081e27000efe6032050e001e0dce40240a0e10040624203605ee00650a0e100506642050054e10450a0310e00a031022096e00040d1e500206242050052e10300a0310e30a0e1040080e00100c1e4090051e10000003af080bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f0482de9047090e501c0a0e10030d2e50000d1e5020057e3030080e00700cce6000000ba01e082e2011081e27000efe6034050e00120dee40450a0e100506442037052e00760a0e100606742060055e10560a0310200a031044097e00050d1e500406442060054e10300a0310230a0e1050080e00100c1e40c0051e10000003af088bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "0b78f0b5456812f8010b0d44034401f8013ba94200d3f0bd12f8016bdbb2a3eb000e341a8eeaee7784eae47ca7ebee77acebe47c7444002cb8bf6442bc45ccbf33466746a742d8bf18460b780344304601f8013b00e0",
+      "mask": "ffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f8"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af13780d784668e8180870022e00db01eb060902f1010c0131c0b2c21a144648bf54421cf801ebbeeb0306354648bf7542ac423cbf70462546921948bf52420c78aa4238bf1846204401f8010b4945734600d3f0bd",
+      "mask": "ffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "f0b513780e784768f0180870022f00db01eb070c02f1010e0131c0b2c41a254648bf65421ef8012bd71a3e4648bf7e42b5423cbf10462e46e41948bf64420d78b44238bf1846284401f8010b6145134600d3f0bd",
+      "mask": "ffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_1byte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "f0b5154647680b7815f801ebcc19734401f8013ba14200d217447046dab215f801eb131aaeeb000c83eae374a4ebe37463448ceaec76002ba6ebec76b8bf5b42b44291f800c0acbf34467246a342a8bf1046bd420ceb000301f8013b00d1f0bd",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de204802de50b60d0e5073086e2000056e3a391a0e10000000aa3e181e0093081e001c081e20c0053e103c0a0810130a0e10040d3e50150d2e4044085e00140c3e40e0053e10000003a000000ea01c0a0e10130a0e1040090e5000081e0000053e10000002a0c8040e0009069e209c0d2e70910d3e70000d2e5012082e20ce051e00e50a0e100506e420c6050e00640a0e100406642040055e10540a0310010a0310e0096e00050d3e500006042040050e10c10a031050081e00000c3e5018058e2013083e20000001a04809de4f080bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f0412de901c0a0e10250a0e10b30d0e5073083e2c3e1a0e1a33181e00c40a0e10c0053e10000008a030051e1043090e50e40a0910040a083042082e004c081e00e2042e0031081e001005ce1f081bd280e304ce00000d2e50240dee7012082e20060d3e5003044e0008046e0c37f23e0c37f47e0083083e0c85f28e0000053e3c85f45e0003063b2050057e10750a0d10640a0d1030055e10c30a0e10400a0d10140d3e4000084e00000cce503c0a0e1000000ea0040d4e50160d5e4064084e00140cce4000000ea",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f0412de90b70d0e5073087e2000057e3a3c1a0e10000000aa34181e00c3081e001e081e20e0053e103e0a0810130a0e10050d3e50160d2e4055086e00150c3e4040053e10000003a000000ea01e0a0e10130a0e1040090e5000081e0000053e10000002a0e0040e000c06ce20ce0d2e70c10d3e70040d2e5012082e20e8051e00860a0e1006068420e7054e00750a0e100506742050056e10650a0310410a031084097e00060d3e500406442050054e10e10a031010050e2061081e00010c3e5013083e20000001af081bde8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f0432de90b50d0e5075085e2c551a0e1054081e0040051e10000002a01e041e2056082e002c0a0e10170dce40130fee50c0056e1073083e00030cee50000001a012042e0022084e0043090e5031081e0040051e1f083bd980550e0e1041041e0057082e0016082e0055084e00110f7e50180f5e50100d2e4013048e001e040e0c3cf23e0c3cf4ce0ce9f2ee00e3083e0ce9f49e0000053e300e0d4e5003063b209005ce109c0a0a10800a0a103005ce10010a0d1060052e101308ee00130c4e40000001af083bde80140a0e1000000ea",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f0410c461746c37a0733dd1001ebd3032646a34200d8994294bf2e460026436832448c19521b19448c4200d3bde8f081367817f801cb664404f8016b00e0631bae5c1078013293f800c0331aaceb000883eae37eaeebe37e434488eae877002ba7ebe877b8bf5b42be45dcbf664677469f42d8bf3046234613f8016b304420701c4600e0",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f8"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f041c77afb1d4fead30c07b101ebd30401eb0c0301f1010e734588bf9e460b461d7812f8016b354403f8015ba34200d300e08e460b4640680844834200d2a0eb0e08ccf1000c12f80ce013f80c10b1eb0e04264648bf664210780132b0eb0e073d4648bf7d42ae423cbf014635461e78381948bf4042a84238bf714688191870b8f1010803f1010300d1bde8f081",
+      "mask": "ffffffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ff00f8ffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f043c57a0735ed104c19a14200d201f1ff3e561994461cf8017b1ef8013f66453b448ef8003000d1521a224443681944a14200d9ed43091b57195618254417f8011f15f8018f12f8010ba8eb0103a0eb010e83eae37cacebe37c8eeaee797344a9ebee79002b94f800e0b8bf5b42cc45a4bfcc4640469c45d8bf0146b2420eeb010304f8013b00d1bde8f0830c4600e0",
+      "mask": "ffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffff00f8"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_paeth_multibyte_pixel",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af4df8048dc67af31d4fead30906b101ebd30e01eb090301f1010c634588bf9c460b461c7812f8015b2c4403f8014b734500d300e08c460b4640680844834200d2a0eb0c0ec9f1000912f809c013f80910b1eb0c08454648bfc8f1000510780132b0eb0c06344648bf7442a5423cbf01462c461d7816eb080048bf4042a04238bf614648191870bef1010e03f1010300d15df8048bf0bd",
+      "mask": "ffffffffffffffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ff00f8ffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "0b20d0e5040090e5072082e2a20150e11eff2f91a291a0e10930d1e7010040e20020d1e5000059e1032082e00920c1e7011081e20000001a1eff2fe1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "0b20d0e5040090e5072082e2a20150e11eff2f91a2c1a0e10c30d1e7010040e20020d1e500005ce1032082e00c20c1e7011081e20000001a1eff2fe1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "0b20d0e504c090e5072082e2c221a0e102005ce1023081e01eff2f9102c04ce0011041e20cc083e00020d3e50100f1e5002082e00120c3e403005ce10000001a1eff2fe1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "0b30d0e504c090e5073083e2a32181e0001061e2020081e0a331e0e100005ce11eff2f9104e02de50100d2e403e0d2e70e0080e0010042e5020081e000005ce10000008a04f09de4",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "30b54468c37a073301ebd30249426fead3038818844200d830bd12f8010bd55c284402f8010c00e0",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffff00f8"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "c27a40680732b0ebd20f98bf70474fead20911f8093001380a7881451a4401f8092001f1010100d17047",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "c27a40680732b0ebd20f98bf70474fead20c11f80c3001380a7884451a4401f80c2001f1010100d17047",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_sub",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "c37a4268d81dc0100b18824200d9a2eb000c01399c441a7811f8010f024403f8012b9c4500d17047",
+      "mask": "ffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "040090e5000050e31eff2f010090d1e5010050e20130d2e4093083e00130c1e40000001a1eff2fe1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "040090e5000050e31eff2f0100c0d1e5010050e20130d2e40c3083e00130c1e40000001a1eff2fe1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "043090e5011041e2033082e0030052e11eff2f010100f1e501c0d2e40c0080e00000c1e5000000ea",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "arm",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "04c090e500005ce31eff2f01011041e20cc082e00100d2e40130f1e50c0052e1003083e00030c1e50000001a1eff2fe1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-O2:thumb"
+        ],
+        "1.6.37": [
+          "clang-ios:-O2:thumb"
+        ]
+      },
+      "value": "4068002808bf704791f80090013812f8013b4b4401f8013b00d17047",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-O2:thumb"
+        ],
+        "1.6.37": [
+          "clang-elf:-O2:thumb"
+        ]
+      },
+      "value": "4068002808bf704791f800c0013812f8013b634401f8013b00d17047",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-ios:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "406800b191f80090013812f8013b4b4401f8013b00d17047",
+      "mask": "ffff07fdffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "clang-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "406800b191f800c0013812f8013b634401f8013b00d17047",
+      "mask": "ffff07fdffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "4368013910b513449a4200d110bd11f8010f12f8014b2044087000e0",
+      "mask": "ffffffffffffffffffff00ffffffffffffffffffffffffffffff00f8"
+    },
+    {
+      "library": "libpng",
+      "function": "png_read_filter_row_up",
+      "isa": "thumb",
+      "versions": [
+        "1.6.16",
+        "1.6.37"
+      ],
+      "profiles": {
+        "1.6.16": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.6.37": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "436803b1013902eb030c12f8010b11f8013f624503440b7000d17047",
+      "mask": "ffff07fdffffffffffffffffffffffffffffffffffffffff00ffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de90cd04de200b0a0e1000090e508909be50330c0e300208de5c060a0e140e1a0e106a182e006c181e008608de503808ae010604ae21c404ce20900a0e1032080e0021a94ed000a94ed035086e0033a92ed106046e2022a92ed100080e2431a21ee401a02ee001a85ed031a92ed002a94ed020a92ed011a22ee023a94ed431a00ee011a85ed011a92ed063a94ed000a92ed411a23ee042a94ed421a00ee021a85ed011a92ed042a94ed063a94ed204044e2011a22ee000a92ed010054e1431a00ee031a85ed0000002a0e0189e020204ce2080040e20830a0e104e08de5000a90ed063a92ed011a90ed000a23ee042a92ed010a02ee",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de90250a0e10030a0e12cd04de2084093e510208de5002090e5c2a0a0e14221a0e11f014ae202e1a0e114e08de500c1a0e102008ae020204ce20cc08de5006185e00e0084e0022081e00650a0e110c080e206e0a0e1026a1ced020051e1087ad2ed10c08ce20a6ad2ed10e04ee2057a1ced202042e2867a67eec77a56ee007aceed066a1ced127ad2ed106ad2ed057a1ced867a67ee877a56ee017aceed086a1ced147ad2ed166ad2ed077a1ced867a67eec77a56ee027aceed167ad2ed086a1ced146ad2ed077a1ced867a67ee877a56ee037aceed0000009a0c209de5107086e207c0a0e1242042e2022081e0026a10ed020051e10e7ad2ed100040e2",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de904d04de20070a0e1000090e508c097e50290a0e10330c0e3c0a0a0e14001a0e10ab182e00ae181e003808be010604be21c404ee200008de50c00a0e1035080e0021a94ed000a94ed032086e0033a95ed106046e2022a95ed100080e2431a21ee401a02ee001a82ed031a95ed002a94ed020a95ed011a22ee023a94ed431a00ee011a82ed011a95ed063a94ed000a95ed411a23ee042a94ed421a00ee021a82ed011a95ed042a94ed063a94ed204044e2011a22ee000a95ed010054e1431a00ee031a82ed0000002a00009de520204ee20830a0e100018ce0080040e2000a90ed063a92ed011a90ed000a23ee042a92ed010a02ee000a83ed000a90ed",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f74f2de90250a0e100a090e5084090e5ca20a0e11fb142e24a6182e003a0cae30bb1a0e1066185e00ac084e020304be20680a0e1033081e010e08ce20670a0e1026a1eed030051e1087ad3ed107047e20a6ad3ed10e08ee2057a1eed203043e2867a67eec77a56ee007ac7ed066a1eed127ad3ed106ad3ed057a1eed867a67ee877a56ee017ac7ed086a1eed147ad3ed166ad3ed077a1eed867a67eec77a56ee027ac7ed167ad3ed086a1eed146ad3ed077a1eed867a67ee877a56ee037ac7ed0000009a24304be2107086e2033081e007e0a0e1026a1ced030051e10e7ad3ed10c04ce20c6ad3ed10e08ee2037a9ced203043e2867a67ee877a46ee087a4eed",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "03682de9f74f154684685a1023f0030a02f1804b02eba306abf1070b04eb0a0c05eb86060cf110074fea8b0bb046abf12003b6460b4417ed026a9942d3ed087aaef1100ed3ed0a6a07f1100717ed057aa3f1200367ee867a56eec77aceed007a17ed066ad3ed127ad3ed106a17ed057a67ee867a56ee877aceed017a17ed086ad3ed147ad3ed166a17ed077a67ee867a56eec77aceed027a17ed086ad3ed167ad3ed146a17ed077a67ee867a56ee877aceed037a00d9abf1240306f110070b44be461ced026a9942d3ed0e7aacf1100cd3ed0c6a0ef1100e9ced037aa3f1200367ee867a46ee877a4eed087a9ced036ad3ed167ad3ed146a9ced027a67ee867a",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f164603468bb09c68049202684fea620a92100af1804007389700059785000aeb0200a5f12002039506eb8006e0190a44354600f11007b44617ed026a9142d2ed087a07f11007d2ed0a6aacf1100c17ed057aa2f1200267ee867a56eec77acced007a17ed066ad2ed127ad2ed106a17ed057a67ee867a56ee877acced017a17ed086ad2ed147ad2ed166a17ed077a67ee867a56eec77acced027a17ed086ad2ed167ad2ed146a17ed077a67ee867a56ee877acced037a00d9039a06f11007bc46243a0a4410ed026a9142d2ed0e7aa0f11000d2ed0c6a0cf1100c90ed037aa2f1200267ee867a46ee877a4ced087a90ed036ad2ed167ad2ed146a90ed",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f83b0074600689146d7f808c020f003034210801009eb820801eb820e08eb030aa8f11006aef11c050290c34660460192c41895ed021a95ed000af21894ed033a103e94ed022a103021ee431a02ee401a82ed001a94ed031a95ed002a94ed020a22ee011a95ed023a00ee431a82ed011a94ed011a95ed063a94ed000a23ee411a95ed042a00ee421a82ed021a94ed011a95ed042a95ed063a203d22ee011a94ed000a8d4200ee431a82ed031a00d20298aef1200253460ceb8000083890ed000a92ed063a90ed011a23ee000a92ed042a02ee010a83ed000a90ed000a92ed042a90ed011a22ee000a92ed063a01ee430a83ed010a10ed021a92ed023a",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d84b006689246d0f8089026f00303009072104feaa60e0aeb820801eb820c08eb030ba8f11006acf11c004c460392cdf80880e21890ed021a90ed000af51892ed033a103e92ed022a103421ee431a02ee401a85ed001a92ed031a90ed002a92ed020a22ee011a90ed023a00ee431a85ed011a92ed011a90ed063a92ed000a23ee411a90ed042a00ee421a85ed021a92ed011a90ed042a90ed063a203822ee011a92ed000a884200ee431a85ed031a00d209eb8e00acf1200208385b46cdf804e090ed000a92ed063a90ed011a23ee000a92ed042a02ee010a83ed000a90ed000a92ed042a90ed011a22ee000a92ed063a01ee430a83ed010a",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de904d04de2000050e30040a01140009015000050130000000a046090e5000056e3000054130000000a648090e5000058e31cb0961500005b130000001a8700e0e318d047e2000dbde8f080bde80400a0e10150a0e104a084e2000000ebd020c5e10a00a0e10210a0e10320a0e1000000eb0a00a0e10110a0e3000000eb0010a0e18600e0e3000051e30000001a2c1098e50a00a0e1000000eb010070e30000000a20108be20080a0e1288084e5000191e7000050e30000000a000090e500108de5000050e31c0084e50000000a0a00a0e10110a0e3000000eb180084e50a00a0e10110a0e3000000eb200084e5010070e38700e0e3",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-ios:-O2:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de908d04de2000050e30040a01140009015000050130000000a046090e5000056e3000054130000000a645090e5000055e31c809615000058130000001a8700e0e318d047e2000dbde8f080bde80400a0e104a084e201b0a0e1000000ebd020cbe10a00a0e104b08de50210a0e10320a0e1000000eb0a00a0e10110a0e3000000eb0010a0e18600e0e3000051e30000001a2c1095e50a00a0e1000000eb010070e30000000a20b088e2280084e500119be7000051e30000000a00008de5000091e51c0084e5000050e30000000a0a00a0e10110a0e3000000eb180084e50a00a0e10110a0e3000000eb200084e5010070e38700e0e3",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de9004050e200a01fe504d04de20aa08fe00000000a403094e5000053e30000000a047093e5000057e30000000a688093e504b084e21c9097e5000058e30000000a000059e30000000a0160a0e1000000eb0b00a0e1060096e8000000eb0110a0e30b00a0e1000000eb005050e20000001a2c1098e50b00a0e1000000eb010070e30000000a008189e0280084e5203098e5000053e30000000a003093e51c3084e5000053e318308405203084050000001a047b96ed0400a0e1033199e7041097e50c2096e50c7b84ed067b96ed0111a0e1243084e52c2084e50e7b84ed000000eb043097e50060a0e1000084e5000053e3000000ca000000ea006094e5",
+      "mask": "ffffffffffffffff00f07fffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ff000000ffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de904d04de2000050e30040a01140009015000050130000000a046090e5000056e3000054130000000a687090e5000057e31c909615000059130000001a8700e0e304d08de2f08fbde80400a0e10150a0e104b084e2000000ebd020c5e10b00a0e10210a0e10320a0e1000000eb0b00a0e10110a0e3000000eb0010a0e18600e0e3000051e30000001a2c1097e50b00a0e1000000eb010070e30000000a20a089e20080a0e1288084e500019ae7000050e30000000a000090e51c0084e5000050e30000000a0b00a0e10110a0e3000000eb180084e50b00a0e10110a0e3000000eb200084e5010070e38700e0e30000000a1c0094e5000000ea0000a0e3",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de904d04de2000050e30040a01140009015000050130000000a046090e5000056e3000054130000000a687090e5000057e31cb0961500005b130000001a8700e0e304d08de2f08fbde80400a0e1049084e20150a0e1000000ebd020c5e10900a0e105a0a0e10210a0e10320a0e1000000eb0900a0e10110a0e3000000eb0010a0e18600e0e3000051e30000001a2c1097e50900a0e1000000eb010070e30000000a20808be2280084e5001198e7000051e30000000a00008de5000091e51c0084e5000050e30000000a0900a0e10110a0e3000000eb180084e50900a0e10110a0e3000000eb200084e5010070e38700e0e30000000a1c0094e5000000ea",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffff000000ff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "arm",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f14f2de9004050e200801fe508808fe00000001a8700e0e304d08de2f08fbde8403094e501a0a0e1000053e303b0a0010370a0010350a0010000000a047093e568b093e5000057e30750a0011c509715049084e200005be3000053130000000a000055e3000057130000000a0400a0e1000000eb0900a0e106009ae8000000eb0110a0e30900a0e1000000eb006050e20000001a2c109be50900a0e1000000eb010070e30000000a00b185e0280084e520309be5000053e30000000a003093e51c3084e5000053e318608405206084050000000a0110a0e30900a0e1000000eb0110a0e3180084e50900a0e1000000eb010070e3200084e50000000ad021cae1",
+      "mask": "ffffffffffffffff00f07fffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f5ff800a081b0fa44002800d0036c0446002b00d05f68002f00d0d3f8688000f1040bd7f81c90b8f1000f00d0b9f1000f00d00e4600f000c05846d6e9001200f000c00121584600f000c00546002800d1d8f82c10584600f000c0431c00d009eb8008a062d8f82030002b00d01b68e361002b00d1a361236296ed047b204659f823307968f26884ed0c7b96ed067b89006362e26284ed0e7b00f000c07b6806462060002b00dc00e02668616a2046890000f000c07b6846f825000135ab4200dcd8f820202046004bd2685af8033009eb8209d9f82021d9f8201253f822301b6901b0bde8f04f18476ff0870001b0bde8f08f0121584600f000c00121",
+      "mask": "ffffffff7fff00f0ffffffffffff00ffffffffffffff00ffffffffff00ffffffffffffffffffffffffffffffffff00ffffffffff00ffffff00f800c0ffffffffffff00f800c0ffffffff00f800c0ffffffff00ffffffffffffff00f800c0ffff00ffffffffffffffffffffffffff00ffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffff00ff00f8ffffffffffffffff00f800c0ffffffffffffffffffff00ffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f81b0002800d00d46016c044601b14e6806b16ff0870004b18f6e07b1d6f81c90b9f1000f00d0204604f1040b00f000c0d5e90012584600f000c05846012100f000c000b16ff0860000e0f96a584600f000c08046013000d009f1200ac4f828805af8280000b10068e06100b15846012100f000c0a0615846012100f000c02062013000d0e06900e06ff0870001b0bde8f08f00202062a06105f10c0759f82000ed698ecf63637368c4e90b12606220469900c4e90e7500f000c071682060012900db0025606a8100204600f000c02168726841f825000135954200db5af8280000497944c0680a6809eb8000d0f82031d0f8201252f8230002692046",
+      "mask": "ffffffffffffffff00ffffffffffffff07fdffff07fdffffffff07fdffff07fdffffffffffffffff00ffffffffffffff00f800c0ffffffffffff00f800c0ffffffff00f800c007fdffffffff00f8ffffffff00f800c0ffffffff00ffffffffffffffffffffffffff07fdffffffff07fdffffffff00f800c0ffffffffffff00f800c0ffffffff00ffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffff00ffffffffffffffffff00f800c0ffffffffffffffffffffffff00ffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f81b000281ebf0246036c002b00d16ff0870001b0bde8f08f5e686ff08700002e18bf002a00d101b0bde8f08f9f6e002f1cbfd6f81cb0bbf1000f00d01046151d91460c4600f000c0d4e900122846a24600f000c02846012100f000c000b16ff0860001b0bde8f08ff96a284600f000c0411c00d00bf12008c9f8280058f82020002a00d0009049461068c9f81c0000b12846012100f000c0c9f818002846012100f000c0c9f82000013000d04946d9f81c0000e00020086288610af10c075bf82000dae906548ccf4f63776848624846c1e90e54c1e90b23b90000f000c0726801464846c9f80010012a00db0025406a8100484600f000c0d9f80020",
+      "mask": "ffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffff00f800c0ffffffffffffffff00f800c0ffffffff00f800c007fdffffffffffffffffffffffffffff00f800c0ffff00ffffffffffffffffffffffffffffff00ffffffffffffffffffffff07fdffffffff00f800c0ffffffffffffffff00f800c0ffffffffffff00ffffffffffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffffffffffff00ffffffffffffffffff00f800c0ffffffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f14f8b465ff800900446f94400b96ff0870001b0bde8f08f036c002b00d0d3f804a0baf1000f00d09e6e00f10408daf81c70002e00d0002f00d000f000c04046dbe9001200f000c00121404600f000c00546002800d1f16a404600f000c0431c00d007eb8006a062336a002b00d01b68e361002b00d00121404600f000c00121a061404600f000c02062013000d0dbe90423c4e90c23dbe90623c4e90e23dbf80c302046e362e369daf8041057f823308900636200f000c02060daf80430ab4200dc336a2046004adb6859f8022007eb8303d3f8201152f82120d3f82012126901b0bde8f04f1047a561256200e0616a2046d4f80080890000f000c048f8",
+      "mask": "ffffffffffff7fff00f0ffffffff07fdffffffffffffffffffffffffffff00ffffffffffffffffff00ffffffffffffffffffffffffff00ffffff00ff00f800c0ffffffffffff00f800c0ffffffff00f800c0ffffffff00ffffffffff00f800c0ffff00ffffffffffffffffffffff00ffffffffffffff00ffffffffff00f800c0ffffffffffff00f800c0ffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffff00ffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f8ffffffffffffffffffff00f800c0ffff"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d81b0002800d00d46016c0446002900d04e68002e00d06ff08700002c00d0d1f86480b8f1000f1cbfd6f81cb0bbf1000f00d0204604f1040a00f000c0d5e90012504600f000c05046012100f000c000b16ff0860000e0d8f82c10504600f000c08046013000d00bf12001c4f8288051f8280000b100680091e06100b15046012100f000c0a0615046012100f000c02062013000d0e06900e06ff0870001b0bde8000df0bd00202062a061d5e90531d5e90392ed69636373685bf82000c4e90e15606299002046c4e90b9200f000c071682060012900db0025606a8100204600f000c02168726841f825000135954200db009850f828000000",
+      "mask": "ffffffffffffffffffffffff00ffffffffffffffffff00ffffffffff00ffffffffffffff00ffffffffffffffffffffffffffffffffffffff00ffffffffffffff00f800c0ffffffffffff00f800c0ffffffff00f800c007fdffffffff00f8ffffffffffff00f800c0ffffffff00ffffffffffffffffffffffffff07fdffffffffffff07fdffffffff00f800c0ffffffffffff00f800c0ffffffff00ffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffff00ffffffffffffffffff00f800c0ffffffffffffffffffffffff00ffffffffffffff0000"
+    },
+    {
+      "library": "libvorbis",
+      "function": "vorbis_synthesis",
+      "isa": "thumb",
+      "versions": [
+        "1.3.5"
+      ],
+      "profiles": {
+        "1.3.5": [
+          "clang-ios:-O2:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d82b000281ebf0246036c002b00d16ff0870000e05e686ff08700002e18bf002a00d05c6e002c1cbfd6f81c80b8f1000f00d102b0bde8000df0bd1046151d92468b4600f000c0dbe900122846cdf804b000f000c02846012100f000c000b16ff0860000e0e16a284600f000c0411c00d008f1200bcaf828005bf82020002a00d0009051461068caf81c0000b12846012100f000c0caf818002846012100f000c0caf82000013000d05146daf81c0000e0002008628861019a58f82000d2e90543d2e90395d2694c63746848625046c1e90e32c1e90b95a10000f000c0726801465046caf80010012a00db0025406a8100504600f000c0daf8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffff00ffffffffff00f8ffffffffffffffffffffffff00ffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffffffff00f800c0ffffffff00f800c007fdffffffff00f8ffffffff00f800c0ffff00ffffffffffffffffffffffffffffff00ffffffffffffffffffffff07fdffffffff00f800c0ffffffffffffffff00f800c0ffffffffffff00ffffffffffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffffffffffff00ffffffffffffffffff00f800c0ffff"
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de90cd04de2000050e30040a01140009015000050130000000a04b090e500005be3000054130000000a448090e5000058e31c009b15000050130000001a8700e0e318d047e2000dbde8f080bde808008de50400a0e10250a0e10160a0e104a084e2000000ebd020c6e10a00a0e10210a0e10320a0e1000000eb0a00a0e10110a0e3000000eb0010a0e18600e0e3000051e30000001a081098e50a00a0e1000000eb010070e30000000a0010a0e108009de5281084e5202080e2010192e7000050e30000000a000090e500208de5000050e304108de51c0084e50000000a0a00a0e10110a0e3000000eb180084e50a00a0e10110a0e3",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-ios:-O2:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de910d04de2000050e30000000a403090e5000053e30000000a046093e5000056e30000000a000050e30000000a448093e5000058e30000000a1ca096e500005ae30000000a0c208de5045080e20040a0e101b0a0e1000000ebd020cbe10500a0e108b08de50210a0e10320a0e1000000eb0500a0e10110a0e3000000eb0010a0e18600e0e3000051e30000001a081098e50500a0e1000000eb010070e30000000a20b08ae2280084e500219be7000052e30000000a04008de50410a0e1000092e51c0084e5000050e30000000a00b08de501b0a0e10500a0e10110a0e3000000eb18008be50500a0e10110a0e3000000eb20008be5",
+      "mask": "ffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de9004050e200301fe514d04de203308fe004308de50000000a403094e5000053e30000000a048093e5000058e30000000a48b093e5049084e21ca098e500005be30000000a00005ae30000000a0160a0e10270a0e1000000eb0900a0e1060096e8000000eb0110a0e30900a0e1000000eb005050e20000001a08109be50900a0e1000000eb0030a0e1010070e30000000a00218ae0280084e5201092e5000051e30000000a001091e51c1084e5000051e318508405205084050000001a047b96ed000057e30c1096e50700a0010c7b84ed067b96ed2c1084e524708405007084050e7b84ed0000000a1c1094e50400a0e10c208de508308de501119ae7",
+      "mask": "ffffffffffffffff00f07fffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de9004050e200301fe514d04de203308fe00c308de50000001a8760e0e30600a0e114d08de2f08fbde80260a0e1402094e50180a0e1000052e302b0a0010270a0010290a0010000000a047092e548b092e5000057e30790a0011c90971504a084e200005be3000052130000000a000059e3000057130000000a0400a0e1000000eb0a00a0e1060098e8000000eb0110a0e30a00a0e1000000eb005050e20000001a08109be50a00a0e1000000eb010070e304008de50000000a003189e0280084e508308de5202093e5000052e30000000a002092e51c2084e5000052e318508405205084050000000a0110a0e30a00a0e1000000eb0110a0e3180084e5",
+      "mask": "ffffffffffffffff00f07fffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de904d04de2000050e30040a01140009015000050130000000a047090e5000057e3000054130000000a48a090e500005ae31cb0971500005b130000001a8700e0e304d08de2f08fbde80400a0e10250a0e10160a0e1049084e2000000ebd020c6e10900a0e10210a0e10320a0e1000000eb0900a0e10110a0e3000000eb0010a0e18600e0e3000051e30000001a08109ae50900a0e1000000eb010070e30000000a20108be20080a0e1288084e5000191e7000050e30000000a000090e500108de5000050e31c0084e50000000a0900a0e10110a0e3000000eb180084e50900a0e10110a0e3000000eb200084e5010070e38700e0e30000001a000000ea",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ff000000ff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de90cd04de2000050e340309015000053130000000a046093e5000056e3000050130000000a489093e5000059e31c809615000058130000001a8700e0e30cd08de2f08fbde802a0a0e1045080e20040a0e10170a0e1000000ebd020c7e10500a0e107b0a0e10210a0e10320a0e1000000eb0500a0e10110a0e3000000eb0010a0e18600e0e3000051e30000000a0cd08de2f08fbde8081099e50500a0e1000000eb010070e30000000a203088e2280084e5002193e7000052e30000000a08008de50470a0e1000092e51c0084e5000050e304308de50000000a0500a0e10110a0e3000000eb180087e50500a0e10110a0e3000000eb200087e5010070e3",
+      "mask": "ffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f004b85b07b440193002800d0036c0446002b00d0d3f80480b8f1000f00d0d3f848b000f10409d8f81ca0bbf1000f00d0baf1000f00d00e46174600f000c04846d6e9001200f000c00121484600f000c00546002800d1dbf80810484600f000c00346421c00d00aeb8002a062116a01b10968e16101b9a561256296ed047bf16884ed0c7b96ed067be16284ed0e7b07b938466762276005b0bde8f08fcde902020121484600f000c00121a061484600f000c02062dde90232013000d16ff0870005b0bde8f08fe1692046cde902325af821106162d8f80410890000f000c0d8f80410dde9023206460029206000dd1f46914600e02668616a20468900",
+      "mask": "ffffffff00ffffffffffffffffff00ffffffffffffff00ffffffffffffffffff00ffffffffffffffffffffffffffffffffff00ffffffffff00ffffffffff00f800c0ffffffffffff00f800c0ffffffff00f800c0ffffffff00ffffffffffffff00f800c0ffffffff00ffffffffffffffffff07fdffffffff07fdffffffffffffffffffffffffffffffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffff00f800c0ffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffffffffffffffff00ffffffffff00f8ffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f81b0002800d00f46016c0446002900d04e68002e00d06ff0870004b1d1f848a0baf1000f1cbfd6f81cb0bbf1000f00d02046154604f1040900f000c0d7e90012484600f000c04846012100f000c000b16ff0860000e0daf80810484600f000c08046013000d00bf12001c4f8288051f8280000b100680091e06100b14846012100f000c0a0614846012100f000c02062013000d16ff0870001b0bde8f08f00202062a0610c3704f12c0c8fcf8ce88f0005b1e06971685bf8200089006062204600f000c071682060012900db0025606a8100204600f000c02168726841f825000135954200db009850f828000049daf80c207944c06809680beb8000",
+      "mask": "ffffffffffffffff00ffffffffffffffffff00ffffffffff00ffffffffff07fdffffffffffffffffffffffffffffffffffff00ffffffffffffffffff00f800c0ffffffffffff00f800c0ffffffff00f800c007fdffffffff00f8ffffffffffff00f800c0ffffffff00ffffffffffffffffffffffffff07fdffffffffffff07fdffffffff00f800c0ffffffffffff00f800c0ffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffffffffffffffffffffffffffff00f800c0ffffffffffff00ffffffffffffffffff00f800c0ffffffffffffffffffffffff00ffffffffffffff00ffffffffffffffffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f83b000281ebf0346076c002f00d16ff0870003b0bde8f08f7e686ff08700002e18bf002b00d103b0bde8f08fd7f84890b9f1000f1cbfd6f81c80b8f1000f00d0184693461d1d1c460f4600f000c0d7e900122846ba4600f000c02846012100f000c000b16ff0860003b0bde8f08fd9f80810284600f000c0411c00d008f12007a06257f82020002a00d0029021461068e06100b12846012100f000c0a0612846012100f000c020622146013000d100e000200862886101970af10c07bbf1000f01f12c0cadcf8ce8ad0000d0c869726858f8200048629100204600f000c07268014620462160012a00db0025406a8100204600f000c0226801467368",
+      "mask": "ffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffff00f800c0ffffffffffffffff00f800c0ffffffff00f800c007fdffffffffffffffffffffffffffffffff00f800c0ffff00ffffffffffffffffffffffffff00ffffffffffffffffff07fdffffffff00f800c0ffffffffffff00f800c0ffffffffffff00ff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffff00f800c0ffffffffffffffffffff00ffffffffffffffffff00f800c0ffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f8a46004b85b015467b440446029300b96ff08705284605b0bde8f08f026c002a00d0d2f80490b9f1000f00d0936c071dd9f81c800193002b00d0b8f1000f00d000f000c03846dae9001200f000c00121384600f000c08346002800d1019b3846996800f000c00646431c00d008eb8003a0620393196a002900d00968e161002900d00121384600f000c00121a061384600f000c02062013000d0dae90401c4e90c01daf80c30dae90601c4e90e01e362002d00d0e3692046d9f8041058f823308900636200f000c02060d9f804305b4500dc019b20460299da68004bc958039b1b6adb68483358f8233051f8233052f826101b6905b0bde8f04f1847",
+      "mask": "ffffffffffff00ffffffffffffffffffffff07fdffffffffffffffffffffffffffffffff00ffffffffffffffffff00ffffffffffffffffffffffffff00ffffffffff00ff00f800c0ffffffffffff00f800c0ffffffff00f800c0ffffffff00ffffffffffffff00f800c0ffffffff00ffffffffffffffffffffffffff00ffffffffffffff00ffffffffff00f800c0ffffffffffff00f800c0ffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffff00ffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-ios:-O2:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d83b0002800d0056c0346002d00d06e686ff08700002e18bf002b00d0d5f84480b8f1000f1cbfd6f81ca0baf1000f00d0184602921d1d1c468b4600f000c0dbe900122846cdf804b000f000c02846012100f000c000b16ff0860000e0d8f80810284600f000c0411c00d00af1200ba0625bf8202002b1009021461068e06100b12846012100f000c0a0612846012100f000c020622146013000d16ff0870003b0bde8000df0bd002008628861019801f12c0c00f10c09c06999e82c02c86302988ce82c0200b1c86972685af8200048629100204600f000c07268014620462160012a00db0025406a8100204600f000c02268014673682046",
+      "mask": "ffffffffffffffffffffffff00ffffffffffffff00ffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffff00f800c0ffffffffffffffffffff00f800c0ffffffff00f800c007fdffffffff00f8ffffffffffff00f800c0ffff00ffffffffffffffffffffff07fdffffffffffffffff07fdffffffff00f800c0ffffffffffff00f800c0ffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffffffffffffffffffffffffffff00f800c0ffffffffffffffffffff00ffffffffffffffffff00f800c0ffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "_vorbis_synthesis1",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d83b0002800d00e46016c0446002900d0d1f804b0bbf1000f00d06ff08700002c00d0d1f84480b8f1000f1cbfdbf81c10002900d020461546029104f1040a00f000c0d6e90012504600f000c05046012100f000c000b16ff0860000e0d8f80810504600f000c0411c00d00299a06201f1200353f8202002b1cde900301068e06100b15046012100f000c0a0615046012100f000c002992062013000d16ff0870003b0bde8000df0bd00202062a061d6e903091436c4e90b094cce04f134004cc005b1e06951f82000dbf8041060622046890000f000c0dbf804102060012900db0025606a8100204600f000c02168dbf8042041f825000135",
+      "mask": "ffffffffffffffffffffffff00ffffffffffffffffff00ffffffffffffffffff00ffffffffffffff00ffffffffffffffffffffffffffffffffff00ffffffffffffffffffffff00f800c0ffffffffffff00f800c0ffffffff00f800c007fdffffffff00f8ffffffffffff00f800c0ffff00ffffffffffffffffffffffffff07fdffffffffffffffff07fdffffffff00f800c0ffffffffffff00f800c0ffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffffffffffffffffffffffffffffffff00f800c0ffffffffffffffff00ffffffffffffffffff00f800c0ffffffffffffffffffffffff",
+      "internal": true
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de946df4de20140a0e1c050a0e10730e0e30110a0e30e6083e2013083e2300611e10000000a0360c0e3942007e5061084e01c1007e5051182e0022086e0108042e20d2083e2901007e5061081e0302007e5072083e24001a0e104108de5001063e294208de5052184e08c1007e5342007e50260a0e32c4007e51611a0e110508de51cb044e208008de500000000000000000ca044e200008fe00561a0e1044080e20101a0e1200007e58101a0e10c108de5240007e54c6007e54c0017e50a30a0e14c2017e520b04be220a04ae20060b3e7022088e0d40044e108c093e511f65ee711fc51e710fc59e710f650e78110a0e18990a0e1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de90150a0e14071a0e16cd04de206a0a0e3c030a0e124208de52c308de5503aa0e1010013e30000000a0d306ae20d206ae218308de50230a0e300601fe51332a0e128308de52c309de506608fe024209de51f8143e20831a0e108308de52c309de5088185e00840a0e1073083e0033182e00c308de528309de50c909de50331a0e114308de50731a0e13c308de528309de5077185e08331a0e11c308de514309de5043083e230308de5109049e20c3089e204308de5083089e200308de5d020c6e1181094e5100094e5000000eb14209de5043089e204308de530309de500908de5033096e7022096e7081094e5200014e4000000eb1c309de5040057e1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de911de4de20140a0e1c050a0e10760e0e30130a0e30e7086e2016086e2300713e10000000a0330c0e398208de5031084e00c118de5051182e0a0108de5031081e0023083e00d2086e2fc208de5072086e24001a0e104108de5001066e290208de5052184e09c108de5108043e2f8208de50230a0e300418de51311a0e110508de51c9044e208008de50c7044e200001fe50531a0e10c108de500008fe0d4308de5045080e20101a0e108018de58101a0e104018de5000000ea0000000000000000000000000000000000000000000000000720a0e1d4a045e10300b2e7209049e2d4309de5207047e208c092e51bf051e71afc5ee71af050e78e60a0e1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de911de4de20140a0e1c050a0e10760e0e30130a0e30e7086e2016086e2300713e10000000a0330c0e398208de5031084e00c118de5051182e0a0108de5031081e0023083e00d2086e2fc208de5072086e24001a0e104108de5001066e290208de5052184e09c108de5108043e2f8208de50230a0e300418de51311a0e110508de51c9044e208008de50c7044e200001fe50531a0e10c108de500008fe0d4308de5045080e20101a0e108018de58101a0e104018de50720a0e1d4a045e10300b2e7209049e2d4309de5207047e208c092e51bf051e71afc5ee71af050e78e60a0e1811046e0036088e0d4e09de50c1086e51bfc51e78110a0e1800081e0",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de9c030a0e10180a0e194d04de24011a0e1400010e36c208de554308de50000001a0630a0e303c0a0e1013083e25023a0e1010012e30000000a0d2063e20230a0e34c208de505b04ce21332a0e17c308de50321a0e14331a0e174208de578308de5003062e25c308de554209de574a09de51f3142e200001fe504908ae20361a0e1013082e00121a0e16c109de5065088e000008fe002e088e08a70a0e1031181e00530a0e184208de570108de588108de550708de500608de520088de9106093e5101041e2182093e5203043e2201090e803005ee192bcc4e096bccce09665cbe09552c2e08440a0e18cc0a0e18b4084e0084081e582206ce00c2081e5",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f0d4687109bb04ff0060a43100a92079340fa0af3db0740f10080caf10d03caf10d02069302235ff8006093400b93079b7e440a9a03f18048a8f107084fea88030293079b05eb880844463b4402eb830303930b9bddf80c909b000593bb000f930b9b05eb8707db000893059b04330c93a9f1100909f10c03019309f108030093d6e90023a169206900f000c0059a09f10403cde900930c9bb258a168f35854f8200900f000c0089ba7421e4400d9029a6ff01f060f997b1e0d9308f1ff33541a7a1e9342a8f120084fea54145ff800307b44049304fb06f638bf0026039b46446ff00f080993a3f1100308fb04f838bf4ff0000804f1010438bf0124",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffff7fff00f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fff00f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f43108946a5b0811046061b92149300f1008006231c46013340fa03f2d50700d5c3f10d02631f1a9302230f9203fa02fa0afa03f34feaaa021d935b421e921693149a5ff8000002f18043cdf808a0073b78449f0053188a00209209eb02041d9a1b9909eb070c151dcde9007c5600904601eb8301b6466346aa46a4461c91219119961f6910399a69203bd0e900649c4582fb04b587fb04b487fb067b86fb02624fea45054fea440405eb4b058d60c4eb4202ca6050f80a601d6a50f8084070449a6a85fb06b782fb06b685fb045b4fea470784fb0242c7eb42074fea460202eb4b024f600a6000d9009f6446209b04f1ff3eddf804c05546fb1a1d98",
+      "mask": "ffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fff00f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04fc5b00d4646106ff0070707f10e03013720fa03f3db0700d020f003038010e918439102eb86012f9119441344049207f10d02269179423f92fa1d2791a3f1100824920223409503fa01f10396a5f11c0b0190a5f10c0700484fea860902917844449000f1040a88004290c8005346419000e000bf0000000007eb090057f809e053e901568268abf1200b429c203f56fb0ef155fb02fc56fb02f255fb0ef54fea4c0caceb410c08eb09015200c1f80cc002eb45028a601e5950f8102c50f8080c56fb00f54fea450c1d1955f8045c55fb00f055fb02f40beb090556fb02f240000ceb440448f80940a8f11008a0eb42004860419803444398854200d2",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffff00f8ffff00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04fc5b00d4646106ff0070707f10e03013720fa03f3db0700d020f003038010e918439102eb86012f9119441344049207f10d02269179423f92fa1d2791a3f1100824920223409503fa01f10396a5f11c0b0190a5f10c0700484fea860902917844449000f1040a88004290c8005346419007eb090057f809e053e901568268abf1200b429c203f56fb0ef155fb02fc56fb02f255fb0ef54fea4c0caceb410c08eb09015200c1f80cc002eb45028a601e5950f8102c50f8080c56fb00f54fea450c1d1955f8045c55fb00f055fb02f40beb090556fb02f240000ceb440448f80940a8f11008a0eb42004860419803444398854200d202990020ddf800b1",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "mdct_backward",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000dc6b00c4645106ff0070303f10e01013320fa01f1c90700d020f003068010a119459102eb850128913144cde9261232445942a2f1100803f10d024192da1d2492aa0029910226429406fa01f10395a4f11c063c92a4f10c0a01900000000000000000ddf8f0b078440291031d88004490c800439040930aeb0b045af80b1053e90150d4f80890203eaaf1200a50fb01fe55fb09fc50fb09f055fb01f14fea4c0caceb4e0c08eb0b0e4000cef80cc000eb4100cef8080054f8100c54f8081c449c1a5952fb01f54fea45091d1955f8045c55fb00f455fb01f106eb0b0552fb00f009eb440448f80b40a8f110084900a1eb4000cef804004398",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "tremor",
+      "function": "vorbis_synthesis",
+      "isa": "arm",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm",
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm",
+          "gcc-elf:-O2:arm",
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "0120a0e3000000ea",
+      "mask": "ffffffff000000ff",
+      "target": "_vorbis_synthesis1"
+    },
+    {
+      "library": "tremor",
+      "function": "vorbis_synthesis",
+      "isa": "thumb",
+      "versions": [
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481"
+      ],
+      "profiles": {
+        "18a673fc97d95dffff3ccdeea7d493b2a6ab4481": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb",
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb",
+          "gcc-elf:-O2:thumb",
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "012200f00090",
+      "mask": "ffff00f800d0",
+      "target": "_vorbis_synthesis1"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-Os:arm"
+        ],
+        "1.2.8": [
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de97030ffe620b8a0e1010052e30000001a0010d1e5f12f0fe3011083e0f03f0fe3030051e1021041800f28a0e30b0081e0030050e10068a0e100688280010086e1000000ea000051e30000000a100052e30000002a000052e30000000a0160d1e4012052e2063083e00bb083e00000001a711008e3071048e39b1182e0a217a0e1f12f0fe391b260e0f01f0fe3010053e102304380000883e1000000ea0100a0e3000000eab00501e3000052e10000003a50ca0ee3f1af0fe3ffcf4fe3002042e00060a0e30150a0e1064075e7106046e20c0056e10100d5e5043083e00280d5e5004083e00b3083e003e0d5e5080084e0043083e0",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:arm"
+        ],
+        "1.2.8": [
+          "clang-ios:-O2:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de97030ffe620b8a0e1010052e30000001a0010d1e5f12f0fe3011083e0f03f0fe3030051e1021041800f28a0e30b0081e0030050e10068a0e100688280010086e1000dbde8f080bde8000051e30000000a100052e30000002a000052e30000000a0160d1e4012052e2063083e00bb083e00000001a711008e3071048e39b1182e0a217a0e1f12f0fe391b260e0f01f0fe3010053e102304380000883e1000dbde8f080bde80100a0e3000dbde8f080bde8b00501e3000052e10000003a50ca0ee3f1af0fe3ffcf4fe3002042e00060a0e30150a0e1064075e7106046e20c0056e10100d5e5043083e00280d5e5004083e00b3083e0",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.2.8": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f0472de9010052e320e8a0e17090ffe60000000a000051e30000000a0200a0e10f0052e30000009aaf7501e3070052e10000009a714008e3074048e3572d81e2b06501e3f15f0fe30080a0e1560d40e2300040e210c081e210305ce510c08ce21fa05ce5093083e003908ae01ea05ce5093083e009a08ae01d905ce50a3083e00a9089e01ca05ce5093083e009a08ae01b905ce50a3083e00a9089e01aa05ce5093083e009a08ae019905ce50a3083e00a9089e018a05ce5093083e009a08ae017905ce50a3083e00a9089e016a05ce5093083e009a08ae015905ce50a3083e00a9089e014a05ce5093083e009a08ae013905ce50a3083e00a9089e012a05ce5",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.2.8": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de9010052e30160a0e124d04de22048a0e17050ffe60000001a0030d1e5055083e0f03f0fe3030055e1ff5c4582f1504582044085e0030054e1ff4c4482f1404482040885e1000000ea000051e30100a0030000000a0f0052e30270a0e1027081900000009aaf3501e3030057e10000008a000057e30630a0110720a0110000000a103083e20f0052e30000008a2732a0e1033286e0076086e0060053e10000001a0500a0e1f11f0fe3000000eb0400a0e10150a0e1f11f0fe3000000eb0140a0e1000000ea0130d6e4035085e0054084e0070056e10000001af03f0fe3030055e1ff5c45820400a0e1f1504582f11f0fe3000000eb010885e124d08de2",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ],
+        "1.2.8": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de97030ffe620b8a0e1010052e30000001a0010d1e5f12f0fe3011083e0f03f0fe3030051e1021041800f28a0e30b0081e0030050e10078a0e100788280010087e1f08fbde8000051e30000000a100052e30000002a000052e30000000a0170d1e4012052e2073083e00bb083e00000001a711008e3071048e39b1182e0a217a0e1f12f0fe391b260e0f01f0fe3010053e102304380000883e1f08fbde80100a0e3f08fbde8b0c501e30c0052e10000003a50ea0ee3f1af0fe3ffef4fe30c2042e00070a0e30160a0e1074076e7107047e20e0057e10150d6e5043083e00200d6e5054083e00b3083e00380d6e5005084e0043083e00490d6e5054083e0",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.2.8": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f047012a4fea104e1ffa80f900f000800120002900d010460f2a00d941f2af58424540f2008048f27105c8f2070501f5ae5241f2b0574ff6f1760446a0f5ad50103801f1100c1cf8103c0cf1100c1cf81fac4b440aeb03091cf81eac4b44ca441cf81d9c5344d1441cf81cac4b44ca441cf81b9c5344d1441cf81aac4b44ca441cf8199c5344d1441cf818ac4b44ca441cf8179c5344d1441cf816ac4b44ca441cf8159c5344d1441cf814ac4b44ca441cf8139c5344d1441cf812ac4b44ca441cf8119c53446245d1444b449e4400d1a5fb09c339443a4440454fead33306fb1399a5fb0ec34fead33306fb13ee00d800b949ea0e40bde8f08702b10844",
+      "mask": "ffffffffffffffffffffffffffffc0fb00d0ffffffff00ffffffffff00ffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ff07fdffffffffffffffff07fdffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.2.8": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f012a0f4689b090464fea104485b200d10b781d444ff6f0739d4284bfa5f57f45f13d2c449c4200d9a4f57f44f13c45ea044000e0002900f000800f2a00f200808844474500d14ff6f0739d4288bfa5f57f45204688bff13d4ff6f17100f000c045ea014009b0bde8f08f17f8013b1d442c4400e0a8f5ad5807f11006a8f1100807f5ae53079316f8103c103616f81f0c16f81ebc2b4416f81dac184416f81c2c8344da4403445244019201995b4416f81b2c534401980a4402920299034416f81a2c02980a4403920399034416f8192c03980a4404920499034416f8182c04980a4405920599034416f8172c16f8169c05980a440692914416f815ec",
+      "mask": "ffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffff00f8ffffc0fb00d0ffffc0fb00d0ffffffff00ffffffffffffffffffffffffffffffffffffffffffffff00f800c0ffffffffffffffffffffffffffffffffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ],
+        "1.2.8": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f1ffa80fb4fea104a012a00d109784ff6f1724ff6f0735944994288bf891a01eb0a004ff4702298424fea004788bf02eb004747ea0100bde8f08f01b1102a00d202b111f8017b013abb44da4400d148f27101c8f20701aafb0112d10b4ff6f17201fb12a04ff6f0718b4588bfabeb020b4bea0040bde8f08f0120bde8f08f41f2b05c624500d348f2710e4ff6f179c8f2070ea2eb0c0200268f198d5d10367c7866455d44b8782c445544fb7820442c4497f8048004eb0005184405eb00037d794044bc7903442844fd79034420443c7a034428447d7a03442044bc7a034428440344204497f80ea0034497f80db03d7bfc7bff7a3844034428440344",
+      "mask": "ffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffff00ff07fdffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-Os:thumb"
+        ],
+        "1.2.8": [
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d1ffa80fb4fea104a012a00d109784ff6f1724ff6f0735944994288bf891a01eb0a004ff4702298424fea004688bf02eb004646ea010000e001b1102a00d202b111f8016b013ab344da4400d148f27101c8f20701aafb0112d10b4ff6f17201fb12a04ff6f0718b4588bfabeb020b4bea004000e0012000e041f2b0594a4500d34ff6f17ea2eb090200254e194c5d103570784d455c44b3782044544496f803800344204496f804c000eb0304434470791c44634496f806c01c44184404eb0003f479604496f808c003442044747a0344604496f80ac0034420440344604496f80ea0034496f80db0347b96f80fc0f67a3044034420440344",
+      "mask": "ffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f807fdffff00ff07fdffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f8ffff00f8ffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "adler32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:thumb"
+        ],
+        "1.2.8": [
+          "clang-ios:-O2:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d1ffa80fb4fea104a012a00d109784ff6f1724ff6f0735944994288bf891a01eb0a004ff4702298424fea004688bf02eb004646ea0100bde8000df0bd01b1102a00d202b111f8016b013ab344da4400d148f27101c8f20701aafb0112d10b4ff6f17201fb12a04ff6f0718b4588bfabeb020b4bea0040bde8000df0bd0120bde8000df0bd41f2b0594a4500d34ff6f17ea2eb090200254e194c5d103570784d455c44b3782044544496f803800344204496f804c000eb0304434470791c44634496f806c01c44184404eb0003f479604496f808c003442044747a0344604496f80ac0034420440344604496f80ea0034496f80db0347b96f8",
+      "mask": "ffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffff00ff07fdffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.2.8": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "000051e30000000a00c0e0e100001fe5f0402de900008fe0000052e30000000a030011e30000001a00301fe50140a0e10250a0e103308fe0000000ea0130d1e4012042e20c3023e07330efe6033190e72cc423e0000000ea200014e5205045e20c0020e050c8e7e7207ca0e101cc8ce20c6193e770c0efe603cc8ce25004e7e7020c80e20ce193e707c193e7000193e70ce02ee01cc014e50ce02ee000e02ee006e02ee05e08e7e72e7ca0e1010c80e2006193e77e00efe6030c80e25ee4e7e702ec8ee200c193e7070193e700c02ce0180014e500c02ce00e0193e700c02ce006c02ce05c08e7e72c7ca0e1010c80e2006193e77c00efe6030c80e25cc4e7e7",
+      "mask": "ffffffff000000ffffffffff00f07fffffffffffffffffffffffffff000000ffffffffff000000ff00f07fffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.2.8": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "000051e30000000a00c0e0e1000052e30000000a00001fe500008fe0000000ea0130d1e4012052e20c3023e07330efe6033190e72cc423e00000000a030011e30000001a1f0052e3f0412de90000009a00301fe5204042e2205081e240e081e21f40c4e30500a0e104e08ee003308fe0201010e5200080e23c6010e50c1021e071c0efe6218ca0e103cc8ce25174e7e7027c87e25118e7e7088193e7011c81e20cc193e7077193e708c02ce0011193e706c02ce007c02ce00c1021e07160efe6217ca0e151c4e7e7036c86e202cc8ce25118e7e7078193e7011c81e2066193e70c7193e738c010e5086026e0011193e70c6026e030c010e5076026e0061021e0",
+      "mask": "ffffffff000000ffffffffffffffffff000000ff00f07fffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffff000000ff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:arm"
+        ],
+        "1.2.8": [
+          "clang-ios:-O2:arm"
+        ]
+      },
+      "value": "000051e30000a0031eff2f01f0402de90c708de200052de900000000000052e3000000000030e0e109908fe0030011120000000a0100a0e101c052e20140d0e4034024e07440efe6044199e7233424e0034010120000001a0010a0e10c20a0e1200052e30000002a000000ea0100d1e502c052e2024081e2030020e07000efe6000199e7233420e0030014120000000a0200d1e503c052e2034081e2030020e07000efe6000199e7233420e0030014120000001a0410a0e10c20a0e1200052e30000003a010491e803cb89e2202042e2036020e0088091e50ce091e51f0052e37600efe600319ce75644e7e7020b89e2044190e75658e7e7034024e0013b89e2",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff00000000ffffffff00000000ffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-Os:arm"
+        ],
+        "1.2.8": [
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "000051e30000a0031eff2f01f0402de90c708de200052de900000000000052e3000000000030e0e109908fe0030011120000001a200052e30000003a010491e803cb89e2202042e2036020e0088091e50ce091e51f0052e37600efe600319ce75644e7e7020b89e2044190e75658e7e7034024e0013b89e2055193e7054024e0265ca0e1055199e7054024e00a4024e07450efe605519ce75464e7e7066190e7055026e05468e7e7244ca0e1066193e7044199e7065025e0044025e0084024e07450efe605519ce75464e7e7066190e7055026e05468e7e7244ca0e1066193e7044199e7065025e0044025e00e6024e07650efe605519ce75644e7e7044190e7",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff00000000ffffffff00000000ffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:arm"
+        ],
+        "1.2.8": [
+          "clang-elf:-O2:arm"
+        ]
+      },
+      "value": "000051e30000a0031eff2f01f04b2de900c01fe5000052e30030e0e1030011120cc08fe00000000a0100a0e10150d0e4035025e07550efe605519ce7233425e0015052e2034010120000001a0010a0e10520a0e1200052e30000002a000000ea0100d1e5025081e2030020e07000efe600019ce7233420e0020052e2034015120000000a0200d1e5035081e2030020e07000efe600019ce7233420e0030052e2034015120000001a0510a0e10020a0e1200052e30000003a410291e803eb8ce2202042e2037020e00c8091e51f0052e37700efe600319ee75744e7e7020b8ce2044190e75758e7e7034024e0013b8ce2055193e7054024e0275ca0e105519ce7",
+      "mask": "ffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-Os:arm"
+        ],
+        "1.2.8": [
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "000051e30000a0031eff2f01f04b2de900c01fe5000052e30030e0e1030011120cc08fe00000001a200052e30000003a410291e803eb8ce2202042e2037020e00c8091e51f0052e37700efe600319ee75744e7e7020b8ce2044190e75758e7e7034024e0013b8ce2055193e7054024e0275ca0e105519ce7054024e0064024e07450efe605519ee75464e7e7066190e7055026e05468e7e7244ca0e1066193e704419ce7065025e0044025e0094024e07450efe605519ee75464e7e7066190e7055026e05468e7e7244ca0e1066193e704419ce7065025e0044025e0084024e07450efe605519ee75464e7e7066190e7055026e0246ca0e106619ce75448e7e7",
+      "mask": "ffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-Os:thumb"
+        ],
+        "1.2.8": [
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "002900f000802de9f043004dc3437d4402b111f0030000d0481c11f8014b013a84ea0304e4b255f8244084ea132300d010f0030400f1010000d1202ac0f0008091e8014105f54069203a80ea03072b46d1f80cc01f2af8b2c7f3072659f8204005f50060c7f3074550f8266086ea040603f5806454f8255085ea06054fea176653f8266085ea060585ea0805c5f30727eeb259f8266050f8277086ea0706c5f307474fea156554f8277053f8255086ea070685ea060585ea0e07c7f30725feb259f8266050f8255086ea0506c7f307454fea176754f8255053f8277086ea050687ea060787ea0c07c7f30725feb259f8266050f8255086ea05064fea1765c7f3",
+      "mask": "ffffc0fb00d0ffffffff00ffffffffff07fdffffffff00ffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffff00ffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.2.8": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "002900f000802de9f043c543002a00f000800048784400e011f8013b013a83ea0503dbb250f8233083ea152500f000808b0700d11f2a40f20080004ba2f1200001f1200401f1400e20f01f00a44686447b445cf8201c0cf1200c6940ceb20f0ec1f3072506f54076c1f3074105f5007501f5807153f8278053f8266053f8257053f8215086ea08065cf83c1c4e407e407540efb24fea1568c5f3072607f54077c5f3074506f5007605f5807553f8289053f8277053f8261053f8256087ea09075cf8385c6f404f407e40f7b24fea166907f54077c6f3072808f50078c6f3074653f8295006f5807653f8277053f828106f405cf8345c53f826606f404f407e40",
+      "mask": "ffffc0fb00d0ffffffffffffffffc0fb00d000ffffff00f8ffffffffffffffffffffffffffffffffffffffffc0fb00d0ffff00ffffffc0fb00d000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-Os:thumb"
+        ],
+        "1.2.8": [
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "002900f00080f0b503af2de9000500000000c34300000000f94402b111f0030000d0481c11f8014b013a84ea0304e4b259f8244084ea132300d010f0030400f1010000d1202ac0f00080d1e9000a09f5406cd1e9028e203a80ea03061f2af0b2c6f307245cf8203009f50060c6f3074550f8244084ea030409f5806353f8255084ea05044fea166559f8255084ea050484ea0a04c4f30726e5b25cf8255050f8266085ea0605c4f307464fea146453f8266059f8244085ea060584ea050484ea0804c4f30726e5b25cf8255050f8266085ea0605c4f307464fea146453f8266059f8244085ea060584ea050484ea0e06c6f30724f5b25cf8255050f8244085ea",
+      "mask": "ffffc0fb00d0ffffffffffffffff00000000ffff00000000ffff07fdffffffff00ffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffff00ffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:thumb"
+        ],
+        "1.2.8": [
+          "clang-elf:-O2:thumb"
+        ]
+      },
+      "value": "002904bf002070472de9f043004dc443002a7d4418bf11f0030040f000800b469146b9f1200fc0f0008093e802412846a9f1200981ea040705f54061d3f80cc0b9f11f0ffab2c7f3072551f8224000f50062c7f3074652f8255085ea040500f5806454f8266085ea06054fea176650f8266085ea060585ea0805c5f30727eeb251f8266052f8277086ea0706c5f307474fea156554f8277050f8255086ea070685ea060585ea0e07c7f30725feb251f8266052f8255086ea0506c7f307454fea176754f8255050f8277086ea050687ea060787ea0c07c7f30725feb251f8266052f8255086ea05064fea1765c7f3074750f8255054f8277087ea06071e6987ea",
+      "mask": "ffffffffffffffffffffffff00ffffffffffffffffffffffffffc0fb00d0ffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:thumb"
+        ],
+        "1.2.8": [
+          "clang-ios:-O2:thumb"
+        ]
+      },
+      "value": "002904bf00207047f0b503af2de9000500000000c04300000000002af94418bf11f0030300d10b46944600e00b46b2f1010c13f8014b84ea0004e4b259f8244084ea102018bf13f0030400d04b78b2f1020c83ea0003dbb259f8233083ea102001f1020318bf13f0030400d08b78b2f1030c83ea0003dbb259f8233083ea102001f1030318bf13f0030400d0cb78a2f1040c4340dbb259f8233083ea10200b1dbcf1200fc0f00080d3e9001aacf1200cd3e9028ebcf11f0f81ea000609f54060f1b2c6f3072450f8212009f50061c6f3074551f8244084ea020409f5806252f8255084ea05044fea166559f8255084ea050484ea0a04c4f30726e5b250f82550",
+      "mask": "ffffffffffffffffffffffffffffffff00000000ffff00000000ffffffffffffffffffff00ffffffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "crc32",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.2.8": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "f0b504460846002900f000800049e443794402b1830700d1004b014696467b4400e010f8013b013a6340dbb251f8233083ea142400e051f8205caef1200e51f81c6c6c40e7b24fea146c07f54077c4f30745c4f3072405f5807504f5007453f82cc053f8277053f8255053f8244087ea0c07774051f8186c7c406540efb24fea156c07f54077c5f30744c5f3072504f5807405f5007553f82cc053f8277053f8244053f8255087ea0c07774051f8146c7d406c40e7b24fea146c07f54077c4f30745c4f3072405f5807504f5007453f82cc053f8277053f8255053f8244087ea0c07774051f8106c7c406540efb24fea156c07f54077c5f30744c5f3072504f5",
+      "mask": "ffffffffffffffffc0fb00d000ffffffffff07fdffff00ff00ffffffffffffff00f8ffffffffffffffffffffffffffffffffffff00f8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de958d04de20180e0e3000050e30000000a1ce090e500005ee30c909015000059130000001a0800a0e118d047e2000dbde8f080bde8006090e5000056e30000000a240007e5270e8ee214008de56f0d8ee230008de5240017e500209ee538a09ee504b090e50b0052e310c090e5050041e228008de558008ee210008de52f0e8ee220008de570008ee2300007e554008ee21c008de56c008ee23c509ee50c20a00324008de5530e8ee218008de50000a0e300208e052c108de538008de534b08de534c007e52ce007e51e0052e30000008a205007e500000fe20280e0e3021190e701f080e07c000000200400005403000078040000",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff00f00ffeffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de95cd04de20180e0e3000050e30000000a1cb090e50040a0e100005be30c609415000056130000001a0800a0e118d047e2000dbde8f080bde800c094e500005ce30000000a270e8be238108de510008de56f0d8be22c008de538009de5042094e5050040e224008de558008be20c008de52f0e8be220008de570008be200109be5240007e554008be210e094e50b0051e31c008de56c008be238a09be50c10a0033c509be50290a0e118008de5530e8be214008de50000a0e300108b0528008de530208de538e007e52c4007e530b007e51e0051e30000008a00000fe20280e0e3206007e5011190e701f080e07c000000dc010000",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff00f00ffeffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de95cd04de20180e0e3000050e30000000a1ce090e500005ee30c509015000055130000001a0800a0e118d047e2000dbde8f080bde8009090e5000059e30000000a240007e5270e8ee214008de56f0d8ee234008de5240017e500209ee538a09ee504b090e50b0052e310c090e5050041e22c008de558008ee210008de52f0e8ee224008de570008ee22c0007e554008ee220008de56c008ee23c809ee50c20a00328008de5530e8ee21c008de50000a0e300208e0530108de5340007e538b007e530c007e528e007e51e0052e30000008a208007e500000fe20280e0e3021190e701f080e07c00000014040000480300006c040000",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff00f00ffeffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-ios:-O2:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de960d04de20180e0e3000050e30000000a1cb090e50040a0e100005be30cc0941500005c130000001a0800a0e118d047e2000dbde8f080bde8009094e5000059e30000000a270e8be23c108de510008de56f0d8be230008de53c009de500109be5050040e228008de558008be20c008de52f0e8be220008de570008be2240007e554008be2048094e510e094e50b0051e31c008de56c008be238a09be50c10a0033c509be518008de5530e8be214008de50000a0e300108b052c008de534808de538e007e52c4007e530b007e51e0051e30000008a208007e500000fe20280e0e3011190e701f080e07c000000e001000030020000",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff00f00ffeffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de9009050e234d04de218108de50000000a1c4099e5000054e30000000a0c3099e50c308de5000053e30000000a008099e5043099e5000058e320308de50000001a000053e30000001a003094e5386094e50b0053e33c5094e50c30a00320709de5003084050030a0e310308de500301fe510b099e503308fe014b08de524308de500a094e524309de51e005ae30000008a0a3083e0ba3093e103f18fe000f020e300301fe503308fe0183089e51d30a0e3003084e5000000ea00301fe503308fe0000000ea0230e0e310308de5000000ea0130e0e310308de510009de534d08de2f08fbde8082094e5000052e30c30a0030000000a0f0055e30000009a",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffff000000ff00f07fffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffff000000ff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de9009050e234d04de218108de50000000a1c4099e5000054e30000000a0c3099e50c308de5000053e30000000a008099e5043099e5000058e320308de50000001a000053e30000001a003094e5386094e50b0053e33c5094e50c30a00320709de5003084050030a0e310308de500301fe510b099e503308fe014b08de524308de500a094e524309de51e005ae30000008a0a3083e0ba3093e103f18fe000f020e30230e0e310308de5000000ea082094e5000052e30c30a0030000000a0f0055e30000009ad230e0e71f1b08e3010056e10030a01301300302000053e30000000a0020a0e30a50a0e10210a0e10200a0e1000000eb00301fe50220a0e3",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ff00f07fffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de900a050e234d04de218108de50000000a1c809ae5000058e30000000a0c309ae514308de5000053e30000000a00609ae504309ae5000056e310308de50000000a009098e500201fe5387098e50b0059e33c4098e50c90a00310509de502208fe010309ae5009088050c308de51c208de508308de51c309de51e0059e30000008a093083e0b93093e103f18fe000f020e3000055e30000000a0130d6e4015045e2137487e0084084e20d0054e30000009a1f2007e2d732e4e7012c82e2013083e2012082e25715e3e71e0100e31e0053e300005291602088e5041081e20e4044e22777a0e10120a0830020a093643088e55c1088e50000009a00301fe5",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff00f07fff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de900a050e23cd04de218108de50000000a1c809ae5000058e30000000a0c309ae514308de5000053e30000000a00609ae504309ae5000056e310308de50000000a009098e500301fe5387098e50b0059e33c4098e50c90a00310509de503308fe010b09ae5009088050cb08de51c308de51c309de51e0059e30000008a093083e0b93093e103f18fe000f020e3000055e30000000a0130d6e4015045e2137487e0084084e20d0054e30000009a1f2007e2d732e4e7012c82e2013083e2012082e25715e3e71e0100e31e0053e300005291602088e5041081e20e4044e22777a0e10120a0830020a093643088e55c1088e50000009a00301fe50290e0e3",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffff00f07fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff00f07fffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de95cd04de20050a0e10100e0e3000055e30000000a1ca095e500005ae30c809515000058130000001a5cd08de2f08fbde8009095e5000059e30000000a270e8ae21c008de56f0d8ae240008de5050041e234008de558008ae218008de52f0e8ae200209ae52c008de554008ae204b095e50b0052e310e095e570c08ae228008de56c008ae238409ae50c20a0033c609ae524008de5530e8ae220008de50000a0e300208a0538108de53c008de530b08de548e08de54c508de550c08de51e0052e30000008a00100fe20200e0e3022191e702f081e07c000000c0030000c80200000c040000180400005011000020120000e8120000a813000038020000",
+      "mask": "ffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff00f00ffeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de95cd04de200e0a0e10100e0e300005ee30000000a1ca09ee500005ae30c809e15000058130000001a5cd08de2f08fbde800909ee5000059e30000000a270e8ae21c008de56f0d8ae240008de5050041e22c008de558008ae218008de52f0e8ae230008de570008ae200209ae554008de554008ae204b09ee50b0052e328008de56c008ae238409ae50c20a0033cc09ae510509ee524008de5530e8ae234108de544108de220008de50000a0e300208a0538b08de5214081e8000000ea04209ee5000052e30000001a000000ea0040a0e300c0a0e320109ae50c70a0e10e60a0e1000051e30120a01330208115d004e0172c0081150000a0e30010a0e3",
+      "mask": "ffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de95cd04de20160e0e3000050e30000000a1c7090e50030a0e1000057e30ca0931500005a130000001a0600a0e15cd08de2f08fbde8008093e5000058e30000000a270e87e21c008de56f0d87e238008de5050041e230008de5580087e218008de52f0e87e2002097e528008de5540087e2049093e50b0052e310e093e570c087e224008de56c0087e2384097e50c20a0033cb097e52c008de5530e87e220008de50000a0e30020870534108de550308de544008de540908de548e08de54cc08de554708de51e0052e30000008a00000fe20260e0e3021190e701f080e07c000000cc030000100300001c04000028040000980f0000641000002c110000",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff00f00ffeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "arm",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de95cd04de20160e0e3000050e30000000a1ca090e50050a0e100005ae30cc0951500005c130000001a0600a0e15cd08de2f08fbde8008095e5000058e30000000a270e8ae220008de56f0d8ae240008de5050041e234008de558008ae21c008de52f0e8ae230008de570008ae200209ae554008de554008ae2049095e50b0052e310e095e50c20a0032c008de56c008ae238409ae53cb09ae528008de5530e8ae224008de50000a0e300208a053c108de548008de544908de54ce08de550508de51e0052e30000008a00000fe20260e0e3021190e701f080e07c000000c4030000080300001404000020040000380f000004100000c810000084110000",
+      "mask": "ffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff00f00ffeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f81468bb00591002800f00080c469002c00f00080c3680393002b00f00080d0e900830793b8f1000f00d1002b40f000802368d4e90e650b2b079f08bf0c23d9f810b008bf23600023cdf810b00293d4f800a0baf11e0f00f20080dfe81af023009600ba00ce00e600f9002c01ad01de0115021f0238023d027d02a302a502cf02ed023d0317041904a904b2042d0544059705a605aa05b1051f0079016ff00203029300e0a36803b90c23236000e0002f00f0008018f8012b013faa40083516440f2d00d99a0700d548f61f32964200d100221146104600f000c0adf82460022209a9a061564600f000c00123a0612360354600e000222261226a02b1",
+      "mask": "ffffffffffffffffffffffffc0fb00d0ffffffffc0fb00d0ffffffffffffc0fb00d0ffffffffffffffffffff00ffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f8ffff07fdffffffff00f8ffffc0fb00d0ffffffffffffffffffffffffffff00ffffff00ffffffffffffff00ffffffffffffff00f800c0ffffffffffffffffffffffff00f800c0ffffffffffffffff00f8ffffffffffff07fd"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f81468bb00591002800f00080c469002c00f00080c3680393002b00f00080d0e900830793b8f1000f00d1002b40f000802368d4e90e650b2b079f08bf0c23d9f810b008bf23600023cdf810b00293d4f800a0baf11e0f00f20080dfe81af023009600ba00ce00e600f9002c01b001e101180222023b0240028002a602a802d202f00240031a041c04ac04b504300547059a05a905ad05b4051f007c016ff00203029300e0a36803b90c23236000e0002f00f0008018f8012b013faa40083516440f2d00d99a0700d548f61f32964200d100221146104600f000c0adf82460022209a9a061564600f000c00123a0612360354600e000222261226a02b1",
+      "mask": "ffffffffffffffffffffffffc0fb00d0ffffffffc0fb00d0ffffffffffffc0fb00d0ffffffffffffffffffff00ffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00f8ffff07fdffffffff00f8ffffc0fb00d0ffffffffffffffffffffffffffff00ffffff00ffffffffffffff00ffffffffffffff00f800c0ffffffffffffffffffffffff00f800c0ffffffffffffffff00f8ffffffffffff07fd"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f8db00591002800f00080c7698246002f00f00080c3680493002b00f00080d0e900830393b8f1000f00f000803b68daf81020d7e90e640b2b039d934608bf0c23029208bf3b601e2b00f20080dfe813f0f503e90064007a003a0443046b046d04c7039f00a900b700bb0039027203960328009803f602f001f20188029302600266024205c600d402cc00f7002105002d00f0008018f8013b013da34008341e440d2c00d906f01f02c6f3441302f201120133c6f383211e2b98bfb2f58f7f3a6601f10401a4f10e044fea96368cbf012200227b66f96540f200805ff800306ff002097b44caf818301d233b6000e03b6a03b1c6f300221a60b30500f1",
+      "mask": "ffffffffffffffffffffc0fb00d0ffffffffffffc0fb00d0ffffffffffffc0fb00d0ffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d07fff00f0ffffffffffffffffffffffffffff00f8ffff07fdffffffffffffffffc0fb"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f8db00791002800f00080c7698246002f00f00080c3680693002b00f00080d0e900830593b8f1000f00f000803b68d7e90e640b2b059d08bf0c23daf8102008bf3b60049203921e2b00f20080dfe813f0d903e7005e0074001a0424044d044f0494039900a300b100b500310251043f03280066030003e501e7017a028402520258028904c000bf02c6009e072805002d00f0008018f8013b013da34008341e440d2c00d906f01f03c6f3441203f201130132c6f383211e2a98bfb3f58f7f3b6601f10401a4f10e044fea96368cbf012300237a66f96540f200805ff800307b4400e03b6a03b1c6f300221a60b30500f100800026022334463b60002d",
+      "mask": "ffffffffffffffffffffc0fb00d0ffffffffffffc0fb00d0ffffffffffffc0fb00d0ffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d07fff00f0ffff00f8ffff07fdffffffffffffffffc0fb00d0ffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f93b000b1d0f81ce00446bef1000f1cbfd4f80cc0bcf1000f00d16ff00109484613b0bde8f08fd4f80080b8f1000f00f000800ef5de50def800300990481f0b2b04bf0c23cef8003006900ef1580002900ef53c7007900ef1540005900ef16c00226904900ef5a660dee90ea5d4f804b003900ef170000f9000200891cde90ab0cde90d24cde910e21e2b00d86ff0020900487844dfe813f01f0064011601850189015f05a005ee052d06a600c300d700db001a01b401b70133018f018300cd06d00668002c03a300e603590088008a06b208f1070908def80800002800f000800f2d00d8bbf1000f00f0008018f8011babf1010b082d01fa05f18a44",
+      "mask": "ffffffffffff07fdffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffff00ffffffffffc0fb00d0ffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f95b000b1d0f81c800346b8f1000f1cbfd3f80cc0bcf1000f00d16ff00109484615b0bde8f08f1f680d46002f00f0008008f5de50d8f800100d90681f0b2904bf0c21c8f80010079008f15800039008f53c70089008f15400059008f16c00d3f810e0d8e90eb6119008f5a660049008f17000d3f804a0129000200c90cdf84ca0cdf838e01093cde90aa51e2900d86ff0020900487844dfe811f01f00b500d800b0002e01bb050b065d06a506ed000d0229022d023601860289026f0080014900150818089200eb084e007909dd008d019f07d80aee0abd0ad8f80800002800f00080102e80f000801399002900f000803a461c4612f8011b072e139b",
+      "mask": "ffffffffffff07fdffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffc0fb00d0ffffffffc0fb00d0ffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f95b000b1d0f81c808446b8f1000f1cbfdcf80c60002e00d16ff00109484615b0bde8f08fdcf80050002d00f0008008f5de50d8f800300d90481f0b2b04bf0c23c8f80030089008f15800049008f53c700a9008f15400dcf8102008f16c04079008f5a660d8e90ebedcf804a0059008f17000139000200991cde90ba01292cde90ec206941e2b00d86ff0020900487844dfe813f01f009400b8008e0011017206b906fc064007ce00db01f101f50119014a024d024f006301480095089808730098024c004c03be006b012308360a440a1a0ad8f80800002800f00080bef1100f80f00080baf1000f00f000802a46aaf1010312f8011bbef1070f01fa",
+      "mask": "ffffffffffff07fdffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffc0fb00d0ffffffffc0fb00d0ffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f95b000b1d0f81cc00446bcf1000f1cbfe668002e00d16ff00109484615b0bde8f08fd4f80080b8f1000f00f000800e910cf5de50dcf800100cf16c0e0a900cf170070b2904bf0c21ccf800100e982269053808900cf1580005900cf53c7009900cf15400dce90ea5d4f804b007900cf5a66006900020cde90bb00d92cde911c2cde90f4e13971e2900d86ff0020900487844dfe811f01f006501130186018a018105c10500063c06a200bf00d200d6001701b501b801310190018000db06de0665004c039d000b04560084009806b00802081708dcf80800002800f000800f2d00d8bbf1000f00f0008018f8011babf1010b082d01fa05f18a4405f1",
+      "mask": "ffffffffffff07fdffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffff00ffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-ios:-O2:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d96b000b1d0f81cb0bbf1000f1cbfd0f80cc0bcf1000f00d16ff00108404616b0bde8000df0bd0668002e00f000800c910bf16c04dbf8001012900bf5de500b900b2904bf0c21cbf80010cdf83cb01298dbe90ea511944268d0f810e00c989146cdf834e0053807900bf1580003900bf53c7008900bf1540005900bf5a66004900bf1700010900020cde909201e2900d86ff0020800000000000000007844dfe811f01f00aa00cc00a5001e019606e70631077807e100f3011102150226016e02710268006b014600eb08ee088a00be024d004403d10074017508af0abd0a940adbf80800002800f00080102d80f00080b9f1000f00f00080",
+      "mask": "ffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff0000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffc0fb00d0ffffffffc0fb00d0"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d96b000b1d0f81cc00446bcf1000f1cbfd4f80c90b9f1000f00d16ff00108404616b0bde8000df0bd2668002e00f000800cf5de50dcf800300c90481f0b2b04bf0c23ccf8003007900cf1580003900cf53c7006900cf1540005900cf16c00d4f810e009900cf5a660dce90eb8d4f804a004900cf170000a9000200b91cde90e0acde9104ecdf848c01e2b00d8cde9138600000000000000006ff002087844dfe813f01f0093013401bc01c3012c067a06bf060107ae00cf00e700eb003b01f001f3015701cb018800b707ba076a00bd03a70085045e008b006b076d096f098509dcf80800002800f00080139a149e0f2a00d8baf1000f00f0",
+      "mask": "ffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff0000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffff00ffffffffffc0fb"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.8": [
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d96b000b1d0f81cc0bcf1000f1cbfc568002d00d16ff00108404616b0bde8000df0bdd0f800900246b9f1000f00f00080dcf800300cf5de5014920cf16c040d900b2b04bf0c23ccf800300c911498dce90e6b0694d0f810e0d0f804a0481f08900cf1580004900cf53c700a900cf1540007900cf5a66005900cf1700013900020cde90ea0cde910ec1e2b00d86ff002080000000000000000139c7844dfe813f01f0084012601a901ae01c305100655069706a800c700e000e4002c01cd01d0014701b401840049074c0769007b03a30031045d008700fc06e008e208f908dcf80800002800f00080bbf10f0f00d8baf1000f00f0008019f8",
+      "mask": "ffffffffffffffffffff07fdffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff0000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffff00ffffffffffc0fb00d0ffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d97b000b1d0f81ce0bef1000f1cbfd0f80cb0bbf1000f00d16ff00108404617b0bde8000df0bdd0f800c00246bcf1000f00f000800d910ef5de50def800100ef16c0412920ef170060c900b2904bf0c21cef80010cde913e41298dee90ea50996426803690d9891460e93053808900ef1580004900ef53c7007900ef1540006900ef5a66005900020cde90a201e2900d86ff0020800000000000000007844dfe811f01f00b400d700af002b01f50546069106d906ea000702230227023301830286026e0080014a0047084a08930011095200a509dc008901cc07330b410b180bdef80800002800f00080102d119380f00080b9f1000f00f0",
+      "mask": "ffffffffffffffffffff07fdffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffff0000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0fb00d0ffffffffc0fb00d0ffffffffc0fb"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ],
+        "1.2.8": [
+          "clang-ios:-O2:arm",
+          "clang-ios:-Os:arm"
+        ]
+      },
+      "value": "f0402de90c708de2000d2de94cd04de2dc80c0e1016049e01ca090e5014100e301b048e200e0e0e306308be009608be0046046e058409ae530308de5240090e81e34e0e154409ae5303007e5280007e51e34e0e134c09ae5243007e5013042e2052083e030409ae50350a0e128309ae5050042e22c209ae528208de5012083e0092042e0200007e5082042e018308de50c2082e02c408de5012082e214208de5012084e004c08de5092042e0082042e00c2082e0012082e210208de5032084e00c208de5011082e03c409ae5091041e0080041e04c809ae50c0080e038109ae5010080e208008de550009ae51c0007e56f0d8ae220008de501004ce224008de5",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:arm"
+        ],
+        "1.2.8": [
+          "gcc-elf:-O2:arm"
+        ]
+      },
+      "value": "f04f2de90090a0e11c4090e5d020c0e134d04de200e0e0e350b094e501a042e2053043e203308ae000308de5103090e50c0090e5011043e0013c43e2010040e2013043e2033080e004308de5543094e5012080e04c1094e518208de51e33e0e108308de5283094e524308de52c3094e520308de5303094e514308de5343094e51c308de53c2094e5383094e558c094e510c08de50c908de50e0052e30000008a01c0dae5085082e20260dae502a08ae21cc2a0e1102082e216c58ce00c3083e008c09de50cc003e00c6181e00c51d1e701c0d6e5000055e3b260d6e10c2042e0333ca0e10000001a000000ea400015e30000001a0c6181e00c51d1e7000055e3",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ff000000ffffffffff000000ffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:arm"
+        ],
+        "1.2.8": [
+          "gcc-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de900e0e0e3002090e534d04de2043090e5012042e210c090e5053043e21c6090e5033082e004308de50c3090e501104ce030b096e5013043e2384096e5011083e01c108de5011c4ce23cc096e5011041e2011083e008108de5281096e514108de52c1096e520108de5341096e524108de54c1096e50c108de5501096e510108de5581096e518108de5541096e51e11e0e128108de50e005ce30000008a0110d2e508e08ce20250d2e5022082e2111ca0e110c08ce2151e81e0014084e028109de5011004e00ce09de501518ee00111dee7000051e301e0d5e5b250d5e10ec04ce0344ea0e10000001a0150c3e5013083e2000000ea100011e30000000a",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000ffffffffffffffffff000000ffffffffff000000ff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "arm",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ],
+        "1.2.8": [
+          "clang-elf:-O2:arm",
+          "clang-elf:-Os:arm"
+        ]
+      },
+      "value": "f04f2de94cd04de200e0a0e1017100e31c609ee500c0e0e30ca09ee510509ee501804ae2584096e5012045e0010290e8022088e030208de5052088e0072042e044208de51c24e0e1544096e5017040e234208de5090087e0343096e51c24e0e1050040e240208de5282096e548008de52c0096e524008de5010082e0050040e0304096e50a0040e018208de5030080e028408de5010080e214008de5010084e038608de5050040e004308de50a0040e0030080e0010080e210008de5020084e00c008de5010080e0381096e5050040e03c5096e50a0040e04ca096e5030080e0010080e208008de5500096e53c008de56f0d86e21c008de5010043e220008de5",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-O2:thumb"
+        ],
+        "1.2.8": [
+          "gcc-elf:-O2:thumb"
+        ]
+      },
+      "value": "2de9f04f4ff0ff3ec469d0e900238db081466ff4807702f1ff3a053b53440093636da0460269c0680efa03f3511adb430293a36a013809933a44e36a411808938218236b0593636b069101920793d4e9131bcdf80c90d4e90e32a56d04950e2a00d89af8024002f108069af801500af1020ab440954010322c442344029c1c4001eb840511f824706c786d88121be34007b900e025447c0600f1008001eb850611f8257074787588121be340002f00d00efa07f417f0100f23ea040400d02c4617f00f0700d0974200d99af801400af1010a9440083223444ff0ff34d21bbc4023ea0404fb402c440e2a00d9049d4ff0ff3c0cfa05f623ea06060beb86051bf8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fd00f8ffffffffc0fb00d0ffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffff00ffffffffffffff00ffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ],
+        "1.2.8": [
+          "clang-elf:-O2:thumb",
+          "clang-elf:-Os:thumb"
+        ]
+      },
+      "value": "2de9f04f92b0d0e903748446d0e90025661a7b1edcf81c909819a2f101081e190c90a6f2011008eb05021090501fd9f858204ff0ff361190d9f84ca006fa02f2d043d9f854200e9006fa02f2d9e90c56d04309950f90d9e90a02059008924218121b2844d21b029032440096013204926a180144091b121bc91bd21b31443244481c0190d9f850000132d9e90ee10d9009f5de500690701e4ff0ff36039207900e2900d818f8022f01f1080418f8017ca2408f4041f01001774407eb020e0f980eea00020aeb82077c78b7f802b01af82270091b2efa04fe07b1fa0600d4780600f1008006fa07f02eea000058440aeb80021af820705578b2f802b0491b2efa",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffff00ffffffc0fb00d0ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "gcc-elf:-Os:thumb"
+        ],
+        "1.2.8": [
+          "gcc-elf:-Os:thumb"
+        ]
+      },
+      "value": "84462de9f04fc0698db06ff48076dcf800204ff0ff35dcf80430013adcf81040053bd3180293dcf80c30611a3444013b5918089119190391816a0691c16a0991d0e90cb10a91c16c0491016d0591816d0791416dd0e90e6405fa01f1c9430b910e2c00d8917804f108050232a94012f8015ca540103429440e440b993140049d05eb810715f821107d787f88641bee4001b95f70013302998a4200d203998b4200d300e0cd0640f100803d4611f00f0100d08c4200d255780132a54008342e444ff0ff35641a8d4026ea0505ce403d440e2c00d8917804f108070232b94012f8017ca740103439440e4407994ff0ff3808fa01f126ea0101059f07eb810e17f8",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffffffffffffffff00ffffffffff00ff00f8ffffc0fb00d0ffffffffffff00ffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "library": "zlib",
+      "function": "inflate_fast",
+      "isa": "thumb",
+      "versions": [
+        "1.2.7",
+        "1.2.8"
+      ],
+      "profiles": {
+        "1.2.7": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ],
+        "1.2.8": [
+          "clang-ios:-O2:thumb",
+          "clang-ios:-Os:thumb"
+        ]
+      },
+      "value": "f0b503af2de9000d93b08246d0e90005dae90326741aa0f1010909eb0500a2f1010805381290daf81c0008eb040308eb06040c93a4f201134ff0ff34856d1093d0f84ce004fa05f50f90eb43456d0e9304fa05f5d0e90c4ceb4309941193d0e90a35059308955d18ad1b2344ad1acdf800c0654402930135049565181944891bad1b891aad1a6144654401310191016d4ff0ff340d910135d0e90eb100f5de500690acf10100d446ca46ddf84090039507900e2900d81af8022f01f108051af8016caa408e4041f010015e4406eb020b11980bea00020eeb82061ef8222075887678891b2bfa06fb02b1d60600d4500600f1008004fa02f02bea000028440eeb",
+      "mask": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07fdffff00ffffffc0fb00d0ffffffffffffffffffffffff"
+    }
+  ]
+}

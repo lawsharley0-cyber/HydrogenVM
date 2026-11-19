@@ -12,7 +12,7 @@ usage:
         [--timeout 30] [--skip-build]
         [--home DIR]
 
-    # Omit --case to execute the complete TL-A through TL-Y suite.
+    # Omit --case to execute the complete TL-A through TL-AM plus TL-AO, TL-AP and TL-AR suite.
     python3 tools/hvm_testlab.py validate REPORT.json
 
 Exit status:
@@ -33,6 +33,7 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 import re
 import shutil
 import subprocess
@@ -46,7 +47,7 @@ TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
 OBJC_CASE_IDS = ("TL-S", "TL-T", "TL-U", "TL-V", "TL-W")
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M", "TL-N", "TL-O", "TL-P", "TL-Q", "TL-R", *OBJC_CASE_IDS, "TL-X", "TL-Y"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M", "TL-N", "TL-O", "TL-P", "TL-Q", "TL-R", *OBJC_CASE_IDS, "TL-X", "TL-Y", "TL-Z", "TL-AA", "TL-AB", "TL-AC", "TL-AD", "TL-AE", "TL-AF", "TL-AG", "TL-AH", "TL-AI", "TL-AJ", "TL-AK", "TL-AL", "TL-AM", "TL-AN", "TL-AO", "TL-AP", "TL-AQ", "TL-AR"]
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.
@@ -115,6 +116,28 @@ def build_testlab(build_dir: str, skip_build: bool) -> tuple[str, str]:
     return str(ipa_path), digest
 
 
+def ipad_testlab_variant(ipa_path: str) -> str:
+    """Clone our generated fixture with iPad metadata; never modify the input IPA."""
+    source = Path(ipa_path)
+    destination = source.with_name(source.stem + "-iPad.ipa")
+    found = False
+    with zipfile.ZipFile(source) as src, zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as dst:
+        for entry in src.infolist():
+            data = src.read(entry.filename)
+            if entry.filename == "Payload/TestLab.app/Info.plist":
+                info = plistlib.loads(data)
+                info["UIDeviceFamily"] = [2]
+                info["UIInterfaceOrientation"] = "UIInterfaceOrientationPortrait"
+                info["UIInterfaceOrientation~ipad"] = "UIInterfaceOrientationLandscapeLeft"
+                info["UISupportedInterfaceOrientations~ipad"] = ["UIInterfaceOrientationLandscapeLeft"]
+                data = plistlib.dumps(info)
+                found = True
+            dst.writestr(entry, data)
+    if not found:
+        raise ValueError("Generated TestLab fixture has no bundle Info.plist")
+    return str(destination)
+
+
 def verify_ipa_contents(ipa_path: str) -> list[str]:
     """Return a list of error strings (empty → ok)."""
     errors = []
@@ -175,7 +198,7 @@ def run_case(
                    "--run-for", str(timeout),
                    "--", "--run", case_id]
 
-    if case_id == "TL-L":
+    if case_id in ("TL-L", "TL-AQ"):
         # Termination is initiated by the host after launch, not by guest exit().
         run_for = cmd.index("--run-for") + 1
         cmd[run_for] = "1"
@@ -372,6 +395,16 @@ def run_all_cases(
     os.makedirs(home, exist_ok=True)
 
     for case_id in cases:
+        if case_id == "TL-AO":
+            variant = ipad_testlab_variant(ipa_path)
+            profile_home = str(Path(home) / "tablet-profile")
+            os.makedirs(profile_home, exist_ok=True)
+            print(f"[testlab] running {case_id} (iPad-only fixture) …", flush=True)
+            cr = run_case(hvm, variant, case_id, profile_home, timeout)
+            cr.setdefault("diagnostics", {})["fixtureSha256"] = sha256_file(variant)
+            _print_result(cr)
+            results.append(cr)
+            continue
         if case_id == "TL-E":
             result = _run_case_e(hvm, ipa_path, home, TIMEOUT_E_TOTAL)
             results.append(result)

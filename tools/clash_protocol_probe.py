@@ -3,8 +3,9 @@
 
 The default captures message metadata only. --login-ok exercises the pinned
 native LoginOk decoder with a local diagnostic identity. --home-client also
-sends a pinned, persisted initial home/avatar fixture. --npc-fixture sends
-an initial sector fixture. Turn authority and progression saves are absent.
+sends a pinned, persisted initial home/avatar fixture. --npc-fixture optionally
+initializes the first NPC battle. Turn authority and progression saves are not
+implemented; a successful startup probe does not establish a playable game.
 """
 import argparse
 import json
@@ -108,22 +109,20 @@ def serve(args):
     args.out.mkdir(parents=True, exist_ok=True)
     profile = load_profile(args.state) if args.login_ok else None
     home = None
-    template = None
+    sector_template = None
     if getattr(args, 'home_client', None):
         from clash_home_state import load_state, encode_home
         home_state = load_state(args.home_client, args.game_state, profile['account'])
         home = encode_home(home_state, profile['account'])
-    if getattr(args, 'npc_fixture', False):
-        sys.path.insert(0, str(Path(__file__).resolve().parent / 'clash'))
-        from clash_sector_state import load_template, encode_sector
-        from clash_turns import decode_turn
-        template = load_template(args.home_client)
+        if getattr(args,'npc_fixture',False):
+            from clash.clash_sector_state import load_template
+            sector_template=load_template(args.home_client)
     events = []
     def event(kind, **details):
         item = {'event': kind, **details}
         events.append(item)
         print(json.dumps(item), flush=True)
-    deadline = time.monotonic() + args.seconds
+    deadline = time.monotonic() + args.seconds if args.seconds else float('inf')
     with socket.socket() as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind(('127.0.0.1', args.port))
@@ -174,21 +173,23 @@ def serve(args):
                                     npc = reader.reference()
                                     if reader.offset != len(payload) or npc // 1000000 != 18:
                                         raise ValueError('Invalid start-mission request')
-                                    if npc == 18000000 and template is not None:
-                                        sector = encode_sector(template, home_state, profile['account'])
-                                        compressed = zlib.compress(sector)
-                                        reply = b'\x01' + struct.pack('<I', len(sector)) + compressed
-                                        send(21903, 1, reply)
-                                        event('npc_requested', npc=npc, supported=True)
-                                        event('npc_fixture_sent', size=len(sector), seed=template['seed'])
-                                    else:
-                                        event('npc_requested', npc=npc, supported=False)
-                                elif message == 14102 and template is not None:
+                                    supported=sector_template is not None and npc==18000000
+                                    event('npc_requested', npc=npc, supported=supported)
+                                    if supported:
+                                        from clash.clash_sector_state import encode_sector
+                                        sector=encode_sector(sector_template,home_state,profile['account'],npc)
+                                        send(21903,1,b'\x01'+struct.pack('<I',len(sector))+zlib.compress(sector))
+                                        event('npc_fixture_sent',npc=npc,uncompressedSize=len(sector),seed=sector_template['seed'])
+                                elif message==14102 and sector_template is not None:
+                                    from clash.clash_turns import decode_turn
+                                    # This is observation, not command authority. An unknown
+                                    # schema must not tear down a valid encrypted session.
                                     try:
-                                        decode_turn(payload, profile['account'])
-                                        event('client_turn')
+                                        turn=decode_turn(payload,profile['account'])
                                     except ValueError as error:
-                                        event('unsupported_turn', reason=str(error))
+                                        event('unsupported_client_turn',size=len(payload),reason=str(error))
+                                    else:
+                                        event('client_turn',**turn)
                     except (ValueError, OSError) as error:
                         event('connection_error', reason=str(error))
                     event('disconnected', incompleteBytes=len(frames.pending))
@@ -196,7 +197,7 @@ def serve(args):
             pass
         finally:
             (args.out / 'protocol-events.json').write_text(json.dumps({
-                'scope': 'Diagnostic login, optional initial home fixture, and optional initial sector fixture. Turn authority and progression saves are absent.',
+                'scope': 'Diagnostic login/home and optional initial NPC sector. No turn authority, battle rewards or progression saves.',
                 'events': events,
             }, indent=2) + '\n')
 
@@ -205,12 +206,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', required=True, type=Path)
     parser.add_argument('--port', type=int, default=9339)
-    parser.add_argument('--seconds', type=float, default=60)
+    parser.add_argument('--seconds', type=float, default=60,help='Stop after this duration; 0 serves until interrupted')
     parser.add_argument('--login-ok', action='store_true')
     parser.add_argument('--state', type=Path, help='Local diagnostic identity JSON; required with --login-ok')
     parser.add_argument('--home-client', type=Path, help='Pinned unchanged IPA: send its initial home/avatar fixture')
     parser.add_argument('--game-state', type=Path, help='Persistent initial home/avatar JSON; required with --home-client')
-    parser.add_argument('--npc-fixture', action='store_true')
+    parser.add_argument('--npc-fixture',action='store_true',help='Experimental first-NPC initialization from original client data; no progression saves')
     args = parser.parse_args()
     if args.login_ok and args.state is None:
         parser.error('--login-ok requires --state')
@@ -220,9 +221,11 @@ def main():
         parser.error('--home-client requires --login-ok, --state and --game-state')
     if args.game_state and not args.home_client:
         parser.error('--game-state requires --home-client')
+    if args.npc_fixture and not args.home_client:
+        parser.error('--npc-fixture requires --home-client')
     if args.game_state and args.state and args.game_state.resolve() == args.state.resolve():
         parser.error('Identity and game state must use separate paths')
-    if not 0 <= args.port <= 65535 or not 0 < args.seconds <= 3600:
+    if not 0 <= args.port <= 65535 or not 0 <= args.seconds <= 3600:
         parser.error('Invalid port or duration')
     serve(args)
 

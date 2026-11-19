@@ -1,4 +1,5 @@
 // HydrogenVM — UIResponder, UIView, UIWindow, UIScreen, UIViewController.
+#include <cctype>
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 
@@ -28,11 +29,19 @@ bool r_isFirst(Ctx& x, id self, SEL) { return ui(x).firstResponder == self; }
 bool r_become(Ctx& x, id self, SEL) {
     if (!sendBool(x, self, "canBecomeFirstResponder")) return false;
     auto& u = ui(x);
-    if (u.firstResponder && u.firstResponder != self) rt(x).send(x.cpu, u.firstResponder, "resignFirstResponder");
+    if (u.firstResponder == self) return true;
+    if (u.firstResponder && !sendBool(x, u.firstResponder, "resignFirstResponder")) return false;
     u.firstResponder = self;
+    customKeyboardFocus(x, self, true);
     return true;
 }
-bool r_resign(Ctx& x, id self, SEL) { if (ui(x).firstResponder == self) ui(x).firstResponder = 0; return true; }
+bool r_resign(Ctx& x, id self, SEL) {
+    if (ui(x).firstResponder == self) {
+        ui(x).firstResponder = 0;
+        customKeyboardFocus(x, self, false);
+    }
+    return true;
+}
 void forwardTouches(Ctx& x, id self, SEL s, id touches, id event) {
     const id next = id(rt(x).send(x.cpu, self, "nextResponder"));
     if (next) rt(x).send(x.cpu, next, s, {touches, event});
@@ -89,7 +98,7 @@ void v_dealloc(Ctx& x, id self, SEL) {
         auto& u = ui(x);
         u.windows.erase(std::remove(u.windows.begin(), u.windows.end(), self), u.windows.end());
         if (u.keyWindow == self) u.keyWindow = 0;
-        if (u.firstResponder == self) u.firstResponder = 0;
+        if (u.firstResponder == self) { u.firstResponder = 0; customKeyboardFocus(x, self, false); }
         for (auto& t : u.activeTouches) if (t.view == self) t.view = 0;
     }
     setNeedsComposite(x);
@@ -241,20 +250,26 @@ void notifyMoveToWindow(Ctx& x, id view, id newWindow, bool will) {
     for (id s : std::vector<id>(V(x, view).subviews)) notifyMoveToWindow(x, s, newWindow, will);
 }
 void vcAppearance(Ctx& x, id view, bool appearing) {
-    const id vc = V(x, view).viewController;
-    if (vc) {
-        VCData& c = VC(x, vc);
-        if (appearing && !c.appeared) {
-            c.appeared = true;
-            rt(x).send(x.cpu, vc, "viewWillAppear:", {0});
-            rt(x).send(x.cpu, vc, "viewDidAppear:", {0});
-        } else if (!appearing && c.appeared) {
-            c.appeared = false;
-            rt(x).send(x.cpu, vc, "viewWillDisappear:", {0});
-            rt(x).send(x.cpu, vc, "viewDidDisappear:", {0});
+    std::vector<id> controllers;
+    std::function<void(id)> collect = [&](id v) {
+        const id vc = V(x, v).viewController;
+        if (vc && VC(x, vc).appeared != appearing) {
+            VC(x, vc).appeared = appearing;
+            controllers.push_back(vc);
         }
+        for (id child : std::vector<id>(V(x, v).subviews)) collect(child);
+    };
+    collect(view);
+    for (id vc : controllers) {
+        if (VC(x, vc).appeared == appearing) rt(x).send(x.cpu, vc, appearing ? "viewWillAppear:" : "viewWillDisappear:", {0});
     }
-    for (id s : std::vector<id>(V(x, view).subviews)) vcAppearance(x, s, appearing);
+    // Initial layout is synchronous with showing the hierarchy. In particular,
+    // a GL view allocates its drawable and notifies its director during layout;
+    // code after makeKeyAndVisible must not see an uninitialized scene.
+    if (appearing) layoutIfNeeded(x, view);
+    for (id vc : controllers) {
+        if (VC(x, vc).appeared == appearing) rt(x).send(x.cpu, vc, appearing ? "viewDidAppear:" : "viewDidDisappear:", {0});
+    }
 }
 
 void insertSubview(Ctx& x, id self, id view, long index) {
@@ -339,7 +354,10 @@ void v_removeFromSuperview(Ctx& x, id self, SEL) {
     if (oldWindow) notifyMoveToWindow(x, self, 0, false);
     // first responder inside the removed subtree resigns
     auto& u = ui(x);
-    for (id fr = u.firstResponder; fr && isView(x, fr); fr = V(x, fr).superview) if (fr == self) { u.firstResponder = 0; break; }
+    for (id fr = u.firstResponder; fr && isView(x, fr); fr = V(x, fr).superview) if (fr == self) {
+        const id responder = u.firstResponder; u.firstResponder = 0;
+        customKeyboardFocus(x, responder, false); break;
+    }
     autoreleased(x, self);
 }
 void v_hookObj(Ctx&, id, SEL, id) {}
@@ -503,6 +521,33 @@ void vc_begin(Ctx& x, id, SEL, id animID, uint32_t ctx) {
     b.context = ctx;
     AS(x).stack.push_back(b);
 }
+// The `finished` argument of a +setAnimationDidStopSelector: callback. UIKit documents it as an
+// NSNumber (animationDidStop:finished:(NSNumber *)finished context:), and code that sends it
+// -boolValue crashes on a raw 1 (Minecraft: Story Mode's ActivityIndicator). Other apps declare
+// it BOOL and test the register's low byte, which an NSNumber pointer can leave 0 (Canabalt's
+// Scores overlay stayed up). The method's own type encoding says which it declared.
+uint32_t finishedArg(Ctx& x, id delegate, SEL sel) {
+    std::string types = rt(x).methodTypes(rt(x).classOf(delegate), sel);
+    std::string args;   // return, self, _cmd, then the arguments, without the offsets
+    for (size_t i = 0; i < types.size(); ++i) {
+        const char c = types[i];
+        if (std::isdigit(static_cast<unsigned char>(c)) || c == 'r' || c == 'n' || c == 'N' || c == 'o' || c == 'O' || c == 'R' || c == 'V') continue;
+        args += c;
+        if (c == '^') { if (i + 1 < types.size()) args += types[++i]; }   // ^v: one argument
+        else if (c == '@' && i + 1 < types.size() && types[i + 1] == '?') ++i;   // block
+    }
+    // args: [ret][@][:][animationID][finished][context]; pointer types take two characters.
+    size_t pos = 0, index = 0;
+    char finishedType = 0;
+    while (pos < args.size()) {
+        const char c = args[pos];
+        if (index == 4) { finishedType = c; break; }
+        pos += c == '^' ? 2 : 1;
+        ++index;
+    }
+    if (finishedType == 'c' || finishedType == 'B' || finishedType == 'C' || finishedType == 'i' || finishedType == 'I') return 1;
+    return Foundation::makeBool(x, true);
+}
 void vc_commit(Ctx& x, id, SEL) {
     auto& st = AS(x).stack;
     if (st.empty()) return;
@@ -516,7 +561,7 @@ void vc_commit(Ctx& x, id, SEL) {
         Process* p = &x.proc;
         Foundation::mainRunLoop(x.proc).addTimer(b.duration + b.delay, 0, false, [p, b](CPU::Cpu& c) {
             Ctx cx{*p, c, p->mem()};
-            rt(cx).send(c, b.delegate, b.didStop, {b.animID, Foundation::makeBool(cx, true), b.context});
+            rt(cx).send(c, b.delegate, b.didStop, {b.animID, finishedArg(cx, b.delegate, b.didStop), b.context});
             rt(cx).release(c, b.delegate);
             if (b.animID) rt(cx).release(c, b.animID);
         });
@@ -552,14 +597,14 @@ void setVisible(Ctx& x, id self, bool vis) {
     auto& u = ui(x);
     if (vis) {
         if (std::find(u.windows.begin(), u.windows.end(), self) == u.windows.end()) u.windows.push_back(self);
-        rt(x).retain(x.cpu, self);   // visible windows are kept alive by the app
+        // UIApplication tracks windows without owning them. The application
+        // must retain its windows; releasing a visible overlay dismisses it.
         layerData(x, viewLayer(x, self)).hidden = false;
         vcAppearance(x, self, true);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeVisibleNotification", self);
     } else {
         vcAppearance(x, self, false);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeHiddenNotification", self);
-        rt(x).release(x.cpu, self);
     }
     setNeedsComposite(x);
 }
@@ -600,9 +645,11 @@ G::Rect applicationFrame(Ctx& x) {
     auto& u = ui(x);
     G::Rect base;
     if (u.statusBarHidden) base = {0, 0, u.screenW, u.screenH};
+    // UIKit values: LandscapeRight (3) has the home button on the right, so the UI's top
+    // (and the status bar) is the device's right edge; LandscapeLeft (4) is the mirror.
     else switch (u.statusBarOrientation) {
-        case 3: base = {20, 0, u.screenW - 20, u.screenH}; break;
-        case 4: base = {0, 0, u.screenW - 20, u.screenH}; break;
+        case 3: base = {0, 0, u.screenW - 20, u.screenH}; break;
+        case 4: base = {20, 0, u.screenW - 20, u.screenH}; break;
         case 2: base = {0, 0, u.screenW, u.screenH - 20}; break;
         default: base = {0, 20, u.screenW, u.screenH - 20}; break;
     }
@@ -620,11 +667,15 @@ void layoutRootView(Ctx& x, id window, id vc) {
     const int o = u.statusBarOrientation;
     const G::Size old{l.bounds.w, l.bounds.h};
     if (o == 3 || o == 4) {
-        l.transform = from2D(G::Affine::rotate(o == 4 ? kPi / 2 : -kPi / 2));
+        // LandscapeRight (3): the view's top turns to the device's right edge (+90 degrees).
+        // Interface orientation is a discrete quarter-turn. Computing cos(pi/2)
+        // in float leaves a residual skew, turning pixel-aligned backgrounds
+        // into general paths and adding antialiasing drift at screen edges.
+        l.transform = from2D(o == 3 ? G::Affine{0, 1, -1, 0, 0, 0} : G::Affine{0, -1, 1, 0, 0, 0});
         l.bounds = {0, 0, af.h, af.w};
         l.position = {af.x + af.w / 2, af.y + af.h / 2};
     } else if (o == 2) {
-        l.transform = from2D(G::Affine::rotate(kPi));
+        l.transform = from2D(G::Affine{-1, 0, 0, -1, 0, 0});
         l.bounds = {0, 0, af.w, af.h};
         l.position = {af.x + af.w / 2, af.y + af.h / 2};
     } else {
@@ -634,6 +685,9 @@ void layoutRootView(Ctx& x, id window, id vc) {
     }
     boundsSizeChanged(x, view, old, {l.bounds.w, l.bounds.h});
     (void)window;
+    // Laid out for this orientation: rotateLegacyControllers must not turn it a second time
+    // if the controller later stops being a window's root.
+    VC(x, vc).legacyOrientation = o;
     setNeedsComposite(x);
 }
 const char* orientationName(int o) {
@@ -680,7 +734,19 @@ void w_setRoot(Ctx& x, id self, SEL, id vc) {
     const int want = u.initialOrientation;
     int chosen = u.statusBarOrientation;
     if (controllerSupports(x, vc, want)) chosen = want;
-    else for (int o : {1, 3, 4, 2}) if (controllerSupports(x, vc, o)) { chosen = o; break; }
+    else for (int o : {1, 3, 4, 2}) {
+        if (!controllerSupports(x, vc, o)) continue;
+        if (u.plistLandscapeOnly && o <= 2) {
+            // A controller that accepts portrait only, in an app that lists landscape only: iOS
+            // keeps the app in landscape. Choosing portrait here turned the whole game and left
+            // it there (a controller shown for Minecraft PE's keyboard).
+            x.proc.logf(LogLevel::Info, "Orientation: stays %s (root view controller %s accepts portrait only, but the app's Info.plist allows landscape only)",
+                        orientationName(u.statusBarOrientation), rt(x).objectClassName(vc).c_str());
+            continue;
+        }
+        chosen = o;
+        break;
+    }
     changeOrientation(x, chosen, vc, "setRootViewController:");
     VC(x, vc).modalStyle = 0;
     const id view = id(rt(x).send(x.cpu, vc, "view"));
@@ -749,16 +815,25 @@ id vc_initWithCoder(Ctx& x, id self, SEL, id coder) {
     d.wantsFullScreen = (uint32_t(r.send(x.cpu, coder, "decodeBoolForKey:", {makeString(x, "UIWantsFullScreenLayout")})) & 0xFF) != 0;
     const id view = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIView")}));
     if (view) r.send(x.cpu, self, "setView:", {view});
+    // Storyboard scenes archive their outgoing segues here; performSegueWithIdentifier: uses them.
+    const id templates = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIStoryboardSegueTemplates")}));
+    if (templates) d.segueTemplates = r.retain(x.cpu, templates);
+    // Objects of the scene that the controller's separate view nib references (UpstreamPlaceholder-N).
+    const id externals = id(r.send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, "UIExternalObjectsTableForViewLoading")}));
+    if (externals) d.externalObjects = r.retain(x.cpu, externals);
     return self;
 }
+void detachSegueTemplates(Ctx& x, id self, id templates);
 void vc_dealloc(Ctx& x, id self, SEL) {
     if (VCData* d = rt(x).hostIf<VCData>(self)) {
+        detachSegueTemplates(x, self, d->segueTemplates);
         if (d->view && rt(x).hostIf<ViewData>(d->view)) V(x, d->view).viewController = 0;
         auto children = std::move(d->children);
         d->children.clear();
         for (id c : children) rt(x).release(x.cpu, c);
-        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard}) if (o) rt(x).release(x.cpu, o);
-        d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = d->storyboard = 0;
+        for (id o : {d->view, d->nibName, d->nibBundle, d->title, d->presented, d->navigationItem, d->tabBarItem, d->storyboard, d->segueTemplates, d->externalObjects}) if (o) rt(x).release(x.cpu, o);
+        d->view = d->nibName = d->nibBundle = d->title = d->presented = d->navigationItem = d->tabBarItem = d->storyboard = d->segueTemplates = 0;
+        d->externalObjects = 0;
     }
     rt(x).disposeInstance(x.cpu, self);
 }
@@ -774,8 +849,18 @@ std::string nibForClass(Ctx& x, id self) {
 void vc_loadView(Ctx& x, id self, SEL) {
     VCData& d = VC(x, self);
     std::string nib = d.nibName ? utf8(x, d.nibName) : nibForClass(x, self);
+    // A storyboard controller's view is its own nib inside the .storyboardc (ROBLOX's login).
+    if (!nib.empty() && d.storyboard) {
+        const std::string dir = storyboardNibDir(x, d.storyboard);
+        if (!dir.empty() && nibExists(x, dir + nib)) nib = dir + nib;
+    }
     if (!nib.empty()) {
-        loadNib(x, nib, d.nibBundle, self, 0);
+        // The table can hold the controller itself; it is only needed for this load, so
+        // drop it now rather than keep a retain cycle.
+        const id externals = d.externalObjects;
+        d.externalObjects = 0;
+        loadNib(x, nib, d.nibBundle, self, externals);
+        if (externals) rt(x).release(x.cpu, externals);
         if (VC(x, self).view) return;
         x.proc.logf(LogLevel::Warning, "-[%s loadView] loaded the \"%s\" nib but the view outlet was not set", rt(x).objectClassName(self).c_str(), nib.c_str());
     }
@@ -785,13 +870,61 @@ void vc_loadView(Ctx& x, id self, SEL) {
     rt(x).send(x.cpu, self, "setView:", {view});
     rt(x).release(x.cpu, view);
 }
+// Segues marked "perform on view load" (embed segues for container views) run once the
+// view exists, before viewDidLoad, as UIKit does.
+void performViewLoadSegues(Ctx& x, id self) {
+    const id templates = VC(x, self).segueTemplates;
+    if (!templates) return;
+    for (id t : Foundation::arrayItems(x, templates))
+        if (rt(x).respondsTo(t, rt(x).sel("performOnViewLoad")) && (rt(x).send(x.cpu, t, "performOnViewLoad") & 0xff))
+            rt(x).send(x.cpu, t, "_performWithSender:", {self});
+}
 id vc_view(Ctx& x, id self, SEL) {
     if (!VC(x, self).view) {
         rt(x).send(x.cpu, self, "loadView");
-        if (VC(x, self).view) rt(x).send(x.cpu, self, "viewDidLoad");
+        if (VC(x, self).view) {
+            performViewLoadSegues(x, self);
+            rt(x).send(x.cpu, self, "viewDidLoad");
+        }
     }
     return VC(x, self).view;
 }
+id vc_segueTemplates(Ctx& x, id self, SEL) { return VC(x, self).segueTemplates; }
+// Templates point back at their controller without retaining it; clear that pointer when
+// the controller lets go of them, so a template that outlives it never sends to a freed object.
+void detachSegueTemplates(Ctx& x, id self, id templates) {
+    if (!templates) return;
+    for (id t : Foundation::arrayItems(x, templates))
+        if (rt(x).respondsTo(t, rt(x).sel("viewController")) && id(rt(x).send(x.cpu, t, "viewController")) == self)
+            rt(x).send(x.cpu, t, "setViewController:", {0});
+}
+void vc_setSegueTemplates(Ctx& x, id self, SEL, id templates) {
+    VCData& d = VC(x, self);
+    if (templates) rt(x).retain(x.cpu, templates);
+    const id old = d.segueTemplates;
+    d.segueTemplates = templates;
+    if (old && old != templates) detachSegueTemplates(x, self, old);
+    if (old) rt(x).release(x.cpu, old);
+}
+void vc_performSegue(Ctx& x, id self, SEL, id ident, id sender) {
+    const id templates = VC(x, self).segueTemplates;
+    for (id t : templates ? Foundation::arrayItems(x, templates) : std::vector<id>{}) {
+        const id tid = id(rt(x).send(x.cpu, t, "identifier"));
+        if (!tid || !ident || !(rt(x).send(x.cpu, tid, "isEqualToString:", {ident}) & 0xff)) continue;
+        rt(x).send(x.cpu, t, "_performWithSender:", {sender});
+        return;
+    }
+    // As UIKit: an NSInvalidArgumentException the guest can catch.
+    const std::string reason = "Receiver (<" + rt(x).objectClassName(self) + ">) has no segue with identifier '" +
+                               (ident ? utf8(x, ident) : std::string("(null)")) + "'";
+    const Class excCls = rt(x).getClass("NSException");
+    const id exc = excCls ? id(rt(x).send(x.cpu, excCls, "exceptionWithName:reason:userInfo:",
+                                          {Foundation::constString(x.proc, "NSInvalidArgumentException"), makeString(x, reason), 0})) : 0;
+    if (!exc) throw ObjC::ObjCError("Terminating app due to uncaught exception 'NSInvalidArgumentException', reason: '" + reason + "'");
+    Foundation::raiseObjCException(x, exc);
+}
+bool vc_shouldPerformSegue(Ctx&, id, SEL, id, id) { return true; }
+void vc_prepareForSegue(Ctx&, id, SEL, id, id) {}
 void vc_setView(Ctx& x, id self, SEL, id view) {
     VCData& d = VC(x, self);
     if (d.view == view) return;
@@ -861,6 +994,7 @@ void vc_present(Ctx& x, id self, SEL, id vc, bool, uint32_t completion) {
     if (d.presented) { x.proc.log(LogLevel::Warning, "presentViewController: already presenting"); return; }
     d.presented = rt(x).retain(x.cpu, vc);
     VC(x, vc).presenting = self;
+    if (!presentPhotoPicker(x, vc) && !presentDocumentPicker(x, vc)) {
     // Show it full screen in the presenter's window.
     id window = 0;
     if (d.view) window = viewWindow(x, d.view);
@@ -869,6 +1003,7 @@ void vc_present(Ctx& x, id self, SEL, id vc, bool, uint32_t completion) {
     if (window && view) {
         layoutRootView(x, window, vc);
         insertSubview(x, window, view, -1);
+    }
     }
     if (completion) {
         const uint32_t b = ObjC::blockCopy(x, completion);
@@ -884,6 +1019,8 @@ void vc_dismiss(Ctx& x, id self, SEL, bool, uint32_t completion) {
     VCData& d = VC(x, presenter);
     const id vc = d.presented;
     if (vc) {
+        dismissPhotoPicker(x, vc);
+        dismissDocumentPicker(x, vc);
         d.presented = 0;
         VC(x, vc).presenting = 0;
         if (const id view = VC(x, vc).view) rt(x).send(x.cpu, view, "removeFromSuperview");
@@ -921,6 +1058,8 @@ id vc_navigationItem(Ctx& x, id self, SEL) {
 bool vc_editing(Ctx&, id, SEL) { return false; }
 void vc_setEditing(Ctx&, id, SEL, bool, bool) {}
 int32_t vc_zero(Ctx&, id, SEL) { return 0; }
+int32_t vc_fade(Ctx&, id, SEL) { return 1; }   // UIStatusBarAnimationFade
+id vc_nil(Ctx&, id, SEL) { return 0; }
 void vc_setInt(Ctx& x, id self, SEL, int32_t v) { VC(x, self).modalStyle = v; }
 void vc_contentSize(Ctx& x, GuestPtr ret, id self, SEL) { CG::writeStruct(x, ret, CGSize{320, 460}); }
 
@@ -955,6 +1094,67 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
     relayout(win, vc);
     for (id w : std::vector<id>(u.windows))
         if (w != win) if (const id other = V(x, w).rootViewController) relayout(w, other);
+}
+
+// Before iOS 6 a window had no rootViewController: UIKit rotated the controller whose view
+// was the window's first subview, sending it willRotateToInterfaceOrientation:duration:,
+// willAnimateRotationToInterfaceOrientation:duration: and didRotateFromInterfaceOrientation:.
+// Unity 3.x (Bad Piggies) adds its controller's view this way and takes its orientation
+// from those callbacks; without them it drew landscape scenes unrotated in portrait.
+void rotateLegacyControllers(Ctx& x, const char* cause) {
+    auto& u = ui(x);
+    // An app built for iPhone OS 2 turns its own picture: its view stays portrait and it draws
+    // rotated (PvZ reads the status bar orientation and rotates in OpenGL). UIKit only began
+    // turning a launch-landscape controller's view for apps built for 3.0 and later; doing it
+    // for PvZ turned its title a second time, upside down and half off the screen.
+    if (u.builtForIOS2) return;
+    const int o = u.statusBarOrientation;
+    for (id win : std::vector<id>(u.windows)) {
+        ViewData& wd = V(x, win);
+        if (wd.rootViewController || wd.subviews.empty()) continue;
+        const id view = wd.subviews.front();
+        const id vc = viewControllerOfView(x, view);
+        if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o || !controllerSupports(x, vc, o)) continue;
+        // A view the app has already turned itself (a transform, or landscape-shaped bounds for
+        // a landscape orientation) is left as it is. Turning it again showed the whole game
+        // sideways, and nothing turned it back (a view that became the window's first subview
+        // while Minecraft PE's keyboard was up).
+        {
+            const LayerData& l = layerData(x, viewLayer(x, view));
+            const bool landscape = o == 3 || o == 4;
+            const bool turned = std::fabs(l.transform.m11 - 1.0f) > 1e-4f || std::fabs(l.transform.m12) > 1e-4f ||
+                                (landscape && l.bounds.w > l.bounds.h + 0.5f);
+            if (turned) {
+                x.proc.logf(LogLevel::Info, "Orientation: %s keeps its own layout for %s (%s)", rt(x).objectClassName(vc).c_str(), orientationName(o), cause);
+                VC(x, vc).legacyOrientation = o;
+                continue;
+            }
+        }
+        const int from = VC(x, vc).legacyOrientation;
+        x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, window-subview controller %s)", orientationName(from),
+                    orientationName(o), cause, rt(x).objectClassName(vc).c_str());
+        auto& r = rt(x);
+        const uint32_t noTime[2] = {0, 0};   // duration 0.0 (a double, after the int in r2: r3 and the stack)
+        r.send(x.cpu, vc, "willRotateToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        layoutRootView(x, win, vc);
+        // iOS 2 had a two-step rotation, and a controller that implements it and not the
+        // one-step method gets those callbacks instead. PvZ runs its own turn between the two
+        // halves; without them it stayed half-turned and drew its title upside down.
+        const SEL oneStep = r.sel("willAnimateRotationToInterfaceOrientation:duration:");
+        const SEL firstHalf = r.sel("willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:");
+        const bool ownOneStep = r.lookup(r.classOf(vc), oneStep) != r.lookup(u.viewController, oneStep);
+        if (!ownOneStep && r.respondsTo(vc, firstHalf)) {
+            r.send(x.cpu, vc, "willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+            if (r.respondsTo(vc, r.sel("didAnimateFirstHalfOfRotationToInterfaceOrientation:")))
+                r.send(x.cpu, vc, "didAnimateFirstHalfOfRotationToInterfaceOrientation:", {uint32_t(o)});
+            if (r.respondsTo(vc, r.sel("willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:")))
+                r.send(x.cpu, vc, "willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:", {uint32_t(from), noTime[0], noTime[1]});
+        } else {
+            r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        }
+        VC(x, vc).legacyOrientation = o;
+        r.send(x.cpu, vc, "didRotateFromInterfaceOrientation:", {uint32_t(from)});
+    }
 }
 
 // ================================================================ exports ===
@@ -1066,7 +1266,7 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder resp = r.defineClass("UIResponder", "NSObject");
     u.responder = resp.cls();
     resp.m<&r_nextResponder>("nextResponder").m<&r_isFirst>("isFirstResponder", "c@:").m<&r_false>("canBecomeFirstResponder", "c@:")
-        .m<&r_become>("becomeFirstResponder", "c@:").m<&r_true>("canResignFirstResponder", "c@:").m<&r_resign>("resignFirstResponder", "c@:")
+        .m<&r_become>("becomeFirstResponder", "c@:").m<&r_true>("canResignFirstResponder", "c@:")
         .method("touchesBegan:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
         .method("touchesMoved:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
         .method("touchesEnded:withEvent:", [](Ctx& x) { forwardTouches(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[2], x.cpu.r[3]); }, "v@:@@")
@@ -1076,6 +1276,8 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
         .method("motionCancelled:withEvent:", [](Ctx& x) { forwardMotion(x, x.cpu.r[0], x.cpu.r[1], int32_t(x.cpu.r[2]), x.cpu.r[3]); }, "v@:i@")
         .m<&r_remoteControl>("remoteControlReceivedWithEvent:", "v@:@").m<&r_nil>("inputView").m<&r_nil>("inputAccessoryView")
         .m<&r_nil>("undoManager");
+    supportMethod(p, resp, "UIResponder", "resignFirstResponder", [](Ctx& x) { callWrapped<&r_resign>(x); },
+                  SupportStatus::Real, "Clears first-responder ownership and publishes custom keyboard hide events; subclasses can refuse", "c@:");
 
     {
         ObjC::ClassBuilder ax = r.builder(r.getClass("NSObject"));
@@ -1211,7 +1413,30 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
       .m<&vc_zero>("modalPresentationStyle", "i@:").m<&vc_setInt>("setModalPresentationStyle:", "v@:i")
       .m<&vc_zero>("preferredStatusBarStyle", "i@:").m<&vc_editing>("prefersStatusBarHidden", "c@:")
       .m<&vc_hook>("setNeedsStatusBarAppearanceUpdate", "v@:").m<&vc_contentSize>("contentSizeForViewInPopover", S + "@:")
-      .m<&vc_hookObj>("setHidesBottomBarWhenPushed:", "v@:c");
+      .m<&vc_hookObj>("setHidesBottomBarWhenPushed:", "v@:c")
+      .m<&vc_segueTemplates>("storyboardSegueTemplates").m<&vc_setSegueTemplates>("_setStoryboardSegueTemplates:", "v@:@")
+      .m<&vc_performSegue>("performSegueWithIdentifier:sender:", "v@:@@");
+    // UIViewController's own base implementations: subclasses override them, and engines
+    // look them up to copy their type encodings (Unity asserted when they were missing).
+    const auto base = [&](const char* sel, auto fn, const char* types, const char* what) {
+        supportMethod(p, vc, "UIViewController", sel, fn, SupportStatus::Real, what, types);
+    };
+    const auto noop = [](Ctx& x) { callWrapped<&vc_hook>(x); };
+    base("shouldPerformSegueWithIdentifier:sender:", [](Ctx& x) { callWrapped<&vc_shouldPerformSegue>(x); }, "c@:@@", "UIKit's base returns YES");
+    base("prepareForSegue:sender:", [](Ctx& x) { callWrapped<&vc_prepareForSegue>(x); }, "v@:@@", "UIKit's base does nothing");
+    base("willRotateToInterfaceOrientation:duration:", noop, "v@:id", "UIKit's base does nothing");
+    base("didRotateFromInterfaceOrientation:", noop, "v@:i", "UIKit's base does nothing");
+    base("willAnimateRotationToInterfaceOrientation:duration:", noop, "v@:id", "UIKit's base does nothing");
+    base("viewWillTransitionToSize:withTransitionCoordinator:", noop, "v@:{CGSize=ff}@",
+         "UIKit's base forwards to child controllers; this one has none to forward to");
+    base("preferredStatusBarUpdateAnimation", [](Ctx& x) { callWrapped<&vc_fade>(x); }, "i@:", "UIKit's default, UIStatusBarAnimationFade");
+    base("prefersHomeIndicatorAutoHidden", [](Ctx& x) { callWrapped<&vc_editing>(x); }, "c@:", "UIKit's default, NO");
+    base("preferredScreenEdgesDeferringSystemGestures", [](Ctx& x) { callWrapped<&vc_zero>(x); }, "I@:", "UIKit's default, UIRectEdgeNone");
+    for (const char* sel : {"childViewControllerForStatusBarHidden", "childViewControllerForStatusBarStyle",
+                            "childViewControllerForHomeIndicatorAutoHidden", "childViewControllerForScreenEdgesDeferringSystemGestures"})
+        base(sel, [](Ctx& x) { callWrapped<&vc_nil>(x); }, "@@:", "UIKit's default, nil");
+    base("setNeedsUpdateOfHomeIndicatorAutoHidden", noop, "v@:", "There is no home indicator to update");
+    base("setNeedsUpdateOfScreenEdgesDeferringSystemGestures", noop, "v@:", "There are no system edge gestures to update");
 }
 
 } // namespace Hydrogen::Runtime::UIKit

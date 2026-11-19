@@ -1,12 +1,20 @@
 #include "Process.hpp"
+#include <unordered_set>
 #include "MemoryDiagnostics.hpp"
 #include "Support.hpp"
+#include "compat/Profiles.hpp"
 #include "libc/Unwind.hpp"
 #include "runtime/objc/ObjC.hpp"
 #include "runtime/gl/HostGL.hpp"
+#include <cerrno>
+#include <cstring>
+#include <cctype>
+#include <cstdlib>
 #include <sstream>
 #include "audio/Audio.hpp"
+#include "offline/ClashOffline.hpp"
 #include "loader/ElfLoader.hpp"
+#include "runtime/android/Android.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cxxabi.h>
@@ -34,6 +42,16 @@ namespace {
 thread_local GuestThread* t_thread = nullptr;
 thread_local uint64_t t_processIdentity = 0;
 std::atomic<uint64_t> nextProcessIdentity{1};
+// Live Process identities. Never destroyed: a host thread still running during
+// static destruction (exit()) may ask whether a Process is live.
+struct LiveIdentities {
+    std::mutex mu;
+    std::unordered_set<uint64_t> ids;
+};
+LiveIdentities& liveIdentities() {
+    static auto* live = new LiveIdentities;
+    return *live;
+}
 
 constexpr uint32_t kHeapBase = 0x10000000u, kHeapLimit = 0x80000000u;
 constexpr uint32_t kStaticBase = 0x0E000000u, kStaticLimit = 0x10000000u;
@@ -90,23 +108,33 @@ bool looksLikeData(const std::string& s) {
 // Host threads for guest threads get a generous stack: nested host↔guest
 // calls (ObjC dispatch from host code, callbacks) recurse on it.
 std::atomic<int> gInjectedSpawnFailures{0};   // test seam: Process::failNextHostThreadSpawns
+std::atomic<int> gInjectedAttrInitFailures{0};   // test seam: Process::failNextHostThreadAttrInits
 
 pthread_t spawnHostThread(std::function<void()> fn) {
     if (gInjectedSpawnFailures.load() > 0 && gInjectedSpawnFailures.fetch_sub(1) > 0)
         throw std::runtime_error("couldn't create host thread (injected failure)");
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 8u << 20);
     auto* heapFn = new std::function<void()>(std::move(fn));
     pthread_t th;
-    const int r = pthread_create(&th, &attr, [](void* p) -> void* {
-        std::unique_ptr<std::function<void()>> f(static_cast<std::function<void()>*>(p));
-        (*f)();
-        return nullptr;
-    }, heapFn);
-    pthread_attr_destroy(&attr);
-    if (r != 0) { delete heapFn; throw std::runtime_error("couldn't create host thread"); }
-    return th;
+    int r = 0;
+    // On the phone the guest arena and the game's own memory leave little contiguous
+    // address space: when an 8 MB stack cannot be mapped, a smaller one still runs
+    // ordinary guest threads (Terraria's camera thread on the phone).
+    for (const size_t stack : {size_t(8) << 20, size_t(2) << 20, size_t(1) << 20, size_t(512) << 10}) {
+        pthread_attr_t attr;
+        r = gInjectedAttrInitFailures.load() > 0 && gInjectedAttrInitFailures.fetch_sub(1) > 0 ? ENOMEM : pthread_attr_init(&attr);
+        if (r != 0) break;   // attr is unusable: report the error, never destroy it
+        pthread_attr_setstacksize(&attr, stack);
+        r = pthread_create(&th, &attr, [](void* p) -> void* {
+            std::unique_ptr<std::function<void()>> f(static_cast<std::function<void()>*>(p));
+            (*f)();
+            return nullptr;
+        }, heapFn);
+        pthread_attr_destroy(&attr);
+        if (r == 0) return th;
+        if (r != EAGAIN && r != ENOMEM) break;
+    }
+    delete heapFn;
+    throw std::runtime_error(std::string("couldn't create host thread (") + std::strerror(r) + ")");
 }
 
 } // namespace
@@ -122,7 +150,15 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
         if (const char* gld = std::getenv("HVM_GUEST_LIB_DIR"); gld && *gld)
             cfg_.guestLibDir = gld;
     }
-    mem_ = std::make_unique<Memory::GuestArena>();
+    if (!cfg_.replayPath.empty()) session_.startReplay(cfg_.replayPath);
+    else if (!cfg_.recordPath.empty()) {
+        std::string app = cfg_.bundlePath;
+        if (const auto slash = app.find_last_of('/'); slash != std::string::npos) app = app.substr(slash + 1);
+        session_.startRecording(cfg_.recordPath, app, cfg_.detailedRecording, cfg_.inputRecordingPath);
+    }
+    if (cfg_.gles1Emulate) ::setenv("HVM_GL1_EMULATE", "1", 1);
+    mem_ = std::make_unique<Memory::GuestArena>(cfg_.hostPageSize);
+    if (cfg_.memoryBudgetBytes) mem_->setCommitBudget(cfg_.memoryBudgetBytes);
     engine_ = std::make_unique<CPU::Engine>(*mem_);
     heap_ = std::make_unique<Heap>(*mem_, kHeapBase, kHeapLimit);
     mem_->map(kStaticBase, 1u << 20, Memory::kProtRW);
@@ -151,12 +187,36 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     const std::string bundleName = fs::path(cfg_.bundlePath).filename().string();
     guestBundlePath_ = guestHomePath_ + "/" + (bundleName.empty() ? "App.app" : bundleName);
 
+    // Phone mode: the iPhone's file system ignores case, so two bundle files whose names differ
+    // only by case are one file there (the second copy wins at import). Say so up front.
+    if (cfg_.phoneMode && !cfg_.bundlePath.empty()) {
+        std::map<std::string, std::string> seen;
+        size_t collisions = 0;
+        for (auto it = fs::recursive_directory_iterator(cfg_.bundlePath, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            std::string rel = fs::relative(it->path(), cfg_.bundlePath, ec).string(), key = rel;
+            for (char& c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
+            auto [pos, fresh] = seen.emplace(key, rel);
+            if (!fresh && pos->second != rel && ++collisions <= 20)
+                logf(LogLevel::Warning, "phone mode: \"%s\" and \"%s\" are the same file on the iPhone (names differ only by case)", pos->second.c_str(), rel.c_str());
+        }
+        if (collisions > 20) logf(LogLevel::Warning, "phone mode: %zu case collisions in the bundle in all", collisions);
+    }
     mainThreadOwner_ = std::make_unique<GuestThread>(*this);
     mainThread_ = mainThreadOwner_.get();
     mainThread_->id = nextThreadId_++;
     t_thread = mainThread_;
     t_processIdentity = identity_;
 
+    // An imported Android app (loader/Apk.hpp) says so in its generated Info.plist.
+    if (cfg_.androidLib.empty() && !cfg_.bundlePath.empty()) {
+        try {
+            const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
+            if (fs::exists(plist))
+                if (auto info = Plist::parseFile(plist.string()))
+                    if (const std::string lib = info->getString("HydrogenVMAndroidLibrary"); !lib.empty())
+                        cfg_.androidLib = (fs::path(cfg_.bundlePath) / lib).string();
+        } catch (...) {}
+    }
     registerLibcString(*this);
     registerLibcStdio(*this);
     registerLibcStdlib(*this);
@@ -177,6 +237,9 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     registerSqlite(*this);
     registerFoundation(*this);
     registerUIKit(*this);
+    ArgReader::align64Args() = isAndroid();
+    if (isAndroid()) Android::registerBionic(*this);
+    Compat::initialize(*this);
 }
 
 Process::~Process() {
@@ -239,8 +302,14 @@ void Process::requestStop() {
     lifeCv_.notify_all();   // a backgrounded main thread is parked in waitWhileBackgrounded()
 }
 
+void Process::logStopSnapshot(const char* why) {
+    if (StallWatch* w = stallWatch_) { try { checkStall(*w, why); } catch (...) {} }
+}
 void Process::requestGracefulStop(double timeout) {
     if (stopping() || gracefulStop_.exchange(true)) return;
+    // What every thread was doing when the player gave up: the log of a game that sat on a
+    // loading screen then says what it was waiting for.
+    logStopSnapshot("the player stopped the game");
     if (!lifecycleHandler_) { requestStop(); return; }
     lifecycleHandler_(Lifecycle::Terminate);
     // Watchdog: an app that doesn't get through its shutdown (or never runs its main loop) is stopped anyway.
@@ -265,13 +334,107 @@ void Process::requestGracefulStop(double timeout) {
         }
     }).detach();
 }
+uint64_t Process::sessionMs() const {
+    return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - perf_.origin).count());
+}
+uint64_t Process::sessionSwaps() const {
+    return perf_.gameSwaps.load(std::memory_order_relaxed);
+}
+uint64_t Process::sessionHooks() const {
+    return perf_.frames.load(std::memory_order_relaxed);
+}
+void Process::recordFrameCheckpoint(uint64_t frameHash) {
+    const auto mode = session_.mode();
+    if (!session_.detailsActive()) return;
+    const uint64_t frame = sessionHooks() + sessionSwaps();
+    uint64_t callTotal = 0;
+    uint64_t callHash = 14695981039346656037ull;
+    if (const Diag::ThreadCallRing* ring = mainThread().cpu.call_ring.load(std::memory_order_acquire)) {
+        const auto snap = ring->snapshot(32);
+        callTotal = snap.total;
+        for (const auto& rec : snap.calls) {
+            const uint64_t packed = (uint64_t(rec.id) << 32) | uint32_t(rec.kind);
+            callHash ^= packed;
+            callHash *= 1099511628211ull;
+        }
+    }
+    if (mode == Session::Mode::Record) {
+        session_.recordCheckpoint(frame, frameHash, callTotal, callHash,
+                                  sessionMs(), sessionSwaps(), sessionHooks());
+    } else if (mode == Session::Mode::Replay) {
+        if (!session_.checkCheckpoint(frame, frameHash, callTotal, callHash)) {
+            log(LogLevel::Warning, session_.formatDivergence());
+        }
+    }
+}
+void Process::recordFrameCheckpoint(const uint8_t* rgba, int w, int h) {
+    if (!session_.detailsActive() || !rgba || w <= 0 || h <= 0) return;
+    const uint64_t frameHash = Session::fnv1a64(rgba, size_t(w) * size_t(h) * 4);
+    recordFrameCheckpoint(frameHash);
+}
+void Process::noteInput(SessionEvent e) {
+    if (session_.mode() != Session::Mode::Record) return;
+    e.ms = sessionMs();
+    e.swaps = sessionSwaps();
+    e.hooks = sessionHooks();
+    session_.note(e);
+}
+
+// Replay: feeds a recording's input back once the game has finished as many frames (GL swaps
+// and main-loop ticks) as it had when the player gave it, or 1.5 s after the recorded time if it
+// is drawing fewer (a slower machine, a static menu). Runs for the length of Process::run().
+class SessionReplayer {
+public:
+    explicit SessionReplayer(Process& p) : p_(p) {
+        if (p.session().mode() == Session::Mode::Replay && !p.session().events().empty())
+            thread_ = std::thread([this] { loop(); });
+    }
+    ~SessionReplayer() {
+        done_ = true;
+        if (thread_.joinable()) thread_.join();
+    }
+private:
+    void loop() {
+        using namespace std::chrono;
+        const auto& events = p_.session().events();
+        size_t delivered = 0;
+        for (const SessionEvent& e : events) {
+            for (;;) {
+                if (done_ || p_.stopping()) return;
+                const uint64_t ms = uint64_t(duration_cast<milliseconds>(steady_clock::now() - p_.perf().origin).count());
+                const uint64_t swaps = p_.perf().gameSwaps.load(std::memory_order_relaxed);
+                const uint64_t hooks = p_.perf().frames.load(std::memory_order_relaxed);
+                const bool ready = e.kind != SessionEvent::Kind::Touch || p_.acceptsTouches();   // the game's view is up
+                const bool caughtUp = swaps >= e.swaps && hooks >= e.hooks;
+                if (ready && (caughtUp || ms >= e.ms + 1500)) break;
+                std::this_thread::sleep_for(milliseconds(2));
+            }
+            switch (e.kind) {
+                case SessionEvent::Kind::Touch: p_.injectTouch(TouchPhase(e.phase), e.x, e.y, e.finger); break;
+                case SessionEvent::Kind::Accel: p_.setAcceleration(e.x, e.y, e.z); break;
+                case SessionEvent::Kind::Background: p_.enterBackground(); break;
+                case SessionEvent::Kind::Foreground: p_.enterForeground(); break;
+                default: break;
+            }
+            ++delivered;
+        }
+        p_.log(LogLevel::Info, "Replay: all " + std::to_string(delivered) + " recorded inputs delivered");
+    }
+    Process& p_;
+    std::atomic<bool> done_{false};
+    std::thread thread_;
+};
+
 void Process::enterBackground() {
     if (stopping() || backgroundRequested_.load() || !lifecycleHandler_) return;
+    noteInput(SessionEvent::input(SessionEvent::Kind::Background));
     backgroundRequested_ = true;
     lifecycleHandler_(Lifecycle::Background);
 }
 void Process::enterForeground() {
     if (stopping() || !lifecycleHandler_) return;
+    noteInput(SessionEvent::input(SessionEvent::Kind::Foreground));
     backgroundRequested_ = false;
     setBackgrounded(false);
     lifecycleHandler_(Lifecycle::Foreground);
@@ -293,8 +456,16 @@ void Process::waitWhileBackgrounded() {
 }
 
 void Process::load() {
+    if (isAndroid()) { loadAndroid(); return; }
     const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
     if (fs::exists(plist)) infoPlist_ = Plist::parseFile(plist.string());
+    const auto offlineBackend = infoPlist_ ? infoPlist_->getString("HydrogenVMOfflineBackend") : "";
+    if (!offlineBackend.empty()) {
+        if (offlineBackend != "clash-2.1306.1")
+            throw std::runtime_error("Unsupported HydrogenVMOfflineBackend: " + offlineBackend);
+        cfg_.offlineClash = true;
+        log(LogLevel::Info, "Guest package requests embedded offline backend clash-2.1306.1");
+    }
     std::string exe = infoPlist_ ? infoPlist_->getString("CFBundleExecutable") : "";
     if (exe.empty()) exe = fs::path(cfg_.bundlePath).stem().string();
     executablePath_ = (fs::path(cfg_.bundlePath) / exe).string();
@@ -313,6 +484,8 @@ void Process::load() {
     std::ostringstream hash;
     for (auto b : digest) hash << std::hex << std::setw(2) << std::setfill('0') << unsigned(b);
     executableHash_ = hash.str();
+    if(cfg_.offlineClash && executableHash_ != "3519d7954cb3dc16b9d7746cc5dbd2521d0209eea2bbc163f6ab7cdfa5e52397")
+        throw std::runtime_error("Offline Clash requires the unchanged pinned 2.1306.1 executable");
     image_ = Loader::loadMachO(*mem_, file, executablePath_);
     logf(LogLevel::Info, "Loaded %s: %s, %zu imports, %zu initializers, entry %s",
          exe.c_str(), image_.cpuSubtype == Loader::kCpuArmV7S ? "armv7s" : image_.cpuSubtype == Loader::kCpuArmV6 ? "armv6" : "armv7",
@@ -322,6 +495,13 @@ void Process::load() {
     setupEnvironment();
     setupMainThread();
     bindImports();
+    if(cfg_.offlineClash) {
+        auto& offline=service<Offline::ClashOffline>();
+        cfg_.loopbackNetwork=true;
+        cfg_.loopbackAliases.push_back("game.clashroyaleapp.com");
+        cfg_.loopbackPortOverrides[9339]=offline.port();
+        onExit([&offline]{offline.stop();});
+    }
 
     // Old (pre-dyld-info) binaries call through __DATA,__dyld.
     if (const auto* s = image_.findSection("__DATA", "__dyld"); s && s->size >= 8) {
@@ -390,6 +570,30 @@ std::vector<std::pair<std::string, bool>> peekDylibLoads(const std::vector<uint8
     return deps;
 }
 } // namespace
+
+void Process::loadAndroid() {
+    const std::string name = fs::path(cfg_.androidLib).filename().string();
+    if (const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist"; fs::exists(plist)) infoPlist_ = Plist::parseFile(plist.string());
+    executablePath_ = cfg_.androidLib;
+    guestExecutablePath_ = guestBundlePath_ + "/lib/" + name;
+    setupEnvironment();
+    if (auto env = lookupSymbol("android:environ")) mem_->write<uint32_t>(*env, envp_);
+    setupMainThread();
+    std::vector<std::string> missingFns = Android::loadLibraries(*this, cfg_.androidLib);
+    {
+        auto& L = service<Android::Library>();
+        image_.headerAddr = Android::kLibraryBase;
+        for (const auto& l : L.libs)
+            for (const auto& [sym, addr] : l->so.image.symbols) image_.exports.emplace(sym, addr);
+    }
+    unimplementedImports_ = missingFns;
+    if (!missingFns.empty()) {
+        std::string list;
+        for (size_t i = 0; i < missingFns.size(); ++i) list += (i ? ", " : "") + missingFns[i];
+        logf(LogLevel::Info, "%zu imported functions aren't implemented yet (the game may still run until it calls one): %s",
+             missingFns.size(), list.c_str());
+    }
+}
 
 void Process::loadGuestDylibs() {
     uint32_t nextLoadAddr = std::max<uint32_t>(0x04000000u, (image_.highAddr + 0xFFFFu) & ~0xFFFFu);
@@ -514,23 +718,66 @@ void Process::unmapGuestDylibs() {
 
 // -------------------------------------------------------------- symbols ---
 
+namespace {
+// The last host functions each guest thread called (the thread's own ring: guest
+// threads are host threads). A crash report lists them, so "what did the app call
+// just before it died, and what did it get back" needs no rerun with --trace.
+struct HostCallCrumb {
+    uint64_t process = 0;   // Process identity: a thread may outlive one Process and serve the next
+    uint32_t hle = 0;       // the host function's HLE index (its name lives in the engine)
+    uint32_t from = 0, result = 0;
+    uint32_t serial = 0;    // which call this slot holds, so a nested call cannot overwrite the result
+    bool returned = false;
+};
+struct HostCallRing {
+    static constexpr unsigned kSize = 12;
+    HostCallCrumb crumb[kSize];
+    uint32_t next = 0;
+};
+thread_local HostCallRing tHostCalls;
+// objc_msgSend and friends dispatch every method call: they would push everything else out.
+bool crumbWorthy(const std::string& name) {
+    return name.compare(0, 13, "_objc_msgSend") != 0 && name != "_objc_retain" && name != "_objc_release" &&
+           name != "_objc_autorelease" && name != "_objc_retainAutoreleasedReturnValue" &&
+           name != "_objc_storeStrong" && name != "_objc_autoreleaseReturnValue";
+}
+}
+
 uint32_t Process::registerHostFunction(const std::string& debugName, HostFn fn) {
-    return engine_->registerHle(debugName, [this, fn = std::move(fn), debugName](CPU::Cpu& c) {
+    const bool worthy = crumbWorthy(debugName);
+    auto index = std::make_shared<uint32_t>(0);   // known once registered
+    const uint32_t addr = engine_->registerHle(debugName, [this, fn = std::move(fn), debugName, worthy, index](CPU::Cpu& c) {
         if (cfg_.traceCalls) log(LogLevel::Debug, "→ " + debugName + " (from " + describeAddress(c.r[CPU::kLR]) + ")");
+        HostCallCrumb* crumb = nullptr;
+        uint32_t serial = 0;
+        if (worthy) {
+            HostCallRing& ring = tHostCalls;
+            serial = ++ring.next;
+            crumb = &ring.crumb[serial % HostCallRing::kSize];
+            *crumb = {identity_, *index, c.r[CPU::kLR], 0, serial, false};
+        }
         Ctx x{*this, c, *mem_};
         try {
             fn(x);
         } catch (const GuestThrow& g) {
             landGuestException(x, g.ue);   // e.g. -[NSException raise] inside an app's @try
+            return;
         } catch (const ProcessExit&) {
             // This is intentional process control, not an HLE exception.
             // Let nested guest calls propagate Halt instead of manufacturing
             // HostError("stopping") in Engine::callHle.
             c.exit = CPU::Exit::Halt;
+            return;
         } catch (const std::runtime_error& e) {
             if (!hostErrorHook_ || !hostErrorHook_(x, e)) throw;
+            return;   // handled as an error, not a return value
         }
+        // Only a normal return records a result: a call that threw, or whose guest
+        // callback faulted, stays "did not return" and is never blamed for its r0.
+        if (crumb && crumb->serial == serial) { crumb->result = c.r[0]; crumb->returned = true; }
     });
+    *index = engine_->hleIndex(addr);
+    return addr;
 }
 
 uint32_t Process::defineFunction(const std::string& name, HostFn fn) {
@@ -573,7 +820,7 @@ void Process::addMissingSymbolResolver(MissingSymbolResolver fn) {
     missingResolvers_.push_back(std::move(fn));
 }
 
-uint32_t Process::resolveMissingSymbol(const std::string& name) {
+uint32_t Process::resolveMissingSymbol(const std::string& name, MissingSymbolMode mode) {
     std::lock_guard<std::mutex> resolutionLock(resolutionMu_);
     {
         std::lock_guard<std::mutex> lk(symMu_);
@@ -581,7 +828,7 @@ uint32_t Process::resolveMissingSymbol(const std::string& name) {
         if (it != symbols_.end()) return it->second;
     }
     for (auto& r : missingResolvers_)
-        if (uint32_t a = r(name, MissingSymbolMode::DynamicLookup)) { defineData(name, a); return a; }
+        if (uint32_t a = r(name, mode)) { defineData(name, a); return a; }
     return 0;
 }
 
@@ -824,21 +1071,90 @@ bool matchesPathPrefix(const std::string& path, const std::string& prefix) {
 std::string canonVar(const std::string& p) { return p.compare(0, 13, "/private/var/") == 0 ? p.substr(8) : p; }
 } // namespace
 
+std::string Process::phoneCaseFold(const std::string& host) const {
+    if (!cfg_.phoneMode) return host;
+    std::error_code ec;
+    if (std::filesystem::exists(host, ec)) return host;
+    // Start from the deepest root we own; resolve each following component case-insensitively.
+    std::string root;
+    if (matchesPathPrefix(host, bundlePath())) root = bundlePath();
+    else if (matchesPathPrefix(host, homePath_)) root = homePath_;
+    else return host;
+    auto lower = [](std::string s) { for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c))); return s; };
+    std::filesystem::path cur = root;
+    const std::filesystem::path rest = std::filesystem::path(host.substr(root.size())).relative_path();
+    for (auto it = rest.begin(); it != rest.end(); ++it) {
+        const std::filesystem::path next = cur / *it;
+        if (std::filesystem::exists(next, ec)) { cur = next; continue; }
+        const std::string want = lower(it->string());
+        bool found = false;
+        for (const auto& e : std::filesystem::directory_iterator(cur, ec)) {
+            if (lower(e.path().filename().string()) == want) { cur = e.path(); found = true; break; }
+        }
+        if (!found) return host;   // not there in any case: the caller gets "no such file"
+    }
+    return cur.string();
+}
+
 std::string Process::hostPath(const std::string& guestPath) const {
     if (guestPath.empty()) return {};
     std::string p = guestPath;
     if (p == "~") p = guestHomePath_;
     else if (p.compare(0, 2, "~/") == 0) p = guestHomePath_ + p.substr(1);
-    const std::string norm = canonVar(p);
     // Already a host path: leave it alone.
-    if (matchesPathPrefix(norm, canonVar(bundlePath())) || matchesPathPrefix(norm, canonVar(homePath_))) return p;
+    if (matchesPathPrefix(canonVar(p), canonVar(bundlePath())) || matchesPathPrefix(canonVar(p), canonVar(homePath_))) return p;
+    // A relative guest path is relative to the guest's working directory ("/" at launch).
+    // Apps that never set one also open bundle files by bare name (PvZ: "resources.xml"), so
+    // while the directory is still the launch one, a name that exists only in the bundle
+    // resolves there. Fruit Ninja's "var/mobile/.../Fruit.app/..." still resolves from "/".
+    if (p[0] != '/') {
+        const std::string original = p;
+        p = absoluteGuestPath(p);
+        bool appSet;
+        { std::lock_guard<std::mutex> lk(cwdMu_); appSet = cwdSetByApp_; }
+        if (!appSet) {
+            std::error_code ec;
+            const std::string inBundle = bundlePath() + "/" + std::filesystem::path(original).lexically_normal().string();
+            const std::string fromRoot = hostPath(p);
+            if (!std::filesystem::exists(fromRoot, ec) && original.rfind("..", 0) != 0 && std::filesystem::exists(inBundle, ec))
+                return inBundle;
+            return fromRoot;
+        }
+    }
+    const std::string norm = canonVar(p);
+    // Android games read Linux's /proc; the phone has none (and a Linux host's own must not leak in).
+    if (procPath && (norm == "/proc" || norm.rfind("/proc/", 0) == 0)) return procPath(norm);
+    // Phone mode: the iPhone has no /proc or /sys; never let the Linux host's answer.
+    if (cfg_.phoneMode && (matchesPathPrefix(norm, "/proc") || matchesPathPrefix(norm, "/sys")))
+        return homePath_ + "/.hvm-phone-absent" + norm;
     // Guest paths, most specific first (the bundle sits inside the home).
-    if (matchesPathPrefix(norm, guestBundlePath_)) return bundlePath() + norm.substr(guestBundlePath_.size());
-    if (matchesPathPrefix(norm, guestHomePath_)) return homePath_ + norm.substr(guestHomePath_.size());
+    if (matchesPathPrefix(norm, guestBundlePath_)) return phoneCaseFold(bundlePath() + norm.substr(guestBundlePath_.size()));
+    if (matchesPathPrefix(norm, guestHomePath_)) return phoneCaseFold(homePath_ + norm.substr(guestHomePath_.size()));
     const std::string hostTmp = homePath_ + "/tmp";
     if (matchesPathPrefix(norm, "/tmp")) return hostTmp + norm.substr(4);
     if (matchesPathPrefix(norm, "/var/tmp")) return hostTmp + norm.substr(8);
+    // A relative name made absolute against the launch directory before it got here (PvZ builds
+    // a CFURL from "sounds/buttonclick.caf", which becomes "/sounds/buttonclick.caf"): the same
+    // bundle rule as for relative names above. Without it the game found no sound or music and
+    // stayed on a black screen after its logo.
+    {
+        bool appSet;
+        { std::lock_guard<std::mutex> lk(cwdMu_); appSet = cwdSetByApp_; }
+        if (!appSet && norm.size() > 1 && norm.find("/..") == std::string::npos) {
+            std::error_code ec;
+            const std::string inBundle = bundlePath() + norm;
+            if (!std::filesystem::exists(p, ec) && std::filesystem::exists(inBundle, ec)) return inBundle;
+        }
+    }
     return p;
+}
+
+std::string Process::absoluteGuestPath(const std::string& path) const {
+    if (path.empty() || path[0] == '/') return path;
+    const std::string cwd = guestCwd();
+    std::string joined = std::filesystem::path(cwd + (cwd.ends_with('/') ? "" : "/") + path).lexically_normal().string();
+    if (joined.size() > 1 && joined.ends_with('/')) joined.pop_back();
+    return joined;
 }
 
 std::string Process::guestPath(const std::string& hostPath) const {
@@ -902,13 +1218,21 @@ void Process::initThreadState(GuestThread& t, uint32_t stackSize, uint32_t stack
         } else { t.stackBase = stackAddr; }
     t.stackSize = stackSize;
     if (!stackAddr) mem_->map(t.stackBase, stackSize, Memory::kProtRW);
-    // A guest-side block standing in for struct _pthread: TSD slots at the
-    // start (TPIDRURO points here, slot 0 = self), errno after them.
-    t.self = allocStatic(1024, 64);
-    t.errnoAddr = t.self + 0x200;
+    // A guest-side block standing in for struct _pthread: the thread-specific data slots at
+    // the start (TPIDRURO points here, slot 0 = self), errno after them. All 768 of Darwin's
+    // slots are real memory, because apps read them without calling pthread_getspecific:
+    // the compiler inlines it as "thread register + key * 4" (Unity's allocators do).
+    t.self = allocStatic(kThreadSpecificSlots * 4 + 64, 64);
+    t.errnoAddr = t.self + kThreadSpecificSlots * 4;
     mem_->write<uint32_t>(t.self, t.self);
     t.cpu.tpidruro = t.self;
-    t.cpu.r[CPU::kSP] = t.stackBase + stackSize - 64;
+    // The stack starts a page below the top of its mapping. On iOS the memory just above a
+    // thread's first frame is readable (the argument and environment strings for the main
+    // thread, the pthread structure for the others), and games read a little past a local
+    // array there without harm: The Sandbox copies 324 bytes from a smaller buffer in its
+    // drawing code, twelve bytes past the top, and crashed when placing an element.
+    const uint32_t headroom = stackSize >= 64 * 1024 ? 4096 : 64;
+    t.cpu.r[CPU::kSP] = t.stackBase + stackSize - headroom;
     t.cpu.fpscr = 0x03000000u;     // RunFast (flush-to-zero + default NaN), as iOS sets up
     t.cpu.user = &t;
     t.cpu.engine = engine_.get();
@@ -919,12 +1243,36 @@ void Process::setupMainThread() {
     initThreadState(*mainThread_, stack);
 }
 
+GuestThread* Process::currentThreadIfGuest() {
+    return t_thread && t_processIdentity == identity_ ? t_thread : nullptr;
+}
+
 GuestThread& Process::currentThread() {
     // Another host thread can destroy the old Process. Compare a generation,
     // never dereference that old GuestThread just to decide which owner it had.
     if (t_thread && t_processIdentity == identity_) return *t_thread;
     // A host thread that isn't a guest thread (e.g. a UI callback) acts as main.
     return *mainThread_;
+}
+
+Process::LiveIdentity::LiveIdentity(uint64_t identity) : id(identity) {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    live.ids.insert(id);
+}
+Process::LiveIdentity::~LiveIdentity() {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    live.ids.erase(id);
+}
+bool Process::isLiveIdentity(uint64_t identity) {
+    auto& live = liveIdentities();
+    std::lock_guard<std::mutex> lk(live.mu);
+    return live.ids.count(identity) != 0;
+}
+
+bool Process::isGuestBoundThread() const {
+    return t_thread && t_processIdentity == identity_;
 }
 
 GuestThread* Process::findThread(uint32_t self) {
@@ -978,6 +1326,7 @@ GuestThread* Process::findThreadById(uint32_t id) {
 }
 
 void Process::failNextHostThreadSpawns(int count) { gInjectedSpawnFailures = count; }
+void Process::failNextHostThreadAttrInits(int count) { gInjectedAttrInitFailures = count; }
 
 uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, bool detached, uint32_t stackAddr) {
     if (stopping()) throw ProcessExit(exitCode_, "stopping");
@@ -999,6 +1348,8 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
     const auto releaseStack = [&] {
         if (!stackAddr) mem_->unmap(stackBase, mappedSize);
         if (!stackAddr && stackTop_ == stackBase - kGuard) stackTop_ = stackBase + mappedSize;
+        failedSpawnBase_ = stackBase;
+        failedSpawnSize_ = mappedSize;
     };
     {
         std::lock_guard<std::mutex> lk(threadsMu_);
@@ -1009,6 +1360,8 @@ uint32_t Process::startThread(uint32_t fn, uint32_t arg, uint32_t stackSize, boo
         std::lock_guard<std::mutex> lk(threadsMu_);
         if (stopping()) { releaseStack(); throw ProcessExit(exitCode_, "stopping"); }
         threads_[raw->self] = std::move(t);
+        spawningBase_ = stackBase;
+        spawningSize_ = mappedSize;
         try {
             raw->host = spawnHostThread([this, raw, fn, arg] { threadMain(raw, fn, arg); });
             raw->hostJoinable = true;
@@ -1252,7 +1605,37 @@ struct ThreadLivenessSampler {
 };
 } // namespace
 
+struct StallWatcher {
+    Process& p;
+    Process::StallWatch* watch;
+    std::mutex mu;
+    std::condition_variable cv;
+    bool stopped = false;
+    std::thread thread;
+    StallWatcher(Process& process, Process::StallWatch* w) : p(process), watch(w) {
+        thread = std::thread([this] {
+            std::unique_lock<std::mutex> lock(mu);
+            // 20 ms ticks: a sample of where main is each tick, the stall check every second.
+            for (unsigned tick = 1; !cv.wait_for(lock, std::chrono::milliseconds(20), [this] { return stopped; }); ++tick) {
+                lock.unlock();
+                try { p.sampleMain(*watch); } catch (...) {}
+                if (tick % 50 == 0) { try { p.checkStall(*watch); } catch (...) {} }
+                lock.lock();
+            }
+        });
+    }
+    ~StallWatcher() {
+        { std::lock_guard<std::mutex> lock(mu); stopped = true; }
+        cv.notify_one();
+        if (thread.joinable()) thread.join();
+    }
+};
+
 int Process::run() {
+    std::unique_ptr<Process::StallWatch, void (*)(Process::StallWatch*)> stallState(newStallWatch(), &deleteStallWatch);
+    StallWatcher stallWatcher(*this, stallState.get());
+    stallWatch_ = stallState.get();
+    struct ClearWatch { Process& p; ~ClearWatch() { p.stallWatch_ = nullptr; } } clearWatch{*this};
     std::unique_ptr<ThreadLivenessSampler> threadSampler;
     if (cfg_.threadLiveness) {
         try { threadSampler = std::make_unique<ThreadLivenessSampler>(*this); }
@@ -1263,6 +1646,7 @@ int Process::run() {
         try { memorySampler = std::make_unique<MemorySampler>(*this); }
         catch (...) { /* best-effort diagnostics, including thread creation */ }
     }
+    SessionReplayer replayer(*this);
     std::unique_ptr<GuestSampler> sampler;
     if (const char* prof = std::getenv("HVM_GUEST_PROFILE"); prof && *prof) sampler = std::make_unique<GuestSampler>(*this, prof);
     t_thread = mainThread_;
@@ -1272,6 +1656,11 @@ int Process::run() {
     try {
         // dyld order: libSystem/libobjc setup (+load), dependent dylib initializers in dependency order, then the image's initializers.
         for (auto& h : preInitHooks_) h(c);
+        if (isAndroid()) {
+            Android::runInitializers(*this, c);
+            exitCode_ = Android::runActivity(*this, c);
+            throw ProcessExit(exitCode_, "activity finished");
+        }
         const uint32_t pvars = allocStatic(20);
         for (const auto& dylib : guestDylibs_) {
             mem_->write<uint32_t>(pvars, dylib.headerAddr);
@@ -1326,6 +1715,94 @@ int Process::run() {
     return crashed_ ? -1 : exitCode_;
 }
 
+uint32_t Process::insn32At(uint32_t pc, bool thumb) const {
+    try {
+        if (!mem_->isMapped(pc) || !mem_->isMapped(pc + 3)) return 0;
+        return thumb ? (uint32_t(mem_->read<uint16_t>(pc)) << 16 | mem_->read<uint16_t>(pc + 2)) : mem_->read<uint32_t>(pc);
+    } catch (...) {
+        return 0;
+    }
+}
+
+// The host functions this thread is inside right now, innermost first ("-[NSString copy] <-
+// +[NSString stringWithFormat:]"): for a zombie's "allocated by", the API that made the object.
+std::string Process::activeHostCalls() const {
+    const HostCallRing& ring = tHostCalls;
+    std::string out;
+    for (uint32_t i = 0; i < HostCallRing::kSize; ++i) {
+        const HostCallCrumb& cr = ring.crumb[(ring.next - i + HostCallRing::kSize) % HostCallRing::kSize];
+        if (!cr.serial || cr.process != identity_ || cr.returned) continue;
+        out += (out.empty() ? "" : " <- ") + engine_->hleName(cr.hle);
+    }
+    return out;
+}
+
+// "Last host calls" and "likely cause" lines for a crash report. Read on the crashing
+// thread, so the host-call ring is that thread's.
+std::string Process::crashClues(CPU::Exit why, uint32_t insn, bool thumb) const {
+    std::string out;
+    std::vector<const HostCallCrumb*> calls;   // oldest first
+    const HostCallRing& ring = tHostCalls;
+    for (uint32_t i = 1; i <= HostCallRing::kSize; ++i) {
+        const HostCallCrumb& cr = ring.crumb[(ring.next + i) % HostCallRing::kSize];
+        if (cr.serial && cr.process == identity_) calls.push_back(&cr);
+    }
+    auto name = [&](const HostCallCrumb* cr) { return engine_->hleName(cr->hle); };
+    char buf[96];
+    if (!calls.empty()) {
+        out += "  last host calls (oldest first):\n";
+        for (const HostCallCrumb* cr : calls) {
+            if (cr->returned) std::snprintf(buf, sizeof buf, " -> 0x%08x", cr->result);
+            else std::snprintf(buf, sizeof buf, " (did not return)");
+            out += "    " + name(cr) + buf + " from " + describeAddress(cr->from) + "\n";
+        }
+    }
+    std::vector<std::string> clues;
+    // Thumb udf #254 (0xdefe) / ARM 0xe7ffdefe: what __builtin_trap and many asserts compile to.
+    const bool trap = why == CPU::Exit::Breakpoint || (thumb ? (insn >> 16) == 0xdefe : insn == 0xe7ffdefe);
+    if (trap) {
+        clues.push_back("the app stopped itself on purpose (__builtin_trap or an assertion): look at what it checked just before");
+        const auto gl = glErrorLog();
+        if (!gl.empty()) clues.push_back("the app saw GL errors before it stopped; first: " + gl.front());
+    }
+    if (why == CPU::Exit::MemFault && !calls.empty()) {
+        // A NULL access right after a host function returned 0: that function's result is the usual suspect.
+        for (auto it = calls.rbegin(); it != calls.rend() && it - calls.rbegin() < 3; ++it)
+            if ((*it)->returned && (*it)->result == 0) {
+                clues.push_back(name(*it) + " returned 0 just before: if the app expected an object or buffer, that function is the likely cause");
+                break;
+            }
+    }
+    if (!calls.empty() && !calls.back()->returned)
+        clues.push_back("the crash happened inside " + name(calls.back()) + " (or code it called back into)");
+    for (const auto& c : clues) out += "  likely cause: " + c + "\n";
+    // Files the app asked for and did not get, and the last ones it did: a missing or short
+    // asset is a common reason for an app to give up (Survivalcraft: "Could not load Manifest asset").
+    {
+        const std::vector<FileRecord> files = fileRing();
+        std::vector<const FileRecord*> missed, opened;
+        for (auto it = files.rbegin(); it != files.rend(); ++it) {
+            if (it->hostResult != 0) { if (missed.size() < 6) missed.push_back(&*it); }
+            else if (opened.size() < 4) opened.push_back(&*it);
+        }
+        if (!missed.empty()) {
+            out += "  files the app could not open (latest last):\n";
+            for (auto it = missed.rbegin(); it != missed.rend(); ++it)
+                out += "    " + (*it)->api + " " + (*it)->path + ": " + std::strerror((*it)->hostResult) + "\n";
+        }
+        if (!opened.empty()) {
+            out += "  last files opened (latest last):\n";
+            for (auto it = opened.rbegin(); it != opened.rend(); ++it) {
+                char sizes[96];
+                // "at least": single-character reads are published in 4 KB steps, positioned reads not at all
+                std::snprintf(sizes, sizeof sizes, " (%lld bytes, at least %lld read)", (long long)(*it)->size, (long long)(*it)->bytesRead);
+                out += "    " + (*it)->api + " " + (*it)->path + sizes + "\n";
+            }
+        }
+    }
+    return out;
+}
+
 void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     try { flushGuestStdio(*this); } catch (...) {}   // what the app printed before dying is the most useful clue
     std::lock_guard<std::mutex> lk(exitMu_);
@@ -1354,7 +1831,10 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
         case CPU::Exit::Undefined: {
             const uint32_t insn = (f.valid ? f.thumb : c.thumb) ? (uint32_t(mem_->read<uint16_t>(r[15])) << 16 | mem_->read<uint16_t>(r[15] + 2))
                                                                 : mem_->read<uint32_t>(r[15]);
-            std::snprintf(buf, sizeof buf, "Crash: unsupported instruction 0x%08x at %s", insn, describeAddress(r[15]).c_str());
+            if ((f.valid ? f.thumb : c.thumb) ? (insn >> 16) == 0xdefe : insn == 0xe7ffdefe)   // __builtin_trap: not an emulator gap
+                std::snprintf(buf, sizeof buf, "Crash: the app stopped itself (trap 0x%08x) at %s", insn, describeAddress(r[15]).c_str());
+            else
+                std::snprintf(buf, sizeof buf, "Crash: unsupported instruction 0x%08x at %s", insn, describeAddress(r[15]).c_str());
             head = buf;
             break;
         }
@@ -1374,6 +1854,7 @@ void Process::finishCrash(const CPU::Cpu& c, CPU::Exit e) {
     CPU::Cpu tmp;
     std::memcpy(tmp.r, r, sizeof r);
     rep += "  backtrace:\n" + backtrace(tmp);
+    rep += crashClues(why, insn32At(r[15], f.valid ? f.thumb : c.thumb), f.valid ? f.thumb : c.thumb);
     crashReport_ = rep;
     CPU::Cpu snapshot;
     std::memcpy(snapshot.r, r, sizeof r);
@@ -1522,6 +2003,8 @@ void Process::pushMicrophone(const float* mono, size_t frames, double rate) {
     std::lock_guard<std::mutex> lk(micMu_);
     micRate_ = rate;
     mic_.insert(mic_.end(), mono, mono + frames);
+    for (size_t i = 0; i < frames; ++i) micPeak_ = std::max(micPeak_, mono[i] < 0 ? -mono[i] : mono[i]);
+    micReceived_ += frames;
     // Keep at most a second: a recording queue that fell behind starts from "now".
     const size_t cap = size_t(rate);
     if (mic_.size() > cap) { mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(mic_.size() - cap)); micPos_ = 0; }
@@ -1538,7 +2021,19 @@ void Process::pullMicrophone(float* out, size_t frames, double rate) {
             micPos_ += step;
         } else {
             out[i] = 0;   // not captured (yet): silence
+            ++micStarved_;
         }
+    }
+    // Every few seconds while the app records: what the phone's microphone delivered. Silence or
+    // a starved queue here tells a recording problem from one in the app.
+    const auto now = std::chrono::steady_clock::now();
+    if (micReported_ == std::chrono::steady_clock::time_point{}) micReported_ = now;
+    else if (now - micReported_ >= std::chrono::seconds(3)) {
+        logf(LogLevel::Info, "Microphone: %llu frames received at %.0f Hz, loudest %.3f; %llu frames asked for before they arrived",
+             (unsigned long long)micReceived_, micRate_, double(micPeak_), (unsigned long long)micStarved_);
+        micReported_ = now;
+        micPeak_ = 0;
+        micReceived_ = micStarved_ = 0;
     }
     const size_t used = std::min(mic_.size(), size_t(micPos_));
     mic_.erase(mic_.begin(), mic_.begin() + std::ptrdiff_t(used));
@@ -1564,6 +2059,9 @@ void Process::microphoneUser(bool start) {
 // ------------------------------------------------------------ diagnostics ---
 
 uint64_t Process::recordFileOpen(const std::string& path, const std::string& api, int hostResult, int64_t size, int64_t bytesRead, bool isOpen) {
+    // HVM_FILE_TRACE=1: every open and lookup on stderr (bench diagnosis of what an app loads).
+    static const bool trace = std::getenv("HVM_FILE_TRACE") != nullptr;
+    if (trace) std::fprintf(stderr, "[file-trace] %s %s -> %s%lld\n", api.c_str(), path.c_str(), hostResult ? "errno " : "size ", (long long)(hostResult ? hostResult : size));
     std::lock_guard<std::mutex> lk(fileRingMu_);
     if (fileRing_.size() >= 32) fileRing_.pop_front();
     const uint64_t h = ++nextFileHandle_;
@@ -1633,6 +2131,23 @@ void Process::reportMissing(const std::string& what) {
         if (!missing_.insert(what).second) return;
     }
     log(LogLevel::Warning, "Missing: " + what);
+}
+
+void Process::reportDefaulted(const std::string& what) {
+    std::string caller;
+    defaultedApis_.hit(what, std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_.origin).count(),
+                       [this, &caller](MissingApiLog::Site& s) {
+                           const CPU::Cpu& cpu = currentThread().cpu;
+                           s.callerPc = cpu.r[CPU::kLR];
+                           s.caller = describeAddress(s.callerPc);
+                           if (s.callerPc) caller = s.caller;   // a host-side caller (a pool drain) has no guest address
+                           s.backtrace = MissingApiLog::splitLines(backtrace(cpu, int(MissingApiLog::kMaxFrames) - 2));
+                       });
+    {
+        std::lock_guard<std::mutex> lk(missingMu_);
+        if (!defaulted_.insert(what).second) return;
+    }
+    log(LogLevel::Warning, "Defaulted: " + what + (caller.empty() ? "" : " (from " + caller + ")"));
 }
 
 uint64_t Process::guestInstructions() {
@@ -1708,8 +2223,12 @@ std::string perfJson(const Process::Perf& pf, double wall, uint64_t insns, uint6
     f << "    \"blocksDecoded\": " << blocksDecoded << ",\n";
     f << "    \"frames\": " << frames << ",\n";
     f << "    \"framesPresented\": " << presented << ",\n";
+    f << "    \"gameSwaps\": " << pf.gameSwaps.load() << ",\n";
     f << "    \"avgFrameMs\": " << (frames ? double(pf.frameNs.load()) / 1e6 / double(frames) : 0) << ",\n";
     f << "    \"avgCompositeMs\": " << (presented ? double(pf.compositeNs.load()) / 1e6 / double(presented) : 0) << ",\n";
+    f << "    \"presentWaitMs\": " << double(pf.presentWaitNs.load()) / 1e6 << ",\n";
+    f << "    \"presentCalls\": " << pf.presentCalls.load() << ",\n";
+    f << "    \"presentCallMs\": " << double(pf.presentCallNs.load()) / 1e6 << ",\n";
     f << "    \"maxFrameMs\": " << double(pf.maxFrameNs.load()) / 1e6 << ",\n";
     f << "    \"slowFrames\": " << pf.slowFrames.load() << ",\n";
     f << "    \"p50FrameMs\": " << double(pf.frameTimes.percentile(50)) / 1e6 << ",\n";
@@ -1717,6 +2236,14 @@ std::string perfJson(const Process::Perf& pf, double wall, uint64_t insns, uint6
     f << "    \"p99FrameMs\": " << double(pf.frameTimes.percentile(99)) / 1e6 << ",\n";
     f << "    \"timeToFirstFrameMs\": " << (ttff == ~uint64_t{0} ? 0.0 : double(ttff) / 1e6) << "\n";
     return f.str();
+}
+
+int Process::linkedSdkMajor() const {
+    if (!infoPlist_) return 0;
+    const std::string sdk = infoPlist_->getString("DTSDKName");   // e.g. "iphoneos3.1"
+    size_t i = 0;
+    while (i < sdk.size() && !std::isdigit(uint8_t(sdk[i]))) ++i;
+    return i < sdk.size() ? std::atoi(sdk.c_str() + i) : 0;
 }
 
 } // namespace Hydrogen::Runtime

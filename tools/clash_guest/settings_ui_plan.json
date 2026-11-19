@@ -1,0 +1,30 @@
+{
+  "name": "Pinned 2.1306.1 offline settings, starting at returning home",
+  "steps": [
+    {"id":"S-01-open","expected":"Settings popup opens","actions":[{"tap":[290,52]}]},
+    {"id":"S-02-music-off","expected":"Music label OFF","actions":[{"tap":[90,250]}]},
+    {"id":"S-02-music-on","expected":"Music label ON","actions":[{"tap":[90,250]}]},
+    {"id":"S-03-sfx-off","expected":"SFX label OFF","actions":[{"tap":[90,288]}]},
+    {"id":"S-03-sfx-on","expected":"SFX label ON","actions":[{"tap":[90,288]}]},
+    {"id":"S-04-landscape-on","expected":"Replay landscape label ON","actions":[{"tap":[90,327]}]},
+    {"id":"S-04-landscape-off","expected":"Replay landscape label OFF","actions":[{"tap":[90,327]}]},
+    {"id":"S-05-facebook","expected":"Offline account notice; no sign-in attempt","actions":[{"tap":[230,250]}]},
+    {"id":"S-05-close","expected":"Settings visible again","actions":[{"tap":[160,350]}]},
+    {"id":"S-06-credits","expected":"Original scrolling credits","actions":[{"tap":[230,288]}]},
+    {"id":"S-06-close","expected":"Tap closes credits and returns to settings","actions":[{"tap":[160,250]}]},
+    {"id":"S-07-link","expected":"Local progress backup notice; no server request","actions":[{"tap":[230,327]}]},
+    {"id":"S-07-close","expected":"Settings visible again","actions":[{"tap":[160,350]}]},
+    {"id":"S-08-name-locked","expected":"Change Name explains its level requirement during training","actions":[{"tap":[160,360]}],"settleSeconds":6},
+    {"id":"S-09-help","expected":"Readable local help fits above original OK button","actions":[{"tap":[90,398]}]},
+    {"id":"S-09-close","expected":"Settings visible again","actions":[{"tap":[160,350]}]},
+    {"id":"S-10-privacy","expected":"Explicit online-page unavailable notice","actions":[{"tap":[230,398]}]},
+    {"id":"S-10-close","expected":"Settings visible again","actions":[{"tap":[160,350]}]},
+    {"id":"S-11-parents","expected":"Explicit online-page unavailable notice","actions":[{"tap":[90,423]}]},
+    {"id":"S-11-close","expected":"Settings visible again","actions":[{"tap":[160,350]}]},
+    {"id":"S-12-terms","expected":"Explicit online-page unavailable notice","actions":[{"tap":[230,423]}]},
+    {"id":"S-12-close","expected":"Settings visible again","actions":[{"tap":[160,350]}]},
+    {"id":"S-01-close","expected":"Settings closes to home","actions":[{"tap":[287,203]}]},
+    {"id":"S-01-reopen","expected":"Settings reopens; audio/replay settings retained","actions":[{"tap":[290,52]}]},
+    {"id":"S-01-finish","expected":"Home visible and responsive","actions":[{"tap":[287,203]}]}
+  ]
+}

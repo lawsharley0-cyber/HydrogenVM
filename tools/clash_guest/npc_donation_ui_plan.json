@@ -1,0 +1,9 @@
+{
+  "name":"Native NPC request, player donation and repeat limit",
+  "precondition":"Pinned King-3 two-member component fixture with three historical entries and the newest Local Donor request at the bottom. Player owns two Knights; NPC request is unfulfilled. Coordinates are fixture-specific; inspect the clan screenshot for other histories.",
+  "steps":[
+    {"id":"N-clan","expected":"Native Local Donor request0/10 below original history, with green Donate","actions":[{"tap":[240,535]}],"settleSeconds":3},
+    {"id":"N-donate","expected":"Player Knight2->1, NPC1->2, original5 Gold/1 XP, request1/10","actions":[{"tap":[230,388]}],"settleSeconds":5},
+    {"id":"N-limit","expected":"Original per-player limit prevents another donation/reward while player still owns one Knight","actions":[{"tap":[230,388]}],"settleSeconds":3}
+  ]
+}

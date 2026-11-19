@@ -18,13 +18,15 @@
 #include <limits>
 #include <type_traits>
 
+#include <cfenv>
+
 #pragma clang fp contract(off)
 
 namespace Hydrogen::CPU {
 
 enum : uint32_t {
     kFpscrN = 1u << 31, kFpscrQC = 1u << 27, kFpscrDN = 1u << 25, kFpscrFZ = 1u << 24,
-    kFpscrRModeShift = 22,
+    kFpscrRModeShift = 22, kFpscrRMode = 3u << 22,
 };
 
 inline uint8_t* vregs(Cpu* c) { return reinterpret_cast<uint8_t*>(c->d); }
@@ -41,13 +43,42 @@ template <bool DP> using FpT = std::conditional_t<DP, double, float>;
 template <bool DP> inline FpT<DP> rdF(const Cpu* c, uint32_t i) { if constexpr (DP) return rdD(c, i); else return rdS(c, i); }
 template <bool DP> inline void wrF(Cpu* c, uint32_t i, FpT<DP> v) { if constexpr (DP) wrD(c, i, v); else wrS(c, i, v); }
 
-// Flush a denormal to a same-signed zero.
+// Flush a denormal to a same-signed zero. A zero exponent field means zero or denormal; both keep
+// only their sign. Branchless: RunFast (flush-to-zero) is how every iOS thread starts, so this runs
+// on nearly every VFP/NEON operation.
 template <typename T> inline T flushDenorm(T v) {
-    return std::fpclassify(v) == FP_SUBNORMAL ? std::copysign(T(0), v) : v;
+    if constexpr (sizeof(T) == 4) {
+        uint32_t b; std::memcpy(&b, &v, 4);
+        const uint32_t keep = (b & 0x7F800000u) ? ~0u : 0x80000000u;
+        b &= keep; std::memcpy(&v, &b, 4);
+    } else {
+        uint64_t b; std::memcpy(&b, &v, 8);
+        const uint64_t keep = (b & 0x7FF0000000000000ull) ? ~0ull : 0x8000000000000000ull;
+        b &= keep; std::memcpy(&v, &b, 8);
+    }
+    return v;
 }
 template <typename T> inline T defaultNaN() {
     if constexpr (sizeof(T) == 4) { uint32_t b = 0x7FC00000u; T f; std::memcpy(&f, &b, 4); return f; }
     else { uint64_t b = 0x7FF8000000000000ull; T f; std::memcpy(&f, &b, 8); return f; }
+}
+
+// VFP arithmetic in a rounding mode other than round-to-nearest (FPSCR.RMode: 0 RN, 1 RP, 2 RM,
+// 3 RZ). Games almost never change it, so the host's rounding mode is switched only for those
+// operations. The operands are read and the result written through volatiles so the compiler
+// can't move the arithmetic (it has no side effects) outside the switched window.
+inline int hostRounding(uint32_t rmode) {
+    static const int kModes[4] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
+    return kModes[rmode & 3];
+}
+template <typename F>
+[[gnu::noinline]] auto withRounding(uint32_t rmode, F f) {
+#pragma STDC FENV_ACCESS ON
+    const int old = std::fegetround();
+    std::fesetround(hostRounding(rmode));
+    const auto r = f();
+    std::fesetround(old);
+    return r;
 }
 
 enum VfpOp3 : uint8_t { kVAdd, kVSub, kVMul, kVNMul, kVDiv, kVMla, kVMls, kVNMla, kVNMls, kVFma, kVFms, kVFNma, kVFNms };
@@ -69,20 +100,66 @@ inline T vfp3(T n, T m, T d) {
     else return std::fma(n, m, -d);   // VFNMS
 }
 
-// a = d, b = n, c = m
+// True when a NaN result came from a NaN operand (which ARM propagates) rather than from an invalid
+// operation on numbers. The multiply-accumulate forms also read d.
+template <int OP, typename T>
+inline bool invalidFromNaN(T n, T m, T d) {
+    return n != n || m != m || (OP >= kVMla && d != d);
+}
+
+// Anything but plain IEEE or exactly RunFast: another rounding mode, or FZ without DN and the
+// like. A separate handler reached by tail call, so the common handler stays a leaf (a call would
+// make every path set up a stack frame).
+template <int OP, bool DP>
+[[gnu::noinline]] HVM_H(H_Vfp3General) {
+    using T = FpT<DP>;
+    T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
+    const uint32_t fpscr = c->fpscr;
+    if (fpscr & kFpscrFZ) { n = flushDenorm(n); mm = flushDenorm(mm); d = flushDenorm(d); }
+    const uint32_t rmode = (fpscr >> kFpscrRModeShift) & 3;
+    T r = rmode ? withRounding(rmode, [=] { volatile T vn = n, vm = mm, vd = d; volatile T vr = vfp3<OP>(T(vn), T(vm), T(vd)); return T(vr); })
+                : vfp3<OP>(n, mm, d);
+    if (fpscr & kFpscrFZ) r = flushDenorm(r);
+    if (r != r && ((fpscr & kFpscrDN) || !invalidFromNaN<OP>(n, mm, d))) r = defaultNaN<T>();
+    wrF<DP>(c, op->a, r);
+    HVM_NEXT();
+}
+
+// a = d, b = n, c = m. Two inline paths: IEEE (Android's default) and RunFast (FZ + DN, round to
+// nearest: how every iOS thread starts).
 template <int OP, bool DP>
 HVM_H(H_Vfp3) {
     using T = FpT<DP>;
-    T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
-    if (__builtin_expect((c->fpscr & (kFpscrFZ | kFpscrDN)) != 0, 0)) {
-        if (c->fpscr & kFpscrFZ) { n = flushDenorm(n); mm = flushDenorm(mm); d = flushDenorm(d); }
+    const uint32_t mode = c->fpscr & (kFpscrFZ | kFpscrDN | kFpscrRMode);
+    if (__builtin_expect(mode == 0, 1)) {
+        const T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
         T r = vfp3<OP>(n, mm, d);
-        if (c->fpscr & kFpscrFZ) r = flushDenorm(r);
-        if ((c->fpscr & kFpscrDN) && std::isnan(r)) r = defaultNaN<T>();
+        // An invalid operation (inf - inf, 0 * inf) gives ARM's positive default NaN; x86 makes a
+        // negative one. A NaN operand is propagated instead, so only fix NaNs made from numbers.
+        if (__builtin_expect(r != r, 0) && !invalidFromNaN<OP>(n, mm, d)) r = defaultNaN<T>();
         wrF<DP>(c, op->a, r);
         HVM_NEXT();
     }
-    wrF<DP>(c, op->a, vfp3<OP>(n, mm, d));
+    if (mode == (kFpscrFZ | kFpscrDN)) {
+        const T n = rdF<DP>(c, op->b), mm = rdF<DP>(c, op->c), d = rdF<DP>(c, op->a);
+        T r = flushDenorm(vfp3<OP>(flushDenorm(n), flushDenorm(mm), flushDenorm(d)));
+        if (r != r) r = defaultNaN<T>();
+        wrF<DP>(c, op->a, r);
+        HVM_NEXT();
+    }
+    HVM_MUSTTAIL return H_Vfp3General<OP, DP>(c, op, m);
+}
+
+// VSQRT in a rounding mode other than round-to-nearest (see withRounding).
+template <bool DP>
+[[gnu::noinline]] HVM_H(H_VsqrtRounded) {
+    using T = FpT<DP>;
+    T v = rdF<DP>(c, op->c);
+    if (c->fpscr & kFpscrFZ) v = flushDenorm(v);
+    const uint32_t rmode = (c->fpscr >> kFpscrRModeShift) & 3;
+    T r = withRounding(rmode, [=] { volatile T vv = v; volatile T vr = std::sqrt(T(vv)); return T(vr); });
+    if (r != r && ((c->fpscr & kFpscrDN) || v == v)) r = defaultNaN<T>();   // sqrt(negative): ARM's positive default NaN
+    wrF<DP>(c, op->a, r);
     HVM_NEXT();
 }
 
@@ -106,10 +183,13 @@ HVM_H(H_Vfp2) {
             wrSu(c, op->a, OP == kVAbs ? (v & 0x7FFFFFFFu) : (v ^ 0x80000000u));
         }
     } else {
+        if (__builtin_expect((c->fpscr & kFpscrRMode) != 0, 0)) { HVM_MUSTTAIL return H_VsqrtRounded<DP>(c, op, m); }
         T m = rdF<DP>(c, op->c);
         if (c->fpscr & kFpscrFZ) m = flushDenorm(m);
         T r = std::sqrt(m);
-        if ((c->fpscr & kFpscrDN) && std::isnan(r)) r = defaultNaN<T>();
+        // sqrt of a negative number is ARM's positive default NaN (x86 makes a negative one); a NaN
+        // operand propagates unless DN is set.
+        if (std::isnan(r) && ((c->fpscr & kFpscrDN) || !std::isnan(m))) r = defaultNaN<T>();
         wrF<DP>(c, op->a, r);
     }
     HVM_NEXT();
@@ -347,7 +427,7 @@ HVM_H(H_VLdrStr) {
 // VLDM/VSTM: a = first word, imm = word count, b = rn, d: bit0 inc, bit2 wb (DB always writes back)
 template <bool LOAD>
 HVM_H(H_VLdmStm) {
-    const uint32_t base = c->r[op->b], bytes = 4 * op->imm;
+    const uint32_t base = c->r[op->b], bytes = 4 * (op->imm + op->c);   // c: FLDMX/FSTMX format word
     const bool inc = op->d & 1;
     const uint32_t addr = inc ? base : base - bytes;
     if constexpr (LOAD) {

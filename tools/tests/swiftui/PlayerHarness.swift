@@ -5,6 +5,7 @@ struct HarnessAppInfo {
     let bundlePath: String
     let bundleIdentifier = "com.hvm.player-harness"
     let version = "1"
+    let isAndroid = false
 }
 enum HVMLogLevel { case error, stderr, warning, debug, stdout, info }
 enum HVMTouchPhase: Int { case began = 0, moved = 1, ended = 3, cancelled = 4 }
@@ -18,6 +19,35 @@ enum HVMCrashJournal {
     static func availableMemory() -> UInt64 { UInt64(os_proc_available_memory()) }
 }
 
+enum HVMEngine {
+    static func liveGuestArenaCount() -> UInt { 0 }
+    static func wait(forGuestArenaRelease timeout: TimeInterval) -> Bool { true }
+    static func chooseFallback(forCrashReport crashReport: String,
+                               internetAccess: Bool,
+                               unlockFrameRate: Bool,
+                               gles1Emulate: Bool,
+                               maxTextureSize: UInt32) -> String? { nil }
+    static func fallbackLabel(forId fallbackId: String) -> String? { nil }
+}
+
+struct GlossToggleRow: View {
+    let title: String
+    let hint: String
+    @Binding var isOn: Bool
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Gloss.ink)
+                Text(hint).font(.system(size: 12)).foregroundStyle(Gloss.inkSoft).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+enum AppIcon {
+    static func load(_ path: String) -> UIImage? { UIImage(contentsOfFile: path) }
+}
+
 @Observable @MainActor
 final class PlayerProbe {
     static let shared = PlayerProbe()
@@ -29,16 +59,39 @@ final class PlayerProbe {
     var maximumTouches = 0
     var cancellations = 0
     var frameDelivered = false
+    var keyText = ""
+    var keyEvent = "none"
     var movedFingers: Set<UInt> = []
     var endedFingers: Set<UInt> = []
     weak var session: HVMSession?
 }
 
+struct HVMPhotoPickerRequest {
+    let active: Bool
+    let requestId: UInt64
+}
+
+struct HVMDocumentPickerRequest {
+    let active: Bool
+    let requestId: UInt64
+    let types: [String]
+}
+
+struct HVMMovieRequest {
+    let active: Bool
+    let requestId: UInt64
+    let path: String
+}
+
 final class HVMTextInputRequest {
-    let active = true, text = "", placeholder = ""
+    let active: Bool, keyInput: Bool, hasText: Bool
+    let text = "", placeholder = ""
     let focusId: UInt64 = 1, ackSeq: UInt64 = 0
     let keyboardType = 0, returnKeyType = 0, autocapitalizationType = 0, autocorrectionType = 0
     let secure = false, multiline = false
+    init(active: Bool = true, keyInput: Bool = false, hasText: Bool = false) {
+        self.active = active; self.keyInput = keyInput; self.hasText = hasText
+    }
 }
 
 /// Replaces only the emulator bridge. The actual RunModel, RunView, UIKit
@@ -48,12 +101,25 @@ final class HVMSession {
     static let emulatorCommit = "harness"
     var keepGoing = false
     var useGPU = false
+    var playSession = false
+    var detailedRecording = false
+    var allowInternet = false
+    var unlockFrameRate = false
+    var safeModeFallback: String?
+    var gles1Emulate = false
+    var maxTextureSize: UInt32 = 0
+    var memoryBudgetBytes: UInt64 = 0
+    var recordingPath: String?
     var onFrame: ((CGImage) -> Void)?
     var onGLLayer: ((CALayer?) -> Void)?
     var onLog: ((String, HVMLogLevel) -> Void)?
     var onExit: ((Int, String?) -> Void)?
     var crashBundle: String?
     var onTextInput: ((HVMTextInputRequest) -> Void)?
+    var onDocumentPicker: ((HVMDocumentPickerRequest) -> Void)?
+    var onMovie: ((HVMMovieRequest) -> Void)?
+    var onPhotoPicker: ((HVMPhotoPickerRequest) -> Void)?
+    private(set) var submittedPhotos: [(id: UInt64, data: Data?)] = []
     var screenSize = CGSize(width: 320, height: 480)
     var interfaceOrientation = 1
     var isBackgrounded = false
@@ -67,6 +133,9 @@ final class HVMSession {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(100))
             self?.deliverFrame()
+            if ProcessInfo.processInfo.environment["PLAYER_KEYINPUT_TEST"] == "1" {
+                self?.publishKeyInput()
+            }
         }
     }
     func deliverFrame() {
@@ -109,9 +178,34 @@ final class HVMSession {
         PlayerProbe.shared.touch = "\(phase.rawValue):\(Int(x.rounded())),\(Int(y.rounded())):\(finger)"
     }
     func setAccelerationX(_ x: Double, y: Double, z: Double) {}
+    func sendAndroidKey(_ keyCode: Int32, down: Bool) {}
+    func sendJoystickLX(_ lx: Float, ly: Float, rx: Float, ry: Float, hatX: Float, hatY: Float) {}
     func submitText(_ text: String, focusId: UInt64, sequence: UInt64) {}
+    func submitDocument(_ path: String?, requestId: UInt64) {}
+    func movieFinished(_ requestId: UInt64) {}
+    func submitPhoto(_ data: Data?, requestId: UInt64) { submittedPhotos.append((requestId, data)) }
     func submitReturnKey(forFocus focusId: UInt64) {}
-    func dismissKeyboard(forFocus focusId: UInt64) {}
+    private func publishKeyInput(active: Bool = true) {
+        onTextInput?(HVMTextInputRequest(active: active, keyInput: true,
+                                        hasText: !PlayerProbe.shared.keyText.isEmpty))
+    }
+    func insertText(_ text: String, focusId: UInt64) {
+        guard focusId == 1 else { return }
+        PlayerProbe.shared.keyText += text
+        PlayerProbe.shared.keyEvent = text == "\n" ? "return" : "insert"
+        publishKeyInput()
+    }
+    func deleteBackward(forFocus focusId: UInt64) {
+        guard focusId == 1 else { return }
+        if !PlayerProbe.shared.keyText.isEmpty { PlayerProbe.shared.keyText.removeLast() }
+        PlayerProbe.shared.keyEvent = "delete"
+        publishKeyInput()
+    }
+    func dismissKeyboard(forFocus focusId: UInt64) {
+        guard focusId == 1 else { return }
+        PlayerProbe.shared.keyEvent = "dismiss"
+        publishKeyInput(active: false)
+    }
 }
 
 struct PlayerHarness: View {
@@ -121,6 +215,10 @@ struct PlayerHarness: View {
         RunView(app: app, keepGoing: false)
             .overlay(alignment: .bottomLeading) {
                 VStack {
+                    if ProcessInfo.processInfo.environment["PLAYER_KEYINPUT_TEST"] == "1" {
+                        Text(PlayerProbe.shared.keyText).accessibilityIdentifier("probe-key-text")
+                        Text(PlayerProbe.shared.keyEvent).accessibilityIdentifier("probe-key-event")
+                    }
                     Text(PlayerProbe.shared.touch).accessibilityIdentifier("probe-touch")
                     Text(PlayerProbe.shared.lifecycle).accessibilityIdentifier("probe-lifecycle")
                     Text(verbatim: String(PlayerProbe.shared.volume)).accessibilityIdentifier("probe-volume")

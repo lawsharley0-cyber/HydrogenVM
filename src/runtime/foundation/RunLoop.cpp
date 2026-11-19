@@ -1,4 +1,6 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — run loops, timers, dates, delayed/cross-thread performs, NSThread.
+#include <exception>
 #include "Foundation.hpp"
 #include "runtime/Support.hpp"
 #include <algorithm>
@@ -28,7 +30,7 @@ std::string runModeKey(Ctx& x, id mode) {
 
 double now() {
     using namespace std::chrono;
-    return duration<double>(system_clock::now().time_since_epoch()).count() - 978307200.0;
+    return double(guestWallNowNs()) / 1e9 - 978307200.0;   // shifted on replay (runtime/Session.hpp)
 }
 
 // ------------------------------------------------------------- RunLoop ---
@@ -122,6 +124,7 @@ bool RunLoop::hasModeInput(const std::string& mode) {
         if (tm->modes.empty() ? common : inMode(tm->modes, mode)) return true;
     }
     for (const auto& s : sources) if (s->valid.load() && !s->modes.empty() && inMode(s->modes, mode)) return true;
+    if (!portModes.empty() && inMode(portModes, mode)) return true;
     return false;
 }
 
@@ -132,7 +135,8 @@ bool RunLoop::runModeOnce(CPU::Cpu& c, double until, const std::string& mode) {
 }
 
 bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
-    if (proc.terminating() || proc.stopping()) return false;
+    if (proc.stopping()) return false;
+    const bool term = proc.terminating();
     struct Active {
         RunLoop& rl; std::string previous;
         Active(RunLoop& l, const std::string& m) : rl(l) { std::lock_guard<std::mutex> lk(rl.mu); previous = rl.activeMode; rl.activeMode = m; }
@@ -148,13 +152,6 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
         std::unique_lock<std::mutex> lk(mu);
         double t = now();
         nextDeadline = t + maxWait;
-        timers.erase(std::remove_if(timers.begin(), timers.end(), [](auto& tm) { return !tm->valid; }), timers.end());
-        for (auto& tm : timers) {
-            if (!inMode(tm->modes, mode)) continue;
-            if (tm->fireAt <= t) due.push_back(tm);
-            else nextDeadline = std::min(nextDeadline, tm->fireAt);
-        }
-        // Signalled sources: claiming one clears its flag, so a source shared by two loops performs once.
         const auto claimSources = [&] {
             sources.erase(std::remove_if(sources.begin(), sources.end(), [](auto& s) { return !s->valid.load(); }), sources.end());
             for (auto& s : sources) {
@@ -162,29 +159,54 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
                 if (s->signalled.exchange(false) && std::find(ready.begin(), ready.end(), s) == ready.end()) ready.push_back(s);
             }
         };
-        if (!sources.empty()) claimSources();
-        if (!frameHooks.empty()) nextDeadline = std::min(nextDeadline, nextFrameAt);
-        if (queue.empty() && due.empty() && ready.empty() && nextDeadline > t) {
-            cv.wait_for(lk, std::chrono::duration<double>(std::min(nextDeadline - t, 0.05)));
-            if (queue.empty()) {
-                t = now();
-                for (auto& tm : timers) if (tm->valid && tm->fireAt <= t && inMode(tm->modes, mode) && std::find(due.begin(), due.end(), tm) == due.end()) due.push_back(tm);
+        if (!term) {
+            timers.erase(std::remove_if(timers.begin(), timers.end(), [](auto& tm) { return !tm->valid; }), timers.end());
+            for (auto& tm : timers) {
+                if (!inMode(tm->modes, mode)) continue;
+                if (tm->fireAt <= t) due.push_back(tm);
+                else nextDeadline = std::min(nextDeadline, tm->fireAt);
             }
             if (!sources.empty()) claimSources();
+            if (!frameHooks.empty()) nextDeadline = std::min(nextDeadline, nextFrameAt);
+        }
+        if (queue.empty() && due.empty() && ready.empty() && nextDeadline > t) {
+            cv.wait_for(lk, std::chrono::duration<double>(std::min(nextDeadline - t, 0.05)));
+            if (!term) {
+                if (queue.empty()) {
+                    t = now();
+                    for (auto& tm : timers) if (tm->valid && tm->fireAt <= t && inMode(tm->modes, mode) && std::find(due.begin(), due.end(), tm) == due.end()) due.push_back(tm);
+                }
+                if (!sources.empty()) claimSources();
+            }
         }
         std::stable_sort(ready.begin(), ready.end(), [](auto& a, auto& b) { return a->order < b->order; });
         work.swap(queue);
         t = now();
-        if (!frameHooks.empty() && t >= nextFrameAt) {
+        if (!term && !frameHooks.empty() && t >= nextFrameAt) {
             frameDue = true;
             hooks = frameHooks;
             // 60 Hz cadence; if we fell behind, don't try to catch up with a burst of frames.
-            nextFrameAt = std::max(nextFrameAt + 1.0 / 60.0, t + 0.004);
+            // A frame that overran its slot is followed after a short breath (timers and
+            // queued work run first in every pass), not after a fixed 4 ms: that turned an
+            // 18 ms frame into a 22 ms one.
+            nextFrameAt = std::max(nextFrameAt + 1.0 / 60.0, t + 0.001);
         }
     }
+    // Drains the turn's autorelease pool. Draining runs guest -dealloc code, which can itself
+    // throw the process-stop exception, so the pool is left alone while one is already
+    // unwinding (watchdog or exit): a second throw from a destructor would abort the host.
+    struct TurnPool {
+        Process& p; CPU::Cpu& cpu; uint32_t token; bool enabled; int unwinding;
+        TurnPool(Process& proc, CPU::Cpu& c, bool on)
+            : p(proc), cpu(c), token(on ? ObjC::rt(proc).poolPush() : 0), enabled(on), unwinding(std::uncaught_exceptions()) {}
+        ~TurnPool() noexcept(false) {
+            if (!enabled || std::uncaught_exceptions() > unwinding || p.stopping() || p.terminating()) return;
+            ObjC::rt(p).poolPop(cpu, token);
+        }
+    } turnPool(proc,c,autoreleasePerTurn);
     bool ran = !work.empty();
     for (auto& fn : work) {
-        if (proc.terminating() || proc.stopping()) return ran;
+        if (proc.stopping()) return ran;
         fn(c);
     }
     for (auto& s : ready) {
@@ -219,7 +241,6 @@ bool RunLoop::runOnce(CPU::Cpu& c, double maxWait, const std::string& mode) {
 void RunLoop::runUntil(CPU::Cpu& c, double until, bool returnAfterSource, const std::string& mode) {
     for (;;) {
         if (proc.stopping()) throw ProcessExit(0, "stopping");
-        if (proc.terminating()) return;
         {
             std::lock_guard<std::mutex> lk(mu);
             if (stopFlag) { stopFlag = false; return; }
@@ -386,7 +407,16 @@ void scheduleTimer(Ctx& x, id timer, RunLoop& rl, const std::string& mode) {
     }
     rt(x).retain(x.cpu, timer);   // the run loop retains scheduled timers
     Process* p = &x.proc;
-    d->t = rl.addTimer(d->fireAt - now(), d->interval, d->repeats, [p, timer](CPU::Cpu& c) {
+    double interval = d->interval;   // what -timeInterval reports stays the game's own value
+    if (d->repeats && Compat::unlockFrameRate(x.proc) && interval > 1.0 / 50 && interval <= 1.0 / 20) {
+        static std::once_flag logged;
+        std::call_once(logged, [&] {
+            x.proc.logf(LogLevel::Info, "Unlock frame rate: a repeating %.4f s timer (%.0f per second) fires every 1/60 s instead",
+                        interval, 1.0 / interval);
+        });
+        interval = 1.0 / 60;
+    }
+    d->t = rl.addTimer(d->fireAt - now(), interval, d->repeats, [p, timer](CPU::Cpu& c) {
         Ctx cx{*p, c, p->mem()};
         fireTimer(cx, timer);
     }, timer, mode);
@@ -490,11 +520,22 @@ void timer_dealloc(Ctx& x, id self, SEL) {
 id rc_current(Ctx& x, id, SEL) { return loopObject(x, currentLoop(x)); }
 id rc_main(Ctx& x, id, SEL) { return loopObject(x, *L(x).main); }
 void r_addTimer(Ctx& x, id self, SEL, id timer, id mode) { scheduleTimer(x, timer, loopOf(x, self), modeKey(x, mode)); }
-void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopOf(x, self).runUntil(x.cpu, 1e18, false, kDefaultModeKey); }
-void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopOf(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
+// -run, -runUntilDate: and -runMode:beforeDate: run the calling thread's loop, as
+// Foundation's do (they are CFRunLoopRunInMode, which takes no loop): a receiver
+// that belongs to another thread is not run on this one. Flurry runs
+// [[NSRunLoop mainRunLoop] runMode:beforeDate:] on its upload thread; running the
+// main loop there executed the game's main-thread sources (Pocket Ants' cocos2d
+// draw loop) on that thread, with no GL context.
+RunLoop& loopToRun(Ctx& x, id self) {
+    RunLoop& own = currentLoop(x);
+    (void)self;
+    return own;
+}
+void r_run(Ctx& x, id self, SEL) { while (!x.proc.terminating()) loopToRun(x, self).runUntil(x.cpu, 1e18, false, kDefaultModeKey); }
+void r_runUntilDate(Ctx& x, id self, SEL, id date) { loopToRun(x, self).runUntil(x.cpu, dateValue(x, date), false, kDefaultModeKey); }
 bool r_runModeBeforeDate(Ctx& x, id self, SEL, id mode, id date) {
     const double d = dateValue(x, date);
-    return loopOf(x, self).runModeOnce(x.cpu, d, runModeKey(x, mode));
+    return loopToRun(x, self).runModeOnce(x.cpu, d, runModeKey(x, mode));
 }
 // The mode being run, as the guest's string (no internal "s:" key prefix); nil when the loop is not running.
 id r_currentMode(Ctx& x, id self, SEL) {
@@ -749,6 +790,7 @@ void o_performOnMain(Ctx& x, id self, SEL, SEL sel, id arg, bool wait) {
         done->set_value();
     });
     if (wait && !onMain) {
+        BlockedScope blocked(x.proc, "performSelectorOnMainThread:waitUntilDone:YES (waiting for the main thread)");
         while (fut.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
             if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     }
@@ -854,6 +896,7 @@ void o_performOnThread(Ctx& x, id self, SEL, SEL sel, id thread, id arg, bool wa
         done->set_value();
     });
     if (wait && t != &x.proc.currentThread()) {
+        BlockedScope blocked(x.proc, "performSelector:onThread:waitUntilDone:YES", t->id);
         while (fut.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
             if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     }
@@ -861,7 +904,27 @@ void o_performOnThread(Ctx& x, id self, SEL, SEL sel, id thread, id arg, bool wa
 void o_performOnThreadModes(Ctx& x, id self, SEL s, SEL sel, id thread, id arg, bool wait, id) { o_performOnThread(x, self, s, sel, thread, arg, wait); }
 // NSPort / NSMachPort: AFNetworking-style "keep this run loop alive" ports. Nothing arrives on them.
 id port_new(Ctx& x, id cls, SEL) { return autoreleased(x, id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, cls, rt(x).selAlloc)), "init"))); }
-void rl_portNoop(Ctx&, id, SEL, id, id) {}
+// A port added to a loop keeps that mode "having input", as on iOS: the classic network thread
+//   [runLoop addPort:[NSMachPort port] forMode:NSDefaultRunLoopMode];
+//   while (!done) [runLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]];
+// then sleeps until work arrives. Without it, -runMode:beforeDate: returned NO at once and the
+// loop spun, making an NSDate per turn: Army of Darkness Defense's ad thread (Burstly) grew the
+// process by ~60 MB/s until it was killed.
+void rl_addPort(Ctx& x, id self, SEL, id port, id mode) {
+    if (!port || !mode) return;
+    RunLoop& rl = loopOf(x, self);
+    const std::string key = runModeKey(x, mode);
+    std::lock_guard<std::mutex> lk(rl.mu);
+    rl.portModes.push_back(key);
+}
+void rl_removePort(Ctx& x, id self, SEL, id port, id mode) {
+    if (!port || !mode) return;
+    RunLoop& rl = loopOf(x, self);
+    const std::string key = runModeKey(x, mode);
+    std::lock_guard<std::mutex> lk(rl.mu);
+    auto it = std::find(rl.portModes.begin(), rl.portModes.end(), key);
+    if (it != rl.portModes.end()) rl.portModes.erase(it);
+}
 
 id th_current(Ctx& x, id, SEL) { return threadObject(x, &x.proc.currentThread()); }
 id th_main(Ctx& x, id, SEL) { return threadObject(x, &x.proc.mainThread()); }
@@ -988,6 +1051,10 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     rl.m<&r_addTimer>("addTimer:forMode:").m<&r_run>("run", "v@:").m<&r_runUntilDate>("runUntilDate:");
     supportMethod(p, rl, "NSRunLoop", "runMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); },
                   SupportStatus::Approx, "Runs one emulated mode iteration until the supplied date; host event and source model is approximate", "c@:@@");
+    // Unity drains touch input each frame with acceptInputForMode:beforeDate:[NSDate distantPast]. It is
+    // one runMode:beforeDate: pass without the result; timers due in that pass also fire here.
+    supportMethod(p, rl, "NSRunLoop", "acceptInputForMode:beforeDate:", [](Ctx& x) { callWrapped<&r_runModeBeforeDate>(x); x.cpu.r[0] = 0; },
+                  SupportStatus::Approx, "One emulated mode iteration until the supplied date; due timers may also fire", "v@:@@");
     rl.m<&r_currentMode>("currentMode").m<&r_getCFRunLoop>("getCFRunLoop");
 
     ObjC::ClassBuilder obj = r.builder(r.nsObject);
@@ -1005,7 +1072,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder port = r.defineClass("NSPort", "NSObject");
     port.cm<&port_new>("port");
     r.defineClass("NSMachPort", "NSPort");
-    r.builder(l.nsRunLoop).m<&rl_portNoop>("addPort:forMode:", "v@:@@").m<&rl_portNoop>("removePort:forMode:", "v@:@@");
+    r.builder(l.nsRunLoop).m<&rl_addPort>("addPort:forMode:", "v@:@@").m<&rl_removePort>("removePort:forMode:", "v@:@@");
 
     ObjC::ClassBuilder th = r.defineClass("NSThread", "NSObject");
     l.nsThread = th.cls();

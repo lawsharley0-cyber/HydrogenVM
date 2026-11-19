@@ -1,0 +1,14 @@
+{
+  "name":"Native music and SFX switches, initially both ON and replay landscape OFF",
+  "steps":[
+    {"id":"A-settings","expected":"Settings opens","actions":[{"tap":[290,52]}]},
+    {"id":"A-music-on","expected":"Idle tail has music signal","actions":[{"wait":2}],"settleSeconds":2},
+    {"id":"A-music-off","expected":"Music OFF, idle tail silent","actions":[{"tap":[90,250]}],"settleSeconds":2},
+    {"id":"A-sfx-on-click","expected":"Music OFF, replay-toggle click has SFX signal","actions":[{"tap":[90,327]}]},
+    {"id":"A-sfx-off","expected":"SFX OFF, idle tail silent","actions":[{"tap":[90,288]}],"settleSeconds":2},
+    {"id":"A-sfx-muted-click","expected":"Music and SFX OFF; replay-toggle click stays silent","actions":[{"tap":[90,327]}]},
+    {"id":"A-music-restored","expected":"Music ON with SFX OFF, idle tail has music signal","actions":[{"tap":[90,250]}],"settleSeconds":2},
+    {"id":"A-sfx-restored","expected":"Both audio switches ON again","actions":[{"tap":[90,288]}]},
+    {"id":"A-close","expected":"Home returns without crash","actions":[{"tap":[287,203]}]}
+  ]
+}

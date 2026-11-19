@@ -23,7 +23,7 @@ jobs:
           name: stub-audit
           path: build/stub-audit.json
       - name: Install C++ dependencies
-        run: sudo apt-get update -q && sudo apt-get install -yq clang cmake ninja-build zlib1g-dev libsqlite3-dev libssl-dev uuid-dev
+        run: sudo apt-get update -q && sudo apt-get install -yq libicu-dev clang cmake ninja-build zlib1g-dev libsqlite3-dev libssl-dev uuid-dev
       - name: Build and check support registrations
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release

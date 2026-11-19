@@ -1,7 +1,10 @@
 // HydrogenVM — <string.h>, <strings.h>, <ctype.h>, <wchar.h> basics.
 // Operates directly on guest memory through the arena's host mapping.
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <strings.h>
 #include <string>
@@ -32,9 +35,22 @@ uint32_t s_memset_pattern16(Ctx& x, GuestPtr d, GuestPtr pat, uint32_t n) {
 
 uint32_t s_strlen(Ctx& x, GuestPtr s) { return uint32_t(std::strlen(H(x, s))); }
 uint32_t s_strnlen(Ctx& x, GuestPtr s, uint32_t n) { return uint32_t(strnlen(H(x, s), n)); }
-int32_t  s_strcmp(Ctx& x, GuestPtr a, GuestPtr b) { return std::strcmp(H(x, a), H(x, b)); }
+// HVM_TRACE_COMPARE=1 prints every strcmp/strcasecmp of two short words ("Compare: strcmp
+// \"code\" \"message\"") to stderr: how a game looks things up in data it was given, for
+// working out a stand-in server's replies (ServerStandIn.cpp) without reading the game's code.
+void traceCompare(const char* f, const char* a, const char* b) {
+    static const bool on = std::getenv("HVM_TRACE_COMPARE") != nullptr;
+    if (!on) return;
+    auto word = [](const char* s) {
+        size_t n = 0;
+        for (; s[n] && n < 64; ++n) if (!std::isalnum(uint8_t(s[n])) && s[n] != '_' && s[n] != '-' && s[n] != '.') return false;
+        return n > 0 && n < 64;
+    };
+    if (word(a) && word(b)) std::fprintf(stderr, "Compare: %s \"%s\" \"%s\"\n", f, a, b);
+}
+int32_t  s_strcmp(Ctx& x, GuestPtr a, GuestPtr b) { traceCompare("strcmp", H(x, a), H(x, b)); return std::strcmp(H(x, a), H(x, b)); }
 int32_t  s_strncmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return std::strncmp(H(x, a), H(x, b), n); }
-int32_t  s_strcasecmp(Ctx& x, GuestPtr a, GuestPtr b) { return ::strcasecmp(H(x, a), H(x, b)); }
+int32_t  s_strcasecmp(Ctx& x, GuestPtr a, GuestPtr b) { traceCompare("strcasecmp", H(x, a), H(x, b)); return ::strcasecmp(H(x, a), H(x, b)); }
 int32_t  s_strncasecmp(Ctx& x, GuestPtr a, GuestPtr b, uint32_t n) { return ::strncasecmp(H(x, a), H(x, b), n); }
 int32_t  s_strcoll(Ctx& x, GuestPtr a, GuestPtr b) { return std::strcmp(H(x, a), H(x, b)); }
 uint32_t s_strcpy(Ctx& x, GuestPtr d, GuestPtr s) { const size_t n = std::strlen(H(x, s)); std::memmove(H(x, d), H(x, s), n + 1); return d; }
@@ -144,11 +160,52 @@ int32_t c_isgraph(Ctx&, int32_t c) { return c > 0x20 && c < 0x7F; }
 int32_t c_toupper(Ctx&, int32_t c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
 int32_t c_tolower(Ctx&, int32_t c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 int32_t c_isascii(Ctx&, int32_t c) { return (c & ~0x7F) == 0; }
-int32_t c_maskrune(Ctx&, int32_t c, uint32_t mask) {
-    // Darwin <ctype.h> inlines call __maskrune for non-ASCII values only.
-    (void)mask;
-    return c >= 0 && c < 256 && std::isalpha(c) ? int32_t(mask) : 0;
+// _DefaultRuneLocale.__runetype[c]: Darwin's character class bits (_CTYPE_A ... _CTYPE_R).
+uint32_t runeType(uint32_t c) {
+    enum : uint32_t { A = 0x100, C = 0x200, D = 0x400, G = 0x800, L = 0x1000, P = 0x2000, S = 0x4000, U = 0x8000,
+                      X = 0x10000, B = 0x20000, R = 0x40000 };
+    uint32_t t = 0;
+    if (c >= 128) return t;
+    if (std::isalpha(int(c))) t |= A;
+    if (std::iscntrl(int(c))) t |= C;
+    if (std::isdigit(int(c))) t |= D | uint32_t(c - '0');
+    if (std::isgraph(int(c))) t |= G;
+    if (std::islower(int(c))) t |= L;
+    if (std::ispunct(int(c))) t |= P;
+    if (std::isspace(int(c))) t |= S;
+    if (std::isupper(int(c))) t |= U;
+    if (std::isxdigit(int(c))) { t |= X; if (!std::isdigit(int(c))) t |= uint32_t(std::tolower(int(c)) - 'a' + 10); }
+    if (c == ' ' || c == '\t') t |= B;
+    if (std::isprint(int(c))) t |= R;
+    return t;
 }
+// __maskrune(c, mask): the character's class bits that are in the mask. Code built without the
+// inline <ctype.h> calls this for every isalpha / iscntrl / isprint, ASCII included, so the
+// answer has to depend on the mask (answering "yes" to iscntrl for letters made Plants vs.
+// Zombies throw away each typed character of a name).
+int32_t c_maskrune(Ctx&, int32_t c, uint32_t mask) {
+    return c >= 0 ? int32_t(runeType(uint32_t(c)) & mask) : 0;
+}
+// xlocale (Crossy Road #532): HydrogenVM has one locale, the C/en_US one every *_l function
+// already uses. newlocale/duplocale hand out distinct handles (freed by freelocale); uselocale
+// keeps each thread's current handle, starting at LC_GLOBAL_LOCALE ((locale_t)-1).
+constexpr uint32_t kGlobalLocale = 0xFFFFFFFFu;
+uint32_t loc_new(Ctx& x, int32_t, GuestPtr, uint32_t base) {
+    if (base && base != kGlobalLocale) return base;   // newlocale modifies and returns base
+    const uint32_t h = x.proc.heap().alloc(16);
+    if (h) x.mem.write<uint32_t>(h, 0x4C4F4341u);     // "LOCA": a valid handle
+    return h;
+}
+uint32_t loc_dup(Ctx& x, uint32_t) { return loc_new(x, 0, 0, 0); }
+int32_t loc_free(Ctx& x, uint32_t h) { if (h && h != kGlobalLocale) x.proc.heap().free(h); return 0; }
+uint32_t loc_use(Ctx& x, uint32_t h) {
+    static const char key = 0;
+    uint32_t& cur = x.proc.threadSlot(&key);
+    const uint32_t prev = cur ? cur : kGlobalLocale;
+    if (h) cur = h;
+    return prev;
+}
+uint32_t loc_query(Ctx& x, int32_t, uint32_t) { return x.proc.internCString("C"); }
 int32_t c_toupper_l(Ctx& x, int32_t c, uint32_t) { return c_toupper(x, c); }
 int32_t c_tolower_l(Ctx& x, int32_t c, uint32_t) { return c_tolower(x, c); }
 
@@ -284,6 +341,32 @@ uint32_t w_wcrtomb(Ctx& x, GuestPtr s, uint32_t wc, GuestPtr) {
     const uint8_t b = uint8_t(wc);
     store_checked(x, s, &b, 1, "invalid guest memory write access in wcrtomb");
     return 1;
+}
+// wcstombs / mbstowcs in the single-byte C locale the other conversions here use: each wide
+// character 0..255 is one byte. PvZ's XML parser converts tag names with wcstombs; the stub
+// produced nothing and every tag mismatched.
+uint32_t w_wcstombs(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    const size_t len = safe_wcslen(x, s);
+    for (size_t i = 0; i < len; ++i)
+        if (x.mem.read<uint32_t>(GuestPtr(s + i * 4)) > 255) { setErrnoLocal(x, kEILSEQ); return kMbErr; }
+    if (!d) return uint32_t(len);
+    const size_t k = std::min<size_t>(len, n);
+    std::string out(k, '\0');
+    for (size_t i = 0; i < k; ++i) out[i] = char(x.mem.read<uint32_t>(GuestPtr(s + i * 4)));
+    if (k < n) out.push_back('\0');
+    if (!out.empty()) store_checked(x, d, out.data(), out.size(), "invalid guest memory write access in wcstombs");
+    return uint32_t(k);
+}
+uint32_t w_mbstowcs(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
+    const size_t len = safe_strlen(x, s);
+    if (!d) return uint32_t(len);
+    const size_t k = std::min<size_t>(len, n);
+    for (size_t i = 0; i < k; ++i) {
+        const uint32_t wc = uint8_t(x.mem.read<uint8_t>(GuestPtr(s + i)));
+        store_checked(x, GuestPtr(d + i * 4), &wc, 4, "invalid guest memory write access in mbstowcs");
+    }
+    if (k < n) { const uint32_t z = 0; store_checked(x, GuestPtr(d + k * 4), &z, 4, "invalid guest memory write access in mbstowcs"); }
+    return uint32_t(k);
 }
 uint32_t s_strxfrm(Ctx& x, GuestPtr d, GuestPtr s, uint32_t n) {
     const uint32_t len = uint32_t(safe_strlen(x, s));
@@ -501,23 +584,8 @@ static void buildRuneLocale(Process& p) {
     auto& m = p.mem();
     m.copyIn(a, "RuneMagA", 8);
     m.copyIn(a + 8, "NONE", 5);
-    enum : uint32_t { A = 0x100, C = 0x200, D = 0x400, G = 0x800, L = 0x1000, P = 0x2000, S = 0x4000, U = 0x8000,
-                      X = 0x10000, B = 0x20000, R = 0x40000 };
     for (uint32_t c = 0; c < 256; ++c) {
-        uint32_t t = 0;
-        if (c < 128) {
-            if (std::isalpha(int(c))) t |= A;
-            if (std::iscntrl(int(c))) t |= C;
-            if (std::isdigit(int(c))) t |= D | uint32_t(c - '0');
-            if (std::isgraph(int(c))) t |= G;
-            if (std::islower(int(c))) t |= L;
-            if (std::ispunct(int(c))) t |= P;
-            if (std::isspace(int(c))) t |= S;
-            if (std::isupper(int(c))) t |= U;
-            if (std::isxdigit(int(c))) { t |= X; if (!std::isdigit(int(c))) t |= uint32_t(std::tolower(int(c)) - 'a' + 10); }
-            if (c == ' ' || c == '\t') t |= B;
-            if (std::isprint(int(c))) t |= R;
-        }
+        const uint32_t t = runeType(c);
         m.write<uint32_t>(a + kRuneTypeOff + c * 4, t);
         m.write<uint32_t>(a + kRuneTypeOff + 1024 + c * 4, c < 128 ? uint32_t(std::tolower(int(c))) : c);
         m.write<uint32_t>(a + kRuneTypeOff + 2048 + c * 4, c < 128 ? uint32_t(std::toupper(int(c))) : c);
@@ -596,6 +664,11 @@ void registerLibcString(Process& p) {
     p.def<&c_tolower>("_tolower");
     p.def<&c_toupper>("___toupper");
     p.def<&c_tolower>("___tolower");
+    supportDef<&loc_new>(p, "_newlocale", SupportStatus::Approx, "one locale (C/en_US); distinct handles");
+    supportDef<&loc_dup>(p, "_duplocale", SupportStatus::Approx, "one locale (C/en_US); distinct handles");
+    supportDef<&loc_free>(p, "_freelocale", SupportStatus::Real, "frees the handle");
+    supportDef<&loc_use>(p, "_uselocale", SupportStatus::Real, "per-thread current locale, LC_GLOBAL_LOCALE first");
+    supportDef<&loc_query>(p, "_querylocale", SupportStatus::Approx, "one locale: \"C\"");
     p.def<&c_toupper_l>("_toupper_l");
     p.def<&c_tolower_l>("_tolower_l");
     p.def<&c_maskrune>("___maskrune");
@@ -620,6 +693,8 @@ void registerLibcString(Process& p) {
     p.def<&w_mbrlen>("_mbrlen");
     p.def<&w_mbtowc>("_mbtowc");
     p.def<&w_wcrtomb>("_wcrtomb");
+    p.def<&w_wcstombs>("_wcstombs");
+    p.def<&w_mbstowcs>("_mbstowcs");
     p.def<&s_strxfrm>("_strxfrm");
     p.def<&w_wcscoll>("_wcscoll");
     p.def<&w_wcsxfrm>("_wcsxfrm");

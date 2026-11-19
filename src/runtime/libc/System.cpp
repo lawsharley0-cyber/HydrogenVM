@@ -231,6 +231,13 @@ int32_t s_ioctl(Ctx& x, int32_t fd, uint32_t req, GuestPtr arg) {
             return 0;
         }
     }
+    if (isNetworkSocket(x.proc, fd) || ((req >> 8) & 0xFF) == 'i') {
+        int result = 0;
+        if (networkInterfaceIoctl(x, req, arg, result)) return result;
+    }
+    char what[96];
+    std::snprintf(what, sizeof what, "ioctl(request 0x%08x) is not known (answered 0, did nothing)", req);
+    x.proc.reportDefaulted(what);
     return 0;
 }
 int32_t s_zero(Ctx&) { return 0; }
@@ -292,8 +299,9 @@ int32_t sysctlValue(Ctx& x, const std::string& name, GuestPtr oldp, GuestPtr old
     if (name == "kern.ostype") return str("Darwin");
     if (name == "kern.hostname") return str(si.hostname);
     if (name == "kern.version") return str("Darwin Kernel Version 13.0.0: HydrogenVM; root:xnu/RELEASE_ARM_S5L8950X");
-    if (name == "kern.boottime") { const uint32_t tv[2] = {uint32_t(std::time(nullptr) - 86400), 0}; return writeSysctl(x, oldp, oldlenp, tv, 8); }
+    if (name == "kern.boottime") { const uint32_t tv[2] = {uint32_t(x.proc.wallNowNs() / 1000000000 - 86400), 0}; return writeSysctl(x, oldp, oldlenp, tv, 8); }
     if (name == "kern.maxproc") return u32(512);
+    x.proc.reportDefaulted("sysctl \"" + name + "\" is not known (answered ENOENT)");
     setErrno(x, ENOENT);
     return -1;
 }
@@ -348,6 +356,7 @@ int32_t s_sysctl(Ctx& x, GuestPtr mib, uint32_t n, GuestPtr oldp, GuestPtr oldle
         if (en0) sdl[11] = 0x02;         // 02:00:00:00:00:00
         return writeSysctl(x, oldp, oldlenp, msg, sizeof msg);
     }
+    x.proc.reportDefaulted("sysctl mib {" + std::to_string(a) + ", " + std::to_string(b) + "} is not known (answered ENOENT)");
     setErrno(x, ENOENT);
     return -1;
 }
@@ -436,7 +445,7 @@ void s_noop(Ctx&) {}
 struct OpenFds {
     explicit OpenFds(Process&) {}
     std::mutex mu;
-    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; };
+    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; std::string path; bool inBundle = false; };
     std::unordered_map<int32_t, FdTrack> tracks;
 };
 
@@ -491,10 +500,44 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
         assetReadAhead(fd, hp, flags, st);
     }
     const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
+    std::string replayPath;
+    bool inBundle = false;
+    if (x.proc.session().detailsActive()) {
+        const auto& bundle = x.proc.bundlePath();
+        const auto& home = x.proc.homePath();
+        inBundle = !bundle.empty() && (hp == bundle || hp.starts_with(bundle + "/"));
+        // Phone and bench installs have different UUIDs. Use the same logical path on both.
+        if (inBundle) replayPath = "@bundle" + hp.substr(bundle.size());
+        else if (!home.empty() && (hp == home || hp.starts_with(home + "/")))
+            replayPath = "@home" + hp.substr(home.size());
+        else replayPath = x.proc.absoluteGuestPath(gp);
+    }
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
-    ofs.tracks[fd] = {h, 0};
+    ofs.tracks[fd] = {h, 0, std::move(replayPath), inBundle};
     return fd;
+}
+// POSIX shared memory: Unity's Mono runtime opens a shared-handle segment at startup (Subway
+// Surfers, #441). One process is all there is here, so a segment is a file in the app's tmp
+// folder; mmap of its descriptor works like any file's.
+std::string shmHostPath(Ctx& x, GuestPtr name) {
+    std::string n = x.proc.readCString(name, 256);
+    while (!n.empty() && n.front() == '/') n.erase(n.begin());
+    for (char& c : n) if (c == '/' || c == '\0') c = '_';
+    const std::string dir = x.proc.config().homePath + "/tmp/.shm";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir + "/" + (n.empty() ? std::string("_") : n);
+}
+int32_t f_shmOpen(Ctx& x, GuestPtr name, uint32_t flags, VarArgs va) {
+    if (!name) { errno = EINVAL; return failD<int32_t>(x); }
+    const uint32_t mode = (flags & 0x200) ? va.args.word() : 0;
+    const int fd = ::open(shmHostPath(x, name).c_str(), hostOpenFlags(flags) | O_CLOEXEC, mode & 0777);
+    return fd < 0 ? failD<int32_t>(x) : fd;
+}
+int32_t f_shmUnlink(Ctx& x, GuestPtr name) {
+    if (!name) { errno = EINVAL; return failD<int32_t>(x); }
+    return ::unlink(shmHostPath(x, name).c_str()) < 0 ? failD<int32_t>(x) : 0;
 }
 int32_t f_close(Ctx& x, int32_t fd) {
     if (fd >= 0 && fd <= 2) return 0;
@@ -532,9 +575,42 @@ void waitUntilReadable(Ctx& x, int fd) {
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
+    std::optional<std::string> trackedPath;
+    bool trackedInBundle = false;
+    uint64_t trackedOff = 0;
+    if (x.proc.session().detailsActive()) {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) {
+            trackedPath = it->second.path;
+            trackedInBundle = it->second.inBundle;
+            const off_t cur = ::lseek(fd, 0, SEEK_CUR);
+            trackedOff = cur >= 0 ? uint64_t(cur) : uint64_t(it->second.bytesRead);
+        }
+    }
+    if (trackedPath && !trackedInBundle && x.proc.session().replayingDetails()) {
+        if (auto rec = x.proc.session().replayFileRead(*trackedPath, trackedOff, n)) {
+            const size_t got = rec->size();
+            if (got > 0) x.mem.copyIn(buf, rec->data(), got);
+            ::lseek(fd, off_t(got), SEEK_CUR);
+            auto& ofs = x.proc.service<OpenFds>();
+            std::lock_guard<std::mutex> lk(ofs.mu);
+            auto it = ofs.tracks.find(fd);
+            if (it != ofs.tracks.end()) {
+                it->second.bytesRead += int64_t(got);
+                x.proc.updateFileRead(it->second.fileHandle, it->second.bytesRead);
+            }
+            return int32_t(got);
+        }
+    }
     waitUntilReadable(x, fd);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     if (r > 0) {
+        if (trackedPath && x.proc.session().recordingDetails()) {
+            x.proc.session().recordFileRead(*trackedPath, trackedOff, x.mem.host(buf), size_t(r), trackedInBundle,
+                                              x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+        }
         auto& ofs = x.proc.service<OpenFds>();
         std::lock_guard<std::mutex> lk(ofs.mu);
         auto it = ofs.tracks.find(fd);
@@ -668,7 +744,13 @@ void storeStat(Ctx& x, GuestPtr out, const struct stat& st) {
 }
 int32_t f_stat(Ctx& x, GuestPtr path, GuestPtr out) {
     struct stat st;
-    if (::stat(x.proc.hostPath(x.proc.readCString(path)).c_str(), &st) < 0) return failD<int32_t>(x);
+    const std::string gp = x.proc.readCString(path);
+    if (::stat(x.proc.hostPath(gp).c_str(), &st) < 0) {
+        const int e = errno;
+        x.proc.recordFileOpen(gp, "stat", e, -1, 0, false);   // shown with a crash: files the app did not find
+        errno = e;
+        return failD<int32_t>(x);
+    }
     storeStat(x, out, st);
     return 0;
 }
@@ -688,12 +770,37 @@ int32_t f_fstat(Ctx& x, int32_t fd, GuestPtr out) {
 int32_t f_access(Ctx& x, GuestPtr path, int32_t mode) { return ::access(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_mkdir(Ctx& x, GuestPtr path, uint32_t mode) { return ::mkdir(x.proc.hostPath(x.proc.readCString(path)).c_str(), mode & 0777) < 0 ? failD<int32_t>(x) : 0; }
 int32_t f_rmdir(Ctx& x, GuestPtr path) { return ::rmdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+// symlink(target, linkpath). An absolute guest target is stored relative to the
+// link's directory, so the host resolves it inside the sandbox as the guest
+// would, and readlink still names the same guest file. Relative targets are kept.
+int32_t f_symlink(Ctx& x, GuestPtr target, GuestPtr linkPath) {
+    if (!target || !linkPath) { setErrno(x, EFAULT); return -1; }
+    std::string to = x.proc.readCString(target);
+    const std::string link = x.proc.hostPath(x.proc.readCString(linkPath));
+    if (to.empty()) { setErrno(x, ENOENT); return -1; }
+    if (to[0] == '/') {
+        const std::filesystem::path hostTo = x.proc.hostPath(to);
+        const std::filesystem::path dir = std::filesystem::path(link).parent_path();
+        to = hostTo.lexically_relative(dir).string();
+        if (to.empty()) { setErrno(x, EINVAL); return -1; }
+    }
+    return ::symlink(to.c_str(), link.c_str()) < 0 ? failD<int32_t>(x) : 0;
+}
 int32_t f_unlink(Ctx& x, GuestPtr path) { return ::unlink(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
-int32_t f_chdir(Ctx& x, GuestPtr path) { return ::chdir(x.proc.hostPath(x.proc.readCString(path)).c_str()) < 0 ? failD<int32_t>(x) : 0; }
+// The working directory is the guest's own (it starts at "/", as on iOS), never the
+// host process's: every guest shares one host process, and relative guest paths are
+// resolved against it by Process::hostPath.
+int32_t f_chdir(Ctx& x, GuestPtr path) {
+    const std::string guest = x.proc.absoluteGuestPath(x.proc.readCString(path));
+    struct stat st{};
+    if (guest.empty()) { setErrno(x, ENOENT); return -1; }
+    if (::stat(x.proc.hostPath(guest).c_str(), &st) < 0) return failD<int32_t>(x);
+    if (!S_ISDIR(st.st_mode)) { setErrno(x, ENOTDIR); return -1; }
+    x.proc.setGuestCwd(guest);
+    return 0;
+}
 uint32_t f_getcwd(Ctx& x, GuestPtr buf, uint32_t size) {
-    char tmp[4096];
-    if (!::getcwd(tmp, sizeof tmp)) return failD<uint32_t>(x, 0);
-    const std::string s = x.proc.guestPath(tmp);
+    const std::string s = x.proc.guestCwd();
     if (!buf) return x.proc.allocCString(s);
     if (size < s.size() + 1) { setErrno(x, ERANGE); return 0; }
     x.mem.copyIn(buf, s.c_str(), s.size() + 1);
@@ -793,6 +900,18 @@ int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t len) {
     return 0;
 }
 int32_t m_ok3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
+// mprotect(2): the guest permissions of whole 4 KB pages. GuestArena pushes them into host page
+// protection where a host page can express them, so later loads and stores are checked by the MMU.
+int32_t m_mprotect(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot) {
+    if ((addr & 4095u) || (prot & ~7)) { setErrno(x, EINVAL); return -1; }
+    if (!len) return 0;
+    const uint64_t end = (uint64_t(addr) + len + 4095u) & ~uint64_t(4095u);
+    if (end > (1ull << 32) || end > Memory::GuestArena::kHleBase) { setErrno(x, ENOMEM); return -1; }
+    for (uint64_t page = addr; page < end; page += 4096)
+        if (!x.mem.isMapped(uint32_t(page))) { setErrno(x, ENOMEM); return -1; }
+    x.mem.protect(addr, uint32_t(end - addr), uint8_t(prot));
+    return 0;
+}
 int32_t m_ok2(Ctx&, GuestPtr, uint32_t) { return 0; }
 
 // --------------------------------------------------------------- signals ---
@@ -834,6 +953,16 @@ uint32_t g_signal(Ctx& x, int32_t sig, GuestPtr handler) {
     s.acts[sig] = {handler, 0, 0};
     return prev;
 }
+// The last fault handed to the app's own signal handler. A crash reporter in the app
+// (PLCrashReporter, HockeyApp) catches the real fault, writes its report and then raises the
+// signal again; the report for that raise names the fault that started it.
+struct HandledFault {
+    explicit HandledFault(Process&) {}
+    std::mutex mu;
+    struct Record { std::string where, backtrace; };
+    std::unordered_map<std::thread::id, Record> byThread;   // only while that thread's handler runs
+};
+
 // Runs the app's SIGSEGV (or SIGBUS) handler for a fault on `c`; true when the
 // handler returned and the thread continues from the context it left.
 bool deliverGuestFault(Process& p, CPU::Cpu& c) {
@@ -847,6 +976,49 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
     if (pc == lastPc && addr == lastAddr) { if (++repeats > 8) return false; }   // the handler isn't fixing it
     else { lastPc = pc; lastAddr = addr; repeats = 0; }
     auto& m = p.mem();
+    if (p.isAndroid()) {
+        // Linux ARM frame: siginfo {signo, errno, code, addr}; ucontext {flags, link, stack{sp, flags,
+        // size}, sigcontext {trap_no, error_code, oldmask, r0-r10, fp, ip, sp, lr, pc, cpsr,
+        // fault_address}, sigmask[128], regspace[128]}. Linux SIGBUS is 7.
+        const int linuxSig = sig == 10 ? 7 : sig;
+        const uint32_t ucl = (c.r[CPU::kSP] - 128 - 768) & ~15u;
+        const uint32_t sil = (ucl - 128) & ~15u;
+        const uint32_t spl = (sil - 16) & ~15u;
+        std::memset(m.host(sil), 0, ucl + 768 - sil);
+        m.write<uint32_t>(sil + 0, uint32_t(linuxSig));
+        m.write<uint32_t>(sil + 8, linuxSig == 11 ? 1u : 2u);   // SEGV_MAPERR / BUS_ADRERR
+        m.write<uint32_t>(sil + 12, addr);
+        const uint32_t sc = ucl + 20;
+        m.write<uint32_t>(sc + 0, 14);                          // trap_no: data abort
+        for (int i = 0; i < 16; ++i) m.write<uint32_t>(sc + 12 + 4 * i, c.r[i]);
+        m.write<uint32_t>(sc + 76, c.cpsr() | (c.thumb ? 0x20u : 0u));
+        m.write<uint32_t>(sc + 80, addr);
+        if (pc >= Memory::GuestArena::kHleBase)
+            p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x in %s (lr 0x%08x)", linuxSig, addr,
+                   p.engine().hleName((pc - Memory::GuestArena::kHleBase) / 4).c_str(), c.r[CPU::kLR]);
+        else
+            p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", linuxSig, addr, pc);
+        p.perf().faultsToApp++;
+        const uint32_t savedSp = c.r[CPU::kSP];
+        c.r[CPU::kSP] = spl;
+        ++depth;
+        try {
+            p.engine().callGuest(c, a.handler, {uint32_t(linuxSig), sil, ucl});
+        } catch (...) {
+            --depth;
+            c.r[CPU::kSP] = savedSp;
+            return false;
+        }
+        --depth;
+        for (int i = 0; i < 16; ++i) c.r[i] = m.read<uint32_t>(sc + 12 + 4 * i);
+        const uint32_t cpsr = m.read<uint32_t>(sc + 76);
+        c.setApsrFlags(cpsr);
+        c.thumb = ((cpsr >> 5) & 1) | (c.r[CPU::kPC] & 1);
+        c.r[CPU::kPC] &= ~1u;
+        c.exit = CPU::Exit::None;
+        c.exit_info = 0;
+        return true;
+    }
     // Frame below the red zone: mcontext (340), ucontext (32), siginfo (64).
     const uint32_t mc = (c.r[CPU::kSP] - 128 - 340) & ~15u;
     const uint32_t uc = (mc - 32) & ~15u;
@@ -870,6 +1042,24 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
     m.write<uint32_t>(mc + 80 + 256, c.fpscr);
     p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", sig, addr, pc);
     p.perf().faultsToApp++;
+    {
+        char where[96];
+        std::snprintf(where, sizeof where, "a bad memory access at 0x%08x%s at ", addr, addr < 0x1000 ? " (NULL pointer)" : "");
+        auto& hf = p.service<HandledFault>();
+        std::string bt = p.backtrace(c, 12);
+        std::lock_guard<std::mutex> lk(hf.mu);
+        hf.byThread[std::this_thread::get_id()] = {where + p.describeAddress(pc), std::move(bt)};
+    }
+    // The record lasts as long as the handler: a handler that returns has dealt with the fault,
+    // and a later raise on this thread has nothing to do with it.
+    struct Forget {
+        Process& p;
+        ~Forget() {
+            auto& hf = p.service<HandledFault>();
+            std::lock_guard<std::mutex> lk(hf.mu);
+            hf.byThread.erase(std::this_thread::get_id());
+        }
+    } forget{p};
     // Where the first few happened (Mono raises these routinely, so not every time).
     static std::atomic<int> traced{0};
     if (traced.fetch_add(1) < 3) p.logf(LogLevel::Info, "  fault backtrace:\n%s", p.backtrace(c, 8).c_str());
@@ -897,7 +1087,16 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
 }
 int32_t g_raise(Ctx& x, int32_t sig) {
     flushGuestStdio(x.proc);
-    throw std::runtime_error("the app raised signal " + std::to_string(sig) + (sig == 6 ? " (SIGABRT)" : ""));
+    std::string what = "the app raised signal " + std::to_string(sig) + (sig == 6 ? " (SIGABRT)" : "");
+    {
+        auto& hf = x.proc.service<HandledFault>();
+        std::lock_guard<std::mutex> lk(hf.mu);
+        if (const auto it = hf.byThread.find(std::this_thread::get_id()); it != hf.byThread.end()) {
+            what += " after its own crash handler caught " + it->second.where;
+            x.proc.log(LogLevel::Error, "The fault the app's crash handler caught: " + it->second.where + "\n" + it->second.backtrace);
+        }
+    }
+    throw std::runtime_error(what);
 }
 int32_t g_kill(Ctx& x, int32_t pid, int32_t sig) { if (sig == 0) return 0; if (pid == 1234 || pid == 0) return g_raise(x, sig); setErrno(x, 1); return -1; }
 int32_t g_sigset(Ctx& x, GuestPtr set) { if (set) x.mem.write<uint32_t>(set, 0); return 0; }
@@ -970,16 +1169,43 @@ int32_t k_make_memory_entry(Ctx& x, uint32_t task, GuestPtr size, uint64_t offse
     // capability failure; do not fabricate a port or a successful mapping.
     return 46; // KERN_NOT_SUPPORTED
 }
+// task_info: the kernel writes exactly the flavor's structure and reports its size in words.
+// Apps pass counts that are too large (Terraria passes the size in bytes), so the caller's
+// count is only an upper bound; a count that is too small is KERN_INVALID_ARGUMENT.
 int32_t k_task_info(Ctx& x, uint32_t, uint32_t flavor, GuestPtr out, GuestPtr count) {
     const uint32_t n = count ? x.mem.read<uint32_t>(count) : 0;
-    const uint32_t maxWords = std::min<uint32_t>(n, 10u);
-    if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
-    if (out && flavor == 5 /*TASK_BASIC_INFO*/ && maxWords >= 5) {
-        const auto st = x.proc.heap().stats();
-        x.mem.write<uint32_t>(out + 4, uint32_t(st.committed + (16u << 20)));   // resident_size
-        x.mem.write<uint32_t>(out + 8, uint32_t(st.committed + (64u << 20)));   // virtual_size
+    uint32_t words = 0;
+    switch (flavor) {
+        case 1: words = 8; break;    // TASK_ABSOLUTETIME_INFO: four 64-bit times
+        case 2: words = 8; break;    // TASK_EVENTS_INFO
+        case 3: words = 4; break;    // TASK_THREAD_TIMES_INFO
+        case 4: words = 8; break;    // TASK_BASIC_INFO_32 (TASK_BASIC_INFO on armv7)
+        case 5: words = 10; break;   // TASK_BASIC_INFO_64
+        case 6: words = 8; break;    // TASK_BASIC2_INFO_32
+        default: break;
     }
-    if (count) x.mem.write<uint32_t>(count, maxWords);
+    if (!words) {   // a flavor with no layout here: zeros, never more than the caller has room for
+        x.proc.reportMissing("task_info flavor " + std::to_string(flavor) + " (answered with zeros)");
+        const uint32_t maxWords = std::min<uint32_t>(n, 10u);
+        if (out && maxWords) std::memset(x.mem.host(out), 0, maxWords * 4);
+        if (count) x.mem.write<uint32_t>(count, maxWords);
+        return 0;
+    }
+    // Flavor 5 with room for only the 32-bit structure: an old SDK's TASK_BASIC_INFO, 32-bit sizes.
+    const bool narrow5 = flavor == 5 && n >= 8 && n < 10;
+    if (narrow5) words = 8;
+    if (!out || n < words) return 4;   // KERN_INVALID_ARGUMENT
+    std::memset(x.mem.host(out), 0, words * 4);
+    const auto st = x.proc.heap().stats();
+    const uint64_t resident = st.committed + (16u << 20), virt = st.committed + (64u << 20);
+    if (flavor == 4 || flavor == 6 || narrow5) {   // suspend_count, virtual_size, resident_size, times, policy
+        x.mem.write<uint32_t>(out + 4, uint32_t(virt));
+        x.mem.write<uint32_t>(out + 8, uint32_t(resident));
+    } else if (flavor == 5) {                  // the same with 64-bit sizes
+        x.mem.write<uint64_t>(out + 4, virt);
+        x.mem.write<uint64_t>(out + 12, resident);
+    }
+    x.mem.write<uint32_t>(count, words);
     return 0;
 }
 int32_t k_host_page_size(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 4096); return 0; }
@@ -1037,8 +1263,7 @@ int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint
 int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 uint32_t sys_ftime(Ctx& x, GuestPtr tp) {
     if (tp) {
-        const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        const uint64_t now = uint64_t(x.proc.wallNowNs() / 1000000);
         x.mem.write<uint32_t>(tp + 0, uint32_t(now / 1000));
         x.mem.write<uint16_t>(tp + 4, uint16_t(now % 1000));
         x.mem.write<uint16_t>(tp + 6, 0);
@@ -1065,14 +1290,11 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     return 0;
 }
 
-// POSIX named semaphores are not implemented (there is no sem_open), so no handle can name an open
-// semaphore: every close is EINVAL rather than a silent success.
-int32_t sys_sem_close(Ctx& x, uint32_t) {
-    setErrno(x, 22);   // EINVAL
-    return -1;
-}
 
 } // namespace
+
+// For tests: what the engine's fault hook does with a guest fault.
+bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c) { return deliverGuestFault(p, c); }
 
 void registerLibcSystem(Process& p) {
     registerStartupMach(p);
@@ -1080,9 +1302,8 @@ void registerLibcSystem(Process& p) {
     p.def<&s_strsignal>("_strsignal");
     p.def<&f_writev>("_writev");
     p.def<&f_flock>("_flock");
-    std::random_device rd;
     const uint32_t guard = p.defineDataBlock("___stack_chk_guard", 4);
-    p.mem().write<uint32_t>(guard, (rd() & 0xFFFFFF00u) | 0x0A);
+    p.mem().write<uint32_t>(guard, (uint32_t(p.entropy()) & 0xFFFFFF00u) | 0x0A);
     p.def<&s_error>("___error");
     p.def<&s_stack_chk_fail>("___stack_chk_fail");
     p.def<&s_noop>("__hvm_noop");
@@ -1121,7 +1342,6 @@ void registerLibcSystem(Process& p) {
     p.def<&s_sysconf>("_sysconf");
     p.def<&s_getrlimit>("_getrlimit");
     p.def<&s_ok2>("_setrlimit");
-    p.def<&sys_sem_close>("_sem_close");
     p.def<&s_getrusage>("_getrusage");
     p.def<&s_sysctl>("_sysctl");
     p.def<&s_sysctlbyname>("_sysctlbyname");
@@ -1143,6 +1363,8 @@ void registerLibcSystem(Process& p) {
     p.def<&d_local_arch_info>("_NXGetLocalArchInfo");
     p.def<&d_arch_from_cputype>("_NXGetArchInfoFromCpuType");
     p.def<&f_open>("_open");
+    supportDef<&f_shmOpen>(p, "_shm_open", SupportStatus::Real, "a file in the app's tmp folder (one process, so sharing needs nothing more)");
+    supportDef<&f_shmUnlink>(p, "_shm_unlink", SupportStatus::Real, "removes the tmp-folder file");
     p.def<&f_close>("_close");
     p.def<&f_read>("_read");
     p.def<&f_write>("_write");
@@ -1153,16 +1375,19 @@ void registerLibcSystem(Process& p) {
     p.def<&f_fsync>("_fsync");
     p.def<&f_ftruncate>("_ftruncate");
     p.def<&f_dup>("_dup");
-    // iOS armv7 apps fill the 108-byte (64-bit inode) struct stat through the plain
-    // symbols too: switching _stat/_fstat to the 96-byte legacy layout broke Unity,
-    // Mono and Supercell file checks on the device ("mscorlib.dll not found").
-    for (const char* n : {"_stat", "_stat$INODE64", "_stat64"}) p.def<&f_stat>(n);
-    for (const char* n : {"_lstat", "_lstat$INODE64", "_lstat64"}) p.def<&f_lstat>(n);
-    for (const char* n : {"_fstat", "_fstat$INODE64", "_fstat64"}) p.def<&f_fstat>(n);
+    for (const char* n : {"_stat$INODE64", "_stat64"}) p.def<&f_stat>(n);
+    for (const char* n : {"_lstat$INODE64", "_lstat64"}) p.def<&f_lstat>(n);
+    for (const char* n : {"_fstat$INODE64", "_fstat64"}) p.def<&f_fstat>(n);
+    // iPhoneOS is __DARWIN_ONLY_64_BIT_INO_T: cdefs.h deliberately emits
+    // no $INODE64 suffix there. Unsuffixed symbols use the same ARMv7 ABI.
+    p.def<&f_stat>("_stat");
+    p.def<&f_lstat>("_lstat");
+    p.def<&f_fstat>("_fstat");
     p.def<&f_access>("_access");
     p.def<&f_mkdir>("_mkdir");
     p.def<&f_rmdir>("_rmdir");
     p.def<&f_unlink>("_unlink");
+    supportDef<&f_symlink>(p, "_symlink", SupportStatus::Real, "Host symlink in the sandbox; absolute guest targets are stored relative to the link");
     p.def<&f_chdir>("_chdir");
     p.def<&f_getcwd>("_getcwd");
     p.def<&f_chmod>("_chmod");
@@ -1173,8 +1398,7 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
     p.def<&m_mmap>("_mmap");
     p.def<&m_munmap>("_munmap");
-    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub,
-        "Returns success without changing guest or host page protections");
+    p.def<&m_mprotect>("_mprotect");
     supportDef<&m_ok3>(p, "_madvise", SupportStatus::Stub,
         "Returns success without applying a memory advice policy");
     supportDef<&m_ok3>(p, "_msync", SupportStatus::Stub,

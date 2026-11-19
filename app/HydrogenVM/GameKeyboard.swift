@@ -1,6 +1,73 @@
 import SwiftUI
 import UIKit
 
+/// Custom guest UIKeyInput views draw and manage their own text/caret. Forward
+/// the native keyboard's incremental events without inventing a full-text copy.
+struct GameKeyInputKeyboard: UIViewRepresentable {
+    let request: HVMTextInputRequest
+    let onInsert: (String) -> Void
+    let onDelete: () -> Void
+    let onDismiss: () -> Void
+
+    func makeUIView(context: Context) -> InputView { InputView() }
+    func updateUIView(_ view: InputView, context: Context) {
+        view.onInsert = onInsert; view.onDelete = onDelete; view.onDismiss = onDismiss
+        view.configure(request)
+    }
+    static func dismantleUIView(_ view: InputView, coordinator: ()) {
+        view.active = false
+        view.onInsert = nil; view.onDelete = nil; view.onDismiss = nil
+        view.resignFirstResponder()
+    }
+
+    final class InputView: UIView, UIKeyInput {
+        var onInsert: ((String) -> Void)?
+        var onDelete: (() -> Void)?
+        var onDismiss: (() -> Void)?
+        var active = false
+        var hasText = false
+        var keyboardType: UIKeyboardType = .default
+        var returnKeyType: UIReturnKeyType = .default
+        var autocapitalizationType: UITextAutocapitalizationType = .sentences
+        var autocorrectionType: UITextAutocorrectionType = .default
+        var isSecureTextEntry = false
+        private var focusId: UInt64?
+        private var needsFocus = false
+        override var canBecomeFirstResponder: Bool { active }
+
+        override var inputAccessoryView: UIView? {
+            let bar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
+            bar.items = [UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+                         UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
+            return bar
+        }
+        @objc private func done() { onDismiss?() }
+        func insertText(_ text: String) { if active { onInsert?(text) } }
+        func deleteBackward() { if active { onDelete?() } }
+
+        func configure(_ request: HVMTextInputRequest) {
+            let traitsChanged = keyboardType.rawValue != request.keyboardType ||
+                returnKeyType.rawValue != request.returnKeyType ||
+                autocapitalizationType.rawValue != request.autocapitalizationType ||
+                autocorrectionType.rawValue != request.autocorrectionType || isSecureTextEntry != request.secure
+            active = request.active; hasText = request.hasText
+            keyboardType = UIKeyboardType(rawValue: request.keyboardType) ?? .default
+            returnKeyType = UIReturnKeyType(rawValue: request.returnKeyType) ?? .default
+            autocapitalizationType = UITextAutocapitalizationType(rawValue: request.autocapitalizationType) ?? .sentences
+            autocorrectionType = UITextAutocorrectionType(rawValue: request.autocorrectionType) ?? .default
+            isSecureTextEntry = request.secure
+            if focusId != request.focusId { focusId = request.focusId; needsFocus = true }
+            if !active { resignFirstResponder() }
+            else if traitsChanged && isFirstResponder { reloadInputViews() }
+            activateIfAttached()
+        }
+        override func didMoveToWindow() { super.didMoveToWindow(); activateIfAttached() }
+        private func activateIfAttached() {
+            if active && needsFocus && window != nil { needsFocus = !becomeFirstResponder() }
+        }
+    }
+}
+
 /// Maps the traits a guest text field asked for (raw UIKit values) onto SwiftUI's input modifiers.
 enum GuestKeyboard {
     static func keyboardType(_ raw: Int) -> UIKeyboardType { UIKeyboardType(rawValue: raw) ?? .default }

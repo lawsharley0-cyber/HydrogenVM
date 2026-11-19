@@ -1,5 +1,6 @@
 // HydrogenVM — OpenGL ES forwarded to the host GPU. See HostGL.hpp.
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/gl/MobileShaderSource.hpp"
 #include "runtime/gl/HostGLInternal.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <set>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -29,6 +31,7 @@ constexpr uint32_t kFramebuffer = 0x8D40, kFramebufferBinding = 0x8CA6;
 constexpr uint32_t kReadFramebuffer = 0x8CA8, kDrawFramebuffer = 0x8CA9;
 constexpr uint32_t kReadFramebufferBinding = 0x8CAA, kDrawFramebufferBinding = 0x8CA6;
 constexpr uint32_t kColorAttachment0 = 0x8CE0, kRgba8 = 0x8058, kRgba = 0x1908, kBgra = 0x80E1;
+constexpr uint32_t kHalfFloatOes = 0x8D61, kHalfFloat = 0x140B;
 constexpr uint32_t kUnsignedByte = 0x1401, kPackAlignment = 0x0D05;
 constexpr uint32_t kRenderbufferWidth = 0x8D42, kRenderbufferHeight = 0x8D43;
 constexpr uint32_t kFbAttachmentObjectType = 0x8CD0, kFbAttachmentObjectName = 0x8CD1;
@@ -75,8 +78,9 @@ struct State {
     std::unordered_map<std::string, uint32_t> strings;
     std::unordered_map<uint32_t, Placement> placed;                                // guest layer -> last geometry sent
     std::atomic<int> presents{0};                                                  // direct presents so far
+    uint64_t drawsAtPresent = 0;                                                   // glTrace: perf().glDraws at the last present
     std::atomic<bool> toldReadback{false};
-    std::chrono::steady_clock::time_point lastPresent{};                           // for 60 Hz pacing
+    PresentPacer pacer;                                                            // keeps presents at the display rate
 };
 
 State& S(Process& p) { return p.service<State>(); }
@@ -216,7 +220,9 @@ void bind(Process& p, HostContext* hc) {
         st.platform->makeCurrent(nullptr);
     }
     
-    if (hc && hc->implicitWorker && root && !root->implicitWorker) {
+    if (hc && hc->implicitWorker && root && !root->implicitWorker &&
+        (hc->boundFbo != root->boundFbo || hc->currentProgram != root->currentProgram)) {
+        GuestErrorScope quiet(hc);
         if (hc->boundFbo != root->boundFbo) {
             if (hc->fn.glBindFramebuffer) hc->fn.glBindFramebuffer(0x8D40, root->boundFbo);
             else if (hc->fn.glBindFramebufferOES) hc->fn.glBindFramebufferOES(0x8D40, root->boundFbo);
@@ -244,6 +250,7 @@ std::unique_ptr<HostContext> makeContext(Process& p, int api, uint32_t guestCont
     }
     auto hc = std::make_unique<HostContext>();
     hc->api = api;
+    hc->trace = p.config().glTrace;
     hc->guestContext = guestContext;
     hc->guestSharegroup = sharegroup;
     hc->implicitWorker = worker;
@@ -416,22 +423,92 @@ template <typename... A> std::string hgArgs(A... a) {
     return s;
 }
 static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname);
+// "(framebuffer 3 status 0x8cd6: color0 renderbuffer 2 640x960 0x8058, depth renderbuffer 4 0x0 0x81a5)":
+// the bound framebuffer's status and each attachment, for GL_INVALID_FRAMEBUFFER_OPERATION.
+static std::string hgDescribeFramebuffer(HostContext* hc) {
+    if (!hc || !hc->fn.glGetIntegerv) return std::string();
+    // A native ES 1.1 context has only the OES spellings.
+    const bool oes = hc->api == 1 && !hc->gles1 && !hc->desktop && hc->fn.glCheckFramebufferStatusOES;
+    auto checkStatus = oes ? hc->fn.glCheckFramebufferStatusOES : hc->fn.glCheckFramebufferStatus;
+    auto attachmentParam = oes ? hc->fn.glGetFramebufferAttachmentParameterivOES : hc->fn.glGetFramebufferAttachmentParameteriv;
+    auto bindRb = oes ? hc->fn.glBindRenderbufferOES : hc->fn.glBindRenderbuffer;
+    auto rbParam = oes ? hc->fn.glGetRenderbufferParameterivOES : hc->fn.glGetRenderbufferParameteriv;
+    if (!checkStatus) return std::string();
+    int32_t fbo = 0;
+    hc->fn.glGetIntegerv(0x8CA6, &fbo);   // FRAMEBUFFER_BINDING
+    char b[96];
+    std::snprintf(b, sizeof b, "(framebuffer %d status 0x%04x", fbo, checkStatus(0x8D40));
+    std::string out = b;
+    if (attachmentParam) {
+        const struct { uint32_t point; const char* label; } points[] = {{0x8CE0, "color0"}, {0x8D00, "depth"}, {0x8D20, "stencil"}};
+        int32_t savedRb = 0;
+        hc->fn.glGetIntegerv(0x8CA7, &savedRb);   // RENDERBUFFER_BINDING
+        bool first = true;
+        for (const auto& pt : points) {
+            int32_t type = 0, objName = 0;
+            attachmentParam(0x8D40, pt.point, 0x8CD0, &type);   // OBJECT_TYPE
+            if (!type) continue;
+            attachmentParam(0x8D40, pt.point, 0x8CD1, &objName);  // OBJECT_NAME
+            std::snprintf(b, sizeof b, "%s %s %s %d", first ? ":" : ",", pt.label,
+                          type == 0x8D41 ? "renderbuffer" : type == 0x1702 ? "texture" : "object", objName);
+            out += b;
+            first = false;
+            if (type == 0x8D41 && bindRb && rbParam) {
+                int32_t w = 0, h = 0, fmt = 0;
+                bindRb(0x8D41, uint32_t(objName));
+                rbParam(0x8D41, 0x8D42, &w);
+                rbParam(0x8D41, 0x8D43, &h);
+                rbParam(0x8D41, 0x8D44, &fmt);
+                std::snprintf(b, sizeof b, " %dx%d 0x%04x", w, h, fmt);
+                out += b;
+            }
+        }
+        if (bindRb) bindRb(0x8D41, uint32_t(savedRb));
+        if (first) out += ": no attachments";
+    }
+    // The queries themselves may raise errors on an odd framebuffer: never report those.
+    for (int i = 0; i < 8 && hc->fn.glGetError && hc->fn.glGetError(); ++i) {}
+    return out + ")";
+}
+
 template <typename F> static void hgAfter(Ctx& x, HostContext* hc, const char* name, F args) {
     if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, std::string("GL ") + name + "(" + args() + ")");
+    if (hc->trace && name[2] == 'D' && (std::strncmp(name, "glDrawArrays", 12) == 0 || std::strncmp(name, "glDrawElements", 14) == 0))
+        x.proc.perf().glDraws++;
     if (!hc->fn.glGetError) return;
     const uint32_t e = hc->fn.glGetError();
     if (!e) return;
+    // The check consumed the error: keep it for the guest's own glGetError.
+    if (!hc->guestError) hc->guestError = e;
+    if (hc->trace) {
+        x.proc.perf().glErrors++;
+        char code[8];
+        std::snprintf(code, sizeof code, "%04x", e);
+        const std::string key = std::string(name) + " -> 0x" + code + (hc->implicitWorker ? " [worker]" : " [main]");
+        // The first occurrence keeps its arguments: "glBindTexture(0x0de1, 1) -> 0x0502 [main]".
+        std::string line = std::string(name) + "(" + args() + ")" + key.substr(std::strlen(name));
+        // An incomplete framebuffer: say which attachment, so a phone report explains it.
+        if ((e == 0x0506 || std::strncmp(name, "glFramebuffer", 13) == 0) && hc->fboDescribes < 32) {
+            ++hc->fboDescribes;
+            line += " " + hgDescribeFramebuffer(hc);
+        }
+        // A buffer upload with nothing bound: say what is bound, so a phone report shows it.
+        if (std::strncmp(name, "glBuffer", 8) == 0 && hc->fn.glGetIntegerv) {
+            int32_t array = 0, element = 0, vao = 0;
+            hc->fn.glGetIntegerv(0x8894 /*ARRAY_BUFFER_BINDING*/, &array);
+            hc->fn.glGetIntegerv(0x8895 /*ELEMENT_ARRAY_BUFFER_BINDING*/, &element);
+            hc->fn.glGetIntegerv(0x85B5 /*VERTEX_ARRAY_BINDING*/, &vao);
+            for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+            line += " (array buffer " + std::to_string(array) + ", element buffer " + std::to_string(element) +
+                    ", vertex array " + std::to_string(vao) + ")";
+        }
+        x.proc.noteGLError(key, std::move(line));
+    }
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 200)
         x.proc.log(LogLevel::Warning, std::string("GPU: ") + name + " raised GL error 0x" + [&] { char b[8]; std::snprintf(b, 8, "%04x", e); return std::string(b); }() +
                                           (hc->implicitWorker ? " [worker]" : " [main]") +
-                                          (e == 0x0506 && hc->fn.glCheckFramebufferStatus ? [&] {
-                                              // Say why the framebuffer is incomplete.
-                                              char b[64];
-                                              std::snprintf(b, sizeof b, " (framebuffer %d status 0x%04x)", hgGetIntFwd(hc, 0x8CA6),
-                                                            hc->fn.glCheckFramebufferStatus(0x8D40));
-                                              return std::string(b);
-                                          }() : std::string()));
+                                          (e == 0x0506 && hc->fboDescribes < 64 && ++hc->fboDescribes ? " " + hgDescribeFramebuffer(hc) : std::string()));
 }
 
 static int32_t hgGetIntFwd(HostContext* hc, uint32_t pname) {
@@ -467,15 +544,133 @@ static uint32_t toGuest(Ctx& x, const void* p) {
     return uint32_t(a);   // an offset into a bound buffer
 }
 
+#define hg_glViewport hg_glViewportGenerated
 #define HOSTGL_WRAPPERS
 #include "runtime/gl/HostGLTable.inc"
 #undef HOSTGL_WRAPPERS
+#undef hg_glViewport
+
+// Backing-size fallback (see OpenGLES.cpp maybeGrowDrawableForViewport): when
+// glViewport exceeds a CAEAGLLayer drawable, grow that drawable and its depth
+// and stencil renderbuffers. presentRenderbuffer reads the full frame back and
+// the compositor scales it into the layer (kCAGravityResize). Offscreen FBOs
+// are left alone so a large viewport there still clips as OpenGL specifies.
+constexpr int kMaxDrawableFallback = 4096;
+constexpr uint32_t kDepthAttachment = 0x8D00, kStencilAttachment = 0x8D20;
+constexpr uint32_t kRenderbufferInternalFormat = 0x8D44;
+
+void maybeGrowHostDrawable(Ctx& x, int32_t vw, int32_t vh) {
+    if (vw <= 0 || vh <= 0 || vw > kMaxDrawableFallback || vh > kMaxDrawableFallback) return;
+    HostContext* hc = hgCurrent(x);
+    if (!hc) return;
+    GuestErrorScope quiet(hc);
+    auto attachmentParam = hc->fn.glGetFramebufferAttachmentParameteriv
+        ? hc->fn.glGetFramebufferAttachmentParameteriv
+        : hc->fn.glGetFramebufferAttachmentParameterivOES;
+    auto bindRb = hc->fn.glBindRenderbuffer ? hc->fn.glBindRenderbuffer : hc->fn.glBindRenderbufferOES;
+    auto rbParam = hc->fn.glGetRenderbufferParameteriv
+        ? hc->fn.glGetRenderbufferParameteriv
+        : hc->fn.glGetRenderbufferParameterivOES;
+    auto storage = hc->fn.glRenderbufferStorage ? hc->fn.glRenderbufferStorage : hc->fn.glRenderbufferStorageOES;
+    if (!attachmentParam || !bindRb || !rbParam || !storage) return;
+
+    const int32_t fbo = hgGetInt(hc, kFramebufferBinding);
+    if (fbo == 0) return;
+    int32_t colorType = 0, colorName = 0;
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectType, &colorType);
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &colorName);
+    if (uint32_t(colorType) != kRenderbuffer || colorName == 0) return;
+
+    State& st = S(x.proc);
+    Drawable d;
+    const uint64_t key = key2(hc->guestSharegroup, uint32_t(colorName));
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        auto it = st.drawables.find(key);
+        if (it == st.drawables.end() || !it->second.layer) return;
+        d = it->second;
+    }
+    if (vw <= d.width && vh <= d.height) return;
+    const int nw = std::max(d.width, int(vw));
+    const int nh = std::max(d.height, int(vh));
+
+    const int32_t savedRb = hgGetInt(hc, kRenderbufferBinding);
+    auto resizeRb = [&](uint32_t name, uint32_t format) {
+        bindRb(kRenderbuffer, name);
+        bool handled = false;
+        bool ok = false;
+        if (name == uint32_t(colorName) && st.platform)
+            ok = st.platform->drawableStorage(hc->handle, d.layer, nw, nh, handled);
+        if (!handled) {
+            storage(kRenderbuffer, format, nw, nh);
+            ok = true;
+        }
+        return ok;
+    };
+    if (!resizeRb(uint32_t(colorName), kRgba8)) {
+        bindRb(kRenderbuffer, uint32_t(savedRb));
+        return;
+    }
+    const uint32_t points[] = {kDepthAttachment, kStencilAttachment};
+    for (uint32_t point : points) {
+        int32_t type = 0, name = 0;
+        attachmentParam(kFramebuffer, point, kFbAttachmentObjectType, &type);
+        attachmentParam(kFramebuffer, point, kFbAttachmentObjectName, &name);
+        if (uint32_t(type) != kRenderbuffer || name == 0 || name == colorName) continue;
+        bindRb(kRenderbuffer, uint32_t(name));
+        int32_t fmt = 0;
+        rbParam(kRenderbuffer, kRenderbufferInternalFormat, &fmt);
+        if (fmt) storage(kRenderbuffer, uint32_t(fmt), nw, nh);
+    }
+    bindRb(kRenderbuffer, uint32_t(savedRb));
+
+    Placement again;
+    bool resend = false;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        auto it = st.drawables.find(key);
+        if (it == st.drawables.end()) return;
+        const int oldW = it->second.width, oldH = it->second.height;
+        it->second.width = nw;
+        it->second.height = nh;
+        auto pl = st.placed.find(d.layer);
+        if (d.layer && pl != st.placed.end() && oldW > 0 && oldH > 0 && nw > 0 && nh > 0) {
+            const float fx = float(oldW) / float(nw), fy = float(oldH) / float(nh);
+            pl->second.unit[0] *= fx; pl->second.unit[1] *= fx;
+            pl->second.unit[2] *= fy; pl->second.unit[3] *= fy;
+            again = pl->second;
+            resend = true;
+        }
+    }
+    if (resend) st.platform->layerGeometry(d.layer, again.unit);
+    x.proc.log(LogLevel::Info, "GPU: drawable grown from " + std::to_string(d.width) + "x" + std::to_string(d.height) +
+                                   " to " + std::to_string(nw) + "x" + std::to_string(nh) +
+                                   " (viewport exceeds CAEAGLLayer backing)");
+}
+
+void hg_glViewport(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
+    maybeGrowHostDrawable(x, a_width, a_height);
+    hg_glViewportGenerated(x, a_x, a_y, a_width, a_height);
+}
 
 // ------------------------------------------------------------- hand wrappers ---
 
+// Hand-written GL functions check for errors when they return, like the generated ones:
+// otherwise a failing call's error is reported on the next checked call (a phone report
+// once showed glBindTexture(GL_TEXTURE_2D, 0) failing, for an error glTexImage2D raised).
+struct HgCheckOnReturn {
+    Ctx& x;
+    HostContext* hc;
+    const char* name;
+    ~HgCheckOnReturn() {
+        if (hc && (hgDebug || hc->trace)) hgAfter(x, hc, name, [] { return std::string("..."); });
+    }
+};
+#define HG_CHECK_ON_RETURN(name) HgCheckOnReturn hgCheckOnReturn_{x, hc, name};
 #define HG_BEGIN(name, ...)                                   \
     HostContext* hc = hgCurrent(x);                           \
-    if (!hc || !hc->fn.name) { hgMissing(x, hc, #name); return __VA_ARGS__; }
+    if (!hc || !hc->fn.name) { hgMissing(x, hc, #name); return __VA_ARGS__; } \
+    HG_CHECK_ON_RETURN(#name)
 
 
 void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
@@ -507,13 +702,42 @@ void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
     if (pname == kImplementationColorReadFormat) *out = kRgba;
 }
 
-static bool hostHasPvrtc(HostContext* hc) {
+static bool hostHasCompressedFormat(HostContext* hc, uint32_t format) {
+    if (!hc->fn.glGetIntegerv) return false;
     int32_t n = 0;
     hc->fn.glGetIntegerv(kNumCompressedTextureFormats, &n);
     if (n <= 0) return false;
     std::vector<int32_t> fmts(static_cast<size_t>(n));
     hc->fn.glGetIntegerv(kCompressedTextureFormats, fmts.data());
-    return std::find(fmts.begin(), fmts.end(), int32_t(kPvrtcRgba4)) != fmts.end();
+    return std::find(fmts.begin(), fmts.end(), int32_t(format)) != fmts.end();
+}
+
+std::optional<CompressedTextureSupport> compressedTextureSupport(Ctx& x, uint32_t format) {
+    auto* hc = hgCurrent(x);
+    if (!hc) return std::nullopt;
+    const auto getString = reinterpret_cast<const uint8_t* (*)(uint32_t)>(x.proc.config().hostGL->proc(hc->handle, "glGetString"));
+    const char* version = getString ? reinterpret_cast<const char*>(getString(0x1F02 /*GL_VERSION*/)) : nullptr;
+    constexpr std::string_view es = "OpenGL ES ";
+    const std::string_view profile = version ? version : "";
+    const bool es3 = profile.starts_with(es) && profile.size() > es.size() && profile[es.size()] >= '3';
+    bool unpackSubimage = hc->desktop || es3;
+    if (!unpackSubimage && getString) {
+        const char* extensions = reinterpret_cast<const char*>(getString(0x1F03 /*GL_EXTENSIONS*/));
+        std::string_view remaining = extensions ? extensions : "";
+        while (!remaining.empty()) {
+            const auto sep = remaining.find(' ');
+            if (remaining.substr(0, sep) == "GL_EXT_unpack_subimage") {
+                unpackSubimage = true;
+                break;
+            }
+            if (sep == std::string_view::npos) break;
+            remaining.remove_prefix(sep + 1);
+        }
+    }
+    // ETC2 and EAC are core in GLES 3, including drivers that omit core formats from the list.
+    const bool core = es3 && format >= 0x9270 && format <= 0x9279;
+    return CompressedTextureSupport{hc->fn.glCompressedTexImage2D && (core || hostHasCompressedFormat(hc, format)),
+                                    unpackSubimage, hc->desktop || es3};
 }
 
 static bool isPvrtc(uint32_t f) { return f >= kPvrtcRgb4 && f <= kPvrtcRgba2; }
@@ -521,7 +745,7 @@ static bool isPvrtc(uint32_t f) { return f >= kPvrtcRgb4 && f <= kPvrtcRgba2; }
 void hg_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height,
                                int32_t border, int32_t imageSize, GuestPtr data) {
     HG_BEGIN(glCompressedTexImage2D)
-    if (isPvrtc(internalformat) && !hostHasPvrtc(hc) && hc->fn.glTexImage2D) {
+    if (isPvrtc(internalformat) && !hostHasCompressedFormat(hc, internalformat) && hc->fn.glTexImage2D) {
         const bool twoBpp = internalformat == kPvrtcRgb2 || internalformat == kPvrtcRgba2;
         const bool alpha = internalformat == kPvrtcRgba4 || internalformat == kPvrtcRgba2;
         std::vector<uint8_t> rgba;
@@ -535,7 +759,7 @@ void hg_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t 
 void hg_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t width, int32_t height,
                                   uint32_t format, int32_t imageSize, GuestPtr data) {
     HG_BEGIN(glCompressedTexSubImage2D)
-    if (isPvrtc(format) && !hostHasPvrtc(hc) && hc->fn.glTexSubImage2D) {
+    if (isPvrtc(format) && !hostHasCompressedFormat(hc, format) && hc->fn.glTexSubImage2D) {
         const bool twoBpp = format == kPvrtcRgb2 || format == kPvrtcRgba2;
         const bool alpha = format == kPvrtcRgba4 || format == kPvrtcRgba2;
         std::vector<uint8_t> rgba;
@@ -552,29 +776,111 @@ void hg_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_
 void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalformat, int32_t width, int32_t height,
                      int32_t border, uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexImage2D)
-    if (format == kBgra && internalformat == int32_t(kRgba) && !hc->desktop) internalformat = int32_t(kBgra);
+    // Formats an iOS 5-9 driver took by their ES 2 names and a newer driver may refuse. The call
+    // is made as the guest made it; if the driver refuses, it is made again in the form below.
+    //  - Depth textures (OES_depth_texture, OES_packed_depth_stencil): the sized format.
+    //    Minecraft: Story Mode on the phone was all black without it.
+    //  - BGRA pixels: Apple's driver wants internal format RGBA, others BGRA. Unreal Engine 3
+    //    and Unity both pass BGRA for both; the phone answered INVALID_ENUM and the texture
+    //    stayed empty (Goat Simulator's black HUD).
+    //  - Half-float and float textures (OES_texture_half_float, OES_texture_float): the sized
+    //    format, and for half floats the ES 3 type. Story Mode's 3D scenes render into these.
+    // What a context accepted is remembered, so only the first such upload is asked twice.
+    int32_t altInternal = 0;
+    uint32_t altType = type;
+    enum { None, Depth, Bgra, HalfFloat, Float } kind = None;
+    if (internalformat == 0x84F9 /*DEPTH_STENCIL*/ && type == 0x84FA /*UNSIGNED_INT_24_8*/) { kind = Depth; altInternal = 0x88F0; }       // DEPTH24_STENCIL8
+    else if (internalformat == 0x1902 /*DEPTH_COMPONENT*/ && type == 0x1403 /*UNSIGNED_SHORT*/) { kind = Depth; altInternal = 0x81A5; }  // DEPTH_COMPONENT16
+    else if (internalformat == 0x1902 && type == 0x1405 /*UNSIGNED_INT*/) { kind = Depth; altInternal = 0x81A6; }                        // DEPTH_COMPONENT24
+    else if (format == kBgra && (internalformat == int32_t(kRgba) || internalformat == int32_t(kBgra))) {
+        kind = Bgra;
+        altInternal = internalformat == int32_t(kRgba) ? int32_t(kBgra) : int32_t(kRgba);
+        if (hc->desktop) { internalformat = int32_t(kRgba); kind = None; }   // desktop GL has no BGRA internal format
+        else if (hc->bgraInternal) { internalformat = hc->bgraInternal; kind = None; }
+    } else if (type == kHalfFloatOes && (internalformat == int32_t(kRgba) || internalformat == 0x1907 /*RGB*/)) {
+        kind = HalfFloat;
+        altInternal = internalformat == int32_t(kRgba) ? 0x881A /*RGBA16F*/ : 0x881B /*RGB16F*/;
+        altType = kHalfFloat;
+        if (hc->halfFloatSized == 1) { internalformat = altInternal; type = altType; kind = None; }
+        else if (hc->halfFloatSized == 0) kind = None;
+    } else if (type == 0x1406 /*FLOAT*/ && (internalformat == int32_t(kRgba) || internalformat == 0x1907)) {
+        kind = Float;
+        altInternal = internalformat == int32_t(kRgba) ? 0x8814 /*RGBA32F*/ : 0x8815 /*RGB32F*/;
+        if (hc->floatSized == 1) { internalformat = altInternal; kind = None; }
+        else if (hc->floatSized == 0) kind = None;
+    }
+    if (kind != None && !hc->desktop && hc->fn.glGetError) {
+        const uint32_t pending = hc->fn.glGetError();   // the guest's own earlier error, kept for it
+        if (pending && !hc->guestError) hc->guestError = pending;
+        hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
+        const uint32_t refused = hc->fn.glGetError();
+        bool usedAlt = false;
+        if (refused) {
+            for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+            hc->fn.glTexImage2D(target, level, altInternal, width, height, border, format, altType, HG_PTR(x, pixels));
+            if (hc->fn.glGetError()) {   // neither form: the guest sees the first refusal
+                for (int i = 0; i < 8 && hc->fn.glGetError(); ++i) {}
+                if (!hc->guestError) hc->guestError = refused;
+                x.proc.perf().glErrors++;
+                if (hgDebug || hc->trace) {
+                    char code[16];
+                    std::snprintf(code, sizeof code, "0x%04x", refused);
+                    // Keyed by format and type, so each refused kind of texture is reported.
+                    x.proc.noteGLError(std::string("glTexImage2D ") + hgArgs(uint32_t(internalformat), format, type) + " -> " + code + (hc->implicitWorker ? " [worker]" : " [main]"),
+                                       "glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) +
+                                       ") -> " + code + (hc->implicitWorker ? " [worker]" : " [main]") + " (the other form of this format was refused too)");
+                }
+                return;
+            }
+            usedAlt = true;
+        }
+        if (kind == Bgra) hc->bgraInternal = usedAlt ? altInternal : internalformat;
+        else if (kind == HalfFloat) hc->halfFloatSized = usedAlt ? 1 : 0;
+        else if (kind == Float) hc->floatSized = usedAlt ? 1 : 0;
+        return;
+    }
     hc->fn.glTexImage2D(target, level, internalformat, width, height, border, format, type, HG_PTR(x, pixels));
+    if (hgDebugLevel >= 2) x.proc.log(LogLevel::Debug, "GL glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) + ")");
+    if ((hgDebug || hc->trace) && hc->fn.glGetError) {
+        // A refused upload leaves a texture that samples black: report each format and type once,
+        // not only the first refused upload.
+        const uint32_t e = hc->fn.glGetError();
+        if (e) {
+            if (!hc->guestError) hc->guestError = e;
+            x.proc.perf().glErrors++;
+            char code[16];
+            std::snprintf(code, sizeof code, "0x%04x", e);
+            x.proc.noteGLError(std::string("glTexImage2D ") + hgArgs(uint32_t(internalformat), format, type) + " -> " + code + (hc->implicitWorker ? " [worker]" : " [main]"),
+                               "glTexImage2D(" + hgArgs(target, level, internalformat, width, height, border, format, type, pixels) + ") -> " + code +
+                               (hc->implicitWorker ? " [worker]" : " [main]"));
+        }
+    }
 }
 void hg_glTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t width, int32_t height,
                         uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexSubImage2D)
+    // A half-float texture created in its sized form takes the ES 3 name of the type.
+    if (type == kHalfFloatOes && hc->halfFloatSized == 1) type = kHalfFloat;
     hc->fn.glTexSubImage2D(target, level, xo, yo, width, height, format, type, HG_PTR(x, pixels));
 }
 
 void hg_glOrthof(Ctx& x, float l, float r, float b, float t, float n, float f) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glOrthof")
     if (hc && hc->fn.glOrthof) hc->fn.glOrthof(l, r, b, t, n, f);
     else if (hc && hc->fn.glOrtho) hc->fn.glOrtho(l, r, b, t, n, f);
     else hgMissing(x, hc, "glOrthof");
 }
 void hg_glFrustumf(Ctx& x, float l, float r, float b, float t, float n, float f) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glFrustumf")
     if (hc && hc->fn.glFrustumf) hc->fn.glFrustumf(l, r, b, t, n, f);
     else if (hc && hc->fn.glFrustum) hc->fn.glFrustum(l, r, b, t, n, f);
     else hgMissing(x, hc, "glFrustumf");
 }
 void hg_glClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glClipPlanef")
     if (!hc || !eq) return;
     if (hc->fn.glClipPlanef) { hc->fn.glClipPlanef(plane, x.mem.host(eq)); return; }
     if (!hc->fn.glClipPlane) { hgMissing(x, hc, "glClipPlanef"); return; }
@@ -584,6 +890,7 @@ void hg_glClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
 }
 void hg_glGetClipPlanef(Ctx& x, uint32_t plane, GuestPtr eq) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glGetClipPlanef")
     if (!hc || !eq) return;
     if (hc->fn.glGetClipPlanef) { hc->fn.glGetClipPlanef(plane, x.mem.host(eq)); return; }
     if (!hc->fn.glGetClipPlane) { hgMissing(x, hc, "glGetClipPlanef"); return; }
@@ -618,6 +925,19 @@ void hg_glShaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings,
         if (len >= 0) fullSource.append(p, size_t(len));
         else fullSource.append(p);
     }
+
+    if (const char* dbg = std::getenv("HVM_SHADER_DEBUG"); dbg && *dbg && *dbg != '0') {
+        // The first bytes as the guest sent them (escaped), to tell a malformed source from GLSL
+        // the driver doesn't accept.
+        std::string head;
+        for (unsigned char ch : fullSource.substr(0, 96)) {
+            if (ch >= 32 && ch < 127) head.push_back(char(ch));
+            else { char b[8]; std::snprintf(b, sizeof b, "\\x%02x", ch); head += b; }
+        }
+        x.proc.log(LogLevel::Info, "GPU: shader " + std::to_string(shader) + " source (" + std::to_string(fullSource.size()) +
+                                       " bytes, " + std::to_string(count) + " strings) begins: " + head);
+    }
+    fullSource = Shader::normalizeMobileSource(fullSource);
 
     // Mesa and desktop GLSL reject duplicate #define directives without an intervening #undef,
     // whereas mobile PowerVR/Apple drivers allow redefinitions. Automatically insert #undef.
@@ -701,7 +1021,37 @@ void hg_glLinkProgram(Ctx& x, uint32_t program) {
 // The driver's mapping is host memory the guest can't address. Hand the guest a
 // shadow copy and write it back on flush / unmap.
 
+// The buffer object bound to a target. Mappings belong to the buffer, not the target: an app
+// maps one buffer, binds and maps another on the same target, then unmaps each in turn
+// (Clumsy Ninja), so each must find its own shadow copy.
+static uint32_t hgBoundBuffer(HostContext* hc, uint32_t target) {
+    uint32_t pname = 0;
+    switch (target) {
+        case 0x8892: pname = 0x8894; break;   // ARRAY_BUFFER
+        case 0x8893: pname = 0x8895; break;   // ELEMENT_ARRAY_BUFFER
+        case 0x88EB: pname = 0x88ED; break;   // PIXEL_PACK_BUFFER
+        case 0x88EC: pname = 0x88EF; break;   // PIXEL_UNPACK_BUFFER
+        case 0x8F36: pname = 0x8F36; break;   // COPY_READ_BUFFER
+        case 0x8F37: pname = 0x8F37; break;   // COPY_WRITE_BUFFER
+        case 0x8C8E: pname = 0x8C8F; break;   // TRANSFORM_FEEDBACK_BUFFER
+        case 0x8A11: pname = 0x8A28; break;   // UNIFORM_BUFFER
+        default: return 0;
+    }
+    int32_t v[4] = {};
+    if (hc->fn.glGetIntegerv) hc->fn.glGetIntegerv(pname, v);
+    return uint32_t(v[0]);
+}
+// Whether the driver still has the bound buffer mapped. glBufferData and glDeleteBuffers end a
+// mapping without glUnmapBuffer; the driver's pointer is gone then and must not be written.
+static bool hgStillMapped(HostContext* hc, uint32_t target) {
+    int32_t mapped = 1;
+    if (hc->fn.glGetBufferParameteriv) hc->fn.glGetBufferParameteriv(target, 0x88BC /*BUFFER_MAPPED*/, &mapped);
+    return mapped != 0;
+}
+
 static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offset, intptr_t length, uint32_t access) {
+    const uint32_t buffer = hgBoundBuffer(hc, target);
+    if (!buffer) return 0;   // nothing bound: the driver would refuse too
     if (length <= 0) {
         int32_t size = 0;
         hc->fn.glGetBufferParameteriv(target, kBufferSize, &size);
@@ -721,7 +1071,8 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
     m.guest = x.proc.heap().allocZeroed(uint32_t(length));
     if (host && (access & kMapReadBit)) std::memcpy(x.mem.host(m.guest), host, size_t(length));
     else if (host && !(access & (0x4 | 0x8))) std::memcpy(x.mem.host(m.guest), host, size_t(length));   // keep contents unless invalidated
-    hc->mapped[target] = m;
+    if (auto old = hc->mapped.find(buffer); old != hc->mapped.end()) x.proc.heap().free(old->second.guest);   // a mapping the app never ended
+    hc->mapped[buffer] = m;
     if (hgDebugLevel >= 2)
         x.proc.log(LogLevel::Debug, "GL map target " + std::to_string(target) + " +" + std::to_string(offset) + " len " +
                                         std::to_string(length) + (host ? "" : " (driver gave no mapping)"));
@@ -730,33 +1081,39 @@ static uint32_t mapRange(Ctx& x, HostContext* hc, uint32_t target, intptr_t offs
 
 uint32_t hg_glMapBufferOES(Ctx& x, uint32_t target, uint32_t /*access: WRITE_ONLY_OES*/) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glMapBufferOES")
     if (!hc) return 0;
     return mapRange(x, hc, target, 0, 0, kMapWriteBit);
 }
 uint32_t hg_glMapBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length, uint32_t access) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glMapBufferRange")
     if (!hc) return 0;
     return mapRange(x, hc, target, intptr_t(uint32_t(offset)), intptr_t(uint32_t(length)), access);
 }
 void hg_glFlushMappedBufferRange(Ctx& x, uint32_t target, int32_t offset, int32_t length) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glFlushMappedBufferRange")
     if (!hc) return;
-    auto it = hc->mapped.find(target);
+    auto it = hc->mapped.find(hgBoundBuffer(hc, target));
     if (it == hc->mapped.end() || !it->second.host) return;
     MappedBuffer& m = it->second;
-    if (offset < 0 || length <= 0 || offset + length > m.length) return;
+    if (offset < 0 || length <= 0 || int64_t(offset) + int64_t(length) > int64_t(m.length) || !hgStillMapped(hc, target)) return;
     std::memcpy(static_cast<uint8_t*>(m.host) + offset, x.mem.host(m.guest + uint32_t(offset)), size_t(length));
     if (hc->fn.glFlushMappedBufferRange) hc->fn.glFlushMappedBufferRange(target, offset, length);
 }
 bool hg_glUnmapBufferOES(Ctx& x, uint32_t target) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glUnmapBufferOES")
     if (!hc) return false;
-    auto it = hc->mapped.find(target);
+    auto it = hc->mapped.find(hgBoundBuffer(hc, target));
     if (it == hc->mapped.end()) return false;
     MappedBuffer m = it->second;
     hc->mapped.erase(it);
     bool ok = true;
-    if (m.host) {
+    if (m.host && !hgStillMapped(hc, target)) {
+        ok = false;   // glBufferData replaced the storage since: the mapping ended there
+    } else if (m.host) {
         if ((m.access & kMapWriteBit) && !(m.access & kMapFlushExplicitBit))
             std::memcpy(m.host, x.mem.host(m.guest), size_t(m.length));
         if (hc->fn.glUnmapBuffer) ok = hc->fn.glUnmapBuffer(target) != 0;
@@ -779,7 +1136,7 @@ bool hg_glUnmapBuffer(Ctx& x, uint32_t target) { return hg_glUnmapBufferOES(x, t
 void hg_glGetBufferPointervOES(Ctx& x, uint32_t target, uint32_t pname, GuestPtr out) {
     HostContext* hc = hgCurrent(x);
     if (!hc || !out) return;
-    auto it = hc->mapped.find(target);
+    auto it = hc->mapped.find(hgBoundBuffer(hc, target));
     x.mem.write<uint32_t>(out, pname == kBufferMapPointer && it != hc->mapped.end() ? it->second.guest : 0);
 }
 
@@ -793,17 +1150,18 @@ void hg_glFramebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, 
     HG_BEGIN(glFramebufferRenderbuffer)
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbuffer(target, attachment, rbtarget, renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
 }
 void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
     HG_BEGIN(glFramebufferRenderbufferOES)
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbufferOES(target, attachment, rbtarget, renderbuffer);
-    if (hgDebug) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
 }
 
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
     HostContext* hc = hgCurrent(x);
+    HG_CHECK_ON_RETURN("glResolveMultisampleFramebufferAPPLE")
     if (!hc) return;
     if (hc->fn.glResolveMultisampleFramebufferAPPLE) { hc->fn.glResolveMultisampleFramebufferAPPLE(); return; }
     if (!hc->fn.glBlitFramebuffer) { hgMissing(x, hc, "glResolveMultisampleFramebufferAPPLE"); return; }
@@ -1116,18 +1474,71 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
     }
     p.log(LogLevel::Info, "GPU: drawable " + std::to_string(width) + "x" + std::to_string(height) + " for renderbuffer " +
                               std::to_string(rb) + (handled ? " (platform layer)" : " (RGBA8 storage)") + (ok ? "" : " FAILED"));
-    std::lock_guard<std::mutex> lk(st.mu);
-    Drawable& d = st.drawables[key2(hc->guestSharegroup, rb)];
-    d.layer = layer;
-    d.width = width;
-    d.height = height;
+    Placement again;
+    bool resend = false;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        const uint64_t key = key2(hc->guestSharegroup, rb);
+        int oldW = 0, oldH = 0;
+        // The layer's earlier drawable (this renderbuffer, or one the app deleted and made again).
+        for (auto it = st.drawables.begin(); it != st.drawables.end();) {
+            if (layer && it->second.layer == layer) {
+                oldW = it->second.width; oldH = it->second.height;
+                if (it->first != key) { it = st.drawables.erase(it); continue; }
+            }
+            ++it;
+        }
+        Drawable& d = st.drawables[key];
+        d.layer = layer;
+        if (ok || oldW <= 0) {   // a refused request leaves the drawable the size it still has
+            d.width = width;
+            d.height = height;
+        }
+        // The platform may now show this layer through a new host layer, which has never been
+        // told where the drawable sits (and the compositor only reports a placement that
+        // changed). Say it again, scaled to the new drawable. Without this a game that makes
+        // its drawable again after launch (Minecraft PE, when its keyboard view is added) was
+        // shown unrotated, squeezed into a portrait picture, for the rest of the run.
+        auto pl = st.placed.find(layer);
+        if (ok && handled && layer && pl != st.placed.end() && oldW > 0 && oldH > 0 && width > 0 && height > 0) {
+            const float fx = float(oldW) / float(width), fy = float(oldH) / float(height);
+            pl->second.unit[0] *= fx; pl->second.unit[1] *= fx;
+            pl->second.unit[2] *= fy; pl->second.unit[3] *= fy;
+            again = pl->second;
+            resend = true;
+        }
+    }
+    if (resend) st.platform->layerGeometry(layer, again.unit);
     return ok;
 }
 
 namespace {
 // Every entry point the readback paths of presentRenderbuffer call.
+// The runtime's own framebuffer calls. A native ES 1.1 context has only the OES
+// spellings (calling the ES 2 entry points there does not bind anything on
+// Apple's driver); emulated ES 1.1 (gles1) and ES 2/3 contexts use the core ones.
+struct FbFns {
+    void (*gen)(int32_t, uint32_t*) = nullptr;
+    void (*bind)(uint32_t, uint32_t) = nullptr;
+    void (*attach)(uint32_t, uint32_t, uint32_t, uint32_t) = nullptr;
+};
+FbFns fbFns(const HostContext* hc) {
+    FbFns f;
+    if (hc->api == 1 && !hc->gles1 && !hc->desktop && hc->fn.glGenFramebuffersOES && hc->fn.glBindFramebufferOES &&
+        hc->fn.glFramebufferRenderbufferOES) {
+        f.gen = reinterpret_cast<decltype(f.gen)>(hc->fn.glGenFramebuffersOES);
+        f.bind = reinterpret_cast<decltype(f.bind)>(hc->fn.glBindFramebufferOES);
+        f.attach = reinterpret_cast<decltype(f.attach)>(hc->fn.glFramebufferRenderbufferOES);
+        return f;
+    }
+    f.gen = reinterpret_cast<decltype(f.gen)>(hc->fn.glGenFramebuffers);
+    f.bind = reinterpret_cast<decltype(f.bind)>(hc->fn.glBindFramebuffer);
+    f.attach = reinterpret_cast<decltype(f.attach)>(hc->fn.glFramebufferRenderbuffer);
+    return f;
+}
 bool hasReadbackFns(const HostContext* hc) {
-    return hc->fn.glReadPixels && hc->fn.glGenFramebuffers && hc->fn.glBindFramebuffer && hc->fn.glFramebufferRenderbuffer;
+    const FbFns f = fbFns(hc);
+    return hc->fn.glReadPixels && f.gen && f.bind && f.attach;
 }
 // The guest's draw and read framebuffer bindings; presentRenderbuffer borrows both while it reads back.
 struct FbBindings { uint32_t draw = 0, read = 0; bool separate = false; };
@@ -1149,11 +1560,12 @@ FbBindings saveFbBindings(HostContext* hc) {
     return b;
 }
 void restoreFbBindings(HostContext* hc, const FbBindings& b) {
+    const FbFns f = fbFns(hc);
     if (b.separate) {
-        hc->fn.glBindFramebuffer(kDrawFramebuffer, b.draw);
-        hc->fn.glBindFramebuffer(kReadFramebuffer, b.read);
+        f.bind(kDrawFramebuffer, b.draw);
+        f.bind(kReadFramebuffer, b.read);
     } else {
-        hc->fn.glBindFramebuffer(kFramebuffer, b.draw);
+        f.bind(kFramebuffer, b.draw);
     }
 }
 } // namespace
@@ -1186,6 +1598,21 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
               ", rb bound: " + std::to_string(rb));
     }
     if (!d.layer || d.width <= 0 || d.height <= 0) return false;
+    if (hc->trace) {
+        // Draw calls since the previous present, from any context of the process (a
+        // worker thread may draw while the main thread presents).
+        auto& pf = p.perf();
+        uint64_t frameDraws;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);   // presents can race on two threads
+            const uint64_t total = pf.glDraws.load();
+            frameDraws = total - st.drawsAtPresent;
+            st.drawsAtPresent = total;
+        }
+        pf.glLastFrameDraws = frameDraws;
+        pf.glPresents++;
+        if (!frameDraws) pf.glEmptyPresents++;
+    }
     layer = d.layer;
     width = d.width;
     height = d.height;
@@ -1196,10 +1623,12 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     if (sample && hasReadbackFns(hc)) {
         // Diagnostic: sample the frame before it goes to the display, so a blank
         // screen can be told apart from a frame the GPU really rendered black.
+        GuestErrorScope quiet(hc);
         const FbBindings saved = saveFbBindings(hc);
-        if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
-        hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
-        hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+        const FbFns fb = fbFns(hc);
+        if (!hc->readFbo) fb.gen(1, &hc->readFbo);
+        fb.bind(kFramebuffer, hc->readFbo);
+        fb.attach(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
         if (hc->fn.glFlush) hc->fn.glFlush();
 
         uint64_t sum[3] = {}, lit = 0;
@@ -1222,12 +1651,20 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
     {
         using Clock = std::chrono::steady_clock;
         const auto now = Clock::now();
-        const auto minGap = std::chrono::microseconds(16400);
-        if (st.lastPresent.time_since_epoch().count() && now - st.lastPresent < minGap)
-            std::this_thread::sleep_for(minGap - (now - st.lastPresent));
-        st.lastPresent = Clock::now();
+        const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        int64_t until = 0;
+        { std::lock_guard<std::mutex> lk(st.mu); until = st.pacer.next(nowNs); }   // two threads may present
+        if (until) {
+            std::this_thread::sleep_until(Clock::time_point(std::chrono::duration_cast<Clock::duration>(std::chrono::nanoseconds(until))));
+            p.perf().presentWaitNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - now).count());
+        }
     }
-    if (st.platform->presentDirect(hc->handle, d.layer)) {
+    const auto callStart = std::chrono::steady_clock::now();
+    const bool shown = st.platform->presentDirect(hc->handle, d.layer);
+    const auto callEnd = std::chrono::steady_clock::now();
+    p.perf().presentCalls += 1;   // every attempt, shown or not
+    p.perf().presentCallNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(callEnd - callStart).count());
+    if (shown) {
         direct = true;
         ++st.presents;
         if (!probe.empty()) p.log(LogLevel::Info, "GPU: presented frame " + std::to_string(n) + " directly" + probe);
@@ -1239,10 +1676,12 @@ bool presentRenderbuffer(Process& p, uint32_t guestContext, uint32_t& layer, int
 
     // Read the drawable back for the software compositor.
     if (!hasReadbackFns(hc)) return false;
+    GuestErrorScope quiet(hc);
     const FbBindings saved = saveFbBindings(hc);
-    if (!hc->readFbo) hc->fn.glGenFramebuffers(1, &hc->readFbo);
-    hc->fn.glBindFramebuffer(kFramebuffer, hc->readFbo);
-    hc->fn.glFramebufferRenderbuffer(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
+    const FbFns fb = fbFns(hc);
+    if (!hc->readFbo) fb.gen(1, &hc->readFbo);
+    fb.bind(kFramebuffer, hc->readFbo);
+    fb.attach(kFramebuffer, kColorAttachment0, kRenderbuffer, rbName);
     if (hc->fn.glFlush) hc->fn.glFlush();
     const int32_t prevPack = hgGetInt(hc, kPackAlignment);
     hc->fn.glPixelStorei(kPackAlignment, 4);
@@ -1318,11 +1757,18 @@ static void chain(Process& p, const std::string& symbol, void (*host)(Ctx&)) {
     }
 }
 
+uint32_t hg_glGetError(Ctx& x) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || !hc->fn.glGetError) { hgMissing(x, hc, "glGetError"); return 0; }
+    if (const uint32_t kept = hc->guestError) { hc->guestError = 0; return kept; }
+    return hc->fn.glGetError();
+}
+
 void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glBindFramebuffer) { hgMissing(x, hc, "glBindFramebuffer"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
     
     uint32_t screenFbo = 0;
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
@@ -1333,14 +1779,15 @@ void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
 
     hc->boundFbo = a_framebuffer;
     hc->fn.glBindFramebuffer(a_target, a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
+    lk.unlock();   // hgAfter may log, which calls into the host
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
 }
 
 void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glBindFramebufferOES) { hgMissing(x, hc, "glBindFramebufferOES"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
 
     uint32_t screenFbo = 0;
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
@@ -1351,20 +1798,22 @@ void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) 
 
     hc->boundFbo = a_framebuffer;
     hc->fn.glBindFramebufferOES(a_target, a_framebuffer);
-    if (hgDebug) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
+    lk.unlock();   // hgAfter may log, which calls into the host
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
 }
 
 void hg_glUseProgram(Ctx& x, uint32_t a_program) {
     HostContext* hc = currentHostContext();
     if (!hc || !hc->fn.glUseProgram) { hgMissing(x, hc, "glUseProgram"); return; }
     State& st = S(x.proc);
-    std::lock_guard<std::mutex> lk(st.mu);
+    std::unique_lock<std::mutex> lk(st.mu);
     if (auto it = st.contexts.find(hc->guestContext); it != st.contexts.end()) {
         it->second->currentProgram = a_program;
     }
     hc->currentProgram = a_program;
     hc->fn.glUseProgram(a_program);
-    if (hgDebug) hgAfter(x, hc, "glUseProgram", [&] { return hgArgs(a_program); });
+    lk.unlock();   // hgAfter may log, which calls into the host
+    if (hgDebug || hc->trace) hgAfter(x, hc, "glUseProgram", [&] { return hgArgs(a_program); });
 }
 
 void registerFunctions(Process& p) {

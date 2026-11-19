@@ -7,8 +7,8 @@ This initializes a battle; it does not implement turn authority or rewards/saves
 
 Ported from the October 21, 2026 handoff into ``tools/clash/``. CSV rows are
 read from the caller's pinned IPA at runtime. This file embeds no client
-bytes, tokens, or save data. The protocol probe does not call this module
-until ``--npc-fixture`` is ported (see ``docs/clash-royale/TODO.md``).
+bytes, tokens, or save data. The protocol peer calls this module only with
+the explicit ``--npc-fixture`` option.
 """
 import sys
 from pathlib import Path
@@ -62,6 +62,8 @@ def load_template(ipa):
         buildings = {r['Name']: (35000000 + i, r) for i, r in enumerate(r for r in table('buildings') if r.get('Name'))}
         towers = []
         group = None
+        deco_ids = {r['Name']: 42000000 + i for i, r in enumerate(r for r in table('decos') if r.get('Name'))}
+        decos = []
         objects = False
         for row in rows('locations/training_arena.csv'):
             if row and row[0] == 'Objects':
@@ -71,23 +73,26 @@ def load_template(ipa):
                 continue
             if row[1]:
                 group = row[1]
-            if group not in ('KingTower', 'PrincessTower'):
-                continue
             try:
                 x, y = int(row[2]), int(row[3])
             except ValueError:
                 continue
+            if group in deco_ids:
+                decos.append(deco_ids[group])
+                continue
+            if group not in ('KingTower', 'PrincessTower'):
+                continue
             data, building = buildings[group]
             owner = 0 if y < 32 else 1  # native world origin is at the bottom
             hp = int(building['Hitpoints'])
-            if group == 'KingTower' and owner == 0:
-                hp = hp * int(npc['WizardHpMultiplier']) // 100
+            if owner == 0:
+                hp = (hp * (int(npc['WizardHpMultiplier'] or 100)) + 99) // 100
             towers.append({'data': data, 'owner': owner, 'x': x * 500, 'y': y * 500, 'hp': hp, 'king': group == 'KingTower'})
         damage_types = [r for r in table('damage_types') if r.get('Name')]
         if len(towers) != 6 or len(deck) != 1 or len(damage_types) != 5:
             raise ValueError('Unsupported initial sector topology')
         return {'npc': 18000000, 'location': 15000000, 'arena': 54000000, 'seed': int(npc['Seed']),
-                'npcMana': int(npc['StartingMana']), 'npcDeck': deck, 'towers': towers, 'damageTypes': len(damage_types)}
+                'npcMana': int(npc['StartingMana']), 'npcDeck': deck, 'towers': towers, 'damageTypes': len(damage_types), 'decos': decos}
 
 
 def encode_deck(w, deck):
@@ -130,10 +135,15 @@ def encode_sector(template, state, account, npc=18000000):
     ints(1, 0, 0)  # NPC battle type and constructor counters
     for _ in range(6):
         w.boolean(False)
-    ints(0, 0, 0, 0, 0, 6)
-    ints(6)  # manager's six ID counters, then object count
+    decos = template.get('decos', [])
+    ints(len(decos), 0, 0, 0, 0, 6)
+    ints(len(decos) + 6)  # preserve native static decos in the full update
+    for data in decos:
+        w.reference(data)
     for tower in towers:
         w.reference(tower['data'])
+    for index in range(len(decos)):
+        w.reference(1000000 + index)
     for index in range(6):
         w.reference(6000000 + index)  # class ID is type+1
     for tower in towers:
@@ -141,7 +151,7 @@ def encode_sector(template, state, account, npc=18000000):
         w.boolean(False)
         w.boolean(False)  # level index, character flags
         ints(tower['owner'], 13, tower['x'], tower['y'], 0)  # owner, component mask, position, object+30
-        ints(0, 0)  # direction
+        ints(0, 256 if tower['owner'] == 0 else -256)  # original spawnObject facing
         ints(0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # character+5c,6c..94,68,64,58
         if tower['king']:
             # KingTower is LogicSummoner, not just LogicCharacter. Its private
@@ -166,7 +176,9 @@ def encode_sector(template, state, account, npc=18000000):
         ints(*([0] * template['damageTypes']))
         for _ in range(template['damageTypes']):
             w.boolean(False)
-        ints(0, 0, 0, 0, 0, 0)
+        # Native ctor 0xf164: neutral damage (+0x34) and size (+0x44)
+        # percentages are 100; zero shrinks occupants/max HP to 1%.
+        ints(100, 0, 0, 0, 100, 0)
     for cards in decks:
         w.boolean(True)
         encode_deck(w, cards)

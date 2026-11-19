@@ -2,6 +2,7 @@
 // property-list conversion, run loop) used across the Foundation and UIKit
 // modules.
 #pragma once
+#include <optional>
 #include "runtime/objc/ObjC.hpp"
 #include "loader/Plist.hpp"
 #include <atomic>
@@ -21,7 +22,7 @@ using ObjC::rt;
 enum : uint32_t {
     kNSASCII = 1, kNSNextStep = 2, kNSJapaneseEUC = 3, kNSUTF8 = 4, kNSISOLatin1 = 5, kNSNonLossyASCII = 7,
     kNSShiftJIS = 8, kNSUnicode = 10, kNSWindowsCP1252 = 12, kNSMacOSRoman = 30,
-    kNSUTF16BE = 0x90000100, kNSUTF16LE = 0x94000100, kNSUTF32 = 0x8C000100,
+    kNSUTF16BE = 0x90000100, kNSUTF16LE = 0x94000100, kNSUTF32 = 0x8C000100, kNSUTF32BE = 0x98000100, kNSUTF32LE = 0x9C000100,
 };
 
 // ---- strings
@@ -125,10 +126,14 @@ struct RunLoop {
     std::deque<std::function<void(CPU::Cpu&)>> queue;   // performSelectorOnMainThread, dispatch main queue
     std::vector<std::function<void(CPU::Cpu&, double now)>> frameHooks;   // CADisplayLink, input pumping
     bool stopFlag = false;
+    bool autoreleasePerTurn = false; // UIKit main loop; worker/Foundation loops keep caller ownership.
     double nextFrameAt = 0;     // next frame-hook deadline (60 Hz)
     void addFrameHook(std::function<void(CPU::Cpu&, double)> h) { std::lock_guard<std::mutex> lk(mu); frameHooks.push_back(std::move(h)); }
 
     std::vector<std::string> commonModes{"s:kCFRunLoopDefaultMode", "s:UITrackingRunLoopMode"};
+    // Modes that have an NSPort added (-addPort:forMode:), once per add. Nothing arrives on the port,
+    // but on iOS it is input: -runMode:beforeDate: then waits until the date instead of returning at once.
+    std::vector<std::string> portModes;
     std::string activeMode;   // the mode of the innermost run; guarded by mu
 
     std::shared_ptr<Timer> addTimer(double delay, double interval, bool repeats, std::function<void(CPU::Cpu&)> fire, id timerObj = 0, const std::string& mode = {});
@@ -172,6 +177,13 @@ std::string bundleResource(Ctx& x, const std::string& name, const std::string& t
 id makeFileURL(Ctx& x, const std::string& path, bool isDir = false);
 std::string urlFilePath(Ctx& x, id url);
 std::string urlString(Ctx& x, id url);
+// Stand-in servers (ServerStandIn.cpp): answers for games whose servers were shut down.
+struct StandInReply { int status = 200; std::string mime = "text/xml"; std::string body; };
+std::optional<StandInReply> standInFetch(Ctx& x, const std::string& url, const std::string& method);
+std::optional<StandInReply> standInFetch(Ctx& x, id url, const std::string& method);
+id standInResponse(Ctx& x, id url, const StandInReply& r);   // an autoreleased NSHTTPURLResponse
+// A game allowed online: the body at `url` (2xx only), fetched by the host; nullopt otherwise.
+std::optional<std::string> onlineFetchContents(Ctx& x, id url);
 bool isURL(Ctx& x, id obj);
 id localizedString(Ctx& x, id key, id value, id table);
 

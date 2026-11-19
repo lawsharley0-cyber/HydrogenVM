@@ -1,5 +1,7 @@
 #import "HVMEngine.h"
 #import "HostGLEAGL.h"
+#import "TlsBridgeApple.h"
+#import "HttpClientApple.h"
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
@@ -7,7 +9,9 @@
 #import <UIKit/UIKit.h>
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
+#include "loader/Apk.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "runtime/uikit/UIKit.hpp"
@@ -65,6 +69,9 @@ static NSString *str(const std::string &s) {
         _iconPath = a.iconPaths.empty() ? nil : str(a.iconPaths.front());
         _runnable = a.runnable;
         _encrypted = a.encrypted;
+        _isAndroid = !a.androidLibrary.empty();
+        _engine = str(a.engine);
+        _engineSupported = a.engineSupport == "driver";
         _problem = str(a.problem);
     }
     return self;
@@ -115,6 +122,42 @@ struct CoreTextBackend final : G::TextBackend {
         }
         [fonts setObject:(__bridge id)base forKey:key];
         return base;
+    }
+
+    // The font's tables, reassembled into a standalone sfnt (system fonts live in .ttc
+    // collections, which the TrueType loader does not read).
+    std::vector<uint8_t> fontFile(const G::FontDesc &f) override {
+        CTFontRef ft = font(f, 1);
+        std::vector<uint8_t> out;
+        if (!ft) return out;
+        CFArrayRef tags = CTFontCopyAvailableTables(ft, kCTFontTableOptionNoOptions);
+        std::vector<std::pair<uint32_t, NSData *>> tables;
+        for (CFIndex i = 0; tags && i < CFArrayGetCount(tags); ++i) {
+            const uint32_t tag = uint32_t(uintptr_t(CFArrayGetValueAtIndex(tags, i)));
+            if (CFDataRef d = CTFontCopyTable(ft, tag, kCTFontTableOptionNoOptions))
+                tables.push_back({tag, (__bridge_transfer NSData *)d});
+        }
+        if (tags) CFRelease(tags);
+        CFRelease(ft);
+        if (tables.empty()) return out;
+        std::sort(tables.begin(), tables.end(), [](auto &a, auto &b) { return a.first < b.first; });
+        auto put16 = [&](uint32_t v) { out.push_back(uint8_t(v >> 8)); out.push_back(uint8_t(v)); };
+        auto put32 = [&](uint32_t v) { put16(v >> 16); put16(v & 0xFFFF); };
+        const uint32_t n = uint32_t(tables.size());
+        uint32_t pow2 = 1, log2 = 0;
+        while (pow2 * 2 <= n) { pow2 *= 2; ++log2; }
+        put32(0x00010000); put16(n); put16(pow2 * 16); put16(log2); put16(n * 16 - pow2 * 16);
+        uint32_t offset = 12 + n * 16;
+        for (auto &[tag, data] : tables) {
+            put32(tag); put32(0); put32(offset); put32(uint32_t(data.length));
+            offset += (uint32_t(data.length) + 3) & ~3u;
+        }
+        for (auto &[tag, data] : tables) {
+            const uint8_t *b = static_cast<const uint8_t *>(data.bytes);
+            out.insert(out.end(), b, b + data.length);
+            while (out.size() % 4) out.push_back(0);
+        }
+        return out;
     }
 
     std::vector<CTLineRef> lines(const std::string &s, CTFontRef ft) {
@@ -254,7 +297,10 @@ struct SessionCore {
     bool logFlushScheduled = false;
     AVAudioEngine *audioEngine = nil;   // pulls from the guest's mixer
     std::mutex audioMu;
-    bool micOn = false;                  // input tap installed (the guest is recording)
+    bool micOn = false;                  // input tap installed (the guest has recorded this run)
+    std::atomic<bool> micWanted{false};  // the guest is recording right now: the tap's sound reaches it
+    id audioConfigObserver = nil;        // restarts the engine after the system reconfigures or interrupts it
+    id audioInterruptObserver = nil;
     // Per-run log file in Documents/Logs (visible in the Files app). Written and
     // flushed line by line on the engine thread, so it survives a hard crash.
     FILE *logFile = nullptr;
@@ -268,11 +314,12 @@ struct SessionCore {
     }
 };
 
-// Opens Documents/Logs/<app>-<date>.log and keeps the 30 newest logs.
-FILE *openRunLog(const std::string &bundlePath) {
+// Opens Documents/Logs/<date>-<app>.log and keeps the 30 newest logs. Games the player plays
+// log to Documents/Logs/Play, so a Test All Games run (one log per game) never pushes them out.
+FILE *openRunLog(const std::string &bundlePath, bool play) {
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     if (!docs) return nullptr;
-    NSString *dir = [docs stringByAppendingPathComponent:@"Logs"];
+    NSString *dir = [docs stringByAppendingPathComponent:play ? @"Logs/Play" : @"Logs"];
     NSFileManager *fm = NSFileManager.defaultManager;
     [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSArray<NSString *> *old = [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(compare:)];
@@ -305,6 +352,45 @@ namespace {
 // Game audio: one AVAudioEngine whose source node renders the guest's mixer on
 // the audio thread. The playback category keeps it audible with the ring/silent
 // switch on (as a media app), mixing with other audio.
+// The microphone tap: the input node's first channel goes to the guest while it is recording.
+// Installed with the bus's own format (nil), which is the only one valid after a route change.
+// Caller holds audioMu.
+bool installMicTap(const std::shared_ptr<SessionCore> &core, AVAudioEngine *engine) {
+    std::weak_ptr<SessionCore> weak = core;
+    AVAudioInputNode *input = engine.inputNode;
+    AVAudioFormat *fmt = [input outputFormatForBus:0];
+    if (fmt.sampleRate <= 0 || fmt.channelCount == 0) {   // no usable input: a tap would raise
+        NSLog(@"HydrogenVM: no microphone input is available; the app records silence");
+        return false;
+    }
+    @try {
+        [input installTapOnBus:0 bufferSize:1024 format:nil block:^(AVAudioPCMBuffer *buffer, AVAudioTime *) {
+            auto c = weak.lock();
+            if (!c || !c->micWanted.load() || !buffer.floatChannelData || buffer.format.sampleRate <= 0) return;
+            std::shared_ptr<RT::Process> p;
+            { std::lock_guard<std::mutex> plk(c->mu); p = c->proc; }
+            if (p) p->pushMicrophone(buffer.floatChannelData[0], buffer.frameLength, buffer.format.sampleRate);
+        }];
+    } @catch (NSException *e) {
+        NSLog(@"HydrogenVM: microphone tap failed: %@", e.reason);
+        return false;
+    }
+    return true;
+}
+// Starts the engine again if the system stopped it. Main queue.
+void resumeAudio(const std::shared_ptr<SessionCore> &core) {
+    std::lock_guard<std::mutex> lk(core->audioMu);
+    AVAudioEngine *engine = core->audioEngine;
+    if (!engine || engine.isRunning) return;
+    [AVAudioSession.sharedInstance setActive:YES error:nil];
+    if (core->micOn) {   // the input format may have changed with the hardware
+        [engine.inputNode removeTapOnBus:0];
+        core->micOn = installMicTap(core, engine);
+    }
+    engine.mainMixerNode.outputVolume = core->outputVolume.load();
+    NSError *err = nil;
+    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to resume: %@", err);
+}
 void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrogen::Runtime::Audio::Mixer> mixer) {
     std::lock_guard<std::mutex> lk(core->audioMu);
     if (core->audioEngine) return;
@@ -337,59 +423,64 @@ void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrog
     NSError *err = nil;
     if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to start: %@", err);
     core->audioEngine = engine;
+    // The system stops an AVAudioEngine whenever the audio hardware is reconfigured (the
+    // session switching to play-and-record for a game's microphone, headphones plugged in, a
+    // Bluetooth route) or interrupted (a call, Siri, an alarm), and never starts it again.
+    // Nothing restarted it, so a game's sound went silent for the rest of the run.
+    std::weak_ptr<SessionCore> weakCore = core;
+    core->audioConfigObserver = [NSNotificationCenter.defaultCenter addObserverForName:AVAudioEngineConfigurationChangeNotification
+                                                                               object:engine queue:NSOperationQueue.mainQueue
+                                                                           usingBlock:^(NSNotification *) {
+        if (auto c = weakCore.lock()) resumeAudio(c);
+    }];
+    core->audioInterruptObserver = [NSNotificationCenter.defaultCenter addObserverForName:AVAudioSessionInterruptionNotification
+                                                                                  object:nil queue:NSOperationQueue.mainQueue
+                                                                              usingBlock:^(NSNotification *note) {
+        if ([note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] != AVAudioSessionInterruptionTypeEnded) return;
+        if (auto c = weakCore.lock()) resumeAudio(c);
+    }];
 }
 void stopAudio(const std::shared_ptr<SessionCore> &core) {
     std::lock_guard<std::mutex> lk(core->audioMu);
+    if (core->audioConfigObserver) [NSNotificationCenter.defaultCenter removeObserver:core->audioConfigObserver];
+    if (core->audioInterruptObserver) [NSNotificationCenter.defaultCenter removeObserver:core->audioInterruptObserver];
+    core->audioConfigObserver = nil;
+    core->audioInterruptObserver = nil;
+    const bool hadMic = core->micOn;
     if (core->micOn) [core->audioEngine.inputNode removeTapOnBus:0];
     core->micOn = false;
+    core->micWanted = false;
     [core->audioEngine stop];
     core->audioEngine = nil;
+    if (hadMic) [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
 }
 
-// Microphone: while the guest has a recording queue running, the engine's input
-// node is tapped and its first channel goes to Process::pushMicrophone. The
-// session switches to play-and-record (still out of the speaker) only then, so
-// apps that never record never ask for the microphone.
+// Microphone: the first time the guest records, the session switches to play-and-record
+// (still out of the speaker) and the engine's input node is tapped, so apps that never
+// record never ask for the microphone. The tap then stays for the rest of the run and only
+// its delivery follows the guest: a Talking game turns recording off and on around every
+// sound it plays, and restarting the engine each time cut those sounds and its listening.
 void beginCapture(const std::shared_ptr<SessionCore> &core) {
     std::lock_guard<std::mutex> lk(core->audioMu);
     AVAudioEngine *engine = core->audioEngine;
     if (!engine || core->micOn) return;
     AVAudioSession *session = AVAudioSession.sharedInstance;
     [engine stop];
+    // AllowBluetoothA2DP keeps Bluetooth headphones as the output while the phone's own
+    // microphone records; without it iOS moves a play-and-record session to the speaker.
+    // DefaultToSpeaker only replaces the earpiece, so wired headphones stay in use too.
     [session setCategory:AVAudioSessionCategoryPlayAndRecord
-             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers
+             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers |
+                         AVAudioSessionCategoryOptionAllowBluetoothA2DP | AVAudioSessionCategoryOptionAllowAirPlay
                    error:nil];
     [session setActive:YES error:nil];
-    AVAudioInputNode *input = engine.inputNode;
-    AVAudioFormat *fmt = [input outputFormatForBus:0];
-    if (fmt.sampleRate > 0 && fmt.channelCount > 0) {
-        const double rate = fmt.sampleRate;
-        std::weak_ptr<SessionCore> weak = core;
-        [input installTapOnBus:0 bufferSize:1024 format:fmt block:^(AVAudioPCMBuffer *buffer, AVAudioTime *) {
-            auto c = weak.lock();
-            if (!c || !buffer.floatChannelData) return;
-            std::shared_ptr<RT::Process> p;
-            { std::lock_guard<std::mutex> plk(c->mu); p = c->proc; }
-            if (p) p->pushMicrophone(buffer.floatChannelData[0], buffer.frameLength, rate);
-        }];
-        core->micOn = true;
-    }
+    core->micOn = installMicTap(core, engine);
     NSError *err = nil;
     if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to restart for recording: %@", err);
 }
-void endCapture(const std::shared_ptr<SessionCore> &core) {
-    std::lock_guard<std::mutex> lk(core->audioMu);
-    AVAudioEngine *engine = core->audioEngine;
-    if (!engine || !core->micOn) return;
-    [engine stop];
-    [engine.inputNode removeTapOnBus:0];
-    core->micOn = false;
-    [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
-    NSError *err = nil;
-    if (![engine startAndReturnError:&err]) NSLog(@"HydrogenVM: audio engine failed to restart: %@", err);
-}
 void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
-    if (!on) { dispatch_async(dispatch_get_main_queue(), ^{ endCapture(core); }); return; }
+    core->micWanted = on;
+    if (!on) return;
     [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (granted) beginCapture(core);
@@ -407,6 +498,18 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 @property (nonatomic, readwrite, nullable) CALayer *glLayer;
 @end
 
+@interface HVMPhotoPickerRequest ()
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId;
+@end
+
+@interface HVMDocumentPickerRequest ()
+- (instancetype)initWithRequest:(const RT::UIKit::DocumentPickerRequest &)q;
+@end
+
+@interface HVMMovieRequest ()
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId path:(NSString *)path;
+@end
+
 @interface HVMTextInputRequest ()
 - (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q;
 @end
@@ -421,6 +524,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if ((self = [super init])) {
         _bundlePath = [bundlePath copy];
         _homePath = [homePath copy];
+        _recordingPath = [[homePath stringByAppendingPathComponent:@"Library/HydrogenVM/last-session.hvmrec"] copy];
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
@@ -442,6 +546,14 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const std::string bundle = _bundlePath.UTF8String, home = _homePath.UTF8String;
     const bool keepGoing = _keepGoing;
     const bool useGPU = _useGPU;
+    const bool playSession = _playSession;
+    const bool allowInternet = _allowInternet;
+    const bool unlockFrameRate = _unlockFrameRate;
+    const bool glTrace = _glTrace;
+    const bool gles1Emulate = _gles1Emulate;
+    const uint32_t maxTextureSize = _maxTextureSize;
+    const uint64_t memoryBudgetBytes = _memoryBudgetBytes;
+    const std::string safeModeFallback = _safeModeFallback.length > 0 ? _safeModeFallback.UTF8String : "";
 
     auto flushLogs = [core, weakSelf]() {
         std::vector<std::pair<std::string, RT::LogLevel>> batch;
@@ -455,15 +567,52 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         for (auto &[line, lvl] : batch) s.onLog(str(line), HVMLogLevel(int(lvl)));
     };
 
-    core->logFile = openRunLog(bundle);
+    core->logFile = openRunLog(bundle, playSession);
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *recDir = [_homePath stringByAppendingPathComponent:@"Library/HydrogenVM"];
+    [fm createDirectoryAtPath:recDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *lastRec = [recDir stringByAppendingPathComponent:@"last-session.hvmrec"];
+    NSString *prevRec = [recDir stringByAppendingPathComponent:@"previous-session.hvmrec"];
+    if ([fm fileExistsAtPath:lastRec]) {
+        [fm removeItemAtPath:prevRec error:nil];
+        [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
+    }
+    NSString *privateRec = [lastRec stringByAppendingPathExtension:@"private"];
+    NSString *prevPrivate = [prevRec stringByAppendingPathExtension:@"private"];
+    [fm removeItemAtPath:prevPrivate error:nil];
+    if ([fm fileExistsAtPath:privateRec]) [fm moveItemAtPath:privateRec toPath:prevPrivate error:nil];
+    const bool detailedRecording = _detailedRecording;
+    const std::string recordPath = detailedRecording ? privateRec.UTF8String : lastRec.UTF8String;
+    const std::string inputPath = detailedRecording ? lastRec.UTF8String : "";
 
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
+        cfg.recordPath = recordPath;
+        cfg.detailedRecording = detailedRecording;
+        cfg.inputRecordingPath = inputPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
+        // Offline protocol lives inside the host process; no Python or remote
+        // server is needed. Process::load verifies the exact executable hash.
+        // An unreadable Info.plist is Process::load's error to report, not this thread's.
+        try {
+            auto offlineInfo = Hydrogen::Plist::parseFile(bundle + "/Info.plist");
+            cfg.offlineClash = offlineInfo && offlineInfo->getString("CFBundleIdentifier") == "com.supercell.scroll" &&
+                offlineInfo->getString("CFBundleShortVersionString") == "2.1306.1";
+        } catch (...) {
+            cfg.offlineClash = false;
+        }
+        cfg.glTrace = glTrace;
+        cfg.internetAccess = allowInternet;
+        cfg.unlockFrameRate = unlockFrameRate;
+        // Secure connections: the game's old TLS in, the system's modern TLS out (TlsBridgeApple.mm).
+        if (allowInternet) cfg.tlsBridge = Hydrogen::App::makeAppleTlsBridge();
+        // Foundation downloads (NSURLConnection / NSURLSession) on the system's own HTTP stack.
+        if (allowInternet) cfg.httpClient = Hydrogen::App::makeAppleHttpClient();
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is
             // handed to the player view, which puts it under the UIKit overlay.
@@ -477,6 +626,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.screenWidth = 320;
         cfg.screenHeight = 568;   // UIKit drops to 480 unless the app opts into 4"
         cfg.screenScale = 2;
+        cfg.rotateAndroidReadback = true;   // the player's screen is portrait
         auto sessionLog = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
             core->logToFile("", msg);
@@ -501,7 +651,11 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             std::shared_ptr<RT::Process> p;
             { std::lock_guard<std::mutex> lk(core->mu); p = core->proc; }
             const NSInteger orientation = p ? RT::UIKit::ui(*p).statusBarOrientation : 1;
-            const CGSize size = CGSizeMake(float(w) / 2, float(h) / 2);
+            // The guest's screen in points (touches are sent in these). Not pixels / 2: an
+            // iPad-only game runs a 768x1024 canvas at scale 1, and halving it put every
+            // touch at half its place (buttons answered away from where they are drawn).
+            const float gw = p ? RT::UIKit::ui(*p).screenW : 0, gh = p ? RT::UIKit::ui(*p).screenH : 0;
+            const CGSize size = gw > 0 && gh > 0 ? CGSizeMake(gw, gh) : CGSizeMake(float(w) / 2, float(h) / 2);
             NSData *pixels = [NSData dataWithBytes:rgba length:size_t(w) * size_t(h) * 4];
             CGDataProviderRef dp = CGDataProviderCreateWithCFData((__bridge CFDataRef)pixels);
             CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
@@ -536,10 +690,39 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                     if (s && s.onTextInput) s.onTextInput(req);
                 });
             });
+            RT::UIKit::setDocumentPickerObserver(*proc, [weakSelf](const RT::UIKit::DocumentPickerRequest &q) {
+                HVMDocumentPickerRequest *req = [[HVMDocumentPickerRequest alloc] initWithRequest:q];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    HVMSession *s = weakSelf;
+                    if (s && s.onDocumentPicker) s.onDocumentPicker(req);
+                });
+            });
+            RT::UIKit::setPhotoPickerObserver(*proc, [weakSelf](const RT::UIKit::PhotoPickerRequest &q) {
+                HVMPhotoPickerRequest *req = [[HVMPhotoPickerRequest alloc] initWithActive:q.active requestId:q.requestId];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    HVMSession *s = weakSelf;
+                    if (s && s.onPhotoPicker) s.onPhotoPicker(req);
+                });
+            });
+            RT::UIKit::setMovieObserver(*proc, [weakSelf](const RT::UIKit::MovieRequest &q) {
+                NSString *path = [NSString stringWithUTF8String:q.hostPath.c_str()] ?: @"";
+                HVMMovieRequest *req = [[HVMMovieRequest alloc] initWithActive:q.active requestId:q.requestId path:path];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    HVMSession *s = weakSelf;
+                    if (s && s.onMovie) s.onMovie(req);
+                    // Nobody to show it (a batch test run): the movie is over at once.
+                    else if (s && req.active) [s movieFinished:req.requestId];
+                });
+            });
             startAudio(core, proc->mixerPtr());
             if (!core->stopRequested) {
                 proc->load();
                 core->ready = true;
+                {   // The guest screen in points, before any frame: GPU-presented games never send one.
+                    const CGSize guestScreen = CGSizeMake(RT::UIKit::ui(*proc).screenW, RT::UIKit::ui(*proc).screenH);
+                    if (guestScreen.width > 0 && guestScreen.height > 0)
+                        dispatch_async(dispatch_get_main_queue(), ^{ if (HVMSession *s = weakSelf) s.screenSize = guestScreen; });
+                }
                 if (core->stopRequested) proc->requestStop();
                 hostLog(RT::LogLevel::Info, "[teardown] waiting for the guest run to finish");
                 code = proc->run();
@@ -633,6 +816,30 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     return p ? double(p->perf().frameTimes.percentile(95)) / 1e6 : 0;
 }
 
+- (NSDictionary<NSString *, NSNumber *> *)perfDetail {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return @{};
+    auto& pf = p->perf();
+    const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - pf.origin).count();
+    const uint64_t frames = pf.frames.load(), insns = p->guestInstructions();
+    return @{
+        @"wallSeconds": @(wall), @"guestMIPS": @(wall > 0 ? double(insns) / 1e6 / wall : 0),
+        @"frames": @(frames), @"framesPresented": @(pf.framesPresented.load()),
+        @"avgFrameMs": @(frames ? double(pf.frameNs.load()) / 1e6 / double(frames) : 0),
+        @"p50FrameMs": @(double(pf.frameTimes.percentile(50)) / 1e6),
+        @"p95FrameMs": @(double(pf.frameTimes.percentile(95)) / 1e6),
+        @"p99FrameMs": @(double(pf.frameTimes.percentile(99)) / 1e6),
+        @"maxFrameMs": @(double(pf.maxFrameNs.load()) / 1e6), @"slowFrames": @(pf.slowFrames.load()),
+        @"compositeMs": @(double(pf.compositeNs.load()) / 1e6), @"presentWaitMs": @(double(pf.presentWaitNs.load()) / 1e6),
+        // GL presents (more than frames means a game presents twice a frame) and the time the
+        // driver took to take them; guest instructions per present shows how much game code runs
+        // for each frame the game renders (frame hooks run at 60 Hz whatever the game's rate).
+        @"presentCalls": @(pf.presentCalls.load()), @"presentCallMs": @(double(pf.presentCallNs.load()) / 1e6),
+        @"guestInstructionsPerPresent": @(pf.presentCalls.load() ? double(insns) / double(pf.presentCalls.load()) : 0),
+    };
+}
+
 - (NSInteger)interfaceOrientation {
     std::shared_ptr<RT::Process> p;
     { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
@@ -666,7 +873,18 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         @"offscreenPresents": @(pf.offscreenPresents.load()), @"faultsToApp": @(pf.faultsToApp.load()),
         @"missingCount": @(p->missingCount()), @"framesPresented": @(pf.framesPresented.load()),
         @"timeToFirstFrameMs": @(ttff == ~uint64_t{0} ? -1.0 : double(ttff) / 1e6),
+        @"glErrors": @(pf.glErrors.load()), @"glDraws": @(pf.glDraws.load()),
+        @"glPresents": @(pf.glPresents.load()), @"glEmptyPresents": @(pf.glEmptyPresents.load()), @"glLastFrameDraws": @(pf.glLastFrameDraws.load()),
     };
+}
+
+- (NSArray<NSString *> *)glErrorLog {
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return @[];
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    for (const auto& line : p->glErrorLog()) [out addObject:str(line)];
+    return out;
 }
 
 - (uint64_t)framesPresented {
@@ -691,6 +909,37 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         p = _core->proc;
     }
     if (p && _core->ready) p->enterForeground();
+    // Sound the system stopped while the app was away starts again.
+    std::shared_ptr<SessionCore> core = _core;
+    dispatch_async(dispatch_get_main_queue(), ^{ resumeAudio(core); });
+}
+
+- (void)submitDocument:(NSString *)sourcePath requestId:(uint64_t)requestId {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lock(_core->mu); p = _core->proc; }
+    if (p) RT::UIKit::submitDocumentPickerResult(*p, requestId, sourcePath ? sourcePath.UTF8String : "");
+}
+
+- (void)submitPhoto:(NSData *)imageData requestId:(uint64_t)requestId {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return;
+    std::vector<uint8_t> data;
+    if (imageData && imageData.length <= 16u * 1024 * 1024) {
+        const auto *bytes = static_cast<const uint8_t *>(imageData.bytes);
+        data.assign(bytes, bytes + imageData.length);
+    }
+    RT::UIKit::submitPhotoPickerResult(*p, requestId, std::move(data));
+}
+
+- (void)movieFinished:(uint64_t)requestId {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return;
+    RT::UIKit::movieFinished(*p, requestId);
 }
 
 - (void)submitTextInput:(RT::UIKit::TextInputEvent)ev {
@@ -705,6 +954,14 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 }
 - (void)submitReturnKeyForFocus:(uint64_t)focusId {
     RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::Return, std::string(), focusId, 0};
+    [self submitTextInput:ev];
+}
+- (void)insertText:(NSString *)text focusId:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::InsertText, std::string(text.UTF8String ?: ""), focusId, 0};
+    [self submitTextInput:ev];
+}
+- (void)deleteBackwardForFocus:(uint64_t)focusId {
+    RT::UIKit::TextInputEvent ev{RT::UIKit::TextInputEvent::DeleteBackward, std::string(), focusId, 0};
     [self submitTextInput:ev];
 }
 - (void)dismissKeyboardForFocus:(uint64_t)focusId {
@@ -722,6 +979,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p) p->injectTouch(RT::TouchPhase(int(phase)), x, y, uint32_t(finger));
 }
 
+
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z {
     if (!_core->ready) return;
     std::shared_ptr<RT::Process> p;
@@ -732,9 +990,54 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p) p->setAcceleration(float(x), float(y), float(z));
 }
 
+- (void)sendAndroidKey:(int32_t)keyCode down:(BOOL)down {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectKey(keyCode, down != NO);
+}
+
+- (void)sendJoystickLX:(float)lx ly:(float)ly rx:(float)rx ry:(float)ry hatX:(float)hatX hatY:(float)hatY {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectJoystick(lx, ly, rx, ry, hatX, hatY);
+}
+
 @end
 
 // --------------------------------------------------------------- engine ---
+
+@implementation HVMDocumentPickerRequest
+- (instancetype)initWithRequest:(const RT::UIKit::DocumentPickerRequest &)q {
+    if ((self = [super initWithActive:q.active requestId:q.requestId])) {
+        NSMutableArray<NSString *> *types = [NSMutableArray array];
+        for (const auto &type : q.types) [types addObject:[NSString stringWithUTF8String:type.c_str()]];
+        _types = [types copy];
+    }
+    return self;
+}
+@end
+
+@implementation HVMPhotoPickerRequest
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId {
+    if ((self = [super init])) { _active = active; _requestId = requestId; }
+    return self;
+}
+@end
+
+@implementation HVMMovieRequest
+- (instancetype)initWithActive:(BOOL)active requestId:(uint64_t)requestId path:(NSString *)path {
+    if ((self = [super init])) { _active = active; _requestId = requestId; _path = [path copy]; }
+    return self;
+}
+@end
 
 @implementation HVMTextInputRequest
 - (instancetype)initWithRequest:(const RT::UIKit::TextInputRequest &)q {
@@ -746,6 +1049,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         _keyboardType = q.keyboardType; _returnKeyType = q.returnKeyType;
         _autocapitalizationType = q.autocapitalization; _autocorrectionType = q.autocorrection;
         _secure = q.secure; _multiline = q.multiline;
+        _keyInput = q.keyInput; _hasText = q.hasText;
     }
     return self;
 }
@@ -790,6 +1094,17 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     }
 }
 
++ (HVMAppInfo *)importAPK:(NSString *)apkPath intoDirectory:(NSString *)appsRoot error:(NSError **)error {
+    try {
+        auto info = Hydrogen::Loader::importApk(apkPath.UTF8String, appsRoot.UTF8String);
+        return [[HVMAppInfo alloc] initWithInfo:info];
+    } catch (const std::exception &e) {
+        if (error)
+            *error = [NSError errorWithDomain:@"HydrogenVM" code:1 userInfo:@{NSLocalizedDescriptionKey: str(e.what())}];
+        return nil;
+    }
+}
+
 + (HVMAppInfo *)appInfoAtPath:(NSString *)appPath {
     try {
         return [[HVMAppInfo alloc] initWithInfo:Hydrogen::Loader::readBundle(appPath.UTF8String)];
@@ -819,6 +1134,33 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         G::setTextBackend(std::make_shared<CoreTextBackend>());
         G::setPlatformImageDecoder(&decodeWithImageIO);
     });
+}
+
++ (nullable NSString *)chooseFallbackForCrashReport:(NSString *)crashReport
+                                     internetAccess:(BOOL)internetAccess
+                                    unlockFrameRate:(BOOL)unlockFrameRate
+                                       gles1Emulate:(BOOL)gles1Emulate
+                                     maxTextureSize:(uint32_t)maxTextureSize {
+    RT::ProcessConfig cfg;
+    cfg.internetAccess = internetAccess;
+    cfg.unlockFrameRate = unlockFrameRate;
+    cfg.gles1Emulate = gles1Emulate;
+    cfg.maxTextureSize = maxTextureSize;
+    const std::string text = crashReport.length > 0 ? crashReport.UTF8String : "";
+    auto fb = RT::Compat::chooseFallback(text, cfg);
+    if (!fb) return nil;
+    for (const auto &info : RT::Compat::fallbacks()) {
+        if (info.fallback == *fb) return str(info.id);
+    }
+    return nil;
+}
+
++ (nullable NSString *)fallbackLabelForId:(NSString *)fallbackId {
+    if (fallbackId.length == 0) return nil;
+    if (const auto *info = RT::Compat::findFallback(fallbackId.UTF8String)) {
+        return str(info->label);
+    }
+    return nil;
 }
 
 @end

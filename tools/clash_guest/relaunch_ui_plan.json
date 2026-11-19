@@ -1,0 +1,10 @@
+{
+  "name":"Returning earned nine-card player after upgrades, fourth chest and native deck swap",
+  "steps":[
+    {"id":"R-home","expected":"Home retains four training wins, Gold 142, XP 16 and no chest","settleSeconds":5},
+    {"id":"R-deck","expected":"Mini P.E.K.K.A. retained in slot four; Arrows level 2 in collection","actions":[{"tap":[185,535]},{"tap":[90,535]}]},
+    {"id":"R-mini-info","expected":"Newly earned Mini P.E.K.K.A. native info opens","actions":[{"tap":[280,115]},{"tap":[280,180]}]},
+    {"id":"R-mini-close","expected":"Deck returns safely","actions":[{"tap":[300,105]}]},
+    {"id":"R-home-final","expected":"Home returns, retains earned resources","actions":[{"tap":[185,535]}],"settleSeconds":5}
+  ]
+}

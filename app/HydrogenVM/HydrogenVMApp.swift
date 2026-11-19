@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         HVMCrashJournal.installSignalHandlers()
         HVMEngine.installPlatformServices()
+        MainActor.assumeIsolated { Gloss.installAppearance() }
         #if COLD_START_URL_TEST && targetEnvironment(simulator)
         // Before any view exists: separates "the process never started" from "the link never
         // arrived" when the cold-start handoff regresses.
@@ -31,7 +32,10 @@ struct HydrogenVMApp: App {
                 Tab("Library", systemImage: "square.grid.2x2") { LibraryView() }
                 Tab("Diagnostics", systemImage: "stethoscope") { DiagnosticsView() }
             }
-            .task { recoveredCrash = CrashReport.recover() }
+            .task {
+                recoveredCrash = CrashReport.recover()
+                await ProblemReporter.flushQueue()   // reports that couldn't be sent earlier
+            }
             .sheet(item: $recoveredCrash) { CrashReportView(report: $0) }
             // A `hydrogenvm://run/<id>` link from a Home Screen icon arrives here, both when the
             // app is already running and when the link is what launched it: a scene-based app
@@ -42,6 +46,13 @@ struct HydrogenVMApp: App {
             // The link is queued before the library resolves it, and the library stays black
             // while one is pending, so a game link never flashes the library.
             // `.ipa` imports keep going to the library's own `.onOpenURL`.
+            // A "Play <game>" shortcut (Add to Home Screen, GameShortcut) arrives as a user
+            // activity; it takes the same route as a game link.
+            .onContinueUserActivity(GameShortcut.activityType) { activity in
+                if let url = GameShortcut.link(activityType: activity.activityType, userInfo: activity.userInfo) {
+                    LaunchRouter.shared.open(url)
+                }
+            }
             .onOpenURL { url in
                 guard url.scheme?.lowercased() == "hydrogenvm" else { return }
                 LaunchRouter.shared.open(url)

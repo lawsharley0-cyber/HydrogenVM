@@ -3,11 +3,14 @@
 // queries, and harmless no-ops.
 #include "core/cpu/Engine.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/Support.hpp"
 #include "runtime/libc/Format.hpp"
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <unistd.h>
 #include <unordered_map>
 
@@ -94,6 +97,8 @@ int32_t semWait(Ctx& x, uint32_t id, double timeout) {
     using clock = std::chrono::steady_clock;
     const auto deadline = timeout < 0 ? clock::time_point::max() : clock::now() + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(timeout));
     std::unique_lock<std::mutex> lk(sem->mu);
+    std::optional<BlockedScope> blocked;
+    if (sem->count <= 0 && timeout != 0) blocked.emplace(x.proc, "semaphore_wait / sem_wait", id);
     while (sem->count <= 0) {
         // Stopping: end the thread like the pthread waits do. Returning KERN_ABORTED
         // made Unity log "Failed to wait on a semaphore (errno:14)" in a loop, which
@@ -106,6 +111,88 @@ int32_t semWait(Ctx& x, uint32_t id, double timeout) {
     return KERN_SUCCESS;
 }
 int32_t m_semWait(Ctx& x, uint32_t id) { return semWait(x, id, -1); }
+
+// ---- POSIX named semaphores (sem_open). iOS has no unnamed sem_init, so apps that want a
+// counting semaphore across threads use these: Geometry Dash's worker threads wait in sem_wait.
+// A sem_t* is a guest word holding one of the Mach semaphore handles above; one per name, so
+// every sem_open of a name returns the same pointer, as on Darwin.
+struct NamedSemaphores {
+    explicit NamedSemaphores(Process&) {}
+    std::mutex mu;
+    std::unordered_map<std::string, GuestPtr> byName;      // name -> sem_t*
+    std::unordered_map<GuestPtr, uint32_t> handle;          // sem_t* -> Mach semaphore id
+    std::unordered_map<GuestPtr, int> opens;                // sem_open count not yet closed
+};
+constexpr GuestPtr kSemFailed = 0xFFFFFFFFu;
+constexpr int32_t kOCreat = 0x200, kOExcl = 0x800;
+// sem_t *sem_open(const char *name, int oflag, ... /* mode_t mode, unsigned value */)
+GuestPtr p_semOpen(Ctx& x, GuestPtr namePtr, int32_t oflag, uint32_t /*mode*/, uint32_t value) {
+    if (!namePtr) { setErr(x, 22); return kSemFailed; }
+    const std::string name = x.proc.readCString(namePtr);
+    if (name.empty() || name.size() > 31) { setErr(x, name.empty() ? 22 : 63); return kSemFailed; }   // EINVAL / ENAMETOOLONG (PSEMNAMLEN 31)
+    auto& n = x.proc.service<NamedSemaphores>();
+    std::lock_guard<std::mutex> lk(n.mu);
+    if (auto it = n.byName.find(name); it != n.byName.end()) {
+        if ((oflag & kOCreat) && (oflag & kOExcl)) { setErr(x, 17); return kSemFailed; }   // EEXIST
+        ++n.opens[it->second];
+        return it->second;
+    }
+    if (!(oflag & kOCreat)) { setErr(x, 2); return kSemFailed; }   // ENOENT
+    if (value > 32767) { setErr(x, 22); return kSemFailed; }      // SEM_VALUE_MAX
+    const GuestPtr cell = x.proc.heap().allocZeroed(4);
+    if (!cell) { setErr(x, 28); return kSemFailed; }   // ENOSPC
+    const GuestPtr idCell = x.proc.heap().allocZeroed(4);
+    m_semCreate(x, 0, idCell, 0, int32_t(value));
+    const uint32_t id = x.mem.read<uint32_t>(idCell);
+    x.proc.heap().free(idCell);
+    x.mem.write<uint32_t>(cell, id);
+    n.byName[name] = cell;
+    n.handle[cell] = id;
+    n.opens[cell] = 1;
+    return cell;
+}
+// The Mach handle behind a sem_t*, or 0 (EINVAL) for anything sem_open did not return.
+uint32_t semHandle(Ctx& x, GuestPtr sem) {
+    auto& n = x.proc.service<NamedSemaphores>();
+    std::lock_guard<std::mutex> lk(n.mu);
+    auto it = n.handle.find(sem);
+    if (it == n.handle.end()) { setErr(x, 22); return 0; }
+    return it->second;
+}
+int32_t p_semPost(Ctx& x, GuestPtr sem) {
+    const uint32_t id = semHandle(x, sem);
+    return id && m_semSignal(x, id) == KERN_SUCCESS ? 0 : -1;
+}
+int32_t p_semWait(Ctx& x, GuestPtr sem) {
+    const uint32_t id = semHandle(x, sem);
+    return id && semWait(x, id, -1) == KERN_SUCCESS ? 0 : -1;
+}
+int32_t p_semTryWait(Ctx& x, GuestPtr sem) {
+    const uint32_t id = semHandle(x, sem);
+    if (!id) return -1;
+    if (semWait(x, id, 0) == KERN_SUCCESS) return 0;
+    setErr(x, 35);   // EAGAIN
+    return -1;
+}
+// Closing drops this process's reference; the semaphore and its count stay with the name
+// (so a later sem_open of the name sees the same count) until sem_unlink.
+int32_t p_semClose(Ctx& x, GuestPtr sem) {
+    auto& n = x.proc.service<NamedSemaphores>();
+    std::lock_guard<std::mutex> lk(n.mu);
+    auto it = n.opens.find(sem);
+    if (it == n.opens.end() || it->second <= 0) { setErr(x, 22); return -1; }
+    --it->second;
+    return 0;
+}
+int32_t p_semUnlink(Ctx& x, GuestPtr namePtr) {
+    const std::string name = namePtr ? x.proc.readCString(namePtr) : std::string();
+    auto& n = x.proc.service<NamedSemaphores>();
+    std::lock_guard<std::mutex> lk(n.mu);
+    auto it = n.byName.find(name);
+    if (it == n.byName.end()) { setErr(x, 2); return -1; }
+    n.byName.erase(it);   // open handles keep working; a new sem_open makes a new semaphore
+    return 0;
+}
 // semaphore_timedwait(semaphore_t, mach_timespec_t {unsigned sec; int nsec}) — the struct is passed in r1, r2.
 int32_t m_semTimedWait(Ctx& x, uint32_t id, uint32_t sec, int32_t nsec) { return semWait(x, id, double(sec) + double(nsec) * 1e-9); }
 
@@ -187,6 +274,9 @@ int32_t x_fgetxattr(Ctx&, int32_t, GuestPtr, GuestPtr, uint32_t, uint32_t, int32
 int32_t p_zero2(Ctx&, int32_t, int32_t) { return 0; }
 int32_t p_zero3(Ctx&, int32_t, int32_t, int32_t) { return 0; }
 void p_void2(Ctx&, GuestPtr, uint32_t) {}
+void p_icacheInvalidate(Ctx& x, GuestPtr addr, uint32_t size) {
+    x.proc.engine().retireRange(addr, size);
+}
 
 } // namespace
 
@@ -220,6 +310,12 @@ void registerLibcPosix(Process& p) {
     p.def<&m_semSignalAll>("_semaphore_signal_all");
     p.def<&m_semWait>("_semaphore_wait");
     p.def<&m_semTimedWait>("_semaphore_timedwait");
+    supportDef<&p_semOpen>(p, "_sem_open", SupportStatus::Real, "process-local named counting semaphores over the Mach semaphore table");
+    supportDef<&p_semPost>(p, "_sem_post", SupportStatus::Real, "named semaphore signal");
+    supportDef<&p_semWait>(p, "_sem_wait", SupportStatus::Real, "named semaphore wait (blocks; ends with the app)");
+    supportDef<&p_semTryWait>(p, "_sem_trywait", SupportStatus::Real, "named semaphore try-wait (EAGAIN at zero)");
+    supportDef<&p_semClose>(p, "_sem_close", SupportStatus::Real, "drops one sem_open reference");
+    supportDef<&p_semUnlink>(p, "_sem_unlink", SupportStatus::Real, "removes the name; open handles keep working");
     p.def<&p_statfs>("_statfs");
     p.def<&p_statvfs>("_statvfs");
     p.def<&p_alarm>("_alarm");
@@ -228,7 +324,7 @@ void registerLibcPosix(Process& p) {
     p.def<&p_nl_langinfo>("_nl_langinfo");
     p.def<&p_zero3>("_getpriority");
     p.def<&p_zero3>("_setpriority");
-    p.def<&p_void2>("_sys_icache_invalidate");
+    p.def<&p_icacheInvalidate>("_sys_icache_invalidate");
     p.def<&p_void2>("_sys_dcache_flush");
     (void)&p_zero; (void)&p_zero2;
 }

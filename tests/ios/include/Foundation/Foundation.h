@@ -87,6 +87,7 @@ typedef struct {
 - (unsigned short)characterAtIndex:(NSUInteger)i;
 - (const char *)UTF8String;
 - (const char *)cStringUsingEncoding:(NSStringEncoding)enc;
+- (BOOL)getBytes:(void *)buffer maxLength:(NSUInteger)maxLength usedLength:(NSUInteger *)usedLength encoding:(NSStringEncoding)encoding options:(NSUInteger)options range:(NSRange)range remainingRange:(NSRange *)remainingRange;
 - (NSData *)dataUsingEncoding:(NSStringEncoding)enc;
 - (BOOL)isEqualToString:(NSString *)s;
 - (NSComparisonResult)compare:(NSString *)s;
@@ -97,6 +98,10 @@ typedef struct {
 - (NSRange)rangeOfString:(NSString *)s;
 - (NSRange)rangeOfString:(NSString *)s options:(NSUInteger)mask;
 - (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set;
+- (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set options:(NSUInteger)options;
+- (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set options:(NSUInteger)options range:(NSRange)range;
+- (NSRange)rangeOfComposedCharacterSequenceAtIndex:(NSUInteger)index;
+- (NSRange)rangeOfComposedCharacterSequencesForRange:(NSRange)range;
 - (NSString *)substringFromIndex:(NSUInteger)i;
 - (NSString *)substringToIndex:(NSUInteger)i;
 - (NSString *)substringWithRange:(NSRange)r;
@@ -141,6 +146,7 @@ typedef struct {
 @interface NSCharacterSet : NSObject <NSCopying, NSMutableCopying>
 + (NSCharacterSet *)whitespaceCharacterSet;
 + (NSCharacterSet *)whitespaceAndNewlineCharacterSet;
++ (NSCharacterSet *)newlineCharacterSet;
 + (NSCharacterSet *)decimalDigitCharacterSet;
 + (NSCharacterSet *)letterCharacterSet;
 + (NSCharacterSet *)punctuationCharacterSet;

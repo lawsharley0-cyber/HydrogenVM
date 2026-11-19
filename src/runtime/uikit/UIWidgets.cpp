@@ -1101,6 +1101,12 @@ void nc_loadView(Ctx& x, id self, SEL) {
     rt(x).release(x.cpu, v);
     syncNavControllerView(x, self);
 }
+void nc_didLayout(Ctx& x, id self, SEL) {
+    // The container owns the content frame even when a custom child view has
+    // no flexible autoresizing mask (common for EAGL views). Rotation changes
+    // the container bounds after loadView, so its initial frame is insufficient.
+    syncNavControllerView(x, self);
+}
 void nc_push(Ctx& x, id self, SEL, id vc, bool animated) {
     if (!vc) return;
     ensureNavBars(x, self);
@@ -1439,6 +1445,29 @@ id tf_nilObj(Ctx&, id, SEL) { return 0; }
 bool tf_trueBool(Ctx&, id, SEL) { return true; }
 
 // ---- on-screen keyboard bridge (#303)
+bool isCustomKeyInput(Ctx& x, id self) {
+    auto& r = rt(x);
+    return self && !r.hostIf<TextFieldData>(self) && r.respondsTo(self, r.sel("hasText")) &&
+           r.respondsTo(self, r.sel("insertText:")) && r.respondsTo(self, r.sel("deleteBackward"));
+}
+void publishCustomKeyboard(Ctx& x, id self, bool active) {
+    std::function<void(const TextInputRequest&)> obs;
+    { std::lock_guard<std::mutex> lk(ui(x).inputMu); obs = ui(x).textInputObserver; }
+    if (!obs) return;
+    TextInputRequest q;
+    q.active = active; q.keyInput = true; q.focusId = ui(x).textFocusId;
+    if (active) {
+        auto& r = rt(x);
+        const auto trait = [&](const char* name, int fallback = 0) {
+            return r.respondsTo(self, r.sel(name)) ? int32_t(r.send(x.cpu, self, name)) : fallback;
+        };
+        q.hasText = sendBool(x, self, "hasText");
+        q.keyboardType = trait("keyboardType"); q.returnKeyType = trait("returnKeyType");
+        q.autocapitalization = trait("autocapitalizationType", 2);
+        q.autocorrection = trait("autocorrectionType"); q.secure = trait("isSecureTextEntry") != 0;
+    }
+    obs(q);
+}
 bool isTextView(Ctx& x, id self) { return rt(x).isKindOf(self, rt(x).getClass("UITextView")); }
 void publishKeyboard(Ctx& x, id self, bool active) {
     std::function<void(const TextInputRequest&)> obs;
@@ -1497,8 +1526,28 @@ void applyHostText(Ctx& x, id self, const std::string& newUtf8) {
 }
 void handleTextInput(Ctx& x, const TextInputEvent& ev) {
     const id fr = ui(x).firstResponder;
-    if (!fr || !rt(x).hostIf<TextFieldData>(fr)) return;
+    if (!fr) return;
     if (ev.focusId != ui(x).textFocusId) return;   // typed for a field that has since lost focus
+    if (isCustomKeyInput(x, fr)) {
+        auto& r = rt(x); r.retain(x.cpu, fr);
+        switch (ev.kind) {
+        case TextInputEvent::InsertText:
+            r.send(x.cpu, fr, "insertText:", {makeString(x, ev.text)}); break;
+        case TextInputEvent::DeleteBackward:
+            r.send(x.cpu, fr, "deleteBackward"); break;
+        case TextInputEvent::Return:
+            r.send(x.cpu, fr, "insertText:", {makeString(x, "\n")}); break;
+        case TextInputEvent::Dismiss:
+            r.send(x.cpu, fr, "resignFirstResponder"); break;
+        case TextInputEvent::SetText:
+            // UIKeyInput exposes neither the full string nor a replacement
+            // range. Never synthesize a replacement that loses its caret.
+            break;
+        }
+        if (ui(x).firstResponder == fr) publishCustomKeyboard(x, fr, true);
+        r.release(x.cpu, fr); return;
+    }
+    if (!rt(x).hostIf<TextFieldData>(fr)) return;
     rt(x).retain(x.cpu, fr);
     switch (ev.kind) {
     case TextInputEvent::SetText:
@@ -1517,6 +1566,9 @@ void handleTextInput(Ctx& x, const TextInputEvent& ev) {
         rt(x).send(x.cpu, fr, "resignFirstResponder");
         if (ui(x).firstResponder == fr) publishKeyboard(x, fr, true);   // the guest refused: keep the keyboard
         break;
+    case TextInputEvent::InsertText:
+    case TextInputEvent::DeleteBackward:
+        break;   // only protocol-based responders use incremental host events
     }
     rt(x).release(x.cpu, fr);
 }
@@ -1618,6 +1670,66 @@ void sw_drawRect(Ctx& x, id self, SEL, CGRect) {
     CG::fillRect(x, ctx, b, on ? G::Color{0.3f, 0.85f, 0.39f, 1} : G::Color{0.85f, 0.85f, 0.88f, 1});
     const float r = b.h - 4;
     CG::fillRect(x, ctx, {on ? (b.w - r - 2) : 2.0f, 2.0f, r, r}, {1, 1, 1, 1});
+}
+
+// UIPickerView: rows come from the data source and titles from the delegate. Not
+// scrollable: it shows each component's selected row; selectRow: changes it.
+struct PickerData : ObjC::HostObject {
+    id dataSource = 0, delegate = 0;   // not retained, as in UIKit
+    std::vector<int32_t> selected;
+    bool indicator = false;
+};
+PickerData& PKD(Ctx& x, id s) { return rt(x).host<PickerData>(s); }
+int32_t pk_components(Ctx& x, id self, SEL) {
+    const id ds = PKD(x, self).dataSource;
+    if (!ds || !(rt(x).send(x.cpu, ds, "respondsToSelector:", {rt(x).sel("numberOfComponentsInPickerView:")}) & 0xff)) return 0;
+    return std::max(0, int32_t(rt(x).send(x.cpu, ds, "numberOfComponentsInPickerView:", {self})));
+}
+int32_t pk_rows(Ctx& x, id self, SEL, int32_t comp) {
+    const id ds = PKD(x, self).dataSource;
+    if (!ds || !(rt(x).send(x.cpu, ds, "respondsToSelector:", {rt(x).sel("pickerView:numberOfRowsInComponent:")}) & 0xff)) return 0;
+    return std::max(0, int32_t(rt(x).send(x.cpu, ds, "pickerView:numberOfRowsInComponent:", {self, uint32_t(comp)})));
+}
+id pk_dataSource(Ctx& x, id self, SEL) { return PKD(x, self).dataSource; }
+void pk_setDataSource(Ctx& x, id self, SEL, id v) { PKD(x, self).dataSource = v; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+id pk_delegate(Ctx& x, id self, SEL) { return PKD(x, self).delegate; }
+void pk_setDelegate(Ctx& x, id self, SEL, id v) { PKD(x, self).delegate = v; rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+bool pk_indicator(Ctx& x, id self, SEL) { return PKD(x, self).indicator; }
+void pk_setIndicator(Ctx& x, id self, SEL, bool b) { PKD(x, self).indicator = b; }
+int32_t pk_selectedRow(Ctx& x, id self, SEL, int32_t comp) {
+    const PickerData& d = PKD(x, self);
+    const int32_t rows = comp < 0 ? 0 : pk_rows(x, self, 0, comp);
+    if (rows <= 0) return -1;
+    return size_t(comp) < d.selected.size() ? std::min(d.selected[size_t(comp)], rows - 1) : 0;
+}
+void pk_selectRow(Ctx& x, id self, SEL, int32_t row, int32_t comp, bool) {
+    if (comp < 0 || row < 0) return;
+    PickerData& d = PKD(x, self);
+    if (d.selected.size() <= size_t(comp)) d.selected.resize(size_t(comp) + 1, 0);
+    d.selected[size_t(comp)] = row;
+    rt(x).send(x.cpu, self, "setNeedsDisplay");
+}
+void pk_reloadAll(Ctx& x, id self, SEL) { rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+void pk_reload(Ctx& x, id self, SEL, int32_t) { rt(x).send(x.cpu, self, "setNeedsDisplay"); }
+void pk_drawRect(Ctx& x, id self, SEL, CGRect) {
+    const id ctx = CG::currentContext(x);
+    if (!ctx) return;
+    const G::Rect b = boundsOf(x, self);
+    CG::fillRect(x, ctx, b, {0.94f, 0.94f, 0.95f, 1});
+    const int32_t n = pk_components(x, self, 0);
+    const id del = PKD(x, self).delegate;
+    const bool titles = del && (rt(x).send(x.cpu, del, "respondsToSelector:", {rt(x).sel("pickerView:titleForRow:forComponent:")}) & 0xff);
+    if (n <= 0) return;
+    const float rowH = 32, w = b.w / float(n), y = (b.h - rowH) / 2;
+    CG::fillRect(x, ctx, {0, y, b.w, rowH}, {1, 1, 1, 1});
+    for (int32_t c = 0; c < n && titles; ++c) {
+        const int32_t row = pk_selectedRow(x, self, 0, c);
+        if (row < 0) continue;
+        const id t = id(rt(x).send(x.cpu, del, "pickerView:titleForRow:forComponent:", {self, uint32_t(row), uint32_t(c)}));
+        if (!t) continue;
+        drawText(x, ctx, utf8(x, t), G::FontDesc{"Helvetica", 18, true, false}, {w * float(c) + 6, y + 5, w - 12, rowH - 6},
+                 {0, 0, 0, 1}, 4, 1, 1);
+    }
 }
 
 struct SliderData : ObjC::HostObject {
@@ -1926,6 +2038,80 @@ id sb_instantiateInitial(Ctx& x, id self, SEL s) {
     return 0;
 }
 
+// UIStoryboardSegueTemplate: what a compiled storyboard archives for each segue. The
+// source controller is its "viewController" outlet; performing it instantiates the
+// destination from the storyboard, gives the source prepareForSegue:sender:, and then
+// presents, pushes or embeds by the template's class. ROBLOX's storyboard stopped at the
+// outlet (the classes did not exist).
+enum class SegueKind { Modal, Push, Show, Embed, None };
+struct SegueTemplateData : ObjC::HostObject {
+    id identifier = 0, destinationId = 0, segueClassName = 0;   // retained
+    id viewController = 0;                                      // not retained (the controller owns its templates)
+    bool performOnViewLoad = false;
+};
+SegueTemplateData& STD(Ctx& x, id t) { return rt(x).host<SegueTemplateData>(t); }
+SegueKind segueKind(Ctx& x, id t) {
+    const std::string cls = rt(x).objectClassName(t);
+    if (cls.find("Embed") != std::string::npos) return SegueKind::Embed;
+    if (cls.find("Push") != std::string::npos) return SegueKind::Push;
+    if (cls.find("Show") != std::string::npos && cls.find("Detail") == std::string::npos) return SegueKind::Show;
+    if (cls.find("Relationship") != std::string::npos || cls.find("Unwind") != std::string::npos) return SegueKind::None;
+    return SegueKind::Modal;   // Modal, Presentation, Popover, Replace, ShowDetail
+}
+id st_initWithCoder(Ctx& x, id self, SEL, id coder) {
+    SegueTemplateData& d = STD(x, self);
+    auto obj = [&](const char* key) { return id(rt(x).send(x.cpu, coder, "decodeObjectForKey:", {makeString(x, key)})); };
+    setRetained(x, d.identifier, obj("UIIdentifier"));
+    setRetained(x, d.destinationId, obj("UIDestinationViewControllerIdentifier"));
+    setRetained(x, d.segueClassName, obj("UISegueClassName"));
+    if (const id vc = obj("UIViewController")) d.viewController = vc;
+    d.performOnViewLoad = (rt(x).send(x.cpu, coder, "decodeBoolForKey:", {makeString(x, "UIPerformOnViewLoad")}) & 0xff) != 0;
+    return self;
+}
+id st_identifier(Ctx& x, id self, SEL) { return STD(x, self).identifier; }
+void st_setIdentifier(Ctx& x, id self, SEL, id v) { setRetained(x, STD(x, self).identifier, v); }
+id st_destinationId(Ctx& x, id self, SEL) { return STD(x, self).destinationId; }
+void st_setDestinationId(Ctx& x, id self, SEL, id v) { setRetained(x, STD(x, self).destinationId, v); }
+id st_viewController(Ctx& x, id self, SEL) { return STD(x, self).viewController; }
+void st_setViewController(Ctx& x, id self, SEL, id v) { STD(x, self).viewController = v; }
+bool st_onViewLoad(Ctx& x, id self, SEL) { return STD(x, self).performOnViewLoad; }
+void st_perform(Ctx& x, id self, SEL, id sender) {
+    SegueTemplateData& d = STD(x, self);
+    const id source = d.viewController;
+    const SegueKind kind = segueKind(x, self);
+    if (!source || kind == SegueKind::None) return;
+    if (d.identifier && !(rt(x).send(x.cpu, source, "shouldPerformSegueWithIdentifier:sender:", {d.identifier, sender}) & 0xff)) return;
+    const id storyboard = id(rt(x).send(x.cpu, source, "storyboard"));
+    const id destination = storyboard && d.destinationId
+        ? id(rt(x).send(x.cpu, storyboard, "instantiateViewControllerWithIdentifier:", {d.destinationId})) : 0;
+    if (!destination) {
+        x.proc.logf(LogLevel::Warning, "segue %s: no destination controller \"%s\"", d.identifier ? utf8(x, d.identifier).c_str() : "(unnamed)",
+                    d.destinationId ? utf8(x, d.destinationId).c_str() : "");
+        return;
+    }
+    Class segueCls = d.segueClassName ? rt(x).getClass(utf8(x, d.segueClassName)) : 0;
+    const bool custom = segueCls != 0;
+    if (!segueCls) segueCls = rt(x).getClass("UIStoryboardSegue");
+    const id segue = id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, segueCls, rt(x).selAlloc)), "initWithIdentifier:source:destination:",
+                                   {d.identifier, source, destination}));
+    rt(x).send(x.cpu, source, "prepareForSegue:sender:", {segue, sender});
+    if (custom) rt(x).send(x.cpu, segue, "perform");
+    else if (kind == SegueKind::Embed) {
+        rt(x).send(x.cpu, source, "addChildViewController:", {destination});
+        rt(x).send(x.cpu, destination, "didMoveToParentViewController:", {source});
+    } else {
+        const id nav = kind == SegueKind::Modal ? 0 : id(rt(x).send(x.cpu, source, "navigationController"));
+        if (nav) rt(x).send(x.cpu, nav, "pushViewController:animated:", {destination, 1});
+        else rt(x).send(x.cpu, source, "presentViewController:animated:completion:", {destination, 1, 0});
+    }
+    if (segue) rt(x).release(x.cpu, segue);
+}
+void st_dealloc(Ctx& x, id self, SEL) {
+    if (SegueTemplateData* d = rt(x).hostIf<SegueTemplateData>(self))
+        for (id* o : {&d->identifier, &d->destinationId, &d->segueClassName}) setRetained(x, *o, 0);
+    rt(x).disposeInstance(x.cpu, self);
+}
+
 struct SegueData : ObjC::HostObject {
     id identifier = 0, source = 0, destination = 0;
     uint32_t handlerBlock = 0;
@@ -1960,6 +2146,12 @@ void seg_perform(Ctx& x, id self, SEL) {
 }
 
 } // namespace
+
+std::string storyboardNibDir(Ctx& x, id storyboard) {
+    if (!storyboard || !rt(x).hostIf<StoryboardData>(storyboard)) return std::string();
+    const StoryboardData& d = SBD(x, storyboard);
+    return d.dirPath.empty() ? std::string() : d.name + ".storyboardc/";
+}
 
 void registerUIWidgets(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
@@ -2191,6 +2383,7 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
     ObjC::ClassBuilder nc = r.defineClass("UINavigationController", "UIViewController");
     nc.m<&nc_initWithRoot>("initWithRootViewController:").m<&nc_init>("init").m<&nc_initWithCoder>("initWithCoder:")
       .m<&nc_dealloc>("dealloc", "v@:").m<&nc_loadView>("loadView", "v@:")
+      .m<&nc_didLayout>("viewDidLayoutSubviews", "v@:")
       .m<&nc_push>("pushViewController:animated:", "v@:@c")
       .m<&nc_pop>("popViewControllerAnimated:", "@@:c")
       .m<&nc_popToRoot>("popToRootViewControllerAnimated:", "@@:c")
@@ -2314,6 +2507,15 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
       .m<&sw_isOn>("isOn", "c@:").m<&sw_setOn>("setOn:", "v@:c").m<&sw_setOnAnim>("setOn:animated:", "v@:cc")
       .m<&sw_touchesEnded>("touchesEnded:withEvent:", "v@:@@").m<&sw_drawRect>("drawRect:", "v@:" + R);
 
+    ObjC::ClassBuilder pk = r.defineClass("UIPickerView", "UIView");
+    pk.m<&pk_dataSource>("dataSource").m<&pk_setDataSource>("setDataSource:", "v@:@")
+      .m<&pk_delegate>("delegate").m<&pk_setDelegate>("setDelegate:", "v@:@")
+      .m<&pk_components>("numberOfComponents", "i@:").m<&pk_rows>("numberOfRowsInComponent:", "i@:i")
+      .m<&pk_indicator>("showsSelectionIndicator", "c@:").m<&pk_setIndicator>("setShowsSelectionIndicator:", "v@:c")
+      .m<&pk_selectedRow>("selectedRowInComponent:", "i@:i").m<&pk_selectRow>("selectRow:inComponent:animated:", "v@:iic")
+      .m<&pk_reloadAll>("reloadAllComponents", "v@:").m<&pk_reload>("reloadComponent:", "v@:i")
+      .m<&pk_drawRect>("drawRect:", "v@:" + R);
+
     ObjC::ClassBuilder sl = r.defineClass("UISlider", "UIControl");
     sl.m<&sl_initWithFrame>("initWithFrame:", "@@:" + R)
       .m<&sl_value>("value", "f@:").m<&sl_setValue>("setValue:", "v@:f").m<&sl_setValueAnim>("setValue:animated:", "v@:fc")
@@ -2368,6 +2570,20 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
          .m<&seg_source>("sourceViewController")
          .m<&seg_dest>("destinationViewController")
          .m<&seg_perform>("perform", "v@:");
+
+    ObjC::ClassBuilder segueTemplate = r.defineClass("UIStoryboardSegueTemplate", "NSObject");
+    segueTemplate.m<&st_initWithCoder>("initWithCoder:")
+         .m<&st_identifier>("identifier").m<&st_setIdentifier>("setIdentifier:", "v@:@")
+         .m<&st_destinationId>("destinationViewControllerIdentifier").m<&st_setDestinationId>("setDestinationViewControllerIdentifier:", "v@:@")
+         .m<&st_viewController>("viewController").m<&st_setViewController>("setViewController:", "v@:@")
+         .m<&st_onViewLoad>("performOnViewLoad", "c@:")
+         .m<&st_perform>("_performWithSender:", "v@:@").m<&st_perform>("perform:", "v@:@")
+         .m<&st_dealloc>("dealloc", "v@:");
+    for (const char* sub : {"UIStoryboardModalSegueTemplate", "UIStoryboardPushSegueTemplate", "UIStoryboardShowSegueTemplate",
+                            "UIStoryboardShowDetailSegueTemplate", "UIStoryboardPresentationSegueTemplate", "UIStoryboardPopoverSegueTemplate",
+                            "UIStoryboardReplaceSegueTemplate", "UIStoryboardEmbedSegueTemplate", "UIStoryboardRelationshipSegueTemplate",
+                            "UIStoryboardUnwindSegueTemplate"})
+        r.defineClass(sub, "UIStoryboardSegueTemplate");
 
     // UIPasteboard
     struct PasteboardData : ObjC::HostObject {
@@ -2517,6 +2733,13 @@ void setTextInputObserver(Process& p, std::function<void(const TextInputRequest&
     UIState& u = ui(p);
     std::lock_guard<std::mutex> lk(u.inputMu);
     u.textInputObserver = std::move(observer);
+}
+void customKeyboardFocus(Ctx& x, id responder, bool active) {
+    if (!isCustomKeyInput(x, responder)) return;
+    if (active) { ++ui(x).textFocusId; ui(x).textAckSeq = 0; }
+    Foundation::postNotification(x, active ? "UIKeyboardWillShowNotification" : "UIKeyboardWillHideNotification", 0);
+    publishCustomKeyboard(x, responder, active);
+    Foundation::postNotification(x, active ? "UIKeyboardDidShowNotification" : "UIKeyboardDidHideNotification", 0);
 }
 void submitTextInput(Process& p, TextInputEvent ev) {
     Process* pp = &p;

@@ -1,0 +1,261 @@
+{
+  "sources": {
+    "ETC2": "detex, hglm/detex decompress-etc.c and decompress-eac.c",
+    "EAC": "Khronos OpenGL ES 3.0.6 Appendix C",
+    "PVRTC": "Imagination Native_SDK PVRTDecompressPVRTC",
+    "ATC": "AMD Compressonator atiDecodeRGBBlockATITC, DecompressExplicitAlphaBlock and GetCompressedAlphaRamp",
+    "DXT": "Khronos EXT_texture_compression_s3tc Appendix A"
+  },
+  "cases": [
+    {
+      "name": "ETC2 T-mode red overflow",
+      "format": "9274",
+      "width": 4,
+      "height": 4,
+      "input": "04f2102339917cad",
+      "rgba": "0b001cff110022ff110022ff0b001cff00ff22ff170628ff00ff22ff0b001cff170628ff00ff22ff170628ff170628ff170628ff0b001cff0b001cff00ff22ff"
+    },
+    {
+      "name": "ETC2 H-mode green overflow",
+      "format": "9274",
+      "width": 4,
+      "height": 4,
+      "input": "8004c903b1a2c3d4",
+      "rgba": "0b0b1cff000006ff8e1700ffa42d0bffa42d0bffa42d0bff000006ffa42d0bff000006ff000006ff0b0b1cff000006ff0b0b1cff8e1700ff0b0b1cff8e1700ff"
+    },
+    {
+      "name": "ETC2 sRGB planar blue overflow",
+      "format": "9275",
+      "width": 4,
+      "height": 4,
+      "input": "617104ab39c4541a",
+      "rgba": "c3f186ffa8c39dff8c95b5ff7166ccffb5dd7fff99af96ff7e81adff6252c5ffa7c978ff8b9b8fff706da6ff543ebdff98b570ff7d8788ff61599fff462ab6ff"
+    },
+    {
+      "name": "ETC2 differential punch-through selector 2",
+      "format": "9276",
+      "width": 4,
+      "height": 4,
+      "input": "80808000ffff0000",
+      "rgba": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "ETC2 sRGB T-mode punch-through",
+      "format": "9277",
+      "width": 4,
+      "height": 4,
+      "input": "04f2102139917cad",
+      "rgba": "0b001cff00000000000000000b001cff00ff22ff170628ff00ff22ff0b001cff170628ff00ff22ff170628ff170628ff170628ff0b001cff0b001cff00ff22ff"
+    },
+    {
+      "name": "ETC2 EAC alpha with spatial selectors",
+      "format": "9278",
+      "width": 4,
+      "height": 4,
+      "input": "7820abcdef012345617104ab39c4541a",
+      "rgba": "c3f18682a8c39d888c95b5727166cc6cb5dd7f6699af96947e81ad726252c582a7c978948b9b8f82706da666543ebd7298b5707c7d87889461599f66462ab682"
+    },
+    {
+      "name": "ETC2 sRGB EAC alpha multiplier zero",
+      "format": "9279",
+      "width": 4,
+      "height": 4,
+      "input": "9900abcdef0123458004c903b1a2c3d4",
+      "rgba": "0b0b1c99000006998e170099a42d0b99a42d0b99a42d0b9900000699a42d0b9900000699000006990b0b1c99000006990b0b1c998e1700990b0b1c998e170099"
+    },
+    {
+      "name": "EAC R11 zero multiplier",
+      "format": "9270",
+      "width": 1,
+      "height": 1,
+      "input": "8000000000000000",
+      "numerators": [
+        1025
+      ],
+      "scale": 2047
+    },
+    {
+      "name": "EAC signed R11 maps reserved base -128 to -127",
+      "format": "9271",
+      "width": 1,
+      "height": 1,
+      "input": "8000000000000000",
+      "numerators": [
+        -1019
+      ],
+      "scale": 1023
+    },
+    {
+      "name": "EAC RG11 two interleaved channels",
+      "format": "9272",
+      "width": 2,
+      "height": 1,
+      "input": "80000000000000007f10000000000000",
+      "numerators": [
+        1025,
+        996,
+        1025,
+        996
+      ],
+      "scale": 2047
+    },
+    {
+      "name": "EAC signed RG11 clamps both endpoints",
+      "format": "9273",
+      "width": 2,
+      "height": 1,
+      "input": "80000000000000007ff0ffffffffffff",
+      "numerators": [
+        -1019,
+        1023,
+        -1019,
+        1023
+      ],
+      "scale": 1023
+    },
+    {
+      "name": "ATC RGB vendor four colors",
+      "format": "8c92",
+      "width": 4,
+      "height": 4,
+      "input": "007c1f00e4e4e4e4",
+      "rgba": "ff0000ff9f005fff5f009fff0000ffffff0000ff9f005fff5f009fff0000ffffff0000ff9f005fff5f009fff0000ffffff0000ff9f005fff5f009fff0000ffff"
+    },
+    {
+      "name": "ATC RGB vendor black mode",
+      "format": "8c92",
+      "width": 4,
+      "height": 4,
+      "input": "00fc01f8e4e4e4e4",
+      "rgba": "000000ffc00000ffff0000ffff0008ff000000ffc00000ffff0000ffff0008ff000000ffc00000ffff0000ffff0008ff000000ffc00000ffff0000ffff0008ff"
+    },
+    {
+      "name": "ATC explicit alpha vendor nibble expansion",
+      "format": "8c93",
+      "width": 4,
+      "height": 4,
+      "input": "1032547698badcfe007c1f00e4e4e4e4",
+      "rgba": "ff0000009f005f115f009f220000ff33ff0000449f005f555f009f660000ff77ff0000889f005f995f009faa0000ffbbff0000cc9f005fdd5f009fee0000ffff"
+    },
+    {
+      "name": "ATC interpolated alpha vendor endpoint and rounding",
+      "format": "87ee",
+      "width": 4,
+      "height": 4,
+      "input": "036488c6fa88c6fa007c1f00e4e4e4e4",
+      "rgba": "ff0000039f005f645f009f160000ff2aff00003d9f005f515f009f000000ffffff0000039f005f645f009f160000ff2aff00003d9f005f515f009f000000ffff"
+    },
+    {
+      "name": "PVRTC1 RGB 4bpp padded mip and wrapped endpoint colors",
+      "format": "8c00",
+      "width": 4,
+      "height": 4,
+      "input": "a5a5a5a501fc1f8000000000008410810000ffff1e8000fcff00550007c20311",
+      "rgba": "53185cff4a145eff421060ff4a145eff690c6eff640a6eff600870ff640a6eff7f007fff7f007fff7f007fff7f007fff690c6eff640a6eff600870ff640a6eff"
+    },
+    {
+      "name": "PVRTC1 RGBA 4bpp punch-through alpha",
+      "format": "8c02",
+      "width": 4,
+      "height": 4,
+      "input": "a5a5a5a501fc1f8000000000008410810000ffff1e8000fcff00550007c20311",
+      "rgba": "53185ce34a145ef1421060004a145e00690c6ef1640a6ef860087000640a6e007f007fff7f007fff7f007f007f007f00690c6ef1640a6ef860087000640a6e00"
+    },
+    {
+      "name": "PVRTC1 RGB 2bpp wrapped horizontal interpolation",
+      "format": "8c01",
+      "width": 8,
+      "height": 4,
+      "input": "4745537f1f8000fc319c006f00fcffff0113148001fc1f80a59d10ff1f77f106",
+      "rgba": "987f84ffaa6081ffa5307fffcd5f7fff7f007fffb6407fffa5307fff9c227fff8c3f81ff8b1883ff7e108fff88178bff3f00bfff5300afff8a1887ff8b1883ff7f007fff8f006fff3f00bfffaf004fff0000ffff7f007fff6f008fff770087ff8c3f81ffa93f71ff67019fffe23f50ff9f1f7fffe23f50ff7e108fff8b1883ff"
+    },
+    {
+      "name": "PVRTC1 RGBA 2bpp wrapped vertical interpolation",
+      "format": "8c03",
+      "width": 8,
+      "height": 4,
+      "input": "4745537f1f8000fc319c006f00fcffff0113148001fc1f80a59d10ff1f77f106",
+      "rgba": "987f84bfaa6081daa5307ff1cd5f7ff27f007fffb6407ff6a5307ff19c227ff08c3f81df8b1883f37e108ff988178bfa3f00bfff5300affd8a1887f78b1883f37f007fff8f006fff3f00bfffaf004fff0000ffff7f007fff6f008fff770087ff8c3f81dfa93f71e667019ffde23f50f69f1f7fffe23f50f67e108ff98b1883f3"
+    },
+    {
+      "name": "DXT1 RGB keeps selector 3 opaque",
+      "format": "83f0",
+      "width": 4,
+      "height": 4,
+      "input": "1f0000f8e4e4e4e4",
+      "rgba": "0000ffffff0000ff7f007fff000000ff0000ffffff0000ff7f007fff000000ff0000ffffff0000ff7f007fff000000ff0000ffffff0000ff7f007fff000000ff"
+    },
+    {
+      "name": "DXT1 RGBA clips a partial block and punches out alpha",
+      "format": "83f1",
+      "width": 4,
+      "height": 1,
+      "input": "1f0000f8e4e4e4e4",
+      "rgba": "0000ffffff0000ff7f007fff00000000"
+    },
+    {
+      "name": "DXT3 always uses four colors with explicit alpha",
+      "format": "83f2",
+      "width": 4,
+      "height": 4,
+      "input": "1032547698badcfe1f0000f8e4e4e4e4",
+      "rgba": "0000ff00ff0000115500aa22aa0055330000ff44ff0000555500aa66aa0055770000ff88ff0000995500aaaaaa0055bb0000ffccff0000dd5500aaeeaa0055ff"
+    },
+    {
+      "name": "DXT5 always uses four colors with eight alpha values",
+      "format": "83f3",
+      "width": 4,
+      "height": 4,
+      "input": "380088c6fa88c6fa1f0000f8e4e4e4e4",
+      "rgba": "0000ff38ff0000005500aa30aa0055280000ff20ff0000185500aa10aa0055080000ff38ff0000005500aa30aa0055280000ff20ff0000185500aa10aa005508"
+    },
+    {
+      "name": "PVRTC rejects non-power-of-two dimensions",
+      "format": "8c02",
+      "width": 6,
+      "height": 4,
+      "input": "a5a5a5a501fc1f8000000000008410810000ffff1e8000fcff00550007c20311",
+      "rejected": true
+    },
+    {
+      "name": "PVRTC rejects fewer than two by two blocks",
+      "format": "8c03",
+      "width": 1,
+      "height": 1,
+      "input": "4745537f1f8000fc319c006f00fcffff0113148001fc1f80a59d10ff1f77f1",
+      "rejected": true
+    },
+    {
+      "name": "ETC2 rejects a short alpha block",
+      "format": "9278",
+      "width": 4,
+      "height": 4,
+      "input": "7820abcdef012345617104ab39c454",
+      "rejected": true
+    },
+    {
+      "name": "DXT rejects surplus payload",
+      "format": "83f0",
+      "width": 4,
+      "height": 4,
+      "input": "1f0000f8e4e4e4e400",
+      "rejected": true
+    },
+    {
+      "name": "ATC rejects negative dimensions",
+      "format": "8c92",
+      "width": -1,
+      "height": 4,
+      "input": "007c1f00e4e4e4e4",
+      "rejected": true
+    },
+    {
+      "name": "Unknown format is rejected",
+      "format": "aaaa",
+      "width": 4,
+      "height": 4,
+      "input": "007c1f00e4e4e4e4",
+      "rejected": true
+    }
+  ]
+}

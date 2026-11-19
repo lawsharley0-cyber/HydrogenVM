@@ -1,0 +1,57 @@
+{
+  "name": "Restore bundled menu music; relaunch after saving",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "Native settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "modlab",
+      "expected": "Mod Lab editors",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "music",
+      "expected": "Music editor",
+      "actions": [
+        {
+          "tap": [
+            160,
+            445
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "restore",
+      "expected": "Original menu soundtrack selected",
+      "actions": [
+        {
+          "tap": [
+            160,
+            300
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    }
+  ]
+}

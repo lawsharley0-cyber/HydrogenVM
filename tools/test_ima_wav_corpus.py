@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare IMA WAV guest decoding against the independent system libsndfile.
+"""Compare IMA or Microsoft ADPCM WAV decoding with independent libsndfile.
 
 No game assets are changed or included in the report. libsndfile retains block
 padding, so compare its output trimmed to the WAV fact sample count.
@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--hvm-tests', required=True, type=Path)
     parser.add_argument('--out', required=True, type=Path)
     parser.add_argument('--require-count', type=int)
+    parser.add_argument('--codec', choices=('ima','ms'), default='ima')
     args = parser.parse_args()
     library = ctypes.util.find_library('sndfile')
     if not library:
@@ -51,7 +52,7 @@ def main():
                 chunks[raw[pos:pos+4]] = raw[pos+8:end]
                 pos = end + (size & 1)
             fmt = chunks.get(b'fmt ', b'')
-            if len(fmt) < 2 or struct.unpack_from('<H', fmt)[0] != 17:
+            if len(fmt) < 2 or struct.unpack_from('<H', fmt)[0] != (17 if args.codec=='ima' else 2):
                 continue
             info = Info()
             handle = lib.sf_open(str(path).encode(), 0x10, C.byref(info))
@@ -83,7 +84,7 @@ def main():
     if not results or (args.require_count is not None and len(results) != args.require_count):
         raise AssertionError(f'Unexpected corpus size: {len(results)}')
     args.out.write_text(json.dumps(results, indent=2) + '\n')
-    print(f'{len(results)} IMA WAV files match libsndfile sample-for-sample')
+    print(f'{len(results)} {args.codec.upper()} ADPCM WAV files match libsndfile sample-for-sample')
 
 
 if __name__ == '__main__':

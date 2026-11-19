@@ -28,6 +28,10 @@ struct BatchTestOptions: Codable, Sendable {
     /// Start the game a second time on the data the first run saved (catches save-file crashes).
     var relaunchEnabled: Bool = true
     var relaunchTime: Int = 12
+    /// GPU runs: check every GL call for errors and count draw calls (explains black screens).
+    var glTrace: Bool = true
+    /// Only these games (bundle ids); empty tests every runnable game in the library.
+    var onlyGames: [String] = []
 
     init(secondsPerApp: Int = 10, rendererMode: BatchRendererMode = .both, keepGoing: Bool = true, resetSandbox: Bool = false, exploreEnabled: Bool = true, exploreTime: Int = 30, relaunchEnabled: Bool = true) {
         self.secondsPerApp = secondsPerApp
@@ -50,6 +54,14 @@ struct BatchTestOptions: Codable, Sendable {
         exploreTime = try c.decodeIfPresent(Int.self, forKey: .exploreTime) ?? 30
         relaunchEnabled = try c.decodeIfPresent(Bool.self, forKey: .relaunchEnabled) ?? true
         relaunchTime = try c.decodeIfPresent(Int.self, forKey: .relaunchTime) ?? 12
+        glTrace = try c.decodeIfPresent(Bool.self, forKey: .glTrace) ?? true
+        // Sessions saved before the pick existed have no onlyGames: every game (BatchSelection.Pick).
+        onlyGames = try BatchSelection.Pick(from: decoder).onlyGames
+    }
+
+    /// The runnable games this run covers, in library order.
+    func games(from apps: [InstalledApp]) -> [InstalledApp] {
+        BatchSelection.games(apps, pick: onlyGames, id: \.info.bundleIdentifier, runnable: \.info.runnable)
     }
 }
 
@@ -106,6 +118,10 @@ struct BatchAppResult: Codable, Identifiable, Sendable {
     var checks: [BatchCheck]? = nil
     /// Last engine counters (audio mixer, off-screen frames, missing APIs).
     var diagnostics: BatchDiagnostics? = nil
+    /// GPU runs with GL tracing: the first distinct GL errors, "call -> 0xCODE [main|worker]".
+    var glErrorLog: [String]? = nil
+    /// Where the time went (HVMSession.perfDetail), last snapshot before the game stopped.
+    var perfDetail: [String: Double]? = nil
 
     var worstCheck: BatchCheck.Status? {
         guard let checks else { return nil }
@@ -140,13 +156,27 @@ struct BatchSessionState: Codable, Sendable {
     var options: BatchTestOptions
     var completedResults: [BatchAppResult]
     var pendingBundleIds: [String]
+    /// The full run this run replaced could not be kept (see BatchSnapshot), so a resumed
+    /// run's reports still say so. Sessions saved before this field decode as false.
+    var fullRunNotKept: Bool = false
 
-    init(runId: String = UUID().uuidString, timestamp: String = ISO8601DateFormatter().string(from: Date()), options: BatchTestOptions = BatchTestOptions(), completedResults: [BatchAppResult] = [], pendingBundleIds: [String] = []) {
+    init(runId: String = UUID().uuidString, timestamp: String = ISO8601DateFormatter().string(from: Date()), options: BatchTestOptions = BatchTestOptions(), completedResults: [BatchAppResult] = [], pendingBundleIds: [String] = [], fullRunNotKept: Bool = false) {
         self.runId = runId
         self.timestamp = timestamp
         self.options = options
         self.completedResults = completedResults
         self.pendingBundleIds = pendingBundleIds
+        self.fullRunNotKept = fullRunNotKept
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try c.decode(String.self, forKey: .runId)
+        timestamp = try c.decode(String.self, forKey: .timestamp)
+        options = try c.decode(BatchTestOptions.self, forKey: .options)
+        completedResults = try c.decode([BatchAppResult].self, forKey: .completedResults)
+        pendingBundleIds = try c.decode([String].self, forKey: .pendingBundleIds)
+        fullRunNotKept = try BatchSelection.SessionFlags(from: decoder).fullRunNotKept
     }
 }
 
@@ -263,11 +293,23 @@ final class ExitBox {
 @Observable
 @MainActor
 final class BatchTestRunner {
-    var options = BatchTestOptions()
+    var options: BatchTestOptions = {
+        var o = BatchTestOptions()
+        o.onlyGames = BatchTestRunner.rememberedGameChoice()
+        return o
+    }()
+    /// The options the current or last run started with. Reports, the session and Retest use
+    /// these; `options` is what the options sheet edits for the next run, so opening the sheet
+    /// never relabels results that are already on screen.
+    private(set) var runOptions = BatchTestOptions()
     private(set) var status: BatchTestStatus = .idle
     private(set) var results: [BatchAppResult] = []
     private(set) var targets: [BatchTarget] = []
     private(set) var currentIndex: Int = 0
+    /// Runnable games in the library when this run started or resumed (the report's "N of M").
+    private(set) var libraryGames: Int = 0
+    /// The full run this run replaced could not be copied to last_full_run/ (see BatchSnapshot).
+    private(set) var fullRunNotKept = false
 
     private(set) var currentApp: InstalledApp?
     private(set) var currentModeName: String = "software"
@@ -328,6 +370,8 @@ final class BatchTestRunner {
     @ObservationIgnored private var lastTotalPresented: UInt64 = 0
     /// Engine counters, copied every second while the game runs (they vanish when it stops).
     @ObservationIgnored private var lastDiag: BatchDiagnostics?
+    @ObservationIgnored private var lastPerfDetail: [String: Double] = [:]
+    @ObservationIgnored private var lastGLErrors: [String] = []
     @ObservationIgnored private var missingLines: [String] = []
     @ObservationIgnored private var audioDecodeFailures: [String] = []
 
@@ -354,12 +398,21 @@ final class BatchTestRunner {
     }
 
     func startNewBatch(apps: [InstalledApp], options: BatchTestOptions) {
+        // A failed copy keeps the previous last_full_run/; this run's reports say so.
+        self.fullRunNotKept = BatchSnapshot.keepLastFullRun(reports: Self.reportsDir, thumbnails: Self.thumbnailsDir) == .failed
         self.options = options
+        self.runOptions = options
         self.clearPendingSession()
         self.results = []
+        self.libraryGames = apps.filter(\.info.runnable).count
 
         var newTargets: [BatchTarget] = []
-        for app in apps where app.info.runnable {
+        for app in options.games(from: apps) {
+            // Android games only run on the GPU renderer: one GPU run, whatever the mode.
+            if app.info.isAndroid {
+                newTargets.append(BatchTarget(app: app, useGPU: true))
+                continue
+            }
             switch options.rendererMode {
             case .software:
                 newTargets.append(BatchTarget(app: app, useGPU: false))
@@ -386,12 +439,15 @@ final class BatchTestRunner {
         }
 
         self.options = saved.options
+        self.runOptions = saved.options
+        self.fullRunNotKept = saved.fullRunNotKept
         self.results = saved.completedResults
+        self.libraryGames = allApps.filter(\.info.runnable).count
 
         let completedIds = Set(saved.completedResults.map(\.id))
 
         var remainingTargets: [BatchTarget] = []
-        for app in allApps where app.info.runnable {
+        for app in options.games(from: allApps) {
             let swTarget = BatchTarget(app: app, useGPU: false)
             let gpuTarget = BatchTarget(app: app, useGPU: true)
 
@@ -413,6 +469,32 @@ final class BatchTestRunner {
         runNextTarget()
     }
 
+    // The games picked for the last run, so the next run starts from the same choice.
+    private static let gameChoiceKey = "BatchTestOnlyGames"
+    static func rememberedGameChoice() -> [String] { UserDefaults.standard.stringArray(forKey: gameChoiceKey) ?? [] }
+    static func rememberGameChoice(_ ids: [String]) { UserDefaults.standard.set(ids, forKey: gameChoiceKey) }
+
+    /// Bundle ids of the games whose last result crashed, showed no good picture or failed a check.
+    var gamesWithProblems: [String] {
+        BatchSelection.gamesWithProblems(results.map {
+            BatchSelection.Outcome(bundleId: $0.bundleId, crashed: $0.crashed, signal: $0.frame.signal, failedCheck: $0.worstCheck == .fail)
+        })
+    }
+
+    /// Retest is offered only when no batch is in progress: a paused batch keeps its Resume.
+    var canRetest: Bool { status == .idle || status == .completed || status == .cancelled }
+
+    /// The last full run kept as one folder (see BatchSnapshot).
+    static var lastFullRunDir: URL { BatchSnapshot.folder(in: reportsDir) }
+
+    /// Run again on just these games, with the options of the run on screen. The player's own pick
+    /// (what the options sheet shows next time) is left as it was.
+    func retest(_ ids: [String], apps: [InstalledApp]) {
+        var o = runOptions
+        o.onlyGames = ids
+        startNewBatch(apps: apps, options: o)
+    }
+
     func cancel() {
         guard status == .running || status == .paused else { return }
         status = .cancelled
@@ -427,9 +509,10 @@ final class BatchTestRunner {
     private func savePendingSession() {
         try? FileManager.default.createDirectory(at: Self.reportsDir, withIntermediateDirectories: true)
         let state = BatchSessionState(
-            options: options,
+            options: runOptions,
             completedResults: results,
-            pendingBundleIds: targets.suffix(from: currentIndex).map(\.app.info.bundleIdentifier)
+            pendingBundleIds: targets.suffix(from: currentIndex).map(\.app.info.bundleIdentifier),
+            fullRunNotKept: fullRunNotKept
         )
         if let data = try? JSONEncoder().encode(state) {
             try? data.write(to: Self.pendingSessionURL, options: .atomic)
@@ -460,6 +543,8 @@ final class BatchTestRunner {
         lastP95 = 0
         lastTotalPresented = 0
         lastDiag = nil
+        lastPerfDetail = [:]
+        lastGLErrors = []
         missingLines = []
         audioDecodeFailures = []
         frameCount = 0
@@ -506,6 +591,7 @@ final class BatchTestRunner {
                 s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: testHome.path(percentEncoded: false))
                 s.keepGoing = self.options.keepGoing
                 s.useGPU = target.useGPU
+                s.glTrace = target.useGPU && self.options.glTrace
                 self.activeSession = s
 
                 // The bridge delivers every callback on the main queue (see RunModel).
@@ -549,6 +635,8 @@ final class BatchTestRunner {
                         self.lastP95 = s.frameTimeP95Milliseconds
                         if presented > 0 { self.lastTotalPresented = presented }
                         if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
+                        self.lastPerfDetail = s.perfDetail.mapValues { $0.doubleValue }
+                        self.lastGLErrors = s.glErrorLog   // this session's log; reset per game
                     }
                 }
 
@@ -666,6 +754,7 @@ final class BatchTestRunner {
             var closedGracefully: Bool? = nil
             if !exitBox.exited && self.status == .running {
                 if let d = BatchDiagnostics(s.diagnostics) { self.lastDiag = d }
+                self.lastGLErrors = s.glErrorLog   // errors from the last second before closing
                 self.activeSession?.stopGracefully()
                 let gracefulDeadline = Date().addingTimeInterval(4.0)
                 while Date() < gracefulDeadline && !exitBox.exited {
@@ -768,6 +857,7 @@ final class BatchTestRunner {
             obs.relaunchSummary = relaunch?.summary
             obs.missingLines = self.missingLines
             obs.audioDecodeFailures = self.audioDecodeFailures
+            if target.useGPU && self.options.glTrace { obs.glErrorLog = self.lastGLErrors }
             let checks = BatchCheckBuilder.build(obs)
 
             let appResult = BatchAppResult(
@@ -792,6 +882,8 @@ final class BatchTestRunner {
             var finished = appResult
             finished.checks = checks
             finished.diagnostics = self.lastDiag
+            if !self.lastPerfDetail.isEmpty { finished.perfDetail = self.lastPerfDetail }
+            if !self.lastGLErrors.isEmpty { finished.glErrorLog = self.lastGLErrors }
             if isCrashed, let bundle = self.activeSession?.crashBundle, let data = bundle.data(using: .utf8),
                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let files = json["fileHistory"],
                let filesData = try? JSONSerialization.data(withJSONObject: files) {
@@ -847,6 +939,7 @@ final class BatchTestRunner {
             s = HVMSession(bundlePath: target.app.info.bundlePath, homePath: home.path(percentEncoded: false))
             s.keepGoing = options.keepGoing
             s.useGPU = target.useGPU
+            s.glTrace = target.useGPU && options.glTrace
             activeSession = s
             s.onFrame = { [weak self] img in
                 MainActor.assumeIsolated {
@@ -958,6 +1051,7 @@ final class BatchTestRunner {
                     "fps": r.perf.fps,
                     "frameTimeP95Ms": r.perf.frameTimeP95Ms
                 ],
+                "perfDetail": r.perfDetail ?? [:],
                 "frame": [
                     "signal": r.frame.signal,
                     "thumbnailPath": r.frame.thumbnailPath ?? ""
@@ -973,6 +1067,7 @@ final class BatchTestRunner {
                let parsed = try? JSONSerialization.jsonObject(with: data) { dict["checks"] = parsed }
             if let diag = r.diagnostics, let data = try? JSONEncoder().encode(diag),
                let parsed = try? JSONSerialization.jsonObject(with: data) { dict["diagnostics"] = parsed }
+            if let gl = r.glErrorLog { dict["glErrorLog"] = gl }
 
             if let explore = r.explore {
                 if let expData = try? JSONEncoder().encode(explore),
@@ -1002,12 +1097,17 @@ final class BatchTestRunner {
                 "systemVersion": UIDevice.current.systemVersion
             ],
             "options": [
-                "seconds": options.secondsPerApp,
-                "renderer": options.rendererMode.rawValue,
-                "keepGoing": options.keepGoing,
-                "explore": options.exploreEnabled,
-                "exploreSeconds": options.exploreTime,
-                "relaunch": options.relaunchEnabled
+                "seconds": runOptions.secondsPerApp,
+                "renderer": runOptions.rendererMode.rawValue,
+                "keepGoing": runOptions.keepGoing,
+                "explore": runOptions.exploreEnabled,
+                "exploreSeconds": runOptions.exploreTime,
+                "relaunch": runOptions.relaunchEnabled,
+                "glTrace": runOptions.glTrace,
+                "selection": BatchSelection.reportEntry(pick: runOptions.onlyGames, libraryGames: libraryGames),
+                "previousFullRunKept": !fullRunNotKept,
+                // Written after every game; only the report saved when the batch finished says true.
+                "runComplete": status == .completed
             ],
             "suites": [
                 "apps": [
@@ -1022,7 +1122,11 @@ final class BatchTestRunner {
         md += "**Date:** \(ISO8601DateFormatter().string(from: Date()))  \n"
         md += "**Device:** \(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)  \n"
         md += "**Emulator Commit:** `\(HVMSession.emulatorCommit.prefix(12))`  \n"
-        md += "**Options:** \(options.secondsPerApp)s/app · Renderer \(options.rendererMode.displayName) · KeepGoing \(options.keepGoing) · Explore \(options.exploreEnabled ? "\(options.exploreTime)s" : "off") · Relaunch \(options.relaunchEnabled)\n\n"
+        md += "**Options:** \(runOptions.secondsPerApp)s/app · Renderer \(runOptions.rendererMode.displayName) · KeepGoing \(runOptions.keepGoing) · Explore \(runOptions.exploreEnabled ? "\(runOptions.exploreTime)s" : "off") · Relaunch \(runOptions.relaunchEnabled)  \n"
+        md += BatchSelection.markdownLine(pick: runOptions.onlyGames, libraryGames: libraryGames) + "\n\n"
+        if fullRunNotKept {
+            md += "> ⚠️ The previous full run's report could not be copied to last_full_run/; the copy from before it was kept.\n\n"
+        }
 
         let total = results.count
         let crashed = results.filter(\.crashed).count
@@ -1086,6 +1190,9 @@ final class BatchTestRunner {
                 for c in r.checks ?? [] {
                     md += "- \(c.emoji) **\(c.name):** \(c.detail.replacingOccurrences(of: "|", with: "\\|"))\n"
                 }
+                if let gl = r.glErrorLog, !gl.isEmpty {
+                    md += "- GL errors: " + gl.prefix(8).map { "`\($0)`" }.joined(separator: ", ") + "\n"
+                }
             }
         }
 
@@ -1103,6 +1210,66 @@ final class BatchTestRunner {
         let mdText = buildMarkdownReport()
         let mdURL = Self.reportsDir.appending(path: "latest_batch_report.md")
         try? mdText.write(to: mdURL, atomically: true, encoding: .utf8)
+    }
+
+    /// One folder with everything from the last run, for "Save to Files" / AirDrop:
+    /// report.json and report.md, the screenshots, and per-game logs and crash reports.
+    /// Saved into the desktop's test_ipa folder, it is what the desktop bench compares.
+    func exportBundle() throws -> URL {
+        let fm = FileManager.default
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let root = fm.temporaryDirectory.appending(path: "HydrogenVM-test-\(stamp)", directoryHint: .isDirectory)
+        try? fm.removeItem(at: root)
+        try fm.createDirectory(at: root.appending(path: "logs", directoryHint: .isDirectory), withIntermediateDirectories: true)
+        // Written from the current results, never copied from an older saved report.
+        let json = try JSONSerialization.data(withJSONObject: buildCompatReportJSON(), options: [.prettyPrinted, .sortedKeys])
+        try json.write(to: root.appending(path: "report.json"), options: .atomic)
+        try buildMarkdownReport().write(to: root.appending(path: "report.md"), atomically: true, encoding: .utf8)
+        // Only this run's thumbnails: the shared folder also holds older runs' pictures.
+        let thumbs = root.appending(path: "thumbnails", directoryHint: .isDirectory)
+        try fm.createDirectory(at: thumbs, withIntermediateDirectories: true)
+        for name in BatchSelection.thumbnailFiles(results.map(\.frame.thumbnailPath)) {
+            let src = Self.thumbnailsDir.appending(path: name)
+            if fm.fileExists(atPath: src.path(percentEncoded: false)) { try fm.copyItem(at: src, to: thumbs.appending(path: name)) }
+        }
+        // A partial run also carries the last full run's report, so a retest never hides it.
+        if !runOptions.onlyGames.isEmpty,
+           fm.fileExists(atPath: Self.lastFullRunDir.appending(path: "report.json").path(percentEncoded: false)) {
+            try fm.copyItem(at: Self.lastFullRunDir, to: root.appending(path: "last-full-run", directoryHint: .isDirectory))
+        }
+        for r in results {
+            // Bundle IDs come from the game's Info.plist: keep only filename-safe characters.
+            let safe = "\(r.bundleId)_\(r.mode)".map { $0.isLetter || $0.isNumber || "._-".contains($0) ? $0 : "_" }
+            let name = String(safe).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            var text = r.logs
+            if let crash = r.crashReport { text += "\n\n==== crash report ====\n" + crash }
+            if let gl = r.glErrorLog, !gl.isEmpty { text += "\n\n==== GL errors ====\n" + gl.joined(separator: "\n") }
+            try text.write(to: root.appending(path: "logs/\(name).log"), atomically: true, encoding: .utf8)
+        }
+        // The logs of games the player played by hand (the newest 30, each cut to its last
+        // 1.5 MB): what happened in a session a test run cannot reproduce, such as typing.
+        let playLogs = URL.documentsDirectory.appending(path: "Logs/Play", directoryHint: .isDirectory)
+        if let names = try? fm.contentsOfDirectory(atPath: playLogs.path(percentEncoded: false)) {
+            let out = root.appending(path: "play-logs", directoryHint: .isDirectory)
+            try fm.createDirectory(at: out, withIntermediateDirectories: true)
+            var skipped: [String] = []
+            for name in names.sorted() where name.hasSuffix(".log") {
+                do {
+                    // Only the tail is read: a long session's log can be far larger than the cut.
+                    let handle = try FileHandle(forReadingFrom: playLogs.appending(path: name))
+                    defer { try? handle.close() }
+                    let size = try handle.seekToEnd()
+                    try handle.seek(toOffset: size > 1_500_000 ? size - 1_500_000 : 0)
+                    try (handle.readToEnd() ?? Data()).write(to: out.appending(path: name))
+                } catch {
+                    skipped.append("\(name): \(error.localizedDescription)")
+                }
+            }
+            if !skipped.isEmpty {
+                try? skipped.joined(separator: "\n").write(to: out.appending(path: "skipped.txt"), atomically: true, encoding: .utf8)
+            }
+        }
+        return root
     }
 
     func consoleIssueURL(for result: BatchAppResult) -> URL {

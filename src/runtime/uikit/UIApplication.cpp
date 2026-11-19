@@ -1,8 +1,10 @@
 // HydrogenVM — UIApplication, UIApplicationMain (the launch sequence), UITouch /
 // UIEvent and touch delivery, UIDevice, UIAccelerometer.
+#include <array>
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 #include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -94,6 +96,49 @@ void e_dealloc(Ctx& x, id self, SEL) {
     rt(x).disposeInstance(x.cpu, self);
 }
 
+// ====================================================== UILocalNotification ===
+// A value object games fill in before scheduling a reminder. Nothing is ever delivered
+// (scheduleLocalNotification: stays a no-op), but the properties hold what was set, so
+// games that read them back or copy the object see their own values.
+enum LocalNoteObject { kFireDate, kTimeZone, kRepeatCalendar, kAlertBody, kAlertAction, kAlertTitle,
+                       kAlertLaunchImage, kSoundName, kUserInfo, kCategory, kNoteObjectCount };
+struct LocalNoteData : ObjC::HostObject {
+    id objects[kNoteObjectCount] = {};
+    uint32_t repeatInterval = 0;
+    int32_t badge = 0;
+    bool hasAction = true;
+};
+LocalNoteData& LN(Ctx& x, id n) { return rt(x).host<LocalNoteData>(n); }
+template <int I> id ln_get(Ctx& x, id self, SEL) { return LN(x, self).objects[I]; }
+template <int I> void ln_set(Ctx& x, id self, SEL, id value) {
+    // Strings and the user-info dictionary are copied, as UIKit's properties declare.
+    const bool copy = I != kFireDate && I != kTimeZone && I != kRepeatCalendar;
+    const id held = value ? (copy ? id(rt(x).send(x.cpu, value, "copy")) : rt(x).retain(x.cpu, value)) : 0;
+    id& slot = LN(x, self).objects[I];
+    const id old = slot;
+    slot = held;
+    if (old) rt(x).release(x.cpu, old);
+}
+uint32_t ln_repeat(Ctx& x, id self, SEL) { return LN(x, self).repeatInterval; }
+void ln_setRepeat(Ctx& x, id self, SEL, uint32_t v) { LN(x, self).repeatInterval = v; }
+int32_t ln_badge(Ctx& x, id self, SEL) { return LN(x, self).badge; }
+void ln_setBadge(Ctx& x, id self, SEL, int32_t v) { LN(x, self).badge = v; }
+bool ln_hasAction(Ctx& x, id self, SEL) { return LN(x, self).hasAction; }
+void ln_setHasAction(Ctx& x, id self, SEL, bool v) { LN(x, self).hasAction = v; }
+id ln_copy(Ctx& x, id self, SEL, id) {
+    const id copy = id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, rt(x).classOf(self), "alloc")), "init"));
+    LocalNoteData& from = LN(x, self);
+    LocalNoteData& to = LN(x, copy);
+    for (int i = 0; i < kNoteObjectCount; ++i) if ((to.objects[i] = from.objects[i])) rt(x).retain(x.cpu, to.objects[i]);
+    to.repeatInterval = from.repeatInterval; to.badge = from.badge; to.hasAction = from.hasAction;
+    return copy;
+}
+void ln_dealloc(Ctx& x, id self, SEL) {
+    if (LocalNoteData* d = rt(x).hostIf<LocalNoteData>(self))
+        for (id& o : d->objects) { const id v = o; o = 0; if (v) rt(x).release(x.cpu, v); }
+    rt(x).disposeInstance(x.cpu, self);
+}
+
 // Deliver one event's touches to their views (UIWindow -sendEvent:).
 void w_sendEvent(Ctx& x, id self, SEL, id event) {
     EventData* e = rt(x).hostIf<EventData>(event);
@@ -159,9 +204,18 @@ void deliverPendingInput(Ctx& x) {
     auto& r = rt(x);
     static thread_local TapMemory lastTap;
     for (const auto& ht : pending) {
-        if (u.ignoreCount > 0) continue;
         const G::Point sp{ht.x, ht.y};
         auto it = std::find_if(u.activeTouches.begin(), u.activeTouches.end(), [&](auto& t) { return t.hostId == ht.id; });
+        if (u.ignoreCount > 0) {
+            // beginIgnoringInteractionEvents drops events, but a finger that lifts meanwhile is
+            // gone: forget it, or its id stays "down" and that finger never works again.
+            if (ht.phase >= 3 && it != u.activeTouches.end()) {
+                const id t = it->touch;
+                u.activeTouches.erase(it);
+                r.release(x.cpu, t);
+            }
+            continue;
+        }
         id touch = 0;
         if (ht.phase == 0) {
             if (it != u.activeTouches.end()) continue;   // duplicate begin
@@ -174,8 +228,11 @@ void deliverPendingInput(Ctx& x) {
             td.timestamp = ht.time;
             const id event0 = 0;
             id view = hitTest(x, window, td.loc, event0);
-            // a view that isn't multi-touch only gets one touch at a time
-            if (view && !viewData(x, view).multipleTouch) {
+            // A view that isn't multi-touch only gets one touch at a time. The view is asked, as
+            // UIKit asks it: Minecraft's EAGLView never sets the property, it overrides
+            // -isMultipleTouchEnabled to return YES. Read from the stored flag, its second
+            // finger was dropped and the player could not look around while walking.
+            if (view && !(uint32_t(r.send(x.cpu, view, "isMultipleTouchEnabled")) & 0xFF)) {
                 for (auto& at : u.activeTouches) if (at.view == view) { view = 0; break; }
             }
             td.view = view ? r.retain(x.cpu, view) : 0;
@@ -192,6 +249,12 @@ void deliverPendingInput(Ctx& x) {
             if (ht.phase == 1 && td.prev.x == td.loc.x && td.prev.y == td.loc.y) continue;   // no movement: no event
             if (ht.phase >= 3) { lastTap = {sp, ht.time, td.tapCount}; }
         }
+        // One touch changes per event; every other finger still down is UITouchPhaseStationary
+        // and is not delivered again. Left in their last phase, they were re-sent with each
+        // event: a second finger going down gave the first a second touchesBegan:, and a game
+        // that tracks fingers by touch (a held move button under a look finger) then kept
+        // a finger "down" after it lifted.
+        for (auto& at : u.activeTouches) if (at.touch != touch) TD(x, at.touch).phase = 2;
         // build the event with all live touches
         const id event = r.createInstance(u.event);
         EventData& ed = ED(x, event);
@@ -251,6 +314,12 @@ int32_t app_statusBarOrientation(Ctx& x, id, SEL) { return ui(x).statusBarOrient
 void app_setStatusBarOrientation(Ctx& x, id, SEL, int32_t o) {
     auto& u = ui(x);
     if (o < 1 || o > 4) return;
+    if (u.plistLandscapeOnly && o <= 2) {
+        // Minecraft PE's keyboard turned the whole game to portrait and left it there.
+        x.proc.logf(LogLevel::Info, "Orientation: stays %d (the app asked for portrait with setStatusBarOrientation:, but its Info.plist allows landscape only)",
+                    u.statusBarOrientation);
+        return;
+    }
     u.orientationSetByApp = true;
     if (o == u.statusBarOrientation) return;
     x.proc.logf(LogLevel::Info, "Orientation: %d -> %d (setStatusBarOrientation: from the app)", u.statusBarOrientation, o);
@@ -349,8 +418,17 @@ id app_nextResponder(Ctx& x, id, SEL) {
 id dev_current(Ctx& x, id, SEL) { return ui(x).currentDevice; }
 id dev_systemVersion(Ctx& x, id, SEL) { return makeString(x, x.proc.config().systemVersion); }
 id dev_systemName(Ctx& x, id, SEL) { return makeString(x, "iPhone OS"); }
-id dev_model(Ctx& x, id, SEL) { return makeString(x, "iPhone"); }
-id dev_name(Ctx& x, id, SEL) { return makeString(x, "HydrogenVM iPhone"); }
+bool tabletOnly(Ctx& x) {
+    const auto* info=x.proc.infoPlist();
+    const auto* family=info ? info->get("UIDeviceFamily") : nullptr;
+    if(family && family->type==Plist::Value::Type::Integer) return family->i==2;
+    return family && family->type==Plist::Value::Type::Array && !family->array.empty() &&
+        std::all_of(family->array.begin(),family->array.end(),[](const auto& item) {
+            return item && item->type==Plist::Value::Type::Integer && item->i==2;
+        });
+}
+id dev_model(Ctx& x, id, SEL) { return makeString(x, tabletOnly(x) ? "iPad" : "iPhone"); }
+id dev_name(Ctx& x, id, SEL) { return makeString(x, tabletOnly(x) ? "HydrogenVM iPad" : "HydrogenVM iPhone"); }
 std::string hexHash(const std::string& s, size_t len) {
     uint64_t h1 = 1469598103934665603ull, h2 = 0x9E3779B97F4A7C15ull;
     for (unsigned char c : s) { h1 = (h1 ^ c) * 1099511628211ull; h2 = (h2 + c) * 6364136223846793005ull + 1; }
@@ -372,7 +450,7 @@ int32_t dev_orientation(Ctx& x, id, SEL) {
     // UIDeviceOrientation: LandscapeLeft(3) = interface LandscapeRight(4) and vice versa
     switch (ui(x).statusBarOrientation) { case 3: return 4; case 4: return 3; default: return ui(x).statusBarOrientation; }
 }
-int32_t dev_idiom(Ctx&, id, SEL) { return 0; }
+int32_t dev_idiom(Ctx& x, id, SEL) { return tabletOnly(x) ? 1 : 0; }
 struct DevFlags : ObjC::HostObject { bool battery = false, proximity = false, orientationNotes = false; };
 DevFlags& DF(Ctx& x, id d) { return rt(x).host<DevFlags>(d); }
 float dev_batteryLevel(Ctx& x, id self, SEL) { return DF(x, self).battery ? 1.0f : -1.0f; }
@@ -381,7 +459,13 @@ bool dev_batteryMonitoring(Ctx& x, id self, SEL) { return DF(x, self).battery; }
 void dev_setBatteryMonitoring(Ctx& x, id self, SEL, bool b) { DF(x, self).battery = b; }
 bool dev_proximity(Ctx& x, id self, SEL) { return DF(x, self).proximity; }
 void dev_setProximity(Ctx& x, id self, SEL, bool b) { DF(x, self).proximity = b; }
-void dev_beginOrientation(Ctx& x, id self, SEL) { DF(x, self).orientationNotes = true; }
+// iOS answers the first beginGenerating... with a UIDeviceOrientationDidChangeNotification
+// once the accelerometer reports. Unity 3.x waits for it before rotating its view, so without
+// it Bad Piggies stayed in portrait.
+void dev_beginOrientation(Ctx& x, id self, SEL) {
+    if (!DF(x, self).orientationNotes) ui(x).deviceOrientationNotePending = true;
+    DF(x, self).orientationNotes = true;
+}
 void dev_endOrientation(Ctx& x, id self, SEL) { DF(x, self).orientationNotes = false; }
 bool dev_generating(Ctx& x, id self, SEL) { return DF(x, self).orientationNotes; }
 
@@ -396,6 +480,19 @@ double as_x(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).x; }
 double as_y(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).y; }
 double as_z(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).z; }
 double as_t(Ctx& x, id self, SEL) { return rt(x).host<AccelSample>(self).t; }
+// Gravity in UIAcceleration's device axes (x right, y up, in g). Until the host reports real
+// motion, the device is held upright in the game's own orientation rather than lying flat:
+// Unity 3.x picks its orientation from gravity and stayed in portrait (Bad Piggies) when the
+// reading was the flat {0, 0, -1}. Interface LandscapeRight (3) is the device's LandscapeLeft.
+std::array<double, 3> gravityFor(const UIState& u) {
+    if (u.accelFromHost) return {u.accel[0], u.accel[1], u.accel[2]};
+    switch (u.statusBarOrientation) {
+    case 2: return {0, 1, 0};
+    case 3: return {-1, 0, 0};
+    case 4: return {1, 0, 0};
+    default: return {0, -1, 0};
+    }
+}
 void startAccelTimer(Ctx& x, id acc) {
     AccelData& d = AD(x, acc);
     if (d.timer) d.timer->valid = false;
@@ -409,7 +506,8 @@ void startAccelTimer(Ctx& x, id acc) {
         auto& u = ui(cx);
         const id s = rt(cx).createInstance(ACS(cx).acceleration);
         AccelSample& smp = rt(cx).host<AccelSample>(s);
-        smp.x = u.accel[0]; smp.y = u.accel[1]; smp.z = u.accel[2]; smp.t = nowSeconds();
+        const auto g = gravityFor(u);
+        smp.x = g[0]; smp.y = g[1]; smp.z = g[2]; smp.t = nowSeconds();
         cx.mem.write<double>(s + 4, smp.t);
         cx.mem.write<double>(s + 12, smp.x);
         cx.mem.write<double>(s + 20, smp.y);
@@ -436,6 +534,7 @@ void acc_setInterval(Ctx& x, id self, SEL, double i) { AD(x, self).interval = st
 void configureScreen(Ctx& x) {
     auto& u = ui(x);
     const Plist::Value* info = x.proc.infoPlist();
+    const bool tablet=tabletOnly(x);
     const std::string bundle = x.proc.bundlePath();
     std::error_code ec;
     // 4-inch support is opted into with a Default-568h@2x launch image (or a launch storyboard / UILaunchImages).
@@ -451,18 +550,32 @@ void configureScreen(Ctx& x) {
     u.screenH = tall ? std::max(568.0f, float(x.proc.config().screenHeight)) : 480.0f;
     if (!tall && x.proc.config().screenHeight < 568) u.screenH = float(x.proc.config().screenHeight);
     u.scale = x.proc.config().screenScale;
+    // An iPad-only binary needs an iPad logical canvas, independently of the
+    // host phone/window displaying it. Universal apps retain the phone profile.
+    if(tablet) { u.screenW=768; u.screenH=1024; u.scale=1; }
     applyGuestScreenEnv(x);
     x.proc.setScreenSize(uint32_t(u.screenW), uint32_t(u.screenH));
     if (info) {
-        if (const Plist::Value* h = info->get("UIStatusBarHidden"); h && h->type == Plist::Value::Type::Bool) u.statusBarHidden = h->b;
-        std::string o = info->getString("UIInterfaceOrientation");
+        auto deviceValue=[&](const char* key) {
+            const auto* value=info->get(std::string(key)+(tablet ? "~ipad" : "~iphone"));
+            return value ? value : info->get(key);
+        };
+        if (const Plist::Value* h = deviceValue("UIStatusBarHidden"); h && h->type == Plist::Value::Type::Bool) u.statusBarHidden = h->b;
+        const auto* initial=deviceValue("UIInterfaceOrientation");
+        std::string o = initial && initial->type==Plist::Value::Type::String ? initial->s : "";
         if (o.empty()) {
-            const Plist::Value* sup = info->get("UISupportedInterfaceOrientations~iphone");
-            if (!sup) sup = info->get("UISupportedInterfaceOrientations");
+            const Plist::Value* sup = deviceValue("UISupportedInterfaceOrientations");
             if (sup && sup->type == Plist::Value::Type::Array && !sup->array.empty()) o = sup->array.front()->s;
         }
         u.initialOrientation = orientationFromString(o);
         u.statusBarOrientation = u.initialOrientation;
+        if (const Plist::Value* min = info->get("MinimumOSVersion"); min && !min->s.empty())
+            u.builtForIOS2 = std::atoi(min->s.c_str()) > 0 && std::atoi(min->s.c_str()) < 3;
+        const Plist::Value* list = deviceValue("UISupportedInterfaceOrientations");
+        if (list && list->type == Plist::Value::Type::Array && !list->array.empty()) {
+            u.plistLandscapeOnly = true;
+            for (const auto& v : list->array) if (orientationFromString(v->s) <= 2) u.plistLandscapeOnly = false;
+        }
     }
     x.proc.logf(LogLevel::Info, "Screen: %gx%g @%gx, %s, status bar %s", u.screenW, u.screenH, u.scale,
                 u.initialOrientation >= 3 ? "landscape" : "portrait", u.statusBarHidden ? "hidden" : "visible");
@@ -478,10 +591,8 @@ bool legacyLifecycle(Process& p) {
     const Plist::Value* info = p.infoPlist();
     if (!info) return false;
     if (const Plist::Value* e = info->get("UIApplicationExitsOnSuspend"); e && e->type == Plist::Value::Type::Bool && e->b) return true;
-    const std::string sdk = info->getString("DTSDKName");   // e.g. "iphoneos3.1"
-    size_t i = 0;
-    while (i < sdk.size() && !std::isdigit(uint8_t(sdk[i]))) ++i;
-    return i < sdk.size() && std::atoi(sdk.c_str() + i) < 4;
+    const int sdk = p.linkedSdkMajor();
+    return sdk > 0 && sdk < 4;
 }
 void deliverLifecycle(Ctx& x, const char* delegateSel, const char* note) {
     auto& u = ui(x);
@@ -556,6 +667,7 @@ void installLifecycle(Process& p) {
 int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id delegateName) {
     auto& u = ui(x);
     auto& r = rt(x);
+    Foundation::mainRunLoop(x.proc).autoreleasePerTurn = true;
     configureScreen(x);
     const Plist::Value* info = x.proc.infoPlist();
     const uint32_t pool = r.poolPush();
@@ -614,9 +726,14 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         r.send(x.cpu, del, "applicationDidFinishLaunching:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidFinishLaunchingNotification", u.app);
     reevaluateRootOrientation(x, "after launch");
+    // iOS lays the windows out (the root controller's viewWillAppear, viewWillLayoutSubviews,
+    // its views' layoutSubviews) before applicationDidBecomeActive:. Engines create their
+    // game object in layoutSubviews and use it in applicationDidBecomeActive: (Terraria 1.2
+    // faulted on the still-NULL pointer when the order was the other way round).
+    rotateLegacyControllers(x, "after launch");
+    layoutPass(x);
     if (del && r.respondsTo(del, r.sel("applicationDidBecomeActive:"))) r.send(x.cpu, del, "applicationDidBecomeActive:", {u.app});
     Foundation::postNotification(x, "UIApplicationDidBecomeActiveNotification", u.app);
-    layoutPass(x);
     r.poolPop(x.cpu, pool);
 
     if (u.windows.empty()) x.proc.log(LogLevel::Warning, "The app finished launching without creating a window");
@@ -640,10 +757,16 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
 
 } // namespace
 
+std::array<double, 3> restingGravity(const UIState& u) { return gravityFor(u); }
+
 // The application's main loop. UIKit runs the main run loop in its default mode, so a timer or
 // source a component added in another mode waits for a run in that mode instead of firing on a
 // frame. Host pumps that are not the app loop (dispatch_main, -[NSRunLoop run]) stay unfiltered.
 void runApplicationLoop(Ctx& x, double until) {
+    // UIKit drains a pool every main-loop turn, including timers and queued
+    // selectors, not only display/input callbacks. Nested main-loop pumps use
+    // the same policy; independent worker loops remain caller-managed.
+    Foundation::mainRunLoop(x.proc).autoreleasePerTurn = true;
     Foundation::mainRunLoop(x.proc).runUntil(x.cpu, until, false, Foundation::defaultRunLoopModeKey());
 }
 
@@ -718,8 +841,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_beginIgnoring>("beginIgnoringInteractionEvents", "v@:").m<&app_endIgnoring>("endIgnoringInteractionEvents", "v@:")
        .m<&app_isIgnoring>("isIgnoringInteractionEvents", "c@:").m<&app_ignoreInt>("registerForRemoteNotificationTypes:", "v@:I")
        .m<&app_noop>("registerForRemoteNotifications", "v@:").m<&app_noop>("unregisterForRemoteNotifications", "v@:")
-       .m<&app_noopObj>("registerUserNotificationSettings:", "v@:@").m<&app_noopObj>("scheduleLocalNotification:", "v@:@")
-       .m<&app_noopObj>("presentLocalNotificationNow:", "v@:@").m<&app_noop>("cancelAllLocalNotifications", "v@:")
+       .m<&app_noopObj>("registerUserNotificationSettings:", "v@:@").m<&app_noop>("cancelAllLocalNotifications", "v@:")
        .m<&app_noopObj>("cancelLocalNotification:", "v@:@").m<&app_nil>("scheduledLocalNotifications")
        .m<&app_noop>("beginReceivingRemoteControlEvents", "v@:").m<&app_noop>("endReceivingRemoteControlEvents", "v@:")
        .m<&app_beginBackgroundTask>("beginBackgroundTaskWithExpirationHandler:", "I@:@?")
@@ -730,12 +852,37 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_nextResponder>("nextResponder").m<&app_nil>("preferredContentSizeCategory")
        .m<&app_layoutDirection>("userInterfaceLayoutDirection", "i@:")
        .m<&app_supportedOrientations>("supportedInterfaceOrientationsForWindow:", "I@:@");
+    // iOS 8 SDK apps check respondsToSelector:@selector(registerForRemoteNotifications) and then
+    // build an NSInvocation from instanceMethodSignatureForSelector:@selector(isRegisteredForRemoteNotifications)
+    // (Subway Surfers); a missing signature is a nil NSInvocation argument.
+    supportMethod(p, app, "UIApplication", "isRegisteredForRemoteNotifications", [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Approx,
+        "NO: remote notifications are never registered", "c@:");
+    supportMethod(p, app, "UIApplication", "currentUserNotificationSettings", [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Stub,
+        "nil: notification settings were never registered", "@@:");
+    supportMethod(p, app, "UIApplication", "scheduleLocalNotification:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
+        "Accepted and dropped: no local notification is ever delivered", "v@:@");
+    supportMethod(p, app, "UIApplication", "presentLocalNotificationNow:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
+        "Accepted and dropped: no local notification is shown", "v@:@");
     supportMethod(p, app, "UIApplication", "statusBarFrame", [](Ctx& x) { callWrapped<&app_statusBarFrame>(x); }, SupportStatus::Approx,
         "Fixed 20pt-high bar across the screen; with HVM_SAFE_AREA it is as tall as the top inset. Not the real safeAreaInsets API",
         "{CGRect={CGPoint=ff}{CGSize=ff}}@:");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
     
-    r.defineClass("UILocalNotification", "NSObject");
+    r.defineClass("UILocalNotification", "NSObject")
+     .m<&ln_get<kFireDate>>("fireDate").m<&ln_set<kFireDate>>("setFireDate:", "v@:@")
+     .m<&ln_get<kTimeZone>>("timeZone").m<&ln_set<kTimeZone>>("setTimeZone:", "v@:@")
+     .m<&ln_get<kRepeatCalendar>>("repeatCalendar").m<&ln_set<kRepeatCalendar>>("setRepeatCalendar:", "v@:@")
+     .m<&ln_get<kAlertBody>>("alertBody").m<&ln_set<kAlertBody>>("setAlertBody:", "v@:@")
+     .m<&ln_get<kAlertAction>>("alertAction").m<&ln_set<kAlertAction>>("setAlertAction:", "v@:@")
+     .m<&ln_get<kAlertTitle>>("alertTitle").m<&ln_set<kAlertTitle>>("setAlertTitle:", "v@:@")
+     .m<&ln_get<kAlertLaunchImage>>("alertLaunchImage").m<&ln_set<kAlertLaunchImage>>("setAlertLaunchImage:", "v@:@")
+     .m<&ln_get<kSoundName>>("soundName").m<&ln_set<kSoundName>>("setSoundName:", "v@:@")
+     .m<&ln_get<kUserInfo>>("userInfo").m<&ln_set<kUserInfo>>("setUserInfo:", "v@:@")
+     .m<&ln_get<kCategory>>("category").m<&ln_set<kCategory>>("setCategory:", "v@:@")
+     .m<&ln_repeat>("repeatInterval", "I@:").m<&ln_setRepeat>("setRepeatInterval:", "v@:I")
+     .m<&ln_badge>("applicationIconBadgeNumber", "i@:").m<&ln_setBadge>("setApplicationIconBadgeNumber:", "v@:i")
+     .m<&ln_hasAction>("hasAction", "c@:").m<&ln_setHasAction>("setHasAction:", "v@:c")
+     .m<&ln_copy>("copyWithZone:", "@@:^v").m<&ln_dealloc>("dealloc", "v@:");
 
     p.mem().write<uint32_t>(p.defineDataBlock("_UIBackgroundTaskInvalid", 4), 0);
     p.mem().write<double>(p.defineDataBlock("_UIApplicationBackgroundFetchIntervalMinimum", 8), 0.0);
@@ -791,12 +938,23 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
         }
         Foundation::mainRunLoop(p).post([&p](CPU::Cpu& c) {
             Ctx cx{p, c, p.mem()};
+            const auto t0 = std::chrono::steady_clock::now();
             deliverPendingInput(cx);
+            // The game's own touch handling, outside a frame: a slow one stalls everything after it.
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            static thread_local std::chrono::steady_clock::time_point last{};
+            if (ms >= 30 && std::chrono::steady_clock::now() - last > std::chrono::seconds(1)) {
+                last = std::chrono::steady_clock::now();
+                char line[96];
+                std::snprintf(line, sizeof line, "Hitch: the game took %.0f ms to handle a touch", ms);
+                p.log(LogLevel::Info, line);
+            }
         });
     });
     p.setAccelerationHandler([&p](float ax, float ay, float az) {
         auto& st = ui(p);
         st.accel[0] = ax; st.accel[1] = ay; st.accel[2] = az;
+        st.accelFromHost = true;
     });
 }
 

@@ -1,0 +1,10 @@
+{
+  "name":"Stamped earned Arena-1 player after interrupted native reward recovery",
+  "steps":[
+    {"id":"Q-home","expected":"Verify saved wallet, crowns, trophies and remaining chest timer; no repeated reward","settleSeconds":4},
+    {"id":"Q-profile","expected":"Original local profile renders actual deck and level","actions":[{"tap":[40,55]}],"settleSeconds":2},
+    {"id":"Q-profile-close","expected":"Original profile closes safely","actions":[{"tap":[300,65]}]},
+    {"id":"Q-cards","expected":"Owned cards/collection persist without repeating grants","actions":[{"tap":[90,535]}],"settleSeconds":2},
+    {"id":"Q-home-final","expected":"Battle tab returns to the same earned home","actions":[{"tap":[185,535]}],"settleSeconds":3}
+  ]
+}

@@ -5,11 +5,9 @@ The peer initializes the original client tutorial and NPC simulation. Battle
 completion, rewards and progression persistence remain under investigation.
 Identity and the installed app are retained; this is not a finished offline game.
 
-Ported from the October 21, 2026 handoff into ``tools/clash/``. The peer and
-the pygame viewer stay in ``tools/``. This wrapper was not smoke-tested in the
-handoff, and ``tools/clash_protocol_probe.py`` does not yet accept
-``--npc-fixture``. Running it before that flag exists fails at peer startup.
-See ``docs/clash-royale/TODO.md``.
+The peer and pygame viewer stay in ``tools/``. Use ``--gpu`` to retain the
+shared accelerated renderer. This remains a first-mission experiment until
+battle results and earned progression are verified.
 """
 import argparse
 import fcntl
@@ -33,6 +31,7 @@ def main():
     for name in ('hvm', 'ipa', 'home', 'out'):
         p.add_argument('--' + name, type=Path, required=True)
     p.add_argument('--seconds', type=float, default=0)
+    p.add_argument('--gpu', action='store_true', help='Use the shared host GLES backend')
     p.add_argument('--capture-audio', action='store_true')
     p.add_argument('--mute', action='store_true')
     p.add_argument('--exit-on-stop', action='store_true')
@@ -67,7 +66,7 @@ def main():
                     '--ipa', str(args.ipa.resolve()), '--home', str(args.home / 'game'), '--out', str(session / 'viewer'),
                     '--pinned-clash', '--loopback-network', '--loopback-alias', 'game.clashroyaleapp.com',
                     '--seconds', str(args.seconds)]
-                for flag in ('capture_audio', 'mute', 'exit_on_stop'):
+                for flag in ('capture_audio', 'mute', 'exit_on_stop', 'gpu'):
                     if getattr(args, flag):
                         command.append('--' + flag.replace('_', '-'))
                 print('Experimental NPC session: ' + str(session), flush=True)

@@ -1,0 +1,512 @@
+# Local clans and subsequent simulation work
+
+Latest after127ad31: original Promote/Demote/leadership handoff and Kick now
+operate on the actual Local Donor. Native526 is staged until the entire home
+turn validates. Removed actors retain finite stock/history as tombstones and
+cannot rejoin/refill on login. GDN1-v1 migrates to v2, with a GCL1 required-child
+flag preventing whole-record truncation from resembling a legacy save. See
+[CLAN_CONTROLS.md](CLAN_CONTROLS.md) for exact schemas, actual UI/relaunch,
+25 tests, 16 unchanged-file negatives and four interruption cases. Reciprocal
+donations, invitations/supply/weekly stats and full device/UI checks remain open.
+
+Owner order, October 26: finish the current timer/recovery/control work, then
+make clan creation/interactions persistent offline; randomize player-style
+opponent names only after training; vary legal arena decks and actual bot
+playstyles; restore the original daily store. Training names stay original.
+The timer checkpoint is 0c24408/v33. v42 now qualifies persistent solo-clan
+creation, chat, info/settings/search and leave/re-create in synthetic component
+fixtures. v46 adds original local clan mail and its persistent Inbox/cooldown.
+v48 adds actual unfulfilled card requests with original cooldown and recovery.
+v64 qualifies the paid Friendly Battle subset with an explicit simulated local
+NPC, native combat/results and durable lifecycle recovery. The post-0be234d
+continuation adds persistent Local Donor membership/profile and finite native
+NPC-to-human common/rare donations. This is not completed clans or a full-button
+pass: reciprocal donations, stock supply, role/kick controls and weekly stats
+remain open.
+
+See [native donation work](DONATIONS.md) for the actual 1/10 common and 1/1 rare
+receipt UI, exhausted 0/1 request, same-save returns, pre/post-checkpoint abort
+recovery, 12 unchanged-file negative cases, 23 tests and GDN1's nine-word
+header. The older opt-in actor diagnostic remains useful, but the default
+guest now includes this synchronous atomic transfer subset. Clan qualification
+is still in synthetic King-3 fixtures, not the earned King-2 player or iPhone.
+
+## Current component qualification — v42
+
+- Exact host source cbde492, Linux/WSL GPU path. Shared input passes 260/260
+  fulltest and 18/18 TestLab cases, with TL-R failing before the fix. The full
+  report and zero-regression compatibility report are indexed below. Twelve
+  authored guest tests now include independent reference classes, every-prefix
+  truncation/single-byte storage corruption, invalid sizes/wallet states, chat
+  author/age/boundaries, and freestanding ARMv7 normal/profiling compilation.
+- Actual original command **209** charges 1000 Gold, sets identity/name/badge,
+  leader role 2 and the native clan achievement. Journal contains the pre-charge
+  avatar and immutable command, not a copied post-charge avatar plus another
+  live debit. `GameMode::addCommand` 0x93560..0x93576 assigns executor (0,1)
+  before the native echo; this differs from the transmitted default (0,0).
+- The first actual creation at v36 persisted 5000→4000 before an overly strict
+  echo check aborted. v37/v39 then recover that already-completed save without
+  another charge. The distinct v41 **owned SIGKILL** trial catches a valid
+  pending GCL1 before delivery; relaunch of the same file executes 209 and
+  commits 4000 once. `/var/tmp/hvm-clash-clans-{interruption,recovery}-v41`.
+- Original native clan page/info renders the actual local member, leader role,
+  score and badge. `AllianceMemberEntry::getName` 0x37f00 reads +0x1c; +0x18
+  is a different nullable identity string. Native region data reference is
+  **class 57**, not class 1; header region is +0x34. Earlier component candidates
+  exposed and corrected these schema mistakes; they are not releasable builds.
+- Original chat request 14315 produces native ChatStreamEntry type 2 through
+  its original encoder, commits it before 24312 delivery, and restores via
+  24311. Keep at most 64 entries/32 KiB, with real wall timestamps and computed
+  ages; no fake remote authors. Original online-count 20207 describes the one
+  actual running local member. `/var/tmp/hvm-clash-clans-{chat-v39,recovered-chat-v41,chat-return-v42}`.
+- Settings 14316 stores the actual description/type/badge/requirements/region
+  atomically and delivers original **212** for native badge/UI updates. Actual
+  description and Open→Invite Only survive relaunch. Search 14324 honors native
+  name/region/member/score/joinability filters over only this stored clan;
+  native String lowercasing/contains produce the actual matching 24310 result.
+  `/var/tmp/hvm-clash-clans-{edit-v39,search-v41}`.
+- Leave 14308 journals original **208**. Native membership clears, no Gold is
+  refunded, chat clears when the only member disbands the clan. The serial
+  survives; the next actual creation uses (1,2), charges 4000→3000, and retains
+  the original creation achievement progress. `/var/tmp/hvm-clash-clans-{leave-v41,recreate-v42}`.
+- Eight private corrupted-checkpoint trials reject bad headers/payloads,
+  duplicate/truncated extensions, a wrong immutable command with recomputed
+  checksums, and an out-of-bounds chat record with recomputed checksums. Each
+  aborts at its explicit guard with the damaged file byte-for-byte unchanged;
+  the source fixture remains untouched. `/var/tmp/hvm-clash-clan-corruption-v42`.
+
+These are labeled King-3/Gold-5000 fixtures, not earned King-3 progression or
+iPhone qualifications. No phone save or original earned source is reset.
+Private v42 package: `/var/tmp/hvm-clash-guest-v42.ipa`; no package/assets/save
+is committed or delivered as complete. Pre-purchase controls need separate
+settled steps: a captured frame is not proof a too-early tap reached Create.
+
+Storage: GCL1's ten LE u32 words are tag, monotonic clan serial, operation
+status (0 disbanded / 1 create pending / 2 active / 3 leave pending / 4 settings
+pending), request length, immutable command length, before/after creation Gold,
+native-body FNV, XOR of the two payload FNVs, and header FNV over 36 bytes.
+The bounded original create-request bytes and command follow. GCS1 has seven
+LE words: tag, payload length, entry count, sequence, native-body FNV, payload
+FNV, header FNV over 24 bytes; each payload record has BE epoch/length and the
+native encoded entry. Validate the complete state before refresh/clock writes.
+All extensions share CRG1's existing atomic fsync/rename transaction. This is
+corruption detection, not cryptographic authentication. Older guests reject
+these extensions: do not downgrade an instance after creating a clan.
+
+Apple history: production simulator shell and Linux CI compile/pass; the
+isolated UI harness first lacked newer bridge members (fixed 9a49f8c), then
+XCTest classified the new UIKeyInput viewport as TextView instead of Other.
+fa5a955 queries the same stable identifier across element types, retaining all
+coordinate/input assertions. That run then hits the 15-minute combined-step
+timeout after a 6:35 cold simulator boot; it is not an input result. 379a8a5
+separates harness build, checked simulator boot and test-without-building, with
+independent bounded timeouts/logs. Run 40347015755 then executes all ten UI
+tests: guest keyboard insertion/deletion/Return passes, as do portrait controls,
+multitouch/rotation cancellation and stop/inspect. Two tests fail: the editor
+test cancels the existing running-game Save warning implicitly, and landscape
+quarter-point touches are attempted with the settings panel still expanded.
+3f6ff51 explicitly confirms Save Anyway and dismisses controls before guest
+touches, retaining the coordinate expectations and adding failure diagnostics.
+That run was superseded before execution. Mail-source 358cf91's Apple run
+40355411529 now passes all ten UI tests with zero failures (five editor and
+five player), including keyboard entry and both landscape directions.
+Its persistence and 74 geometry/activity checks, shell and harness compile
+also pass. Verified artifact ZIP SHA256:
+`d46cb16587ceb87d34cf5b991069db0e6c2b7b65c68a03ba5e4d7cfc4b27e82f`.
+No claim of real iPhone keyboard/gameplay qualification follows from compilation.
+
+## Original clan mail — v46
+
+Original LogicSendAllianceMailCommand **533** execute at 0x37144 retains its
+native role/text validation and **43200-second** cooldown. A pinned prologue
+trampoline calls the complete original function; only a successful local
+execution persists the native home and one actual local recipient's mail.
+No online recipient or online-send acknowledgement is invented. The original
+encoder at 0xe3500 writes MailAvatarStreamEntry type 6; 24412 delivers it live,
+14405/24411 restores the Inbox. Original opaque sender metadata stays at its
+constructor's zero. Echo strings precede base metadata and are checked against
+the just-completed command, including native local executor (0,1).
+
+GMA1 shares the existing CRG1 atomic transaction with native home/avatar,
+GRT1 and clan state. Eight LE words: tag, payload length, count, monotonic
+sequence, native-body FNV, payload FNV, last-command-prefix FNV, header FNV
+over 28 bytes. Each record contains BE epoch/length then original encoded
+entry, bounded to 32 entries/32 KiB. Sequence/echo identity survives removal;
+mail survives leaving a clan. Validate the full Inbox before any clock/home
+snapshot can overwrite it. Older guest versions reject this extension.
+
+Qualification uses the explicitly synthetic King-3 clan fixture, Gold 3000,
+gems 87. Actual authored title/body sends through the original Clan Leader
+Message screen. An owned pidfd SIGKILL after a valid atomic commit leaves
+the exact file unchanged; its timer is [864000,864000,43199], the full native
+12 hours. Relaunch restores exactly one message and real relative age, with
+Gold/gems/cards unchanged. Account pre-command paused time before starting
+the fresh timer, rather than subtracting that earlier interval afterwards.
+The native Message control refuses another send during its cooldown. A clean
+v46 relaunch explicitly selects Inbox and retains the message; tapping its
+already displayed row adds no new action or delete control. The 14418/24418
+removal path is implemented with bounded identity checks, but no original UI
+action reaching it has been qualified. Cooldown expiry at 12 real hours and
+mail after leaving/recreating a clan still require actual-client trials.
+
+Evidence: `/var/tmp/hvm-clash-clans-mail-{interruption,recovery,cooldown}-v45`,
+`/var/tmp/hvm-clash-clans-mail-inbox-v46`. Eight actual-client corruption trials
+reject header/payload checksums, recomputed record/type/count/body-binding
+faults and duplicate/truncated GMA1, with each damaged file unchanged and the
+source untouched: `/var/tmp/hvm-clash-mail-corruption-v46/summary.json`.
+All 14 authored guest tests pass (including normal/profiling ARMv7 compile).
+Recovery/cooldown/Inbox PCM stays nonzero, peak 0.830139, droppedBlocks 0 and
+transportError 0; these counters do not establish perceptually flawless audio.
+Shared C++ is unchanged from clean-source 912a87e's indexed report/compat gates.
+
+Private v46 IPA SHA256:
+`444b781b0a874e3a7bedaaeb2d3a92b2887a21da10ed606b1d765d85fd5027b0`;
+executable `a7985f842c3bc5955416dcaa6a99c579afb74194965ba0b8dda588c43efa7acc`.
+Assets are byte-identical to the original; this remains a component candidate,
+not a full clan/game/device release. Authored mail plans are
+`clan_mail_{send,inbox,cooldown}_ui_plan.json` beside the existing clan plans.
+Sending needs a local clan leader and an expired native cooldown; do not reset
+an existing timer just to repeat it. See [bot research](BOT_RESEARCH.md) for
+the subsequent stage's reference comparison and original-AI boundaries.
+
+## Original unfulfilled card requests — v48
+
+The actual v46 card-selection control aborts on **524**, not 528. Original
+`LogicRequestSpellsCommand::getCommandType` 0x205fc returns 524; 528 belongs
+to Buy Chest (0x5ab74). The earlier research mapping was incorrect. A pinned
+trampoline at 0x20654 preserves the entire native request execution: membership,
+tutorial, eligibility/material-limit and cooldown checks. Native request size
+comes from the actual arena; this fixture displays **10 common or 1 rare**.
+Original `REQUEST_SPELLS_COOLDOWN_MINUTES` is **480**, with native timer +0x6c.
+The separately parsed timer at +0xcc is not the card-request timer.
+
+After actual success, encode native DonateStreamEntry type 1 (0x11051c),
+including the real author's identity/name/level/role, original arena capacity,
+selected card and message. Its capacity and donor count are **fixed BE u32**;
+the wishlist is VInt length/data references. Donor count is genuinely zero.
+Deliver 24312 and retain it alongside chat on 24311. A private (1,sequence)
+stream-ID namespace avoids collision with chat's (0,sequence). The last actual
+request replaces the previous request, retaining a monotonic sequence. Native
+`canDonateAnything`/`canAddDonation` at 0x1108b0/0x1108fc reject the author's
+own avatar; do not bypass that check to manufacture card fulfillment.
+
+GCR1 stores eight LE words: tag, encoded-entry length, monotonic sequence,
+wall epoch, native-body FNV, entry FNV, native command payload FNV, header FNV
+over 28 bytes; the bounded original entry follows (maximum 2048 bytes). Commit
+with the same native home/cooldown transaction. Leave/disband clears the entry
+and stamp, retaining the sequence. Validate before any loaded-home write.
+No separate request sidecar, donor actor or card/currency reward exists here.
+
+Actual tests on labeled King-3 component fixtures:
+
+- `/var/tmp/hvm-clash-clans-request-select-v46` reproduces unsupported 524.
+  v48 selects Arrows, shows the original **0/10** request and an eight-hour
+  native cooldown, with unchanged Gold 3000/gems 87/deck/card collection.
+- `/var/tmp/hvm-clash-clans-request-return-v48` restores one request, refuses
+  a second during cooldown and refuses self-donation. Its info control opens
+  the original daily-donation limit/reset tooltip. These are not fulfilled
+  donations or evidence a bot has joined the clan.
+- A distinct synthetic sandbox forks the preserved pre-request checkpoint;
+  no existing cooldown is reset. The first interruption attempt remains at
+  the original first-launch notice: no request and no kill, not a pass.
+  After dismissing that notice, `request-interruption-v48b` uses an owned pidfd
+  SIGKILL after a valid GCR1/native-home commit; the exact file remains intact,
+  SHA256 `a4b75de8a829089fa6e4c4a2dd6b45a51dbeb7aeea448535155eaefa012e9d8a`.
+  `/var/tmp/hvm-clash-clans-request-recovery-v48` restores one unfulfilled
+  request and remaining cooldown without resource changes or duplicated entry.
+- Eight actual-client corruption cases reject header/payload, recomputed
+  identity/type/sequence/body binding, duplicate/truncated GCR1 and retain
+  each damaged file unchanged; the source remains untouched:
+  `/var/tmp/hvm-clash-card-request-corruption-v48/summary.json`.
+- All **16** authored guest tests pass, including fixed-width request-wire
+  vectors, age, truncation, no fabricated donors and GCR1 corruption/clearing.
+  Shared C++ is unchanged from the indexed 912a87e gate. Recovery PCM is
+  nonzero (peak 0.830139), with no dropped blocks or transport error.
+
+Private v48 IPA SHA256:
+`f33ad3757c7ac814640c7702c19b90d98fe96ae34cbc0d34577fbb1279a511f9`;
+executable `850d97fc92dba114aa58264c95b6bd1a839bd79087c5de58cb82f210dab73e86`.
+Assets remain byte-identical. Plans: `clan_card_request_{send,return}_ui_plan.json`.
+Actual 8-hour expiry/re-request, a rare request, donor transfers, leave/recreate
+with an active request and phone qualification remain open. Do not report the
+whole Clans feature complete; next implement real local donor behavior before
+post-training handles, deck/AI variation and original daily-shop work.
+
+v49 preserves request/chat chronology during conversation reconstruction;
+actual chat after a request stays after it on relaunch in
+`/var/tmp/hvm-clash-clans-request-{chat,chat-return}-v49`. Replacing an expired
+request queues original removal notification **24318** for its old fixed BE
+ID before delivering the new entry, matching the durable replacement. The
+eight-hour re-request/removal transition is source-inspected, not yet played.
+All 16 guest tests pass on this source. Private v49 IPA SHA256
+`bb687308c766a5e49a028951467281c95eb376eef930081c7f023b682d669a9f`,
+executable `69ffddfe624e13bb4b4dbd1ab8a6864dd22ae9ed1ae4f3c61317e7cd42fc9324`;
+assets unchanged.
+
+Historical v49 blocker (superseded by v64 below): Friendly Battle's native form
+opens, but submitting it aborts at the generic home identity guard in
+`/var/tmp/hvm-clash-clans-friendly-submit-v49`. Its original command is **534**
+(`LogicChallengeCommand` type getter 0x62fb4 returns 0x216). Encode 0x62fbc
+writes a boolean/optional message **before** base metadata, so the generic
+base-first parser misreads it. Native execute 0x62ef8 checks the feature,
+wallet and full deck, then invokes challenge/game listeners; the cost getter
+0x63028 reads globals +0x1a8. Do not merely accept the echo: a real persistent
+challenge, native cost transaction, local opponent acceptance, cancel/recovery
+and an actual friendly battle/result path are still required. The existing
+base-only command 538 is a different command and is not this schema.
+
+## Friendly Battle component qualification — v64
+
+v64 supersedes the historical v49 blocker above with an explicit **simulated
+local NPC**, not an online player or acceptance. Native command 534 charges the
+original 5 Gold. Atomic GFR1 state 1 is pending, 2 accepted, 3 completed,
+4 cancelled/refunded and 5 abandoned. Only states 1/2 are active; the NPC accepts
+after a durable two-second pending interval. Wire battle type 2 decodes to
+native type 1; the sector regression preserves accounts `(-1,0)` and `(0,1)`
+and changes only that type byte.
+
+Actual-client evidence under `analysis/friendly/`:
+
+- `friendly-pending-capture-v64` saves state 1 at Gold/FreeGold 2995 before
+  acceptance. `friendly-pending-resume-v64` accepts the same sequence without
+  another debit, runs real native combat and emits the client's 750-byte result.
+  Its native JSON and victory frame show Trainer Boris 1, Offline Player 0;
+  `verify-result-v64.json` checks both eight-card decks and protected state.
+- `friendly-cancel-v64` uses the native pending Cancel control before acceptance.
+  State 4 closes the unchanged challenge text, produces no result, and restores
+  both balances to 3000. `friendly-cancel-return-v64` relaunches without another
+  refund or acceptance. Native Gold adjustment is used once; the original
+  FreeGold setter restores its pre-charge value because Gold only clamps it down.
+- `friendly-abandon-observe-v64` demonstrates accepted-state relaunch directly
+  into combat. `friendly-abandon-v64` uses the native X and Return to the main
+  menu Yes confirmation. State 5 closes the entry with no result/refund and
+  retains 2995. Accepted recovery does not debit again.
+- `friendly-return-v64-{1,2}` render the same native clan result without a new
+  battle/result. `verify-result-v64.json` requires identical result bytes and
+  wallet. Trophies remain 65, NPC wins/losses 9/2, crowns 3; chests,
+  deck/collection and reward journal are unchanged.
+- `verify-malformed-v64.json` covers checksum corruption, recomputed-checksum
+  semantic faults, truncation and duplication. All four actual-client launches
+  reject with exit 70 and retain the complete injected save byte-for-byte.
+
+All **15** `test_clash_guest_*.py` tests pass. Private v64 IPA SHA256
+`8c1498fd5104e90f3cf8ed337a9df86034b1559a5b777d70cf61b87661d1b958`;
+executable `f715e8187332b6ed6b23f0a5f2e89aa8cc810e46fedf5d164444cd19ded292a1`.
+Assets are unchanged. This qualifies one bundled Trainer Boris local-NPC flow
+in a synthetic clan fixture, not multiplayer, donor fulfillment, earned King-3
+progression, phone behavior, or the complete Clans button surface.
+
+## Post-Kimi integration: terminal wallets and stream identities
+
+Kimi's `96003cb80022fc8bc7d80adacd0bf4d1078148d4` is fast-forwarded locally.
+The actual remote branch is `codex/clash-offline-continuation` (the owner's
+message abbreviated its last letter). The broader authored guest glob
+`test_*clash_guest*.py` passes **20** tests on that exact baseline; the prior
+15 count uses the narrower `test_clash_guest_*.py` glob, excluding five builder
+tests. Shared `src/` tree remains identical to clean gated 912a87e.
+
+Independent native combat on a separate synthetic K3 fork of the existing
+clan fixture reproduces Trainer Boris 1 / Offline Player 0 and a 750-byte
+native result without ladder rewards:
+`/var/tmp/hvm-clash-codex-friendly-completion-before`. It retains the actual
+chat/request history, unlike an empty conversation component fixture.
+
+The next actual crash is a cross-feature wallet check. After native friendly
+abandonment (state 5, 3000→2995), a real Giant upgrade spends the original
+50 Gold / two materials, yielding Giant level 2, XP 6 and Gold/FreeGold 2945.
+96003cb's next login incorrectly demands historical 2995 and aborts with
+`saved friendly wallet differs from native avatar`. The rejected save stays
+byte-identical. Evidence:
+`/var/tmp/hvm-clash-codex-friendly-{upgrade-before,wallet-return-before}`.
+The earned source and earned King-2 QA player are untouched.
+
+The fix distinguishes active escrow from historical records. States 1/2 still
+require the exact post-debit Gold/FreeGold and completed membership. Terminal
+states 3/4/5 allow subsequent legitimate native economy actions and pending
+leave/settings journals; historical before/after cost and FreeGold clamp,
+wallet ranges and every header/body/payload guard remain validated. An authored
+regression fails on the extracted original guard before the fix and passes
+afterwards. It covers completed/cancelled/abandoned records, later expenditures/
+rewards, active mismatches, invalid balances and invalid membership/state.
+
+Friendly and chat previously both allocated `(0,sequence)`, allowing equal
+stream IDs. New friendly entries use **(2,sequence)**, separate from chat's
+(0,sequence) and card requests' (1,sequence). GFR1 **version 2** retains its
+80-byte layout, setting word 18 to namespace 2; legacy version 1 requires
+word 18=0. Only after all native/wallet/extension/wire validations pass is a
+legacy challenge/result's one-byte ID namespace changed atomically to 2.
+Amounts, text and native result JSON are retained; no refund/command is replayed.
+Older guests reject the new version, so do not downgrade a migrated instance.
+
+The same failed upgraded save now opens and retains 2945/87, Giant 2/0, XP 6,
+65 trophies, NPC counters 9/2 and crowns 3/10 over two clean returns. Native
+clan frames show the request, authored chat and terminal friendly separately.
+Completed native result history also migrates and renders correctly. Evidence:
+`/var/tmp/hvm-clash-codex-friendly-wallet-return-after{1,2}` and
+`/var/tmp/hvm-clash-codex-friendly-result-history-after1`.
+The final candidate also creates a new namespace-2 sequence 2, charges 2945→2940,
+enters native combat and abandons without refund; its return retains 2940 and
+all other protected progression:
+`/var/tmp/hvm-clash-codex-friendly-{new-identity,new-identity-return}`.
+
+All **22** tests in `test_*clash_guest*.py` pass, including namespace-2 wire/
+storage, byte-preserving idempotent legacy migration and active-wallet guards.
+Nine actual-client malformed-save cases reject unchanged, including a semantic
+active-wallet mismatch and an invalid legacy record that must not be migrated:
+`/var/tmp/hvm-clash-codex-friendly-corruption-rerun/summary.json`.
+The initial negative run overlapped a positive launch's legitimate clock write,
+so its source-equality check failed; the qualifying rerun uses an immutable
+source copy and passes source retention as well as every injected-file check.
+PCM remains nonzero (peak 0.830139), with zero dropped blocks/transport errors;
+this is not a phone audio/stutter qualification.
+
+Private final candidate IPA SHA256:
+`3ff78c95c89436d59d34bc828ac4d71e93193db51d2a36453a5f9cc5dc68f178`;
+executable `d7d17fd195c47cda7fbbf4a9930508c981920715d625fd4189b346147b27dd11`.
+Assets are unchanged. No generic runtime source changed; the clean indexed
+912a87e host gates remain the reused runtime qualification. Donation actors/
+inventory transfers remain the next clan feature, before names/deck/styles/shop.
+
+Reproducible authored plans are `tools/clash_guest/clan_{create,chat,info,edit,search,leave}_ui_plan.json`.
+Run create only against an explicitly labeled King-3 component instance with
+sufficient Gold and no clan; it spends the real original 1000 Gold. Subsequent
+plans need actual completed membership; leave disbands the sole-member clan.
+Use the ordinary `clash_guest_ui_probe.py --gpu` path, review every captured
+frame and inspect the persisted result. A clean exit/captured step is not a
+visual pass. Keep the actual earned King-2 player separate.
+
+Final clean-source 912a87e gate: full report build 1/CPU 15/iOS 6/bench 5 all
+pass, TestLab 18/18 and focused heap/entry/state/service suites pass. Full
+compatibility has zero regressions against baseline and previous report, with
+three informational timing deltas and the optional original Clash skip.
+Indexed report: `docs/dev-system/reports/linux-x86_64/20261026T150956Z-912a87e64a33.json`.
+No emulator C++ change is added by this clan-core checkpoint. Current match
+entry also refuses any still-pending clan transaction before another debit.
+
+## Authoritative client evidence
+
+Pinned executable/IPA hashes and private build instructions are in
+[GUEST_MOD_PROGRESS](GUEST_MOD_PROGRESS.md). Facts from its globals.csv:
+ALLIANCE_UNLOCK_EXP_LEVEL=3, ALLIANCE_CREATE_COST=1000,
+ALLIANCE_CREATE_RESOURCE=Gold. Keep those gates in the production guest.
+
+An isolated, explicitly synthetic King-3/Gold-5000 component fixture is at
+`/var/tmp/hvm-clash-clans-k3-fixture`; it derives from the earned save but
+changes only the labeled test level/wallet, with corrected checksums. The
+earned player remains King 2 and is never restored/reset from that fixture.
+Its first native level-up/legal screens render. Actual creation and subsequent
+membership/chat/edit/leave/relaunch behavior still need implementation/tests.
+After those screens close, the actual Clans tap aborts v33 on 14303 in
+`/var/tmp/hvm-clash-clans-open-before-v33`; the empty discovery reply is the
+first concrete guest protocol gap.
+
+Native schema/function anchors (Thumb addresses below omit the Thumb bit):
+
+| Function/message | Evidence |
+|---|---|
+| CreateAllianceMessage 14301 | encode 0x2f718: BE name/description strings, badge reference, type VInt, required-score VInt, region reference |
+| AskForJoinableAlliancesList 14303 | type getter 0x75cac; empty request |
+| JoinableAllianceList **24304** | getter 0xa1544; encoder 0xa13a8 writes VInt count plus native AllianceHeaderEntry objects; do not assume request+10000 |
+| AllianceList search response | encoder 0x65a44: search BE string, VInt list count, headers |
+| AllianceDataMessage | 0xb4ae0..0xb4c1c; body is native AllianceFullEntry |
+| AllianceFullEntry | 0x690a8: header, description string, member-count VInt and native members |
+| AllianceHeaderEntry | constructor 0x38200/encoder 0x38220; original badge/region references and integer fields |
+| AllianceMemberEntry | constructor 0x37d58/encoder 0x37d84; original name, identity, arena, role/level/score/donation fields and optional home ID |
+| Native join server command **209** | 0xe5874 execute, 0xe59a4 encode, 0xe59e0 decode: fixed LogicLong, name, badge reference, create boolean, server-command base metadata |
+| Join execution | original resource/cost getters 0x68b50/0x68b54; clamps to wallet, charges original helper with reason 4, sets original membership fields, creator role 2, achievement update and UI callbacks |
+| Membership setters | 0x9ae04 ID, 0x9ae28 name, 0x9ae34 badge, 0x9ae3c role |
+| Clan stream/chat | AllianceStreamMessage 0x7c324; ChatToAllianceStreamMessage 0x11ffcc; schemas pending complete qualification |
+| Leave/settings | LogicLeaveAllianceCommand 0x1254c; ChangeAllianceSettingsMessage 0x11ec80; original schemas still under investigation |
+
+Local state must describe this player's actual local clan, not invented remote
+players or successful network calls. Keep membership, original creation cost
+and clan metadata in one durable transaction; interrupted UI delivery must not
+lose the clan or charge twice. Native join/leave/settings executors and UI
+callbacks must retain their original behavior. Qualify each interaction and
+reject unsupported requests explicitly until its actual implementation exists.
+
+## Reference comparison
+
+The [royale-proxy protocol repository](https://github.com/royale-proxy/cr-messages)
+is a primary implementation reference. Its
+[AllianceData](https://github.com/royale-proxy/cr-messages/blob/master/server/AllianceData.json),
+[header](https://github.com/royale-proxy/cr-messages/blob/master/component/AllianceHeaderEntry.json)
+and [member](https://github.com/royale-proxy/cr-messages/blob/master/component/AllianceMemberEntry.json)
+definitions are dated 2017 and have extra fields absent from this pinned
+native encoder. Reusing those packet bytes would be incorrect. They help
+identify concepts; the pinned original encoder/decoder is authoritative.
+
+[Supercell's current clan guide](https://ingame.help.supercellsupport.com/clash-royale/en/articles/creating-or-joining-a-clan.html)
+describes clan creation/customization generally. It is not evidence for this
+old client's exact level gate, field order, limits or economy. Those come from
+the pinned assets/code and actual UI tests.
+
+## Shared prerequisite investigation (before bf6dd7f)
+
+The current emulator marks UITextField/UITextView as editing but has no host
+keyboard bridge or queued CLI text input. It also lacks UIKeyInput insertion
+and deletion. Initial-name confirmation with its default value did not qualify
+typing. Clan names/search/chat require shared text-input work, with independent
+TestLab coverage and real client interaction, not hardcoded clan names.
+Shared Groups D/E are reserved for this necessary keyboard/input prerequisite
+on the same owner-authorized continuation. Pre-change fulltest/TestLab and a
+new minimal failing TL-R must precede runtime fixes.
+
+Pre-keyboard exact runtime 5fbaa8d repeats fulltest 256/256 and TestLab 17/17
+in `/var/tmp/hvm-keyboard-pre-{fulltest.log,testlab}`. New authored TL-R stops
+that unchanged binary with code 70 on missing `-[UITextField insertText:]`;
+`/var/tmp/hvm-keyboard-tlr-before/testlab_report.json` preserves the diagnostic.
+The new case specifies literal UTF-16 ranges, delegate refusal, edit events and
+focus refusal independently of emulator output. UIKeyInput edit support is
+being implemented before the external CLI/native keyboard route; neither this
+partial step nor its compile establishes working clan creation.
+
+bf6dd7f's clean build at `/var/tmp/hvm-keyboard-work` passes fulltest 256/256
+and all 18 TestLab cases, including TL-R. The v34 internal guest adds the
+qualified 14303→24304 empty directory; original Clans/Create forms now render
+in the synthetic fixture without the former discovery abort. Actual creation
+is still unported. Queued CLI text/Backspace/Return, native host UIKeyInput
+routing and stale-focus tests are the next candidate, with Apple validation
+required. Desktop shortcuts move to Ctrl+S/B/F so ordinary name characters
+do not trigger screenshot/background actions.
+
+The Apple UI harness also needs its actual BinaryEditor source and a defined
+crash-journal interface. Its synthetic bridge now uses an actual closable
+FileHandle rather than a successful no-op; that does not test CPU signal
+handlers. A native keyboard-routing UI test is added to the harness. Neither
+fixture nor green UI tests qualify real iPhone guest gameplay.
+
+Input contracts: [UIKeyInput](https://developer.apple.com/documentation/uikit/uikeyinput),
+[replacement delegate](https://developer.apple.com/documentation/uikit/uitextfielddelegate/textfield(_:shouldchangecharactersin:replacementstring:))
+and [editingChanged](https://developer.apple.com/documentation/uikit/uicontrol/event/editingchanged).
+The UIKeyInput bridge supports simple entry; full marked-text/IME behavior must
+not be claimed from insertion/deletion tests.
+
+Main has advanced to 1172b74 after the integrated 5968d88. It is fetched for
+review, not merged into this continuation yet. In particular its new
+finishCrash termination branch converts faults during shutdown into a clean
+close; review that reporting policy against the no-hidden-assertion constraint
+before integrating. Existing immutable test runtime remains 5fbaa8d.
+
+The UI probe can now reuse an installed .app with --app and an explicit exact
+guest sandbox, recording executable/Info.plist hashes instead of an IPA hash.
+This avoids re-import and preserves test provenance if a downloaded package is
+removed. It never recreates deleted downloads or resets saves.
+
+Later research queue: inspect the original NPC decision code and compare
+several primary bot/simulator projects before selecting style/deck variation;
+verify actual behavior, not just bot labels. Current modern shop documentation
+includes items absent from this 42-card build and must not define its rotation.
+
+cbde492 completes the shared keyboard route. Exact clean Linux build passes
+fulltest 260/260, TestLab 18/18 (TL-R fails on unchanged 5fbaa8d), focused
+heap/entry/native state/service suites, nine guest tests and the full report
+(build 1, CPU 15, iOS 6, bench 5; no skips/failures). Full compatibility has
+zero baseline/previous regressions; its optional original Clash fixture skips,
+so modified-client interaction is qualified separately. Indexed report:
+`docs/dev-system/reports/linux-x86_64/20261026T082000Z-cbde4922f25a.json`.
+The actual original clan-name field accepts UTF-8 text through queued host
+input and enables its Create button in `/var/tmp/hvm-clash-clans-name-input-v34`.
+This is a synthetic King-3 component fixture, not earned clan progression.
+Creation has not been purchased/ported. Apple compilation/keyboard UI tests and
+real iPhone input remain pending; Linux output is not that evidence.

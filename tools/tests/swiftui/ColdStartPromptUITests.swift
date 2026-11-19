@@ -13,6 +13,11 @@ final class ColdStartPromptUITests: XCTestCase {
             let open = confirmation.buttons["Open"]
             XCTAssertTrue(open.waitForExistence(timeout: 5))
             open.tap()
+            // CI run 42580285720: the tap landed while the alert was still
+            // animating in and the alert stayed up. Tap Open once more.
+            if !confirmation.waitForNonExistence(timeout: 5), open.exists {
+                open.tap()
+            }
             XCTAssertTrue(confirmation.waitForNonExistence(timeout: 10))
         }
         let target = XCUIApplication(bundleIdentifier: "com.lfull.HydrogenVM")

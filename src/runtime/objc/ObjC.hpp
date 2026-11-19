@@ -106,6 +106,10 @@ public:
     std::string className(Class cls) const;
     std::string objectClassName(id obj) const { return className(classOf(obj)); }
     ClassInfo* info(Class cls) const;
+    // Method-cache generation: bumped whenever any method list changes (see invalidateCaches).
+    uint64_t cacheGeneration() const noexcept { return cacheGen_.load(std::memory_order_acquire); }
+    // True when a send to an object whose isa is `cls` no longer needs +initialize.
+    bool sendReady(Class cls) const;
     bool isKindOf(id obj, Class cls) const;
     bool isSubclass(Class sub, Class cls) const;
     // Make a stub class for a framework class HydrogenVM doesn't implement yet.
@@ -278,6 +282,8 @@ private:
 };
 
 Runtime& rt(Process& p);
+// Logs (once, as Defaulted) a lookup of an Apple class name that found nothing.
+void noteAbsentClass(Ctx& x, const char* how, const std::string& name);
 inline Runtime& rt(Ctx& x) { return rt(x.proc); }
 
 // Per-thread state (autorelease pools).

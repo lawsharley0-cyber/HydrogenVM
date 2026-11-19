@@ -1,6 +1,8 @@
 // HydrogenVM — <math.h>. Uses the host libm (iOS passes floats in core
 // registers, which the ABI wrapper takes care of).
+#include "runtime/Support.hpp"
 #include "runtime/Process.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -35,6 +37,48 @@ int32_t lround_f(Ctx&, float a) { return int32_t(std::lround(a)); }
 int32_t lrint_d(Ctx&, double a) { return int32_t(std::lrint(a)); }
 int32_t lrint_f(Ctx&, float a) { return int32_t(std::lrint(a)); }
 int64_t llround_d(Ctx&, double a) { return std::llround(a); }
+int64_t llrint_d(Ctx&, double a) { return std::isfinite(a) ? std::llrint(a) : 0; }
+int64_t llrint_f(Ctx&, float a) { return std::isfinite(a) ? std::llrint(a) : 0; }
+
+// ---- Accelerate (vDSP): the few vector routines apps use on recorded sound. Talking John
+// measures the microphone level with vDSP_maxmgv and scales and converts samples with
+// vDSP_vsmul and vDSP_vfix16; without them it never heard the player and its recording and
+// playback did not work. Strides are in elements; a stride of 0 or a negative one, or a
+// count the guest could not hold, does nothing.
+constexpr uint32_t kVdspMax = 16u << 20;
+bool vdspOk(int32_t stride, uint32_t n) { return stride > 0 && stride <= 4096 && n > 0 && n <= kVdspMax; }
+void vdsp_maxmgv(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, uint32_t n) {
+    if (!c) return;
+    float best = 0.0f;
+    if (a && vdspOk(ia, n))
+        for (uint32_t i = 0; i < n; ++i) best = std::max(best, std::fabs(x.mem.read<float>(a + i * uint32_t(ia) * 4)));
+    x.mem.write<float>(c, best);
+}
+void vdsp_maxv(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, uint32_t n) {
+    if (!c) return;
+    float best = -INFINITY;
+    if (a && vdspOk(ia, n))
+        for (uint32_t i = 0; i < n; ++i) best = std::max(best, x.mem.read<float>(a + i * uint32_t(ia) * 4));
+    x.mem.write<float>(c, best);
+}
+void vdsp_vsmul(Ctx& x, GuestPtr a, int32_t ia, GuestPtr b, GuestPtr c, int32_t ic, uint32_t n) {
+    if (!a || !b || !c || !vdspOk(ia, n) || !vdspOk(ic, n)) return;
+    const float k = x.mem.read<float>(b);
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<float>(c + i * uint32_t(ic) * 4, x.mem.read<float>(a + i * uint32_t(ia) * 4) * k);
+}
+void vdsp_vfix16(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, int32_t ic, uint32_t n) {
+    if (!a || !c || !vdspOk(ia, n) || !vdspOk(ic, n)) return;
+    for (uint32_t i = 0; i < n; ++i) {
+        const float v = x.mem.read<float>(a + i * uint32_t(ia) * 4);
+        // Truncation toward zero; out-of-range values saturate (the ARM conversion does).
+        const int16_t out = !(v == v) ? 0 : v >= 32767.0f ? 32767 : v <= -32768.0f ? -32768 : int16_t(v);
+        x.mem.write<int16_t>(c + i * uint32_t(ic) * 2, out);
+    }
+}
+void vdsp_vflt16(Ctx& x, GuestPtr a, int32_t ia, GuestPtr c, int32_t ic, uint32_t n) {
+    if (!a || !c || !vdspOk(ia, n) || !vdspOk(ic, n)) return;
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<float>(c + i * uint32_t(ic) * 4, float(x.mem.read<int16_t>(a + i * uint32_t(ia) * 2)));
+}
 double ldexp_d(Ctx&, double a, int32_t e) { return std::ldexp(a, e); }
 float ldexp_f(Ctx&, float a, int32_t e) { return std::ldexp(a, e); }
 double frexp_d(Ctx& x, double a, GuestPtr e) { int ex; const double r = std::frexp(a, &ex); x.mem.write<int32_t>(e, ex); return r; }
@@ -49,13 +93,15 @@ void sincos_f(Ctx& x, float a, GuestPtr s, GuestPtr c) {
     const float sv = std::sin(a), cv = std::cos(a);
     uint32_t b; std::memcpy(&b, &sv, 4); x.mem.write<uint32_t>(s, b); std::memcpy(&b, &cv, 4); x.mem.write<uint32_t>(c, b);
 }
-// 32-bit iOS APCS: struct __sincosf_ret { float __sinval, __cosval; } is 8 bytes, returned in r0:r1.
-uint64_t sincosf_stret(Ctx&, float a) {
+// ARMv7 iOS returns this 8-byte aggregate through the hidden r0 pointer;
+// the float argument is in r1. A uint64_t return has a different ABI.
+void sincosf_stret(Ctx& x, GuestPtr out, float a) {
     const float sv = std::sin(a), cv = std::cos(a);
     uint32_t sb, cb;
     std::memcpy(&sb, &sv, 4);
     std::memcpy(&cb, &cv, 4);
-    return uint64_t(sb) | (uint64_t(cb) << 32);
+    x.mem.write<uint32_t>(out, sb);
+    x.mem.write<uint32_t>(out + 4, cb);
 }
 // struct __sincos_ret { double __sinval, __cosval; } is 16 bytes, returned via sret pointer in r0.
 void sincos_stret(Ctx& x, GuestPtr out, double a) {
@@ -80,7 +126,52 @@ int32_t fpclassify_f(Ctx& x, float a) { return fpclassify_d(x, a); }
 
 } // namespace
 
+// <fenv.h> on 32-bit ARM Darwin: fenv_t is { uint32_t __fpscr; uint32_t __reserved[3]; } and
+// the environment is the FPSCR (rounding mode, flush-to-zero, default NaN, exception flags).
+// Clumsy Ninja's FMOD saves and restores it around its mixer; the stubs left fenv_t garbage.
+namespace {
+constexpr uint32_t kFeFlags = 0x9F;            // IOC DZC OFC UFC IXC IDC (cumulative flags)
+constexpr uint32_t kFeRounding = 3u << 22;     // RMode
+int32_t fe_getenv(Ctx& x, GuestPtr env) { if (!env) return -1; x.mem.write<uint32_t>(env, x.cpu.fpscr); for (int i = 1; i < 4; ++i) x.mem.write<uint32_t>(env + i * 4, 0); return 0; }
+int32_t fe_setenv(Ctx& x, GuestPtr env) {
+    // FE_DFL_ENV is a pointer to a default environment; a null pointer is treated the same way.
+    x.cpu.fpscr = env ? x.mem.read<uint32_t>(env) : 0;
+    return 0;
+}
+int32_t fe_holdexcept(Ctx& x, GuestPtr env) { fe_getenv(x, env); x.cpu.fpscr &= ~kFeFlags; return 0; }
+int32_t fe_updateenv(Ctx& x, GuestPtr env) { const uint32_t raised = x.cpu.fpscr & kFeFlags; fe_setenv(x, env); x.cpu.fpscr |= raised; return 0; }
+int32_t fe_getround(Ctx& x) { return int32_t(x.cpu.fpscr & kFeRounding); }
+int32_t fe_setround(Ctx& x, int32_t mode) {
+    if (uint32_t(mode) & ~kFeRounding) return -1;
+    x.cpu.fpscr = (x.cpu.fpscr & ~kFeRounding) | uint32_t(mode);
+    return 0;
+}
+int32_t fe_testexcept(Ctx& x, int32_t mask) { return int32_t(x.cpu.fpscr & uint32_t(mask) & kFeFlags); }
+int32_t fe_clearexcept(Ctx& x, int32_t mask) { x.cpu.fpscr &= ~(uint32_t(mask) & kFeFlags); return 0; }
+int32_t fe_raiseexcept(Ctx& x, int32_t mask) { x.cpu.fpscr |= uint32_t(mask) & kFeFlags; return 0; }
+int32_t fe_getexceptflag(Ctx& x, GuestPtr out, int32_t mask) { if (!out) return -1; x.mem.write<uint16_t>(out, uint16_t(x.cpu.fpscr & uint32_t(mask) & kFeFlags)); return 0; }
+int32_t fe_setexceptflag(Ctx& x, GuestPtr in, int32_t mask) {
+    if (!in) return -1;
+    const uint32_t m = uint32_t(mask) & kFeFlags;
+    x.cpu.fpscr = (x.cpu.fpscr & ~m) | (x.mem.read<uint16_t>(in) & m);
+    return 0;
+}
+}  // namespace
+
 void registerLibcMath(Process& p) {
+    p.def<&fpclassify_d>("___fpclassify");   // long double is double on 32-bit ARM
+    p.def<&fe_getenv>("_fegetenv");
+    supportDef<&fe_setenv>(p, "_fesetenv", SupportStatus::Real, "Loads the FPSCR from fenv_t (FE_DFL_ENV/NULL: default); always succeeds, as on ARM");
+    supportDef<&fe_holdexcept>(p, "_feholdexcept", SupportStatus::Real, "Saves the FPSCR and clears its exception flags; exceptions never trap on this FPU");
+    supportDef<&fe_updateenv>(p, "_feupdateenv", SupportStatus::Real, "Restores the saved FPSCR and re-raises the flags raised meanwhile");
+    p.def<&fe_getround>("_fegetround");
+    p.def<&fe_setround>("_fesetround");
+    p.def<&fe_testexcept>("_fetestexcept");
+    supportDef<&fe_clearexcept>(p, "_feclearexcept", SupportStatus::Real, "Clears the requested FPSCR cumulative exception flags");
+    supportDef<&fe_raiseexcept>(p, "_feraiseexcept", SupportStatus::Real, "Sets the requested FPSCR cumulative exception flags (no trap, as exceptions are untrapped)");
+    p.def<&fe_getexceptflag>("_fegetexceptflag");
+    p.def<&fe_setexceptflag>("_fesetexceptflag");
+    p.defineDataBlock("__FE_DFL_ENV", 16);   // FE_DFL_ENV: default rounding, no flags (all zero)
 #define RD(n) p.def<&d_##n>("_" #n);
 #define RF(n) p.def<&f_##n>("_" #n "f");
     RD(sin) RD(cos) RD(tan) RD(asin) RD(acos) RD(atan) RD(sinh) RD(cosh) RD(tanh) RD(asinh) RD(acosh) RD(atanh)
@@ -97,6 +188,13 @@ void registerLibcMath(Process& p) {
     p.def<&lrint_d>("_lrint");
     p.def<&lrint_f>("_lrintf");
     p.def<&llround_d>("_llround");
+    p.def<&llrint_d>("_llrint");
+    p.def<&llrint_f>("_llrintf");
+    p.def<&vdsp_maxmgv>("_vDSP_maxmgv");
+    p.def<&vdsp_maxv>("_vDSP_maxv");
+    p.def<&vdsp_vsmul>("_vDSP_vsmul");
+    p.def<&vdsp_vfix16>("_vDSP_vfix16");
+    p.def<&vdsp_vflt16>("_vDSP_vflt16");
     p.def<&ldexp_d>("_ldexp");
     p.def<&ldexp_d>("_scalbn");
     p.def<&ldexp_f>("_ldexpf");

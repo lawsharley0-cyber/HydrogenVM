@@ -9,6 +9,11 @@
 #include <random>
 #include <thread>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#else
+#include <unicode/uloc.h>
+#endif
 
 namespace Hydrogen::Runtime::Foundation {
 
@@ -79,6 +84,56 @@ char firstArgType(const std::string& t) {
     return '@';
 }
 
+id invocationFor(Ctx& x, id self, SEL selector, id* signature = nullptr) {
+    auto& r = rt(x);
+    const id sig = id(r.send(x.cpu, self, "methodSignatureForSelector:", {selector}));
+    if (!sig) throw ObjC::ObjCError("*** KVC method has no signature");
+    const id invocation = id(r.send(x.cpu, r.getClass("NSInvocation"), "invocationWithMethodSignature:", {sig}));
+    r.send(x.cpu, invocation, "setTarget:", {self});
+    r.send(x.cpu, invocation, "setSelector:", {selector});
+    if (signature) *signature = sig;
+    return invocation;
+}
+uint32_t structSize(Ctx& x, const std::string& type) {
+    auto& r = rt(x);
+    if (type.empty() || type[0] != '{') throw ObjC::ObjCError("*** KVC requires a struct NSValue");
+    const id signature = id(r.send(x.cpu, r.getClass("NSMethodSignature"), "signatureWithObjCTypes:", {x.proc.internCString(type + "@:")}));
+    const auto size = uint32_t(r.send(x.cpu, signature, "methodReturnLength"));
+    if (!size || size > 1024 * 1024) throw ObjC::ObjCError("*** KVC invalid struct size");
+    return size;
+}
+struct KvcBuffer {
+    Process& process; uint32_t pointer;
+    KvcBuffer(Process& p, uint32_t size) : process(p), pointer(p.heap().allocZeroed(size)) {
+        if (!pointer) throw ObjC::ObjCError("KVC temporary allocation failed");
+    }
+    ~KvcBuffer() { process.heap().free(pointer); }
+};
+id kvcStructGet(Ctx& x, id self, SEL selector) {
+    auto& r = rt(x); id signature = 0;
+    const id invocation = invocationFor(x, self, selector, &signature);
+    const auto type = x.proc.readCString(uint32_t(r.send(x.cpu, signature, "methodReturnType")));
+    const auto size = structSize(x, type);
+    KvcBuffer bytes(x.proc, size);
+    r.send(x.cpu, invocation, "invoke");
+    r.send(x.cpu, invocation, "getReturnValue:", {bytes.pointer});
+    return makeValue(x, x.mem.host(bytes.pointer), size, type);
+}
+void kvcStructSet(Ctx& x, id self, SEL selector, id value) {
+    auto& r = rt(x); id signature = 0;
+    const id invocation = invocationFor(x, self, selector, &signature);
+    if (!value || !r.isKindOf(value, r.getClass("NSValue")))
+        throw ObjC::ObjCError("*** KVC struct setter requires NSValue");
+    const auto expected = x.proc.readCString(uint32_t(r.send(x.cpu, signature, "getArgumentTypeAtIndex:", {2})));
+    const auto actual = x.proc.readCString(uint32_t(r.send(x.cpu, value, "objCType")));
+    const auto size = structSize(x, expected);
+    if (size != structSize(x, actual)) throw ObjC::ObjCError("*** KVC incompatible NSValue size");
+    KvcBuffer bytes(x.proc, size);
+    r.send(x.cpu, value, "getValue:", {bytes.pointer});
+    r.send(x.cpu, invocation, "setArgument:atIndex:", {bytes.pointer, 2});
+    r.send(x.cpu, invocation, "invoke");
+}
+
 id boxScalar(Ctx& x, char type, uint64_t v) {
     switch (type) {
         case '@': case '#': return id(v);
@@ -122,7 +177,7 @@ id kvcGet(Ctx& x, id self, const std::string& key, bool viaOverride = true) {
         const SEL s = r.sel(name);
         if (r.lookup(cls, s)) {
             const char t = returnType(x, cls, s);
-            if (t == '{') { x.proc.reportMissing("valueForKey: struct-valued key " + key); return 0; }
+            if (t == '{') return kvcStructGet(x, self, s);
             return boxScalar(x, t, r.send(x.cpu, self, s));
         }
     }
@@ -167,7 +222,7 @@ void kvcSet(Ctx& x, id self, const std::string& key, id value, bool viaOverride 
             case 'f': { const float f = float(numberDouble(x, value)); uint32_t b; std::memcpy(&b, &f, 4); r.send(x.cpu, self, s, {b}); return; }
             case 'd': { const double d = numberDouble(x, value); uint64_t b; std::memcpy(&b, &d, 8); r.send(x.cpu, self, s, {uint32_t(b), uint32_t(b >> 32)}); return; }
             case 'q': case 'Q': { const uint64_t v = uint64_t(numberInt(x, value)); r.send(x.cpu, self, s, {uint32_t(v), uint32_t(v >> 32)}); return; }
-            case '{': x.proc.reportMissing("setValue:forKey: struct-valued key " + key); return;
+            case '{': kvcStructSet(x, self, s, value); return;
             default: r.send(x.cpu, self, s, {uint32_t(numberInt(x, value))}); return;
         }
     }
@@ -605,14 +660,9 @@ id pi_environment(Ctx& x, id, SEL) {
     }
     return makeDict(x, e);
 }
-std::string randomUuid() {
-    static std::mt19937_64 rng{std::random_device{}()};
-    static std::mutex mu;
+std::string randomUuid(Ctx& x) {   // from the session's entropy (runtime/Session.hpp)
     uint8_t b[16];
-    {
-        std::lock_guard<std::mutex> lk(mu);
-        for (int i = 0; i < 16; i += 8) { const uint64_t v = rng(); std::memcpy(b + i, &v, 8); }
-    }
+    for (int i = 0; i < 16; i += 8) { const uint64_t v = x.proc.entropy(); std::memcpy(b + i, &v, 8); }
     b[6] = (b[6] & 0x0F) | 0x40;
     b[8] = (b[8] & 0x3F) | 0x80;
     char s[37];
@@ -620,7 +670,7 @@ std::string randomUuid() {
                   b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
     return s;
 }
-id pi_guid(Ctx& x, id, SEL) { return makeString(x, randomUuid()); }
+id pi_guid(Ctx& x, id, SEL) { return makeString(x, randomUuid(x)); }
 id pi_hostName(Ctx& x, id, SEL) { return makeString(x, "localhost"); }
 id pi_osVersionString(Ctx& x, id, SEL) { return makeString(x, "Version " + x.proc.config().systemVersion + " (Build 10B141)"); }
 int32_t pi_pid(Ctx&, id, SEL) { return int32_t(getpid() & 0x7FFF); }
@@ -658,6 +708,10 @@ struct LockData : ObjC::HostObject {
     bool recursive = false;
     int32_t condition = 0;
     id name = 0;
+    // NSCondition: threads in -wait, and signals given to them but not yet taken. The cv is shared
+    // with threads waiting to take the lock, so a signal must be counted: notify_one could wake a
+    // lock waiter instead, and the -wait it was meant for slept on.
+    uint32_t condWaiters = 0, condSignals = 0;
 };
 LockData& ld(Ctx& x, id self) { return rt(x).host<LockData>(self); }
 
@@ -704,8 +758,9 @@ void lock_dealloc(Ctx& x, id self, SEL) {
     rt(x).disposeInstance(x.cpu, self);
 }
 // NSCondition: wait releases the lock, waits for signal, reacquires.
-bool condWait(Ctx& x, LockData& d, double timeout) {
+bool condWait(Ctx& x, LockData& d, double timeout, id self) {
     GuestThread* me = &x.proc.currentThread();
+    BlockedScope blocked(x.proc, "-[NSCondition wait]", self);
     std::unique_lock<std::mutex> lk(d.m);
     const uint32_t depth = d.depth;
     d.owner = nullptr;
@@ -713,14 +768,16 @@ bool condWait(Ctx& x, LockData& d, double timeout) {
     d.cv.notify_all();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(timeout < 0 ? 1e7 : timeout));
     bool signalled = false;
-    // Wait for one signal (spurious wakeups are allowed by NSCondition's contract).
     if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     const auto step = std::chrono::milliseconds(50);
+    ++d.condWaiters;
+    struct Leave { LockData& d; ~Leave() { --d.condWaiters; } } leave{d};
     while (!signalled) {
+        if (d.condSignals) { --d.condSignals; signalled = true; break; }
         const auto now2 = std::chrono::steady_clock::now();
         if (now2 >= deadline) break;
         const std::chrono::steady_clock::time_point until = std::min<std::chrono::steady_clock::time_point>(deadline, now2 + step);
-        signalled = d.cv.wait_until(lk, until) == std::cv_status::no_timeout;
+        d.cv.wait_until(lk, until);
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     }
     while (d.owner) {
@@ -731,10 +788,19 @@ bool condWait(Ctx& x, LockData& d, double timeout) {
     d.depth = depth ? depth : 1;
     return signalled;
 }
-void cond_wait(Ctx& x, id self, SEL) { condWait(x, ld(x, self), -1); }
-bool cond_waitUntil(Ctx& x, id self, SEL, id date) { return condWait(x, ld(x, self), std::max(0.0, dateInterval(x, date) - now())); }
-void cond_signal(Ctx& x, id self, SEL) { ld(x, self).cv.notify_one(); }
-void cond_broadcast(Ctx& x, id self, SEL) { ld(x, self).cv.notify_all(); }
+void cond_wait(Ctx& x, id self, SEL) { condWait(x, ld(x, self), -1, self); }
+bool cond_waitUntil(Ctx& x, id self, SEL, id date) { return condWait(x, ld(x, self), std::max(0.0, dateInterval(x, date) - now()), self); }
+// -signal wakes one waiting thread, -broadcast all; with no thread waiting they do nothing.
+void cond_signal(Ctx& x, id self, SEL) {
+    LockData& d = ld(x, self);
+    { std::lock_guard<std::mutex> lk(d.m); if (d.condSignals < d.condWaiters) ++d.condSignals; }
+    d.cv.notify_all();
+}
+void cond_broadcast(Ctx& x, id self, SEL) {
+    LockData& d = ld(x, self);
+    { std::lock_guard<std::mutex> lk(d.m); d.condSignals = d.condWaiters; }
+    d.cv.notify_all();
+}
 int32_t clock_condition(Ctx& x, id self, SEL) { return ld(x, self).condition; }
 void clock_lockWhen(Ctx& x, id self, SEL, int32_t c) { auto& d = ld(x, self); acquire(x, d, -1, [&] { return d.condition == c; }); }
 bool clock_tryWhen(Ctx& x, id self, SEL, int32_t c) { auto& d = ld(x, self); return acquire(x, d, 0, [&] { return d.condition == c; }); }
@@ -886,7 +952,7 @@ void parseUuid(const std::string& s, uint8_t out[16], bool* ok) {
 id uuid_init(Ctx& x, id self, SEL) {
     auto h = std::make_unique<UuidData>();
     bool ok;
-    parseUuid(randomUuid(), h->b, &ok);
+    parseUuid(randomUuid(x), h->b, &ok);
     rt(x).setHost(self, std::move(h));
     return self;
 }
@@ -927,6 +993,22 @@ id loc_current(Ctx& x, id, SEL) { return singleton(x, M(x).currentLocale, M(x).l
 id loc_identifier(Ctx& x, id, SEL) { return makeString(x, "en_US"); }
 id locc_preferredLanguages(Ctx& x, id, SEL) { return makeArray(x, {makeString(x, "en")}); }
 id locc_available(Ctx& x, id, SEL) { return makeArray(x, {makeString(x, "en_US")}); }
+uint32_t locc_characterDirection(Ctx& x,id,SEL,id language) {
+    const auto code=utf8(x,language);if(code.empty())return 0;
+#if defined(__APPLE__)
+    auto text=::CFStringCreateWithBytes(kCFAllocatorDefault,reinterpret_cast<const UInt8*>(code.data()),code.size(),kCFStringEncodingUTF8,false);
+    if(!text)return 0;
+    const auto direction=::CFLocaleGetLanguageCharacterDirection(text);::CFRelease(text);
+    return uint32_t(direction);
+#else
+    UErrorCode status=U_ZERO_ERROR;
+    const auto direction=uloc_getCharacterOrientation(code.c_str(),&status);
+    if(U_FAILURE(status) || direction==ULOC_LAYOUT_UNKNOWN)return 0;
+    // Match CoreFoundation's ISO-language lookup, not a likely-script guess.
+    // ICU LTR/RTL/TTB/BTT are 0..3; Foundation reserves 0 for unknown.
+    return uint32_t(direction)+1;
+#endif
+}
 id loc_objectForKey(Ctx& x, id, SEL, id key) {
     const std::string k = utf8(x, key);
     if (k == "kCFLocaleCountryCodeKey" || k == "NSLocaleCountryCode") return makeString(x, "US");
@@ -940,6 +1022,27 @@ id loc_objectForKey(Ctx& x, id, SEL, id key) {
     return 0;
 }
 id loc_initWithIdentifier(Ctx&, id self, SEL, id) { return self; }
+// +componentsFromLocaleIdentifier: "zh_Hant_TW" or "en-US" -> {language, script, country},
+// keyed by the NSLocale*Code constants (whose values here are their own names).
+id locc_components(Ctx& x, id, SEL, id ident) {
+    std::string s = utf8(x, ident);
+    s = s.substr(0, s.find('@'));
+    std::vector<std::string> parts;
+    for (size_t i = 0; i <= s.size();) {
+        size_t e = s.find_first_of("_-", i);
+        if (e == std::string::npos) e = s.size();
+        if (e > i) parts.push_back(s.substr(i, e - i));
+        i = e + 1;
+    }
+    std::vector<std::pair<id, id>> entries;
+    auto add = [&](const char* k, const std::string& v) { entries.emplace_back(makeString(x, k), makeString(x, v)); };
+    if (!parts.empty()) add("NSLocaleLanguageCode", parts[0]);
+    for (size_t i = 1; i < parts.size(); ++i) {
+        if (parts[i].size() == 4) add("NSLocaleScriptCode", parts[i]);
+        else if (parts[i].size() == 2 || parts[i].size() == 3) { add("NSLocaleCountryCode", parts[i]); break; }
+    }
+    return makeDict(x, entries);
+}
 id locc_withIdentifier(Ctx& x, id, SEL, id) { return loc_current(x, 0, 0); }
 id loc_displayName(Ctx& x, id, SEL, id, id value) { return value; }
 
@@ -1000,11 +1103,95 @@ id f_stringFromClass(Ctx& x, Class c) { return c ? makeString(x, rt(x).className
 // far as the app can tell: apps probe for optional frameworks this way.
 Class f_classFromString(Ctx& x, id s) {
     if (!s) return 0;
-    const Class c = rt(x).getClass(utf8(x, s));
+    const std::string name = utf8(x, s);
+    const Class c = rt(x).getClass(name);
     const ObjC::ClassInfo* ci = c ? rt(x).info(c) : nullptr;
-    return ci && ci->stub ? 0 : c;
+    const Class found = ci && ci->stub ? 0 : c;
+    if (!found) ObjC::noteAbsentClass(x, "NSClassFromString", name);
+    return found;
 }
 id f_stringFromSelector(Ctx& x, SEL s) { return s ? makeString(x, rt(x).selName(s)) : 0; }
+
+// NSGetSizeAndAlignment: the size and alignment of the first type in an Objective-C type
+// encoding, and where the next type starts. armv7 iOS layout: 8-byte scalars align to 4.
+// Apps walk a method signature with it to size NSInvocation argument buffers (PlayHaven's
+// PHInvocation in Dungeon Raid).
+struct EncodedType { uint32_t size = 0, align = 1; };
+const char* parseEncodedType(const char* p, EncodedType& out, int depth = 0) {
+    out = {};
+    while (*p && std::strchr("rnNoORV", *p)) ++p;   // const, in, inout, out, bycopy, byref, oneway
+    auto scalar = [&](uint32_t size, uint32_t align) { out = {size, align}; return p + 1; };
+    switch (*p) {
+        case 'c': case 'C': case 'B': return scalar(1, 1);
+        case 's': case 'S': return scalar(2, 2);
+        case 'i': case 'I': case 'l': case 'L': case 'f': case '#': case ':': case '*': return scalar(4, 4);
+        case 'q': case 'Q': case 'd': return scalar(8, 4);
+        case 'v': return scalar(0, 1);
+        case '?': return scalar(4, 4);   // a function pointer
+        case '@': {
+            out = {4, 4};
+            ++p;
+            if (*p == '?') return p + 1;                                    // a block
+            if (*p == '"') { const char* e = std::strchr(p + 1, '"'); return e ? e + 1 : p + std::strlen(p); }
+            return p;
+        }
+        case '^': {
+            EncodedType pointee;
+            const char* e = depth < 32 ? parseEncodedType(p + 1, pointee, depth + 1) : p + 1;
+            out = {4, 4};
+            return e;
+        }
+        case 'b': {   // a bit-field: its bits, rounded up to bytes
+            ++p;
+            uint32_t bits = 0;
+            while (*p >= '0' && *p <= '9') bits = uint32_t(std::min<uint64_t>(uint64_t(bits) * 10 + uint32_t(*p++ - '0'), 0xFFFFFFFFull));   // saturates
+            out = {uint32_t((uint64_t(bits) + 7) / 8), 1};
+            return p;
+        }
+        case '[': {
+            ++p;
+            uint32_t count = 0;
+            while (*p >= '0' && *p <= '9') count = uint32_t(std::min<uint64_t>(uint64_t(count) * 10 + uint32_t(*p++ - '0'), 0xFFFFFFFFull));
+            EncodedType element;
+            if (depth < 32) p = parseEncodedType(p, element, depth + 1);
+            if (*p == ']') ++p;
+            out = {uint32_t(std::min<uint64_t>(uint64_t(count) * element.size, 0xFFFFFFFFull)), element.align};
+            return p;
+        }
+        case '{': case '(': {
+            const bool isUnion = *p == '(';
+            const char close = isUnion ? ')' : '}';
+            ++p;
+            while (*p && *p != '=' && *p != close) ++p;   // the name
+            if (*p == '=') ++p;
+            uint32_t size = 0, align = 1;
+            while (*p && *p != close && depth < 32) {
+                if (*p == '"') { const char* e = std::strchr(p + 1, '"'); if (!e) break; p = e + 1; continue; }   // a field name
+                EncodedType field;
+                const char* next = parseEncodedType(p, field, depth + 1);
+                if (next == p) break;   // not a type: stop instead of looping
+                p = next;
+                align = std::max(align, field.align);
+                if (isUnion) size = std::max(size, field.size);
+                else size = ((size + field.align - 1) / field.align) * field.align + field.size;
+            }
+            if (*p == close) ++p;
+            out = {((size + align - 1) / align) * align, align};
+            return p;
+        }
+        default: return p;   // unknown: nothing consumed
+    }
+}
+GuestPtr f_getSizeAndAlignment(Ctx& x, GuestPtr typePtr, GuestPtr sizeOut, GuestPtr alignOut) {
+    if (!typePtr) return 0;
+    const std::string type = x.proc.readCString(typePtr);
+    EncodedType t;
+    const char* end = parseEncodedType(type.c_str(), t);
+    if (sizeOut) x.mem.write<uint32_t>(sizeOut, t.size);
+    if (alignOut) x.mem.write<uint32_t>(alignOut, t.align);
+    while (*end >= '0' && *end <= '9') ++end;   // a method signature's frame offset
+    return typePtr + GuestPtr(end - type.c_str());
+}
 SEL f_selectorFromString(Ctx& x, id s) { return s ? rt(x).sel(utf8(x, s)) : 0; }
 id f_stringFromProtocol(Ctx& x, uint32_t p) { return p ? makeString(x, rt(x).protocolName(p)) : 0; }
 uint32_t f_protocolFromString(Ctx& x, id s) { return s ? rt(x).getProtocol(utf8(x, s)) : 0; }
@@ -1279,11 +1466,12 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     m.locale = loc.cls();
     loc.cm<&loc_current>("currentLocale").cm<&loc_current>("systemLocale").cm<&loc_current>("autoupdatingCurrentLocale")
        .cm<&locc_preferredLanguages>("preferredLanguages").cm<&locc_available>("availableLocaleIdentifiers")
-       .cm<&locc_withIdentifier>("localeWithLocaleIdentifier:");
+       .cm<&locc_characterDirection>("characterDirectionForLanguage:")
+       .cm<&locc_withIdentifier>("localeWithLocaleIdentifier:").cm<&locc_components>("componentsFromLocaleIdentifier:");
     loc.m<&loc_identifier>("localeIdentifier").m<&loc_objectForKey>("objectForKey:").m<&loc_initWithIdentifier>("initWithLocaleIdentifier:")
        .m<&loc_displayName>("displayNameForKey:value:").m<&retainedCopy>("copyWithZone:");
     for (const char* n : {"NSLocaleCountryCode", "NSLocaleLanguageCode", "NSLocaleCurrencyCode", "NSLocaleCurrencySymbol",
-                          "NSLocaleDecimalSeparator", "NSLocaleGroupingSeparator", "NSLocaleUsesMetricSystem", "NSLocaleIdentifier",
+                          "NSLocaleDecimalSeparator", "NSLocaleGroupingSeparator", "NSLocaleUsesMetricSystem", "NSLocaleIdentifier", "NSLocaleScriptCode",
                           "NSCurrentLocaleDidChangeNotification"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, constString(p, n));
@@ -1303,6 +1491,7 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     p.def<&f_stringFromClass>("_NSStringFromClass");
     p.def<&f_classFromString>("_NSClassFromString");
     p.def<&f_stringFromSelector>("_NSStringFromSelector");
+    p.def<&f_getSizeAndAlignment>("_NSGetSizeAndAlignment");
     p.def<&f_selectorFromString>("_NSSelectorFromString");
     p.def<&f_stringFromProtocol>("_NSStringFromProtocol");
     p.def<&f_protocolFromString>("_NSProtocolFromString");

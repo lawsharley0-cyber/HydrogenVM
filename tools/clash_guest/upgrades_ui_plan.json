@@ -1,0 +1,16 @@
+{
+  "name":"Spend earned resources in a private three-win QA copy: Archers, Bomber, Arrows upgrades",
+  "steps":[
+    {"id":"U-open","expected":"Eight-card deck before spending: Gold 141, XP 4","actions":[{"tap":[185,535]},{"tap":[90,535]}]},
+    {"id":"U-archers-info","expected":"Archers level 1, 2/2 cards, 5 Gold upgrade","actions":[{"tap":[120,115]},{"tap":[120,180]}]},
+    {"id":"U-archers-upgrade","expected":"Native upgrade animation then Archers level 2","actions":[{"tap":[160,445]}],"settleSeconds":6},
+    {"id":"U-archers-close","expected":"Deck returns with Archers level 2","actions":[{"tap":[300,105]}]},
+    {"id":"U-bomber-info","expected":"Bomber level 1, 2/2 cards, 5 Gold upgrade","actions":[{"tap":[200,115]},{"tap":[200,180]}]},
+    {"id":"U-bomber-upgrade","expected":"Native upgrade animation then Bomber level 2","actions":[{"tap":[160,445]}],"settleSeconds":6},
+    {"id":"U-bomber-close","expected":"Deck returns with Bomber level 2","actions":[{"tap":[300,105]}]},
+    {"id":"U-arrows-info","expected":"Arrows level 1, 2/2 cards, 5 Gold upgrade","actions":[{"tap":[280,115]},{"tap":[280,180]}]},
+    {"id":"U-arrows-upgrade","expected":"Native upgrade animation then Arrows level 2","actions":[{"tap":[160,445]}],"settleSeconds":6},
+    {"id":"U-arrows-close","expected":"Deck returns with Arrows level 2","actions":[{"tap":[300,105]}]},
+    {"id":"U-finish","expected":"Home returns with Gold 126, XP 16, three training wins","actions":[{"tap":[185,535]}],"settleSeconds":6}
+  ]
+}

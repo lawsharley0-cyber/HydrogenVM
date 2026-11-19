@@ -1,11 +1,14 @@
 #include "GuestArena.hpp"
 #include <sys/mman.h>
+#include <csignal>
+#include <mutex>
 #include <unistd.h>
 #include <stdexcept>
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -20,6 +23,47 @@
 namespace Hydrogen::Memory {
 namespace {
 std::atomic<uint32_t> liveArenas{0};
+
+// Live arenas for the fault handler, which must not take locks or allocate.
+constexpr size_t kMaxLiveArenas = 32;
+std::atomic<GuestArena*> g_live[kMaxLiveArenas]{};
+
+int hostFlags(uint8_t guestProt) {
+    if (guestProt & kProtWrite) return PROT_READ | PROT_WRITE;
+    if (guestProt & (kProtRead | kProtExec)) return PROT_READ;   // execute implies read on ARMv7
+    return PROT_NONE;
+}
+
+// Installed by the first GuestArena, before any Engine (an Engine always wraps an existing arena),
+// so the Engine's handler, which knows whether the thread is running guest code, sits above this
+// one and chains to it. This one handles host writes made before any Engine exists (the loader,
+// tests) and otherwise passes the signal on.
+struct sigaction g_prevSegv, g_prevBus;
+std::once_flag g_handlerOnce;
+void arenaFaultHandler(int sig, siginfo_t* si, void* uctx) {
+    if (si && GuestArena::liftHostFault(reinterpret_cast<uintptr_t>(si->si_addr))) return;
+    struct sigaction& old = sig == SIGBUS ? g_prevBus : g_prevSegv;
+    if (old.sa_flags & SA_SIGINFO) { if (old.sa_sigaction) { old.sa_sigaction(sig, si, uctx); return; } }
+    else if (old.sa_handler != SIG_DFL && old.sa_handler != SIG_IGN) { old.sa_handler(sig); return; }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+void installArenaFaultHandler() {
+    std::call_once(g_handlerOnce, [] {
+        struct sigaction sa;
+        std::memset(&sa, 0, sizeof sa);
+        sa.sa_sigaction = arenaFaultHandler;
+        sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGSEGV, &sa, &g_prevSegv);
+        sigaction(SIGBUS, &sa, &g_prevBus);
+    });
+}
+
+bool envDisablesProtection() {
+    const char* e = std::getenv("HVM_GUEST_PROT");
+    return e && (std::strcmp(e, "0") == 0 || std::strcmp(e, "off") == 0);
+}
 
 // One 4 GB range, PROT_NONE and owned by nobody, waiting for the next
 // GuestArena. Destroying an arena returns its pages but keeps the range, so a
@@ -150,10 +194,21 @@ GuestArena::GuestArena(size_t hostPage) {
     base_ = static_cast<uint8_t*>(p);
     prot_.assign(kGuestPageCount, kProtNone);
     host_committed_.assign(size_t(kArenaSize / host_page_), 0);
+    host_prot_.assign(size_t(kArenaSize / host_page_), PROT_NONE);
+    enforce_ = !envDisablesProtection();
+    if (enforce_) installArenaFaultHandler();
+    for (auto& slot : g_live) {
+        GuestArena* expected = nullptr;
+        if (slot.compare_exchange_strong(expected, this, std::memory_order_acq_rel)) break;
+    }
     liveArenas.fetch_add(1, std::memory_order_release);
 }
 
 GuestArena::~GuestArena() {
+    for (auto& slot : g_live) {
+        GuestArena* expected = this;
+        if (slot.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) break;
+    }
     if (!base_) return;
     uint8_t* base = base_;
     base_ = nullptr;
@@ -187,10 +242,17 @@ void GuestArena::commitHostPages(uint64_t first, uint64_t last) {
         while (j + 1 <= last && !host_committed_[j + 1]) ++j;
         void* want = base_ + i * host_page_;
         size_t len = size_t((j - i + 1) * host_page_);
+        if (budget_ && committed_bytes_ + len > budget_)
+            throw std::runtime_error("HydrogenVM: the game went over the phone's memory budget (" +
+                                     std::to_string(budget_ >> 20) + " MB); iOS would close it here");
         void* r = mmap(want, len, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
         if (r == MAP_FAILED) throw std::runtime_error("HydrogenVM: failed to commit guest memory");
-        for (uint64_t k = i; k <= j; ++k) host_committed_[k] = 1;
+        for (uint64_t k = i; k <= j; ++k) {
+            host_committed_[k] = 1;
+            __atomic_store_n(&host_prot_[k], uint8_t(PROT_READ | PROT_WRITE), __ATOMIC_RELEASE);
+        }
+        committed_bytes_ += len;
         i = j + 1;
     }
 }
@@ -200,6 +262,8 @@ void GuestArena::releaseHostPage(uint64_t idx) {
     mmap(base_ + idx * host_page_, host_page_, PROT_NONE,
          MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_NORESERVE, -1, 0);
     host_committed_[idx] = 0;
+    __atomic_store_n(&host_prot_[idx], uint8_t(PROT_NONE), __ATOMIC_RELEASE);
+    committed_bytes_ -= host_page_;
 }
 
 void GuestArena::map(uint32_t addr, uint32_t size, uint8_t prot) {
@@ -211,14 +275,88 @@ void GuestArena::map(uint32_t addr, uint32_t size, uint8_t prot) {
     commitHostPages(start / host_page_, (end - 1) / host_page_);
     for (uint64_t g = start >> kGuestPageShift; g < (end >> kGuestPageShift); ++g)
         prot_[g] = prot ? prot : kProtRead;   // committed pages are always at least visible
+    applyHostProt(start / host_page_, (end - 1) / host_page_);
 }
 
 void GuestArena::protect(uint32_t addr, uint32_t size, uint8_t prot) {
+    if (!size) return;
     std::lock_guard<std::mutex> lk(mu_);
     uint64_t start = addr >> kGuestPageShift;
     uint64_t end   = (uint64_t(addr) + size + kGuestPageSize - 1) >> kGuestPageShift;
+    if (end > kGuestPageCount) end = kGuestPageCount;
+    // PROT_NONE keeps the page mapped but inaccessible (a guard page).
     for (uint64_t g = start; g < end; ++g)
-        if (prot_[g] != kProtNone) prot_[g] = prot ? prot : kProtRead;
+        if (prot_[g] != kProtNone) prot_[g] = (prot & kProtRWX) ? uint8_t(prot & kProtRWX) : uint8_t(kProtReserved);
+    if (end > start)
+        applyHostProt((start << kGuestPageShift) / host_page_, ((end << kGuestPageShift) - 1) / host_page_);
+}
+
+uint8_t GuestArena::hostProtFor(uint64_t idx, bool* split) const {
+    const uint64_t per = host_page_ >> kGuestPageShift;
+    const uint8_t first = prot_[idx * per];
+    uint8_t all = 0;
+    bool same = true;
+    for (uint64_t g = idx * per; g < (idx + 1) * per; ++g) {
+        all |= uint8_t(hostFlags(prot_[g]));
+        same &= prot_[g] == first;
+    }
+    if (split) *split = !same;
+    return same ? uint8_t(hostFlags(first)) : all;   // a split page gets the union
+}
+
+void GuestArena::applyHostProt(uint64_t first, uint64_t last) {
+    if (!enforce_) return;
+    for (uint64_t h = first; h <= last && h < host_committed_.size(); ++h) {
+        if (!host_committed_[h]) continue;
+        const uint8_t want = hostProtFor(h, nullptr);
+        if (__atomic_load_n(&host_prot_[h], __ATOMIC_ACQUIRE) == want) continue;
+        if (mprotect(base_ + h * host_page_, host_page_, want) == 0)
+            __atomic_store_n(&host_prot_[h], want, __ATOMIC_RELEASE);
+    }
+}
+
+uint64_t GuestArena::splitHostPages() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    uint64_t n = 0;
+    for (uint64_t h = 0; h < host_committed_.size(); ++h) {
+        if (!host_committed_[h]) continue;
+        bool split = false;
+        hostProtFor(h, &split);
+        n += split;
+    }
+    return n;
+}
+
+bool GuestArena::hostCommittedAt(uintptr_t hostAddr) noexcept {
+    for (auto& slot : g_live) {
+        GuestArena* a = slot.load(std::memory_order_acquire);
+        if (!a || !a->base_) continue;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(a->base_);
+        if (hostAddr < base || hostAddr - base >= kArenaSize) continue;
+        return a->host_committed_[(hostAddr - base) / a->host_page_] != 0;
+    }
+    return false;
+}
+
+bool GuestArena::liftHostFault(uintptr_t hostAddr) noexcept {
+    for (auto& slot : g_live) {
+        GuestArena* a = slot.load(std::memory_order_acquire);
+        if (!a || !a->base_) continue;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(a->base_);
+        if (hostAddr < base || hostAddr - base >= kArenaSize) continue;
+        const uint64_t idx = (hostAddr - base) / a->host_page_;
+        if (!a->host_committed_[idx]) return false;
+        constexpr uint8_t rw = PROT_READ | PROT_WRITE;
+        if (__atomic_load_n(&a->host_prot_[idx], __ATOMIC_ACQUIRE) == rw) {
+            // Another thread lifted it, or protect() just changed it: retry the access.
+            return true;
+        }
+        if (mprotect(a->base_ + idx * a->host_page_, a->host_page_, rw) != 0) return false;
+        __atomic_store_n(&a->host_prot_[idx], rw, __ATOMIC_RELEASE);
+        a->lifted_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
 }
 
 void GuestArena::unmap(uint32_t addr, uint32_t size) {
@@ -234,10 +372,14 @@ void GuestArena::unmap(uint32_t addr, uint32_t size) {
         for (uint64_t g = h * per; g < (h + 1) * per; ++g) used |= prot_[g] != kProtNone;
         if (!used) {
             releaseHostPage(h);
-        } else {
-            // Host page still shared with live guest pages: just zero ours.
+        } else if (host_committed_[h]) {
+            // Host page still shared with live guest pages: just zero ours (writable while we do).
+            if (__atomic_load_n(&host_prot_[h], __ATOMIC_ACQUIRE) != (PROT_READ | PROT_WRITE) &&
+                mprotect(base_ + h * host_page_, host_page_, PROT_READ | PROT_WRITE) == 0)
+                __atomic_store_n(&host_prot_[h], uint8_t(PROT_READ | PROT_WRITE), __ATOMIC_RELEASE);
             for (uint64_t g = std::max(start, h * per); g < std::min(end, (h + 1) * per); ++g)
                 std::memset(base_ + (g << kGuestPageShift), 0, kGuestPageSize);
+            applyHostProt(h, h);
         }
     }
 }

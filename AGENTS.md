@@ -1,12 +1,45 @@
 # Agent instructions
 
+November 10 update. [Spell Lab](docs/clash-royale/SPELL_LAB_2026-11-10.md) documents the guest spell controls, save compatibility and native battle checks. [Sandbox roadmap](docs/clash-royale/SANDBOX_ROADMAP_2026-11-10.md) includes custom music import.
+
+November 9 current: [Card behavior + custom PNG images](docs/clash-royale/MOD_CUSTOMIZATION_2026-11-09.md) records the Spawns controls, MCH1 optional profile, ART1 image packs, 67 focused checks, native two-troop deployment, image battle/relaunch and retained-file fallback. Overrides must match bundled res/sc source assets, never decompressed swfcache/sc files. PNG import currently uses the computer packer; static troop art and phone qualification limits are explicit. Keep original training and definition-linked saves intact.
+
+November 8 current: [CARD_FORGE_2026-11-08.md](docs/clash-royale/CARD_FORGE_2026-11-08.md) records the working guest creator/loader, CRG2+FGR1 save contract, 59 focused tests, native creation/tuning/Use/battle/relaunch and save-preserving corruption guards. Branch `codex/clash-forge-runtime` starts at main `588eebb`; #366/#381 were closed and integrated through #382. Preserve newer engine/audio fixes. Main runtime gates: 682 fulltest/26 Test Lab. Phone creation and remaining mod/visual/performance work stay unqualified. Keyboard accessory follow-up is #390; its inherited skipped test must run before a Done claim.
+
+Custom keyboard continuation (November 7): read [KEYBOARD_COMPATIBILITY_2026-11-07.md](docs/KEYBOARD_COMPATIBILITY_2026-11-07.md) for the owner-confirmed missing-keyboard symptom, custom UIView/UIKeyInput bridge, composed-character deletion, fail-before cases and exact native/host/device limits. The offline guest/editor is separate on PR #366. Preserve original training and source saves; do not turn Linux input callbacks into a phone-keyboard claim.
+
+November 7 custom-card foundation: [CUSTOM_CARDS.md](docs/clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
+
+November 7 host follow-up: [PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381) contains the custom UIKeyInput/composed-deletion fix on current main. Clean integrated gates: 657 runtime checks, 26 Test Lab cases, no harness regressions; actual native clan typing/edit/send/save/clean quit/relaunch passes. Phone keyboard/accessory presentation and macOS CI remain separate checks. This guest branch retains its own engine baseline; do not blindly merge host main. [MOD_LAB.md](docs/clash-royale/MOD_LAB.md) records exact evidence and the still-unimplemented custom cards/visual sizing.
+
+Latest owner-prioritized modding continuation: [MOD_LAB.md](docs/clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
+
+Owner priority override, November 6: modding is now the current requested task,
+including an in-game settings editor, card/custom-card behavior, sizes/speeds
+and player currencies. Earlier "modding afterward" scheduling is superseded.
+Investigate the reported iPhone keyboard not appearing in Clash. Keep original
+training intact by default and preserve a pre-mod save before applying edits.
+
+Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](docs/clash-royale/DRAW_CHECKPOINTS.md)
+records the new native draw save path, battle-avatar wallet correction, 41
+focused checks and a controlled original 0–0 draw followed by two unchanged
+production relaunches. Natural/nonzero-crown draws and partial-crown losses
+remain unqualified; all-six-arena and remaining full-game audit limits still
+apply. Active draft PR is #366; optional modding remains after playability.
+
+Clash November 6 continuation: read [PLAYABILITY_2026-11-06.md](docs/clash-royale/PLAYABILITY_2026-11-06.md) for current all-six-arena content/entry qualification and remaining draw/earned-win/full-audit gaps. The owner wants optional modding considered after reliable playability and bug fixes. Preserve original training and advanced battle-AI deferral.
+
 HydrogenVM is a JIT-less ARMv7 user-mode emulator. Guest code is decoded into `Op` records and executed by ahead-of-time C++ handlers. No guest code is written into executable host memory. One process owns a 4 GB `GuestArena`, an `Engine`, guest threads that are host threads, and a symbol table that binds Mach-O imports to host functions. Frameworks are a guest Objective-C runtime in C++. The UI is composited in software. The phone shell is SwiftUI under `app/`. The desktop CLI is `hvm`.
 
 **Start with [docs/PLAN.md](docs/PLAN.md)**: the only plan, with task cards and the rules for running several agents at once. [docs/GROK_HANDOFF.md](docs/GROK_HANDOFF.md) and [docs/GEMINI_HANDOFF.md](docs/GEMINI_HANDOFF.md) are reference (run recipes, per-game history).
 
 The older [docs/dev-system/MASTER_PLAN.md](docs/dev-system/MASTER_PLAN.md) is superseded by PLAN.md. The comparable-project research behind it is [docs/research/COMPARABLE_PROJECTS.md](docs/research/COMPARABLE_PROJECTS.md). Read only the docs your ticket names.
 
+**Clash owner requirement (2026-10-27): preserve the complete original training section**, including all seven trainers' names, decks, AI behavior and tutorial sequence. Authored opponent handles, deck/spending/mana overrides and daily-shop initialization apply only after earned training. Keep training regressions when extending the offline guest; [DAILY_SHOP.md](docs/clash-royale/DAILY_SHOP.md) records the current all-seven AI/sector checks and actual fresh Trainer Earl test.
+
 This file is the working agreement for a coding agent. It does not change the emulator. The detail is in `docs/dev-system/`:
+
+**Clash owner priority (2026-10-27): defer advanced/main-opponent AI refinement and modern-bot comparisons until all other game features and bug fixes are ready.** Retain existing bounded native opponents while completing store/progression/results and full UI/save/device/visual/audio/performance audits. See [STORE_PURCHASES.md](docs/clash-royale/STORE_PURCHASES.md) for the newest scoped qualification; never change original training as part of these additions.
 
 - [ARCHITECTURE_MAP.md](docs/dev-system/ARCHITECTURE_MAP.md) — roles, files, and groups A–E
 - [IMPLEMENTATION_PLAN.md](docs/dev-system/IMPLEMENTATION_PLAN.md) — operational, planned, and needs-owner
@@ -41,7 +74,14 @@ Read [docs/TEST_LAB.md](docs/TEST_LAB.md), especially "Agent guide": what each c
 
 ## Build and test
 
-Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `libssl-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set.
+Scripted game smoke harness: `python3 -m unittest discover -s tools/tests -p
+test_smoke.py` is part of the existing tools test gate. Run private scenarios
+with `python3 -m tools.smoke.run --hvm build/hvm` when `HVM_SMOKE_GAMES` is
+available; absent fixtures and screenshot references are skips, never game or
+visual passes. See [docs/testing/smoke.md](docs/testing/smoke.md). This does not
+replace Test Lab, fulltest or the compatibility baseline.
+
+Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `libssl-dev`, `libicu-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set. ICU supplies Unicode predicate regular expressions on Linux; Apple hosts use native Foundation.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
@@ -112,7 +152,7 @@ The integration line for this system is `main`. `docs/HANDOFF.md` now separates 
 - Do not trade a passing test, or an app the baseline already runs, for a one-off win. Prefer a fix that helps many apps over a special case for one title.
 - Do not mark a backlog row, a status line, or a bug resolved without a reproducible run that shows the new result. The issue generator (`python3 tools/hvm_compat.py issues`) is a dry run. It does not file GitHub issues.
 - Do not weaken `fulltest`, and do not change the emulator, in order to make a baseline look green. The harness records. A crash that was already in the baseline stays recorded. A new one fails the diff.
-- No FairPlay decryption. `CCCrypt` is forwarded to the host platform library (system CommonCrypto on Apple, OpenSSL on Linux); never add cipher code to the emulator. There is no general outbound network. Loopback IPv4 TCP exists only when that flag is set.
+- No FairPlay decryption. `CCCrypt` is forwarded to the host platform library (system CommonCrypto on Apple, OpenSSL on Linux); never add cipher code to the emulator. There is no general outbound network by default. Loopback IPv4 TCP exists only when that flag is set. The one exception is the owner-approved (2026-11-12, for preservation) per-game "Allow internet" switch in the app (`ProcessConfig::internetAccess`, `hvm run --internet`): off unless the player turns it on for that game, and then real IPv4 sockets and name lookups. Never turn it on by default or for a game the player did not choose. With the switch on, guest TCP to port 443 goes through the TLS bridge (`src/runtime/libc/TlsBridge.hpp`): the game's old TLS terminates locally and a modern, certificate-checked TLS connection goes to the server, all through the host TLS library (OpenSSL on Linux, Security.framework on the phone).
 
 ## Where to record status
 

@@ -1,5 +1,6 @@
 // Cocoa data-model classes used by Unity. Unsupported predicate syntax raises explicitly.
 #include "Foundation.hpp"
+#include "HostPredicateRegex.hpp"
 #include "runtime/libc/Format.hpp"
 #include <algorithm>
 #include <cctype>
@@ -29,13 +30,17 @@ int compare(Ctx& x, id a, id b) {
     return (result > 0) - (result < 0);
 }
 // A predicate is a tree: comparisons (key op value) joined by AND / OR / NOT, with
-// parentheses, as NSPredicate's format grammar has them. Constructs outside that
-// subset (BETWEEN, IN, CONTAINS, aggregates, functions) still raise explicitly.
+// parentheses, as NSPredicate's format grammar has them, plus the string operators
+// (BEGINSWITH, ENDSWITH, CONTAINS, LIKE with [c]/[d]/[cd]) and IN. Constructs outside
+// that subset (BETWEEN, aggregates, functions) still raise explicitly.
 struct PNode {
-    enum Kind { Const, Cmp, And, Or, Not } kind = Const;
+    enum Kind { Const, Cmp, And, Or, Not, Block } kind = Const;
+    uint32_t block = 0;           // Block: a copied BOOL (^)(id evaluatedObject, NSDictionary* bindings)
     bool result = false;          // Const
     std::string key, operation;   // Cmp
+    bool foldCase = false, foldDiacritics = false;   // Cmp string operators: [c], [d]
     id rhs = 0;                   // Cmp, retained
+    std::shared_ptr<const HostPredicateRegex> expression;   // Cmp MATCHES / MATCHES[c]: full ICU matching
     std::vector<std::shared_ptr<PNode>> kids;   // And / Or: any number (a chain is one node); Not: one
     int height = 1;                             // longest path to a leaf; bounds every recursion over the tree
 };
@@ -52,6 +57,8 @@ struct Predicate : ObjC::HostObject { std::shared_ptr<PNode> root; };
 void releaseNode(Ctx& x, PNode& n) {
     if (n.rhs) rt(x).release(x.cpu, n.rhs);
     n.rhs = 0;
+    if (n.block) ObjC::blockRelease(x, n.block);
+    n.block = 0;
     for (auto& k : n.kids) releaseNode(x, *k);
 }
 void predicate_free(Ctx& x, id self, SEL) {
@@ -137,6 +144,38 @@ template <class Next> struct PredicateParser {
         auto n = std::make_shared<PNode>(); n->kind = PNode::Cmp;
         n->key = keyPath();
         ws();
+        if (keyword("MATCHES")) {
+            // SDK validation uses inline (?i) and Unicode categories, so the pattern is
+            // compiled with ICU; ASCII substitution would weaken the checks.
+            const bool insensitive = sym("[c]") || sym("[C]");
+            n->operation = insensitive ? "MATCHES[C]" : "MATCHES";
+            n->rhs = literal();
+            if (n->rhs) { rt(x).retain(x.cpu, n->rhs); retained.push_back(n->rhs); }
+            if (!isString(x, n->rhs)) throw ObjC::ObjCError("MATCHES requires an NSString pattern");
+            try {
+                n->expression = compilePredicateRegex(utf8(x, n->rhs), insensitive);
+            } catch (const std::invalid_argument&) {
+                throw ObjC::ObjCError("invalid or unsupported MATCHES regular expression");
+            }
+            return n;
+        }
+        // String operators, and IN (the key's value is a member of the collection on the right).
+        for (const char* word : {"BEGINSWITH", "ENDSWITH", "CONTAINS", "LIKE", "IN"}) {
+            if (!keyword(word)) continue;
+            n->operation = word;
+            if (sym("[")) {
+                while (i < t.size() && t[i] != ']') {
+                    const char c = char(std::tolower(uint8_t(t[i++])));
+                    if (c == 'c') n->foldCase = true;
+                    else if (c == 'd') n->foldDiacritics = true;
+                    else if (c != 'n') fail();   // [n]: normalized, already the case here
+                }
+                if (!sym("]")) fail();
+            }
+            n->rhs = literal();
+            if (n->rhs) { rt(x).retain(x.cpu, n->rhs); retained.push_back(n->rhs); }
+            return n;
+        }
         static const char* const ops[] = {"==", "!=", "<>", ">=", "=>", "<=", "=<", "=", ">", "<"};
         const char* op = nullptr;
         for (const char* o : ops) if (sym(o)) { op = o; break; }
@@ -206,9 +245,63 @@ id predicate_format(Ctx& x, Class cls, SEL, id format, VarArgs args) {
         return type == '@' ? raw : type == 'u' ? makeNumberInt(x, raw) : makeNumberInt(x, int32_t(raw));
     });
 }
+// +predicateWithBlock: evaluates the block for each object (Crossy Road got nil).
+id predicate_block(Ctx& x, Class cls, SEL, uint32_t block) {
+    if (!block) throw ObjC::ObjCError("+[NSPredicate predicateWithBlock:]: nil block");
+    auto n = std::make_shared<PNode>();
+    n->kind = PNode::Block;
+    n->block = ObjC::blockCopy(x, block);
+    return makePredicate(x, cls, n);
+}
 id predicate_array(Ctx& x, Class cls, SEL, id format, id arguments) {
     auto values = arrayItems(x, arguments); size_t i = 0;
     return parse(x, cls, format, [&](char) -> id { if (i >= values.size()) throw ObjC::ObjCError("not enough NSPredicate arguments"); return values[i++]; });
+}
+// A string as the string operators compare it: [c] lowercases; [d] drops combining
+// marks and folds the accented Latin-1 letters to their base letter (é -> e).
+std::string foldedText(Ctx& x, id s, bool foldCase, bool foldDiacritics) {
+    if (foldCase && s) s = id(send(x, s, "lowercaseString"));
+    std::string out = s ? utf8(x, s) : std::string();
+    if (!foldDiacritics) return out;
+    // U+00C0..U+00FF base letters ('*' keeps the character: Æ, Ð, ×, Þ, ß, æ, ð, ÷, þ).
+    static const char kBase[] = "AAAAAA*CEEEEIIII*NOOOOO*OUUUUY**aaaaaa*ceeeeiiii*nooooo*ouuuuy*y";
+    std::string kept;
+    for (size_t i = 0; i < out.size(); ++i) {
+        const uint8_t a = uint8_t(out[i]), b = i + 1 < out.size() ? uint8_t(out[i + 1]) : 0;
+        const uint32_t cp = (a & 0xE0) == 0xC0 && (b & 0xC0) == 0x80 ? (uint32_t(a & 0x1F) << 6) | (b & 0x3F) : 0;
+        if (cp >= 0x300 && cp <= 0x36F) { ++i; continue; }   // a combining mark
+        if (cp >= 0xC0 && cp <= 0xFF && kBase[cp - 0xC0] != '*') { kept += kBase[cp - 0xC0]; ++i; continue; }
+        kept += out[i];
+    }
+    return kept;
+}
+// LIKE: * is any run of characters, ? exactly one (UTF-8 bytes; patterns are ASCII in practice).
+bool likeMatch(const std::string& text, const std::string& pattern) {
+    size_t t = 0, p = 0, star = std::string::npos, mark = 0;
+    while (t < text.size()) {
+        if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == text[t])) { ++t; ++p; continue; }
+        if (p < pattern.size() && pattern[p] == '*') { star = p++; mark = t; continue; }
+        if (star == std::string::npos) return false;
+        p = star + 1;
+        t = ++mark;
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+bool stringOperator(Ctx& x, const PNode& n, id lhs) {
+    if (n.operation == "IN") {
+        if (!n.rhs) return false;
+        if (isString(x, n.rhs)) return isString(x, lhs) && foldedText(x, n.rhs, n.foldCase, n.foldDiacritics).find(foldedText(x, lhs, n.foldCase, n.foldDiacritics)) != std::string::npos;
+        return (send(x, n.rhs, "containsObject:", {lhs}) & 0xff) != 0;
+    }
+    if (n.operation == "CONTAINS" && lhs && !isString(x, lhs))   // a collection on the left: membership
+        return (send(x, lhs, "containsObject:", {n.rhs}) & 0xff) != 0;
+    if (!isString(x, lhs) || !isString(x, n.rhs)) return false;
+    const std::string a = foldedText(x, lhs, n.foldCase, n.foldDiacritics), b = foldedText(x, n.rhs, n.foldCase, n.foldDiacritics);
+    if (n.operation == "BEGINSWITH") return a.compare(0, b.size(), b) == 0;
+    if (n.operation == "ENDSWITH") return a.size() >= b.size() && a.compare(a.size() - b.size(), b.size(), b) == 0;
+    if (n.operation == "CONTAINS") return a.find(b) != std::string::npos;
+    return likeMatch(a, b);   // LIKE
 }
 bool evalNode(Ctx& x, const PNode& n, id object) {
     switch (n.kind) {
@@ -216,9 +309,13 @@ bool evalNode(Ctx& x, const PNode& n, id object) {
         case PNode::And: for (auto& k : n.kids) if (!evalNode(x, *k, object)) return false; return true;
         case PNode::Or: for (auto& k : n.kids) if (evalNode(x, *k, object)) return true; return false;
         case PNode::Not: return !evalNode(x, *n.kids[0], object);
+        case PNode::Block: return (ObjC::callBlock(x, n.block, {object, 0}) & 0xff) != 0;
         case PNode::Cmp: break;
     }
     const id lhs = value(x, object, n.key);
+    if (n.expression) return isString(x, lhs) && n.expression->matches(utf8(x, lhs));
+    if (n.operation == "BEGINSWITH" || n.operation == "ENDSWITH" || n.operation == "CONTAINS" || n.operation == "LIKE" || n.operation == "IN")
+        return stringOperator(x, n, lhs);
     if (n.operation == "==") return objectsEqual(x, lhs, n.rhs);
     if (n.operation == "!=") return !objectsEqual(x, lhs, n.rhs);
     const int order = compare(x, lhs, n.rhs);
@@ -235,6 +332,7 @@ bool evaluate(Ctx& x, id self, SEL, id object) {
 std::shared_ptr<PNode> copyNode(Ctx& x, const PNode& n) {
     auto c = std::make_shared<PNode>(n);
     if (c->rhs) rt(x).retain(x.cpu, c->rhs);
+    if (c->block) c->block = ObjC::blockCopy(x, c->block);   // each tree owns its own copy
     for (auto& k : c->kids) k = copyNode(x, *k);
     return c;
 }
@@ -268,32 +366,59 @@ void filter(Ctx& x, id self, SEL, id predicate) { send(x, self, "setArray:", {fi
 
 // Weak entries use libobjc's real zeroing-weak slots, not dangling host addresses.
 struct Cell { id strong = 0; uint32_t weak = 0; };
-struct Table : ObjC::HostObject { uint32_t keys = 0, values = 0; bool map = false; std::vector<std::pair<Cell, Cell>> items; };
+struct Table : ObjC::HostObject {
+    uint32_t keys = 0, values = 0; bool map = false; std::vector<std::pair<Cell, Cell>> items;
+    std::vector<id> snapshot;    // for (key in table): the keys / objects when enumeration began
+    uint32_t mutationCell = 0;   // guest word NSFastEnumeration watches for mutation
+};
+// NSPointerFunctionsOptions: memory in the low byte (strong 0, zeroing weak 1, opaque 2,
+// weak 5), personality in the next (object 0, opaque 0x100, object pointer 0x200,
+// C string 0x300, integer 0x500) and copy-in 0x10000. Struct personality (0x400) and
+// malloc/Mach memory need size and free functions this table does not have.
+constexpr uint32_t kCopyIn = 0x10000;
 void validateOptions(uint32_t options) {
     const auto memory = options & 0xff, personality = options & 0xff00;
-    if ((memory != 0 && memory != 1 && memory != 5) || (personality != 0 && personality != 0x100) || (options & ~0xffffu))
-        throw ObjC::ObjCError("unsupported NSPointerFunctions options");
+    const bool memoryOK = memory == 0 || memory == 1 || memory == 2 || memory == 5;
+    const bool personalityOK = personality == 0 || personality == 0x100 || personality == 0x200 ||
+                               personality == 0x300 || personality == 0x500;
+    if (!memoryOK || !personalityOK || (options & ~(0xffffu | kCopyIn)))
+        throw ObjC::ObjCError("unsupported NSPointerFunctions options 0x" + [&] { char b[12]; std::snprintf(b, sizeof b, "%x", options); return std::string(b); }());
+}
+// Object-valued only with the object or object-pointer personality and strong or weak memory.
+bool holdsObjects(uint32_t options) {
+    const auto memory = options & 0xff, personality = options & 0xff00;
+    return (personality == 0 || personality == 0x200) && memory != 2;
 }
 Cell hold(Ctx& x, id object, uint32_t options) {
     Cell c; const auto memory = options & 0xff;
+    if (!holdsObjects(options)) { c.strong = object; return c; }   // opaque memory, C strings, integers: as is
     if (memory == 1 || memory == 5) { c.weak = x.proc.heap().allocZeroed(4); rt(x).storeWeak(c.weak, object); }
-    else { c.strong = object; if (memory == 0 && object) rt(x).retain(x.cpu, object); }
+    else if ((options & kCopyIn) && object) c.strong = id(rt(x).send(x.cpu, object, "copy"));   // +1, owned
+    else { c.strong = object; if (object) rt(x).retain(x.cpu, object); }
     return c;
 }
 id get(Ctx& x, const Cell& c) { return c.weak ? rt(x).loadWeak(c.weak) : c.strong; }
 void drop(Ctx& x, Cell& c, uint32_t options) {
     if (c.weak) { rt(x).clearWeakSlot(c.weak); x.proc.heap().free(c.weak); }
-    else if (!(options & 0xff) && c.strong) rt(x).release(x.cpu, c.strong);
+    else if (holdsObjects(options) && c.strong) rt(x).release(x.cpu, c.strong);
     c = {};
 }
 void prune(Ctx& x, Table& t) {
+    // Take dead entries out of the table first: dropping a strong cell can run guest
+    // release/dealloc, which may touch this table and would invalidate an iterator.
+    std::vector<std::pair<Cell, Cell>> dead;
     for (auto i = t.items.begin(); i != t.items.end();) {
-        if (!get(x, i->first) || (t.map && !get(x, i->second))) { drop(x, i->first, t.keys); drop(x, i->second, t.values); i = t.items.erase(i); }
+        if ((i->first.weak && !get(x, i->first)) || (t.map && i->second.weak && !get(x, i->second))) { dead.push_back(*i); i = t.items.erase(i); }
         else ++i;
     }
+    for (auto& [key, value] : dead) { drop(x, key, t.keys); drop(x, value, t.values); }
 }
 void table_clear(Ctx& x, id self, SEL) { auto& t = rt(x).host<Table>(self); for (auto& [key, val] : t.items) { drop(x, key, t.keys); drop(x, val, t.values); } t.items.clear(); }
-void table_free(Ctx& x, id self, SEL) { table_clear(x, self, 0); rt(x).disposeInstance(x.cpu, self); }
+void table_free(Ctx& x, id self, SEL) {
+    table_clear(x, self, 0);
+    if (uint32_t& cell = rt(x).host<Table>(self).mutationCell) { x.proc.heap().free(cell); cell = 0; }
+    rt(x).disposeInstance(x.cpu, self);
+}
 id hash_init(Ctx& x, id self, SEL, uint32_t options, uint32_t) { validateOptions(options); table_clear(x, self, 0); auto& t = rt(x).host<Table>(self); t.keys = options; t.map = false; return self; }
 id map_init(Ctx& x, id self, SEL, uint32_t keys, uint32_t values, uint32_t) { validateOptions(keys); validateOptions(values); table_clear(x, self, 0); auto& t = rt(x).host<Table>(self); t.map = true; t.keys = keys; t.values = values; return self; }
 id hash_factory(Ctx& x, Class cls, SEL, uint32_t options) { return autoreleased(x, hash_init(x, rt(x).createInstance(cls), 0, options, 0)); }
@@ -303,7 +428,14 @@ id map_ss(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 0, 0); }
 id map_sw(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 0, 5); }
 id map_ws(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 5, 0); }
 id map_ww(Ctx& x, Class cls, SEL) { return map_factory(x, cls, 0, 5, 5); }
-size_t find(Ctx& x, Table& t, id key) { prune(x, t); for (size_t i = 0; i < t.items.size(); ++i) { const id stored = get(x, t.items[i].first); if ((t.keys & 0xff00) ? stored == key : objectsEqual(x, stored, key)) return i; } return t.items.size(); }
+bool sameKey(Ctx& x, uint32_t options, id stored, id key) {
+    switch (options & 0xff00) {
+    case 0: return objectsEqual(x, stored, key);
+    case 0x300: return stored == key || (stored && key && x.proc.readCString(stored) == x.proc.readCString(key));
+    default: return stored == key;   // opaque, object pointer, integer: identity
+    }
+}
+size_t find(Ctx& x, Table& t, id key) { prune(x, t); for (size_t i = 0; i < t.items.size(); ++i) if (sameKey(x, t.keys, get(x, t.items[i].first), key)) return i; return t.items.size(); }
 void table_put(Ctx& x, id self, SEL, id object, id key) {
     if (!key || !object) throw ObjC::ObjCError("nil NSMapTable key or value");
     auto& t = rt(x).host<Table>(self); t.map = true; const auto i = find(x, t, key);
@@ -321,6 +453,91 @@ id table_enumerator(Ctx& x, id self, SEL) { return send(x, table_array(x, self, 
 id table_keys(Ctx& x, id self, SEL) { auto& t = rt(x).host<Table>(self); prune(x, t); std::vector<id> keys; for (auto& item : t.items) keys.push_back(get(x, item.first)); return send(x, makeArray(x, keys), "objectEnumerator"); }
 id table_any(Ctx& x, id self, SEL) { auto a = arrayItems(x, table_array(x, self, 0)); return a.empty() ? 0 : a[0]; }
 id table_dictionary(Ctx& x, id self, SEL) { auto& t = rt(x).host<Table>(self); prune(x, t); std::vector<std::pair<id,id>> result; for (auto& item : t.items) result.emplace_back(get(x, item.first), get(x, item.second)); return makeDict(x, result); }
+
+// NSFastEnumeration (for ... in): an NSMapTable yields its keys, an NSHashTable its objects,
+// from a snapshot taken when enumeration starts. Crossy Road's stub returned 0 (nothing).
+uint32_t table_enumerate(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_t len) {
+    auto& t = rt(x).host<Table>(self);
+    const uint32_t pos = x.mem.read<uint32_t>(state);
+    if (pos == 0) {
+        prune(x, t);
+        t.snapshot.clear();
+        for (auto& item : t.items) t.snapshot.push_back(get(x, item.first));
+        if (!t.mutationCell) t.mutationCell = x.proc.heap().allocZeroed(4);
+        x.mem.write<uint32_t>(state + 8, t.mutationCell);
+    }
+    if (pos >= t.snapshot.size() || !len) return 0;
+    const uint32_t n = std::min<uint32_t>(len, uint32_t(t.snapshot.size()) - pos);
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(buf + i * 4, t.snapshot[pos + i]);
+    x.mem.write<uint32_t>(state + 4, buf);
+    x.mem.write<uint32_t>(state, pos + n);
+    return n;
+}
+
+// NSPointerArray: an ordered list that may hold NULL, with the same memory options as the
+// tables (strong, zeroing weak, opaque). Crossy Road's +pointerArrayWithOptions: returned nil.
+struct PointerArray : ObjC::HostObject { uint32_t options = 0; std::vector<Cell> cells; std::vector<id> snapshot; uint32_t mutationCell = 0; };
+PointerArray& PA(Ctx& x, id a) { return rt(x).host<PointerArray>(a); }
+void pa_checkIndex(const PointerArray& a, uint32_t i, bool insert = false) {
+    if (i > a.cells.size() || (!insert && i == a.cells.size())) throw ObjC::ObjCError("NSPointerArray index out of bounds");
+}
+id pa_init(Ctx& x, id self, SEL, uint32_t options) { validateOptions(options); PA(x, self).options = options; return self; }
+id pa_factory(Ctx& x, Class cls, SEL, uint32_t options) { return autoreleased(x, pa_init(x, rt(x).createInstance(cls), 0, options)); }
+id pa_strong(Ctx& x, Class cls, SEL) { return pa_factory(x, cls, 0, 0); }
+id pa_weak(Ctx& x, Class cls, SEL) { return pa_factory(x, cls, 0, 5); }
+uint32_t pa_count(Ctx& x, id self, SEL) { return uint32_t(PA(x, self).cells.size()); }
+void pa_setCount(Ctx& x, id self, SEL, uint32_t n) {
+    auto& a = PA(x, self);
+    while (a.cells.size() > n) { drop(x, a.cells.back(), a.options); a.cells.pop_back(); }
+    while (a.cells.size() < n) a.cells.push_back(hold(x, 0, a.options));
+}
+id pa_at(Ctx& x, id self, SEL, uint32_t i) { auto& a = PA(x, self); pa_checkIndex(a, i); return get(x, a.cells[i]); }
+void pa_add(Ctx& x, id self, SEL, id p) { auto& a = PA(x, self); a.cells.push_back(hold(x, p, a.options)); }
+void pa_insert(Ctx& x, id self, SEL, id p, uint32_t i) { auto& a = PA(x, self); pa_checkIndex(a, i, true); a.cells.insert(a.cells.begin() + i, hold(x, p, a.options)); }
+void pa_remove(Ctx& x, id self, SEL, uint32_t i) {
+    auto& a = PA(x, self); pa_checkIndex(a, i);
+    Cell c = a.cells[i]; a.cells.erase(a.cells.begin() + i); drop(x, c, a.options);
+}
+void pa_replace(Ctx& x, id self, SEL, uint32_t i, id p) {
+    auto& a = PA(x, self); pa_checkIndex(a, i);
+    Cell old = a.cells[i]; a.cells[i] = hold(x, p, a.options); drop(x, old, a.options);
+}
+void pa_compact(Ctx& x, id self, SEL) {
+    auto& a = PA(x, self);
+    std::vector<Cell> keep, gone;
+    for (auto& c : a.cells) (get(x, c) ? keep : gone).push_back(c);
+    a.cells = std::move(keep);
+    for (auto& c : gone) drop(x, c, a.options);
+}
+id pa_allObjects(Ctx& x, id self, SEL) {
+    std::vector<id> out;
+    for (auto& c : PA(x, self).cells) if (const id o = get(x, c)) out.push_back(o);
+    return makeArray(x, out);
+}
+uint32_t pa_enumerate(Ctx& x, id self, SEL, GuestPtr state, GuestPtr buf, uint32_t len) {
+    auto& a = PA(x, self);
+    const uint32_t pos = x.mem.read<uint32_t>(state);
+    if (pos == 0) {
+        a.snapshot.clear();
+        for (auto& c : a.cells) a.snapshot.push_back(get(x, c));
+        if (!a.mutationCell) a.mutationCell = x.proc.heap().allocZeroed(4);
+        x.mem.write<uint32_t>(state + 8, a.mutationCell);
+    }
+    if (pos >= a.snapshot.size() || !len) return 0;
+    const uint32_t n = std::min<uint32_t>(len, uint32_t(a.snapshot.size()) - pos);
+    for (uint32_t i = 0; i < n; ++i) x.mem.write<uint32_t>(buf + i * 4, a.snapshot[pos + i]);
+    x.mem.write<uint32_t>(state + 4, buf);
+    x.mem.write<uint32_t>(state, pos + n);
+    return n;
+}
+void pa_free(Ctx& x, id self, SEL) {
+    if (auto* a = rt(x).hostIf<PointerArray>(self)) {
+        auto cells = std::move(a->cells); a->cells.clear();
+        for (auto& c : cells) drop(x, c, a->options);
+        if (a->mutationCell) { x.proc.heap().free(a->mutationCell); a->mutationCell = 0; }
+    }
+    rt(x).disposeInstance(x.cpu, self);
+}
 
 // Attribute indices and ranges use UTF-16 code units, as NSString does.
 struct Attributed : ObjC::HostObject { std::u16string text; std::vector<id> attributes; };
@@ -440,7 +657,8 @@ id collation_sort(Ctx& x,id,SEL,id array,SEL selector) {auto items=arrayItems(x,
 void registerCompatibilityClasses(Process&, ObjC::Runtime& r) {
     r.defineClass("NSPredicate","NSObject")
       .cm<&predicate_value>("predicateWithValue:").cm<&predicate_format>("predicateWithFormat:")
-      .cm<&predicate_array>("predicateWithFormat:argumentArray:").m<&evaluate>("evaluateWithObject:")
+      .cm<&predicate_array>("predicateWithFormat:argumentArray:").cm<&predicate_block>("predicateWithBlock:")
+      .m<&evaluate>("evaluateWithObject:")
       .m<&immutable_copy>("copyWithZone:").m<&immutable_copy>("copy").m<&predicate_free>("dealloc");
     r.defineClass("NSCompoundPredicate","NSPredicate")
       .cm<&compound_and>("andPredicateWithSubpredicates:").cm<&compound_or>("orPredicateWithSubpredicates:")
@@ -452,14 +670,23 @@ void registerCompatibilityClasses(Process&, ObjC::Runtime& r) {
       .m<&hash_init>("initWithOptions:capacity:").m<&hash_add>("addObject:").m<&table_get>("member:")
       .m<&hash_contains>("containsObject:").m<&table_remove>("removeObject:").m<&table_clear>("removeAllObjects")
       .m<&table_count>("count").m<&table_array>("allObjects").m<&table_enumerator>("objectEnumerator")
-      .m<&table_any>("anyObject").m<&table_free>("dealloc");
+      .m<&table_any>("anyObject").m<&table_enumerate>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
+      .m<&table_free>("dealloc");
     r.defineClass("NSMapTable","NSObject")
       .cm<&map_factory>("mapTableWithKeyOptions:valueOptions:").cm<&map_ss>("strongToStrongObjectsMapTable")
       .cm<&map_sw>("strongToWeakObjectsMapTable").cm<&map_ws>("weakToStrongObjectsMapTable").cm<&map_ww>("weakToWeakObjectsMapTable")
       .m<&map_init>("initWithKeyOptions:valueOptions:capacity:").m<&table_put>("setObject:forKey:")
       .m<&table_get>("objectForKey:").m<&table_remove>("removeObjectForKey:").m<&table_clear>("removeAllObjects")
       .m<&table_count>("count").m<&table_enumerator>("objectEnumerator").m<&table_keys>("keyEnumerator")
-      .m<&table_dictionary>("dictionaryRepresentation").m<&table_free>("dealloc");
+      .m<&table_dictionary>("dictionaryRepresentation").m<&table_enumerate>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
+      .m<&table_free>("dealloc");
+    r.defineClass("NSPointerArray","NSObject")
+      .cm<&pa_factory>("pointerArrayWithOptions:").cm<&pa_strong>("strongObjectsPointerArray").cm<&pa_weak>("weakObjectsPointerArray")
+      .m<&pa_init>("initWithOptions:").m<&pa_count>("count", "I@:").m<&pa_setCount>("setCount:", "v@:I")
+      .m<&pa_at>("pointerAtIndex:", "^v@:I").m<&pa_add>("addPointer:", "v@:^v").m<&pa_insert>("insertPointer:atIndex:", "v@:^vI")
+      .m<&pa_remove>("removePointerAtIndex:", "v@:I").m<&pa_replace>("replacePointerAtIndex:withPointer:", "v@:I^v")
+      .m<&pa_compact>("compact", "v@:").m<&pa_allObjects>("allObjects")
+      .m<&pa_enumerate>("countByEnumeratingWithState:objects:count:", "I@:^v^@I").m<&pa_free>("dealloc");
     r.defineClass("NSAttributedString","NSObject")
       .m<&attr_init>("initWithString:attributes:").m<&attr_init_string>("initWithString:").m<&attr_init_attr>("initWithAttributedString:")
       .m<&attr_string>("string").m<&attr_length>("length").m<&attr_attributes>("attributesAtIndex:effectiveRange:")

@@ -1,48 +1,114 @@
 import SwiftUI
 import UIKit
 
-/// "Add to Home Screen" for one game: writes a Web Clip profile and hands it to the
-/// system share sheet. iOS only adds the icon after the player approves the profile in
-/// Settings; an app cannot install a profile or create a Home Screen icon by itself.
+/// "Add to Home Screen" for one game, through Shortcuts.
+///
+/// Every runnable game is a "Play Game" action (GameIntents.swift). The player makes a
+/// shortcut from it in the Shortcuts app and adds that to the Home Screen; tapping the icon
+/// opens HydrogenVM straight into the game. iOS lets no app place a Home Screen icon by
+/// itself, so the Shortcuts steps are the player's part. The game's icon can be saved to
+/// Photos first, to use as the shortcut's Home Screen picture.
 struct AddToHomeScreenSheet: View {
     let app: InstalledApp
     @Environment(\.dismiss) private var dismiss
-    @State private var profileURL: URL?
-    @State private var errorMessage: String?
-    @State private var iconMissing = false
+    @Environment(\.openURL) private var openURL
+    @State private var iconImage: UIImage?
+    @State private var copiedName = false
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Text("This adds “\(app.title)” to the Home Screen with its own icon. Tapping the icon opens HydrogenVM straight into the game.")
-                }
-                Section("Install") {
-                    Text("1. Tap Share, choose Save to Files.\n2. In Files, tap the .mobileconfig file.\n3. Allow the download, then tap Install in Settings.")
-                        .font(.callout)
-                    if let profileURL {
-                        ShareLink(item: profileURL) {
-                            Label("Share the profile", systemImage: "square.and.arrow.up")
+            ScrollView {
+                VStack(spacing: 0) {
+                    VStack(spacing: 10) {
+                        GlossIcon(path: app.info.iconPath, title: app.title, size: 84)
+                        Text(app.title)
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundStyle(Gloss.ink)
+                            .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
+                            .multilineTextAlignment(.center)
+                        Text("A Home Screen shortcut that opens straight into the game")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Gloss.inkSoft)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.top, 24)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 16)
+
+                    if !app.info.runnable {
+                        GlossCard {
+                            Label("This game can't run yet, so Shortcuts doesn't offer it.", systemImage: "exclamationmark.triangle")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Gloss.warn)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .accessibilityIdentifier("share-home-screen-profile")
-                        Text(profileURL.lastPathComponent)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                    } else if let errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                    } else {
-                        ProgressView()
+                        .padding(.bottom, 12)
                     }
-                }
-                if iconMissing {
-                    Section {
-                        Text("This game's icon could not be read, so iOS will draw its own placeholder icon. The link still opens the game.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+
+                    Button {
+                        if let url = URL(string: "shortcuts://create-shortcut") { openURL(url) }
+                    } label: {
+                        Label("Open Shortcuts", systemImage: "square.2.layers.3d.top.filled")
                     }
+                    .buttonStyle(GlossButtonStyle(kind: .blue))
+                    .padding(.horizontal, 16)
+                    .accessibilityIdentifier("add-home-screen-open-shortcuts")
+
+                    GlossSectionLabel("In Shortcuts")
+                    GlossCard {
+                        StepRow(number: 1, text: "Tap **Add Action**, search for **Play Game** and pick it under HydrogenVM.")
+                        GlossRule()
+                        StepRow(number: 2, text: "Tap **Game** in the action and choose **\(app.title)**.")
+                        GlossRule()
+                        StepRow(number: 3, text: "Tap the shortcut's name at the top, then **Add to Home Screen**.")
+                        GlossRule()
+                        StepRow(number: 4, text: "Tap the icon to use the game's picture (saved below), name it, and tap **Add**.")
+                    }
+
+                    GlossSectionLabel("The game's icon")
+                    GlossCard {
+                        if let iconImage {
+                            let picture = Image(uiImage: iconImage)
+                            ShareLink(item: picture, preview: SharePreview(app.title, image: picture)) {
+                                actionRow("Save icon to Photos", systemImage: "photo.badge.arrow.down")
+                            }
+                            .accessibilityIdentifier("add-home-screen-save-icon")
+                        } else {
+                            Text("This game has no icon HydrogenVM can read; Shortcuts will use its own.")
+                                .font(.system(size: 13)).foregroundStyle(Gloss.inkSoft)
+                                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        GlossRule()
+                        Button {
+                            UIPasteboard.general.string = app.title
+                            copiedName = true
+                        } label: {
+                            actionRow(copiedName ? "Name copied" : "Copy the game's name",
+                                      systemImage: copiedName ? "checkmark" : "doc.on.doc")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text("Share → Save Image puts the icon in Photos. In step 4, choose Photo and pick it.")
+                        .font(.system(size: 12)).foregroundStyle(Gloss.inkSoft)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24).padding(.top, 6)
+
+                    GlossSectionLabel("Also")
+                    GlossCard {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "mic.fill").foregroundStyle(Gloss.link).frame(width: 24)
+                            Text("Ask Siri: “Play \(app.title) in HydrogenVM”. The game also shows up in Spotlight search.")
+                                .font(.system(size: 14)).foregroundStyle(Gloss.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.bottom, 28)
                 }
             }
+            .background(LinenBackground())
             .navigationTitle("Add to Home Screen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -50,40 +116,50 @@ struct AddToHomeScreenSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .task { writeProfile() }
+            .task {
+                if iconImage == nil, let path = app.info.iconPath { iconImage = AppIcon.load(path) }
+                HydrogenShortcuts.updateAppShortcutParameters()
+            }
         }
     }
 
-    private func writeProfile() {
-        guard profileURL == nil, errorMessage == nil else { return }
-        guard let link = GameLink.url(forGameID: app.info.bundleIdentifier) else {
-            // A bundle id with characters a link cannot carry (empty, too long, unusual
-            // spelling): say so instead of writing a profile that would never open.
-            errorMessage = "This game's id can't be used in a link: \(app.info.bundleIdentifier)"
-            return
+    private func actionRow(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage).font(.system(size: 16, weight: .semibold)).foregroundStyle(Gloss.link).frame(width: 24)
+            Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(Gloss.ink)
+            Spacer()
         }
-        let icon = Self.iconPNG(app.info.iconPath)
-        iconMissing = icon == nil
-        let profile = WebClipProfile(gameID: app.info.bundleIdentifier, title: app.title,
-                                    link: link, iconPNG: icon)
-        // One folder per game, so two games called the same thing never overwrite each other.
-        let folder = URL.documentsDirectory
-            .appending(path: "Home Screen", directoryHint: .isDirectory)
-            .appending(path: app.info.bundleIdentifier, directoryHint: .isDirectory)
-        let file = folder.appending(path: profile.filename)
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try Data(profile.payload().utf8).write(to: file, options: .atomic)
-            profileURL = file
-        } catch {
-            errorMessage = "Could not write the profile: \(error.localizedDescription)"
-        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 48)
+        .contentShape(.rect)
+    }
+}
+
+/// One numbered step.
+private struct StepRow: View {
+    let number: Int
+    let text: AttributedString
+
+    /// `text` is Markdown (**bold** for the names to tap).
+    init(number: Int, text: String) {
+        self.number = number
+        self.text = (try? AttributedString(markdown: text)) ?? AttributedString(text)
     }
 
-    /// The game's own icon as PNG. `AppIcon.load` handles both ordinary PNGs and the
-    /// Xcode-crushed (CgBI) icons old apps ship.
-    private static func iconPNG(_ path: String?) -> Data? {
-        guard let path, let image = AppIcon.load(path) else { return nil }
-        return image.pngData()
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color(uiColor: Gloss.barMid)))
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(Gloss.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
     }
 }

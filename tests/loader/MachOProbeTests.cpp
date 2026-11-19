@@ -274,7 +274,99 @@ int main() {
         checkTrie("export_trie_child_at_end", {0, 1, 'x', 0, 5}, "export trie child offset out of range");
         checkTrie("export_trie_child_past_end", {0, 1, 'x', 0, 6}, "export trie child offset out of range");
         checkTrie("export_trie_at_work_limit", largeExportTrie(false), "");
-        checkTrie("export_trie_exceeds_work_limit", largeExportTrie(true), "export trie work limit exceeded");
+        // A normal tree past the old fixed cap of 65,536 visits loads (big games have one).
+        checkTrie("export_trie_large_tree_beyond_old_cap", largeExportTrie(true), "");
+        // A small trie whose nodes are shared (each of 20 nodes points twice at the next one)
+        // needs 2^21 visits from about 200 bytes: the work cap, linear in the trie size, stops it.
+        {
+            Bytes shared;
+            const int k = 20;
+            auto uleb2 = [&](size_t v) { shared.push_back(uint8_t((v & 0x7f) | 0x80)); shared.push_back(uint8_t(v >> 7)); };
+            for (int i = 0; i < k; ++i) {
+                const size_t next = size_t(i + 1) * 10;   // every internal node is 10 bytes
+                shared.push_back(0);                      // no terminal
+                shared.push_back(2);                      // two children ...
+                for (char e : {'a', 'b'}) { shared.push_back(uint8_t(e)); shared.push_back(0); uleb2(next); }   // ... both the same node
+            }
+            shared.insert(shared.end(), {0, 0});          // the leaf
+            checkTrie("export_trie_shared_nodes_hit_work_limit", shared, "export trie work limit exceeded");
+        }
+        // Few visits but long edges into shared nodes: the root and a middle node each have
+        // 255 children with 250-byte edges, all pointing at the same next node. That is about
+        // 65,000 visits (under the visit cap for this 130 KB trie) building 32 MB of names.
+        // The byte budget, also linear in the trie size, stops it.
+        {
+            Bytes longEdges;
+            const size_t children = 255, edgeLen = 250, nodeSize = 2 + children * (edgeLen + 1 + 3);
+            auto uleb3 = [&](size_t v) {
+                longEdges.push_back(uint8_t((v & 0x7f) | 0x80));
+                longEdges.push_back(uint8_t(((v >> 7) & 0x7f) | 0x80));
+                longEdges.push_back(uint8_t(v >> 14));
+            };
+            for (size_t node = 0; node < 2; ++node) {
+                longEdges.push_back(0);
+                longEdges.push_back(uint8_t(children));
+                for (size_t c = 0; c < children; ++c) {
+                    longEdges.insert(longEdges.end(), edgeLen, uint8_t('a' + c % 26));
+                    longEdges.push_back(0);
+                    uleb3((node + 1) * nodeSize);
+                }
+            }
+            longEdges.insert(longEdges.end(), {0, 0});
+            checkTrie("export_trie_long_shared_edges_hit_byte_limit", longEdges, "export trie work limit exceeded");
+        }
+        // Empty labels into a shared node whose terminal is long: 255 x 255 visits each read the
+        // 60 KB terminal header region. Counting the bytes each visit reads stops it.
+        {
+            Bytes longTerminal;
+            const size_t children = 255, entry = 1 + 3, rootSize = 2 + children * entry, midSize = 2 + children * entry;
+            auto uleb3 = [&](size_t v) {
+                longTerminal.push_back(uint8_t((v & 0x7f) | 0x80));
+                longTerminal.push_back(uint8_t(((v >> 7) & 0x7f) | 0x80));
+                longTerminal.push_back(uint8_t(v >> 14));
+            };
+            longTerminal.push_back(0); longTerminal.push_back(uint8_t(children));
+            for (size_t c = 0; c < children; ++c) { longTerminal.push_back(0); uleb3(rootSize); }   // "" -> middle
+            longTerminal.push_back(0); longTerminal.push_back(uint8_t(children));
+            for (size_t c = 0; c < children; ++c) { longTerminal.push_back(0); uleb3(rootSize + midSize); }   // "" -> leaf
+            const size_t pad = 60000;   // the leaf: a terminal of 60,000 bytes and no children
+            longTerminal.push_back(uint8_t((pad & 0x7f) | 0x80)); longTerminal.push_back(uint8_t(((pad >> 7) & 0x7f) | 0x80));
+            longTerminal.push_back(uint8_t(pad >> 14));
+            longTerminal.insert(longTerminal.end(), pad, 0);
+            longTerminal.push_back(0);
+            checkTrie("export_trie_shared_long_terminal_hits_byte_limit", longTerminal, "export trie work limit exceeded");
+        }
+        // The bind opcode stream's SLEB (BIND_OPCODE_SET_ADDEND_SLEB) has the same 10-byte limit.
+        auto checkBind = [&](const std::string& name, const Bytes& binds, const std::string& expectedError) {
+            dylib.resize(0x1000);
+            dylib.insert(dylib.end(), binds.begin(), binds.end());
+            put32(172, 0x1000);
+            put32(176, uint32_t(binds.size()));
+            put32(200, 0);
+            bool ok = false;
+            try {
+                Hydrogen::Memory::GuestArena testArena;
+                Hydrogen::Loader::loadMachO(testArena, dylib, name, {0x04000000u});
+                ok = expectedError.empty();
+            } catch (const Hydrogen::Loader::MachOError& e) {
+                ok = !expectedError.empty() && std::string(e.what()).find(expectedError) != std::string::npos;
+                if (!ok) std::printf("%s: unexpected error '%s'\n", name.c_str(), e.what());
+            }
+            put32(172, 0);
+            put32(176, 0);
+            std::printf("%s %s\n", ok ? "PASS" : "FAIL", name.c_str());
+            if (ok) ++passed; else ++failed;
+        };
+        Bytes tenByteSleb{0x60};
+        tenByteSleb.insert(tenByteSleb.end(), 9, 0x80);
+        tenByteSleb.insert(tenByteSleb.end(), {0x00, 0x00});   // ...last byte, then BIND_OPCODE_DONE
+        checkBind("bind_ten_byte_sleb", tenByteSleb, "");
+        Bytes elevenByteSleb{0x60};
+        elevenByteSleb.insert(elevenByteSleb.end(), 10, 0x80);
+        elevenByteSleb.insert(elevenByteSleb.end(), {0x00, 0x00});
+        checkBind("bind_overlong_sleb", elevenByteSleb, "LEB128 value too long");
+        checkTrie("export_trie_overlong_uleb", Bytes{0, 1, 'x', 0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01},
+                  "LEB128 value too long");
         checkTrie("export_trie_cycle", {0x00, 0x02, 'a', 0x00, 0x00, 'b', 0x00, 0x00}, "export trie cycle detected");
     }
 

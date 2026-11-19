@@ -17,10 +17,10 @@ enum GameLinkError: Error, Equatable {
     }
 }
 
-/// The Home Screen link for one game, and the Web Clip profile that installs its icon.
+/// The Home Screen link for one game (`hydrogenvm://run/<game-id>`).
 ///
 /// Foundation only (no UIKit/SwiftUI) so `tools/tests/swift/PlayerTests.swift` can
-/// cover the parser and the generated profile on the macOS runner.
+/// cover the parser and the web clip profile on the macOS runner.
 enum GameLink {
     static let scheme = "hydrogenvm"
     static let runHost = "run"
@@ -80,6 +80,34 @@ enum GameLink {
     }
 }
 
+/// A game as a Shortcuts action ("Play <game>").
+///
+/// Add to Home Screen now goes through the "Play Game" App Intent (GameIntents.swift); this
+/// activity stays so "Play <game>" shortcuts players already made keep opening their game.
+///
+/// Foundation only, so `tools/tests/swift/PlayerTests.swift` covers it on macOS.
+enum GameShortcut {
+    /// Declared in Info.plist (`NSUserActivityTypes`).
+    static let activityType = "com.lfull.HydrogenVM.play-game"
+    static let gameKey = "gameID"
+
+    static func title(forGameNamed name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "Play " + (trimmed.isEmpty ? "Game" : trimmed)
+    }
+
+    /// The activity's userInfo, or nil for an id a link cannot carry.
+    static func userInfo(forGameID id: String) -> [String: String]? {
+        GameLink.url(forGameID: id) == nil ? nil : [gameKey: id]
+    }
+
+    /// The game link for an incoming activity, or nil if it is not ours or is malformed.
+    static func link(activityType type: String, userInfo: [AnyHashable: Any]?) -> URL? {
+        guard type == activityType, let id = userInfo?[gameKey] as? String else { return nil }
+        return GameLink.url(forGameID: id)
+    }
+}
+
 /// One Web Clip configuration profile (`.mobileconfig`) that adds a game to the Home
 /// Screen with the game's own name and icon, opening `hydrogenvm://run/<game-id>`.
 ///
@@ -128,6 +156,8 @@ struct WebClipProfile {
             lines.append("\t\t\t<data>\(icon)</data>")
         }
         lines += [
+            "\t\t\t<key>IgnoreManifestScope</key>",
+            "\t\t\t<true/>",
             "\t\t\t<key>IsRemovable</key>",
             "\t\t\t<true/>",
             "\t\t\t<key>Label</key>",

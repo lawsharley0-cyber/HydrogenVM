@@ -1,0 +1,57 @@
+{
+  "name": "Known fixture after restart: equip the sole custom Knight in slot zero",
+  "steps": [
+    {
+      "id": "cards",
+      "expected": "cards",
+      "actions": [
+        {
+          "tap": [
+            95,
+            540
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "select-custom",
+      "expected": "select-custom",
+      "actions": [
+        {
+          "tap": [
+            120,
+            420
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "use",
+      "expected": "use",
+      "actions": [
+        {
+          "tap": [
+            120,
+            450
+          ]
+        }
+      ],
+      "settleSeconds": 3
+    },
+    {
+      "id": "replace-musketeer",
+      "expected": "replace-musketeer",
+      "actions": [
+        {
+          "tap": [
+            40,
+            120
+          ]
+        }
+      ],
+      "settleSeconds": 4
+    }
+  ]
+}

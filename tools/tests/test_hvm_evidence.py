@@ -82,6 +82,12 @@ class FingerprintTests(unittest.TestCase):
 
 
 class AdapterTests(unittest.TestCase):
+    def test_two_ipas_of_one_game_are_two_runs(self):
+        # Two versions of Terraria share a bundle id; the probe's per-file key keeps them apart.
+        rows = [result("com.505games.terraria", ipaKey="aaaaaa"), result("com.505games.terraria", ipaKey="bbbbbb")]
+        bundle = bundle_from_probe(probe_summary(rows))
+        self.assertEqual(len({run["runId"] for run in bundle["runs"]}), 2)
+
     def test_probe_distinguishes_failure_classes(self):
         rows = [
             result("import", issues=[issue("load", "bad Mach-O", 100)]),
