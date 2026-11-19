@@ -978,18 +978,84 @@ struct RunView: View {
         }
     }
 
-    private var expandedHUDContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Header Bar with Title, FPS & Frame Time, Collapse Button
-            HStack(spacing: 8) {
-                Image(systemName: "gamecontroller.fill")
-                    .foregroundStyle(.tint)
-                Text(app.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+    private var nextLaunchAndControllerControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: $model.controllerLayout.enabled) {
+                Text("On-screen controller")
+                    .font(.caption)
+            }
+            .accessibilityIdentifier("player-virtual-controller")
 
-                Spacer(minLength: 8)
+            if model.controllerLayout.enabled {
+                Picker("Stick Mode", selection: $model.controllerLayout.thumbstickMode) {
+                    ForEach(VirtualThumbstickMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("player-virtual-controller-mode")
+
+                Button {
+                    editingControllerTargets.toggle()
+                    if editingControllerTargets {
+                        hudExpanded = false
+                        overlay.minimize()
+                    }
+                } label: {
+                    Label(editingControllerTargets ? "Finish Editing Targets" : "Adjust Button Targets on Screen",
+                          systemImage: "hand.draw")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier("player-virtual-controller-targets")
+            }
+
+            Toggle(isOn: Binding(get: { !softwareRenderer }, set: { softwareRenderer = !$0 })) {
+                Text("GPU rendering for this game (next launch)")
+                    .font(.caption)
+            }
+            .accessibilityIdentifier("player-gpu-rendering")
+
+            Toggle(isOn: $allowInternet) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Allow internet for this game (next launch)")
+                        .font(.caption)
+                    Text("Lets it reach its own servers, e.g. to download levels.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("player-allow-internet")
+
+            Toggle(isOn: $unlockFrameRate) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Unlock frame rate (experimental, next launch)")
+                        .font(.caption)
+                    Text("Runs games capped at 30 fps at 60. A game that counts frames instead of time may run too fast.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("player-unlock-frame-rate")
+
+            // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
+            virtualScreenControls
+        }
+    }
+
+    private var floatingHUDPill: some View {
+        Group {
+            if hudExpanded {
+                VStack(alignment: .leading, spacing: 14) {
+                    // Header Bar with Title, FPS & Frame Time, Collapse Button
+                    HStack(spacing: 8) {
+                        Image(systemName: "gamecontroller.fill")
+                            .foregroundStyle(.tint)
+                        Text(app.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+
+                        Spacer(minLength: 8)
 
                         // FPS & Frame-time Badge
                         HStack(spacing: 4) {
@@ -1020,6 +1086,7 @@ struct RunView: View {
                         .accessibilityIdentifier("hud-minimize")
                         .accessibilityLabel("Minimize Controls")
                     }
+                    .fixedSize(horizontal: false, vertical: true)
 
                     Divider().background(.white.opacity(0.2))
 
@@ -1085,8 +1152,9 @@ struct RunView: View {
                         .disabled(model.closing)
                         .accessibilityIdentifier("player-inspect")
                     }
+                    .fixedSize(horizontal: false, vertical: true)
 
-                    // Display Scaling & Interpolation Settings
+                    // Display Scaling & Interpolation Settings (kept outside ScrollView so segmented touches are never delayed)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Viewport Scaling & Interpolation")
                             .font(.caption2.weight(.semibold))
@@ -1130,66 +1198,15 @@ struct RunView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
 
-                        Toggle(isOn: $model.controllerLayout.enabled) {
-                            Text("On-screen controller")
-                                .font(.caption)
+                    // Lower controller & next-launch toggles scroll when viewport height is tight (e.g. landscape)
+                    ViewThatFits(in: .vertical) {
+                        nextLaunchAndControllerControls
+                        ScrollView(.vertical, showsIndicators: true) {
+                            nextLaunchAndControllerControls
                         }
-                        .accessibilityIdentifier("player-virtual-controller")
-
-                        if model.controllerLayout.enabled {
-                            Picker("Stick Mode", selection: $model.controllerLayout.thumbstickMode) {
-                                ForEach(VirtualThumbstickMode.allCases) { mode in
-                                    Text(mode.rawValue).tag(mode)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .accessibilityIdentifier("player-virtual-controller-mode")
-
-                            Button {
-                                editingControllerTargets.toggle()
-                                if editingControllerTargets {
-                                    hudExpanded = false
-                                    overlay.minimize()
-                                }
-                            } label: {
-                                Label(editingControllerTargets ? "Finish Editing Targets" : "Adjust Button Targets on Screen",
-                                      systemImage: "hand.draw")
-                                    .font(.caption)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .accessibilityIdentifier("player-virtual-controller-targets")
-                        }
-
-                        Toggle(isOn: Binding(get: { !softwareRenderer }, set: { softwareRenderer = !$0 })) {
-                            Text("GPU rendering for this game (next launch)")
-                                .font(.caption)
-                        }
-                        .accessibilityIdentifier("player-gpu-rendering")
-
-                        Toggle(isOn: $allowInternet) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Allow internet for this game (next launch)")
-                                    .font(.caption)
-                                Text("Lets it reach its own servers, e.g. to download levels.")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }
-                        .accessibilityIdentifier("player-allow-internet")
-
-                        Toggle(isOn: $unlockFrameRate) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Unlock frame rate (experimental, next launch)")
-                                    .font(.caption)
-                                Text("Runs games capped at 30 fps at 60. A game that counts frames instead of time may run too fast.")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }
-                        .accessibilityIdentifier("player-unlock-frame-rate")
-
-                        // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
-                        virtualScreenControls
                     }
 
                     // Audio & System Footer
@@ -1224,17 +1241,7 @@ struct RunView: View {
                         }
                         .accessibilityIdentifier("player-quit")
                     }
-                }
-    }
-
-    private var floatingHUDPill: some View {
-        Group {
-            if hudExpanded {
-                ViewThatFits(in: .vertical) {
-                    expandedHUDContent
-                    ScrollView(.vertical, showsIndicators: true) {
-                        expandedHUDContent
-                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(14)
                 .frame(maxWidth: 360)
