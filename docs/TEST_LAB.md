@@ -533,6 +533,9 @@ It interrupts on the original missing instance selector and passes after the
 shared compatibility method. AH–AN are reserved by the separate Canabalt #437
 and parked Super Hexagon #438 work; these IDs avoid integration collisions.
 
+### TL-AN — Mach exception metadata
+
+Super Hexagon queries thread exception configuration during startup. The case checks an initially empty thread, grouped masks after metadata setup, scalar behavior/flavor values, and invalid-mask rejection. The runner additionally checks task isolation, send-right copies, swap ABI, destroyed endpoints and checked output spans. Metadata setup does not implement Mach exception message delivery; non-null handlers report that unavailable behavior explicitly.
 
 ### TL-AR — Sequential Core Graphics data provider
 

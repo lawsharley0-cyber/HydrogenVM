@@ -94,6 +94,7 @@ static const char *kAppBuild        = "1";
 #define CASE_AK @"TL-AK"
 #define CASE_AL @"TL-AL"
 #define CASE_AM @"TL-AM"
+#define CASE_AN @"TL-AN"
 #define CASE_AO @"TL-AO"
 #define CASE_AP @"TL-AP"
 #define CASE_AQ @"TL-AQ"
@@ -2236,6 +2237,30 @@ static TLResult *runCaseAG(void) {
     return r;
 }
 
+extern unsigned mach_thread_self(void);
+extern int thread_get_exception_ports(unsigned, unsigned, unsigned *, unsigned *, unsigned *, unsigned *, unsigned *);
+extern int thread_set_exception_ports(unsigned, unsigned, unsigned, int, int);
+static TLResult *runCaseAN(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AN version:1];
+    writeCheckpoint(CASE_AN); r.checkpointWritten = YES;
+    double start = monoMs();
+    unsigned thread = mach_thread_self(), count = 4;
+    unsigned masks[4] = {0}, ports[4] = {0}, behaviors[4] = {0}, flavors[4] = {0};
+    BOOL ok = thread_get_exception_ports(thread, 6, masks, &count, ports, behaviors, flavors) == 0 && count == 0;
+    ok = ok && thread_set_exception_ports(thread, 6, 0, 1, 0) == 0;
+    count = 4;
+    ok = ok && thread_get_exception_ports(thread, 6, masks, &count, ports, behaviors, flavors) == 0 &&
+        count == 1 && masks[0] == 6 && ports[0] == 0 && behaviors[0] == 1 && flavors[0] == 0;
+    count = 4;
+    ok = ok && thread_get_exception_ports(thread, 0x80000000, masks, &count, ports, behaviors, flavors) == 4 && count == 4;
+    r.expected = @"empty initial thread; grouped mask6/null port/default behavior; invalid mask rejected";
+    r.actual = ok ? @"Mach exception metadata correct" : @"Mach exception metadata mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Super Hexagon crash-handler startup query regression";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
 // Host-driven case: run with the project-owned iPad-only TestLab variant.
 static TLResult *runCaseAO(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_AO version:1];
@@ -2515,7 +2540,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP, CASE_AR];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AN, CASE_AP, CASE_AR];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -2600,6 +2625,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseAL()];
         } else if ([cid isEqualToString:CASE_AM]) {
             [results addObject:runCaseAM()];
+        } else if ([cid isEqualToString:CASE_AN]) {
+            [results addObject:runCaseAN()];
         } else if ([cid isEqualToString:CASE_AR]) {
             [results addObject:runCaseAR()];
         } else if ([cid isEqualToString:CASE_AP]) {
@@ -2668,6 +2695,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_AK]) return runCaseAK();
     if ([caseId isEqualToString:CASE_AL]) return runCaseAL();
     if ([caseId isEqualToString:CASE_AM]) return runCaseAM();
+    if ([caseId isEqualToString:CASE_AN]) return runCaseAN();
     if ([caseId isEqualToString:CASE_AO]) return runCaseAO();
     if ([caseId isEqualToString:CASE_AR]) return runCaseAR();
     if ([caseId isEqualToString:CASE_AP]) return runCaseAP();
@@ -2713,8 +2741,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP, CASE_AR ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AH: String search", @"AI: Legacy glyphs", @"AJ: Indexed format", @"AK: Animation BOOL", @"AL: Window lifetime", @"AM: Timer pool", @"AP: Location query", @"AR: Sequential provider" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AN, CASE_AP, CASE_AR ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AH: String search", @"AI: Legacy glyphs", @"AJ: Indexed format", @"AK: Animation BOOL", @"AL: Window lifetime", @"AM: Timer pool", @"AN: Exception ports", @"AP: Location query", @"AR: Sequential provider" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -2756,6 +2784,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_AK version:1],
         [[TLResult alloc] initWithId:CASE_AL version:1],
         [[TLResult alloc] initWithId:CASE_AM version:1],
+        [[TLResult alloc] initWithId:CASE_AN version:1],
         [[TLResult alloc] initWithId:CASE_AP version:1],
         [[TLResult alloc] initWithId:CASE_AR version:1],
     ]];
@@ -2818,7 +2847,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP, CASE_AR]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AN, CASE_AP, CASE_AR]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
