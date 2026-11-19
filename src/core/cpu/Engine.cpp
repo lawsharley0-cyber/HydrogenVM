@@ -18,7 +18,7 @@ namespace Hydrogen::CPU {
 
 // -------------------------------------------------------------- IR hooks ---
 
-Block* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
+const Op* hvmEnterBlock(Cpu* c, uint32_t key) { return c->engine->enterBlock(c, key); }
 void   hvmCallHle(Cpu* c, uint32_t index)  { c->engine->callHle(c, index); }
 bool   hvmFastHle(Cpu* c, uint32_t index)  { return c->engine->tryFastHle(*c, index); }
 void   hvmObserveEntry(Cpu* c, uint32_t address) { c->engine->notifyEntry(*c, address); }
@@ -507,19 +507,21 @@ void Engine::callHle(Cpu* c, uint32_t index) {
 }
 
 
-Block* Engine::enterBlock(Cpu* c, uint32_t key) {
+const Op* Engine::enterBlock(Cpu* c, uint32_t key) {
     const uint64_t g = gen_.load(std::memory_order_acquire);
     if (__builtin_expect(c->fast_gen != g, 0)) {
         if (!c->fast) c->fast.reset(new FastEntry[kFastSize]);
-        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {kFastEmpty, nullptr, nullptr};
+        for (size_t i = 0; i < kFastSize; ++i) c->fast[i] = {nullptr, kFastEmpty};
         c->fast_gen = g;
     }
     FastEntry& fe = c->fast[fastIndex(key)];
-    if (fe.key == key) return fe.block;
+    if (fe.key == key) return fe.first;
     Block* b = lookupOrDecode(key);
     // Never cache a miss: the handlers' fast path follows `first` without checking it.
-    if (b) { fe.key = key; fe.block = b; fe.first = b->ops.data(); }
-    return b;
+    if (!b) return nullptr;
+    const Op* first = b->ops.data();
+    fe = {first, key};
+    return first;
 }
 
 Block* Engine::lookupOrDecode(uint32_t key) {
@@ -599,7 +601,7 @@ void Engine::flushCache() {
 
 void Engine::resetFastCache(Cpu& c) {
     if (!c.fast) return;
-    for (size_t i = 0; i < kFastSize; ++i) c.fast[i] = {kFastEmpty, nullptr, nullptr};
+    for (size_t i = 0; i < kFastSize; ++i) c.fast[i] = {nullptr, kFastEmpty};
     c.fast_gen = gen_.load(std::memory_order_acquire);
 }
 
@@ -823,11 +825,10 @@ Exit Engine::run(Cpu& cpu, int64_t budget) {
     for (;;) {
         while (cpu.exit == Exit::None) {
             const uint32_t key = (cpu.r[kPC] & (cpu.thumb ? ~1u : ~3u)) | (cpu.thumb & 1);
-            Block* b = enterBlock(&cpu, key);
-            if (!b) break;
+            const Op* first = enterBlock(&cpu, key);
+            if (!first) break;
             cpu.block_pc = key & ~1u;
             cpu.recordFaultRegisters(cpu.block_pc);
-            const Op* first = b->ops.data();
             first->fn(&cpu, first, base);
         }
         if (cpu.exit != Exit::Svc || !svcHandler_) break;

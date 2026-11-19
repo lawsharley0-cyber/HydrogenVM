@@ -44,6 +44,14 @@ typedef struct CGDataProvider *CGDataProviderRef;
 typedef struct CGFont *CGFontRef;
 typedef uint16_t CGGlyph;
 CGDataProviderRef CGDataProviderCreateWithData(void *, const void *, size_t, void (*)(void *, const void *, size_t));
+typedef struct {
+    unsigned int version;
+    size_t (*getBytes)(void *, void *, size_t);
+    int64_t (*skipForward)(void *, int64_t);
+    void (*rewind)(void *);
+    void (*releaseInfo)(void *);
+} CGDataProviderSequentialCallbacks;
+CGDataProviderRef CGDataProviderCreateSequential(void *, const CGDataProviderSequentialCallbacks *);
 CGFontRef CGFontCreateWithDataProvider(CGDataProviderRef);
 void CGContextSetFont(CGContextRef, CGFontRef);
 void CGContextSetFontSize(CGContextRef, CGFloat);

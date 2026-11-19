@@ -58,6 +58,7 @@ TL-L is a host-driven termination check and TL-AO uses an iPad-only fixture; 33 
 | TL-X | Player-item readiness | Requires Initial KVO to report Unknown before player creation, followed by an observed ReadyToPlay transition that can start the assigned player; reproduces the UE3 startup-movie wait in Goat Simulator. Oracle: Apple's documented AVPlayerItem status lifecycle |
 | TL-Y | libstdc++ 4.2 ABI | Calls the GCC 4.2 libstdc++ entry points directly: std::string COW `_Rep` (empty rep, refcopy, dispose), `std::list` node hook/unhook, red-black tree insert/rebalance and increment, and the SJLJ unwinder frame chain. Oracle: the libstdc++ 4.2 ABI layouts the app binaries are compiled against |
 | TL-Z | Custom UIKeyInput | A UIView implementing UIKeyInput focuses, handles its own insert/delete, resigns and observes software-keyboard show/hide notifications. Proven red on main ff24df3 (focus/text/resign succeed, shown=hidden=0). The guest deletion also exercises NSString composed ranges for accents/surrogates; the fulltest covers joined emoji, flags, Hangul, CRLF and rejected bounds. Separate fulltest cases verify host requests, Unicode protocol forwarding, traits, focus identity and refused resignation. Phone keyboard presentation remains a device check. |
+| TL-AQ | Termination run-loop work | Host-driven 1-second graceful termination; `applicationWillTerminate:` creates an offline `NSURLConnection` and pumps `-[NSRunLoop runMode:beforeDate:]` until `connection:didFailWithError:` runs. Proven red before the `RunLoop` termination fix (#496) |
 
 ### BADLAND regression cases
 
@@ -531,3 +532,14 @@ disabled location source, without asking for GPS or fabricating coordinates.
 It interrupts on the original missing instance selector and passes after the
 shared compatibility method. AH–AN are reserved by the separate Canabalt #437
 and parked Super Hexagon #438 work; these IDs avoid integration collisions.
+
+
+### TL-AR — Sequential Core Graphics data provider
+
+Dead Space 1.0.2 stops on an unresolved `CGDataProviderCreateSequential` call.
+An authored seven-byte stream returns at most two bytes per callback. Two
+`CGDataProviderCopyData` calls must deliver the complete stream, including the
+embedded zero. The release callback must receive the original context once,
+after the final provider reference is released. The callback ABI and
+end-of-stream semantics come from Apple's
+[CGDataProvider.h](https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.10.sdk/System/Library/Frameworks/CoreGraphics.framework/Versions/A/Headers/CGDataProvider.h).

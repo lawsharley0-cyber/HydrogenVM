@@ -11,6 +11,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <mutex>
 
 namespace Hydrogen::Runtime::CG {
 
@@ -246,7 +247,39 @@ struct ProviderData : ObjC::HostObject {
     std::vector<uint8_t> bytes;      // host copy (files, CFData)
     uint32_t guestData = 0, guestSize = 0, info = 0, releaseFn = 0;
     id cfdata = 0;
-    std::vector<uint8_t> contents(Ctx& x) const {
+    GuestPtr getBytes = 0, releaseInfo = 0;
+    std::once_flag streamRead;
+    bool streamFailed = false;
+
+    // All current consumers request the complete contents. Buffer once so a
+    // forward-only source can also serve a second image or CGDataProviderCopyData.
+    bool readStream(Ctx& x) {
+        constexpr uint32_t chunk = 16 * 1024;
+        constexpr size_t limit = 256u * 1024 * 1024;
+        struct Buffer {
+            Heap& heap;
+            GuestPtr address;
+            ~Buffer() { heap.free(address); }
+        } scratch{x.proc.heap(), x.proc.heap().alloc(chunk)};
+        if (!scratch.address) return false;
+        for (;;) {
+            const uint32_t n = uint32_t(x.proc.callGuest(x.cpu, getBytes, {info, scratch.address, chunk}));
+            if (!n) return true;
+            if (n > chunk || n > limit - bytes.size()) {
+                x.proc.logf(LogLevel::Warning, "CGDataProvider: invalid read count or stream exceeds 256 MiB");
+                return false;
+            }
+            const auto* src = x.mem.host(scratch.address);
+            bytes.insert(bytes.end(), src, src + n);
+        }
+    }
+    std::vector<uint8_t> contents(Ctx& x) {
+        if (getBytes) {
+            std::call_once(streamRead, [&] {
+                streamFailed = !readStream(x);
+                if (streamFailed) std::vector<uint8_t>().swap(bytes);
+            });
+        }
         if (cfdata) return Foundation::dataBytes(x, cfdata);
         if (guestData) return std::vector<uint8_t>(x.mem.host(guestData), x.mem.host(guestData) + guestSize);
         return bytes;
@@ -256,6 +289,15 @@ id newProvider(Ctx& x, std::unique_ptr<ProviderData> h) { h->proc = &x.proc; ret
 uint32_t dp_createWithData(Ctx& x, uint32_t info, GuestPtr data, uint32_t size, uint32_t releaseFn) {
     auto h = std::make_unique<ProviderData>();
     h->guestData = data; h->guestSize = size; h->info = info; h->releaseFn = releaseFn;
+    return newProvider(x, std::move(h));
+}
+uint32_t dp_createSequential(Ctx& x, uint32_t info, GuestPtr callbacks) {
+    if (!callbacks || x.mem.read<uint32_t>(callbacks) != 0) return 0;
+    auto h = std::make_unique<ProviderData>();
+    h->info = info;
+    h->getBytes = x.mem.read<uint32_t>(callbacks + 4);
+    if (!h->getBytes) return 0;
+    h->releaseInfo = x.mem.read<uint32_t>(callbacks + 16);
     return newProvider(x, std::move(h));
 }
 uint32_t dp_createWithCFData(Ctx& x, id data) {
@@ -281,10 +323,11 @@ uint32_t dp_copyData(Ctx& x, id p) {
     ProviderData* d = hd<ProviderData>(x, p);
     if (!d) return 0;
     const auto b = d->contents(x);
-    return Foundation::makeData(x, b.data(), uint32_t(b.size()), true);
+    return d->streamFailed ? 0 : Foundation::makeData(x, b.data(), uint32_t(b.size()), true);
 }
 void dp_dealloc(Ctx& x, id self, SEL) {
     if (ProviderData* d = hd<ProviderData>(x, self)) {
+        if (d->releaseInfo) x.proc.callGuest(x.cpu, d->releaseInfo, {d->info});
         if (d->releaseFn) x.proc.callGuest(x.cpu, d->releaseFn, {d->info, d->guestData, d->guestSize});
         const id cf = d->cfdata;
         d->cfdata = 0;
@@ -1934,6 +1977,7 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&col_getConstant>("_CGColorGetConstantColor");
 
     // data providers & images
+    p.def<&dp_createSequential>("_CGDataProviderCreateSequential");
     p.def<&dp_createWithData>("_CGDataProviderCreateWithData");
     p.def<&dp_createWithCFData>("_CGDataProviderCreateWithCFData");
     p.def<&dp_createWithFilename>("_CGDataProviderCreateWithFilename");

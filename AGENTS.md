@@ -74,6 +74,13 @@ Read [docs/TEST_LAB.md](docs/TEST_LAB.md), especially "Agent guide": what each c
 
 ## Build and test
 
+Scripted game smoke harness: `python3 -m unittest discover -s tools/tests -p
+test_smoke.py` is part of the existing tools test gate. Run private scenarios
+with `python3 -m tools.smoke.run --hvm build/hvm` when `HVM_SMOKE_GAMES` is
+available; absent fixtures and screenshot references are skips, never game or
+visual passes. See [docs/testing/smoke.md](docs/testing/smoke.md). This does not
+replace Test Lab, fulltest or the compatibility baseline.
+
 Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `libssl-dev`, `libicu-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set. ICU supplies Unicode predicate regular expressions on Linux; Apple hosts use native Foundation.
 
 ```sh
