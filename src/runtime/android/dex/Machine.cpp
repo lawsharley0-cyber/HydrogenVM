@@ -353,6 +353,40 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
         throw JavaException{u"Ljava/lang/OutOfMemoryError;"};
     }
 
+    std::optional<Value> invokeExternalAncestor(const LinkedClass& start, const LinkedClass& receiver,
+                                                const Symbol& key, uint32_t reference,
+                                                std::span<const Value> args, bool includeInterfaces) {
+        std::set<const LinkedClass*> visited;
+        std::vector<std::u16string_view> candidates;
+        std::vector<const LinkedClass*> pending;
+        for (const LinkedClass* c = &start; c && visited.insert(c).second; c = c->super) {
+            if (!c->super && !c->superName.empty()) {
+                if (c->superName == u"Ljava/lang/Thread;" && key.second == u"()V" &&
+                    (key.first == u"<init>" || key.first == u"start" || key.first == u"join"))
+                    return threadMethod(receiver, key, reference);
+                candidates.push_back(c->superName);
+            }
+            if (includeInterfaces) {
+                for (const auto& iface : c->externalInterfaces) candidates.push_back(iface);
+                pending.insert(pending.end(), c->interfaces.begin(), c->interfaces.end());
+            }
+        }
+        while (!pending.empty()) {
+            const LinkedClass* iface = pending.back();
+            pending.pop_back();
+            if (!iface || !visited.insert(iface).second) continue;
+            for (const auto& ext : iface->externalInterfaces) candidates.push_back(ext);
+            pending.insert(pending.end(), iface->interfaces.begin(), iface->interfaces.end());
+        }
+        if (host.call) {
+            for (const auto candidate : candidates) {
+                if (auto value = host.call(candidate, key.first, key.second, false, false, args))
+                    return *value;
+            }
+        }
+        return std::nullopt;
+    }
+
     Value invoke(const File& file, const EncodedMethod& caller, uint32_t methodIndex,
                  InvokeKind kind, std::span<const Value> args, Budget& budget) override {
         const auto id = file.method(methodIndex);
@@ -387,16 +421,23 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
                 break;
             }
             case InvokeKind::Super: {
-                auto* parent = requireClass(file.type(file.method(caller.index).owner)).super;
+                auto& callerClass = requireClass(file.type(file.method(caller.index).owner));
+                auto* parent = callerClass.super;
                 if (parent) {
                     const auto it = parent->vtable.find(key);
                     if (it != parent->vtable.end()) resolved = &it->second;
+                }
+                if (!resolved) {
+                    if (auto value = invokeExternalAncestor(parent ? *parent : callerClass, receiver, key, reference, args, false))
+                        return *value;
                 }
                 break;
             }
             case InvokeKind::Virtual: case InvokeKind::Interface: {
                 const auto it = receiver.vtable.find(key);
                 if (it != receiver.vtable.end()) resolved = &it->second;
+                else if (auto value = invokeExternalAncestor(receiver, receiver, key, reference, args, true))
+                    return *value;
                 break;
             }
             case InvokeKind::Static: break;
@@ -438,6 +479,7 @@ Execution Machine::callInstance(std::u16string_view type, std::u16string_view na
         const BoundMethod* method = nullptr;
         if (nonvirtual) method = localMethod(&cls, key);
         else if (const auto it = cls.vtable.find(key); it != cls.vtable.end()) method = &it->second;
+        else method = localMethod(&cls, key);
         if (!method || (method->method.flags & 8)) throw JavaException{u"Ljava/lang/NoSuchMethodError;"};
         if (name == u"<init>") state_->initialize(*method->owner, budget);
         return state_->run(*method, args, budget);

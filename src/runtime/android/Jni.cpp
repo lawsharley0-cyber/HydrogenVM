@@ -157,7 +157,8 @@ bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jo
 }
 
 bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
-                     const std::vector<uint32_t>& words, JValue* result, const std::string& signature) {
+                     const std::vector<uint32_t>& words, JValue* result, const std::string& signature,
+                     bool clearException) {
     traceOnce("JNI native " + cls + "." + name);
     uint32_t fn = 0;
     {
@@ -183,6 +184,17 @@ bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jo
     std::vector<uint32_t> args{envFor(proc), self};
     args.insert(args.end(), words.begin(), words.end());
     const uint64_t r = proc.callGuest(x.cpu, fn, args);
+    if (clearException) {
+        if (const auto thrown = std::exchange(Dex::pendingException(proc), 0u)) {
+            std::string clsName;
+            {
+                std::lock_guard<std::recursive_mutex> lk(mu);
+                if (const auto* o = get(thrown)) clsName = o->cls;
+            }
+            proc.log(LogLevel::Warning, "JNI uncaught exception in " + cls + "." + name +
+                     (clsName.empty() ? "" : ": " + clsName));
+        }
+    }
     if (result) *result = r;
     return true;
 }
@@ -210,7 +222,7 @@ bool isPluginClass(const std::string& cls) {
 
 bool Jni::dexNative(Ctx& x, const std::string& cls, const std::string& name, const std::string& sig,
                     jobject self, const std::vector<JValue>& args, JValue& result) {
-    return callNative(x, cls, name, self, nativeWords(argTypes(sig), args), &result, sig);
+    return callNative(x, cls, name, self, nativeWords(argTypes(sig), args), &result, sig, false);
 }
 
 JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>& args) {
@@ -274,7 +286,7 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
         }
     }
     JValue r = 0;
-    if (callNative(x, m.cls, m.name, self, nativeWords(argTypes(m.sig), args), &r)) return r;
+    if (callNative(x, m.cls, m.name, self, nativeWords(argTypes(m.sig), args), &r, m.sig, false)) return r;
     if (quietClasses.count(m.cls) || quietClasses.count(objCls)) return 0;
     if (m.name == "<init>") return 0;   // constructors of helper objects: nothing to set up
     {

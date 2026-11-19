@@ -113,8 +113,20 @@ def run_import_check(hvm: str, work: Path, timeout: int) -> dict:
     cases = []
     for source, expected in ((base, images[:2]), (split, images)):
         destination = work / ("installed-" + source.stem)
-        run = subprocess.run([hvm, "import", str(source), str(destination)], capture_output=True,
-                             text=True, timeout=timeout)
+        try:
+            run = subprocess.run([hvm, "import", str(source), str(destination)], capture_output=True,
+                                 text=True, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            out_text = ""
+            if isinstance(err, subprocess.TimeoutExpired):
+                for part in (err.stdout, err.stderr):
+                    if isinstance(part, bytes):
+                        out_text += part.decode("utf-8", errors="replace")
+                    elif isinstance(part, str):
+                        out_text += part
+            cases.append({"name": f"import {source.suffix} preserves canonical DEX images in order",
+                          "passed": False, "detail": f"{err}\n{out_text}".strip()})
+            continue
         bundles = list(destination.glob("*/*.app"))
         actual = {str(p.relative_to(bundles[0])): p.read_bytes() for p in bundles[0].rglob("*.dex")} if len(bundles) == 1 else {}
         wanted = dict(zip(("classes.dex", "classes2.dex", "classes3.dex"), expected))
