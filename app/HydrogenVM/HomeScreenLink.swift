@@ -82,9 +82,8 @@ enum GameLink {
 
 /// A game as a Shortcuts action ("Play <game>").
 ///
-/// Add to Home Screen now installs a web clip (`WebClipProfile`); this activity stays
-/// so "Play <game>" shortcuts players already made keep opening their game, and Siri
-/// can still suggest games the player opens often.
+/// Add to Home Screen now goes through the "Play Game" App Intent (GameIntents.swift); this
+/// activity stays so "Play <game>" shortcuts players already made keep opening their game.
 ///
 /// Foundation only, so `tools/tests/swift/PlayerTests.swift` covers it on macOS.
 enum GameShortcut {

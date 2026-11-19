@@ -38,3 +38,58 @@ in this bench directory, so their scenarios were not executed. Their RSS
 ceilings and noted tap timings need owner/runner qualification. Missing games
 and missing visual comparisons remain explicit skips. Full scenario commands
 and private CI configuration are in [the testing guide](../testing/smoke.md).
+
+## Expanded fixture search
+
+A later search outside the primary bench found the owner's Army of Darkness
+1.0.1 archive. Its 90-second script reaches the first movement tutorial, but
+**FAILS** at graceful shutdown: exit 70, `graceful-stop-watchdog`, signature
+`d5c54ff6d981`. The same failure reproduces on unchanged runtime `7fdc8a18`
+(frozen build `6993ed89`, tests-only additions) and on profile refactor
+`2474be76`; it is not newly attributed to the refactor. Candidate peak RSS
+510,590,976 bytes, no stub hits. The harness correctly retains the failure.
+No shutdown check or test is waived. Follow-up issue: **#496**.
+
+An older local Minion Rush 1.0.0 archive has no restored DLC index, so it is
+not the requested with-data fixture. The manifest now requires nonempty
+`Container/Library/Caches/dlcs/mnhtn_index_ios`; both synthetic missing/empty
+archives and the actual no-data archive are rejected before launch. Focused
+harness tests are now **13 passed**. Groove Coaster Zero and a matching
+with-data Minion Rush fixture remain unavailable. Initial skip observations
+above describe the original primary-bench search, not this later result.
+
+## Owner-supplied fixtures: November 16 follow-up
+
+The supplied IPA folder resolved the two missing fixtures. Original archives were
+left unchanged; private scenario copies override only the IPA filename.
+
+| Fixture | Archive SHA-256 | Duration | Result | Peak RSS |
+|---|---|---:|---|---:|
+| Minion Rush 1.0.0 with data | 3d162e5ebeb1044ed04cac55f27a9e0a07f3515263c5fc8d3603d3ba7f048c64 | 300 s | PASS, exit 0 | 1,018,109,952 bytes |
+| Groove Coaster Zero 1.0.0 | 0d5bc908afe2a432dabe098f72483083421a06416dd3ca5e73b19c3abf1fd228 | 60 s | PASS, exit 0 | 234,594,304 bytes |
+
+Both fresh-home GPU runs used profile-refactor runtime 2474be76, internet/FPS
+overrides off, with zero crash/stall/stub reports. Minion's restored index is
+18 bytes with seven data packs. Groove's required stage.pak request was logged.
+Screenshots show Groove's title screen and Minion's introductory notice; the
+historical Minion tap did not dismiss that notice. No terms were accepted and
+no level-entry/gameplay claim is made. A Minion thread-exit autorelease warning
+remains in its private log; the process nevertheless exited 0 under unchanged
+criteria. Approved image comparisons remain SKIPPED.
+
+Private evidence: build/found-fixture-smoke/run-idlrywy_/. Army #496 remains a
+failure on `main` (fix tracked separately in PR #497). Earlier unavailable
+statements record the initial search only.
+
+### Menu/entry follow-up
+
+- **Minion Rush 1.0.0 with data**: tapping `[250, 370]` at 80 s (after the ~71 s
+  initial load hitches) dismisses the introductory `OK` notice and reveals the
+  3D main menu (`PLAY` at `[255, 105]`). `minion-rush.json` is updated to tap
+  `OK` at 80 s and `PLAY` at 95 s over a 120 s run.
+- **Groove Coaster Zero 1.0.0**: tapping `[160, 385]` at 20 s hits
+  `TOUCH TO START`, triggers `GET gczero.com/sync.php` on the stand-in server,
+  and enters `MenuRouteView`. `groove-coaster-zero.json` is updated with this
+  tap.
+- Approved visual-reference comparisons remain **SKIPPED** (`--require-references`
+  is not satisfied without owner-supplied reference PNGs).

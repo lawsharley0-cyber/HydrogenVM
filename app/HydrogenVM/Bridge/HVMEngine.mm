@@ -9,7 +9,9 @@
 #import <UIKit/UIKit.h>
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
+#include "loader/Apk.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "runtime/uikit/UIKit.hpp"
@@ -67,6 +69,9 @@ static NSString *str(const std::string &s) {
         _iconPath = a.iconPaths.empty() ? nil : str(a.iconPaths.front());
         _runnable = a.runnable;
         _encrypted = a.encrypted;
+        _isAndroid = !a.androidLibrary.empty();
+        _engine = str(a.engine);
+        _engineSupported = a.engineSupport == "driver";
         _problem = str(a.problem);
     }
     return self;
@@ -519,6 +524,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if ((self = [super init])) {
         _bundlePath = [bundlePath copy];
         _homePath = [homePath copy];
+        _recordingPath = [[homePath stringByAppendingPathComponent:@"Library/HydrogenVM/last-session.hvmrec"] copy];
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
@@ -544,6 +550,10 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool allowInternet = _allowInternet;
     const bool unlockFrameRate = _unlockFrameRate;
     const bool glTrace = _glTrace;
+    const bool gles1Emulate = _gles1Emulate;
+    const uint32_t maxTextureSize = _maxTextureSize;
+    const uint64_t memoryBudgetBytes = _memoryBudgetBytes;
+    const std::string safeModeFallback = _safeModeFallback.length > 0 ? _safeModeFallback.UTF8String : "";
 
     auto flushLogs = [core, weakSelf]() {
         std::vector<std::pair<std::string, RT::LogLevel>> batch;
@@ -559,10 +569,30 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 
     core->logFile = openRunLog(bundle, playSession);
 
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *recDir = [_homePath stringByAppendingPathComponent:@"Library/HydrogenVM"];
+    [fm createDirectoryAtPath:recDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *lastRec = [recDir stringByAppendingPathComponent:@"last-session.hvmrec"];
+    NSString *prevRec = [recDir stringByAppendingPathComponent:@"previous-session.hvmrec"];
+    if ([fm fileExistsAtPath:lastRec]) {
+        [fm removeItemAtPath:prevRec error:nil];
+        [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
+    }
+    NSString *privateRec = [lastRec stringByAppendingPathExtension:@"private"];
+    NSString *prevPrivate = [prevRec stringByAppendingPathExtension:@"private"];
+    [fm removeItemAtPath:prevPrivate error:nil];
+    if ([fm fileExistsAtPath:privateRec]) [fm moveItemAtPath:privateRec toPath:prevPrivate error:nil];
+    const bool detailedRecording = _detailedRecording;
+    const std::string recordPath = detailedRecording ? privateRec.UTF8String : lastRec.UTF8String;
+    const std::string inputPath = detailedRecording ? lastRec.UTF8String : "";
+
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
+        cfg.recordPath = recordPath;
+        cfg.detailedRecording = detailedRecording;
+        cfg.inputRecordingPath = inputPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
@@ -596,6 +626,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.screenWidth = 320;
         cfg.screenHeight = 568;   // UIKit drops to 480 unless the app opts into 4"
         cfg.screenScale = 2;
+        cfg.rotateAndroidReadback = true;   // the player's screen is portrait
         auto sessionLog = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
             core->logToFile("", msg);
@@ -959,6 +990,26 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p) p->setAcceleration(float(x), float(y), float(z));
 }
 
+- (void)sendAndroidKey:(int32_t)keyCode down:(BOOL)down {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectKey(keyCode, down != NO);
+}
+
+- (void)sendJoystickLX:(float)lx ly:(float)ly rx:(float)rx ry:(float)ry hatX:(float)hatX hatY:(float)hatY {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectJoystick(lx, ly, rx, ry, hatX, hatY);
+}
+
 @end
 
 // --------------------------------------------------------------- engine ---
@@ -1043,6 +1094,17 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     }
 }
 
++ (HVMAppInfo *)importAPK:(NSString *)apkPath intoDirectory:(NSString *)appsRoot error:(NSError **)error {
+    try {
+        auto info = Hydrogen::Loader::importApk(apkPath.UTF8String, appsRoot.UTF8String);
+        return [[HVMAppInfo alloc] initWithInfo:info];
+    } catch (const std::exception &e) {
+        if (error)
+            *error = [NSError errorWithDomain:@"HydrogenVM" code:1 userInfo:@{NSLocalizedDescriptionKey: str(e.what())}];
+        return nil;
+    }
+}
+
 + (HVMAppInfo *)appInfoAtPath:(NSString *)appPath {
     try {
         return [[HVMAppInfo alloc] initWithInfo:Hydrogen::Loader::readBundle(appPath.UTF8String)];
@@ -1072,6 +1134,33 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         G::setTextBackend(std::make_shared<CoreTextBackend>());
         G::setPlatformImageDecoder(&decodeWithImageIO);
     });
+}
+
++ (nullable NSString *)chooseFallbackForCrashReport:(NSString *)crashReport
+                                     internetAccess:(BOOL)internetAccess
+                                    unlockFrameRate:(BOOL)unlockFrameRate
+                                       gles1Emulate:(BOOL)gles1Emulate
+                                     maxTextureSize:(uint32_t)maxTextureSize {
+    RT::ProcessConfig cfg;
+    cfg.internetAccess = internetAccess;
+    cfg.unlockFrameRate = unlockFrameRate;
+    cfg.gles1Emulate = gles1Emulate;
+    cfg.maxTextureSize = maxTextureSize;
+    const std::string text = crashReport.length > 0 ? crashReport.UTF8String : "";
+    auto fb = RT::Compat::chooseFallback(text, cfg);
+    if (!fb) return nil;
+    for (const auto &info : RT::Compat::fallbacks()) {
+        if (info.fallback == *fb) return str(info.id);
+    }
+    return nil;
+}
+
++ (nullable NSString *)fallbackLabelForId:(NSString *)fallbackId {
+    if (fallbackId.length == 0) return nil;
+    if (const auto *info = RT::Compat::findFallback(fallbackId.UTF8String)) {
+        return str(info->label);
+    }
+    return nil;
 }
 
 @end

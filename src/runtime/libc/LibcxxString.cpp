@@ -573,14 +573,11 @@ void plusPtrStr(Ctx& x, GuestPtr ret, GuestPtr lhs, GuestPtr rhs) {
     putResult(x, ret, (lhs ? x.proc.readCString(lhs, 1u << 30) : std::string()) + hostOf(x, rhs));
 }
 void plusCharStr(Ctx& x, GuestPtr ret, uint32_t c, GuestPtr rhs) { putResult(x, ret, std::string(1, char(c)) + hostOf(x, rhs)); }
-// std::random_device: libc++'s object is one int (a /dev/urandom descriptor); the host's
-// random device supplies the numbers, so the guest object needs nothing in it.
+// std::random_device: libc++'s object is one int (a /dev/urandom descriptor); the
+// session's entropy (runtime/Session.hpp) supplies the numbers, so the guest object needs nothing in it.
 void randomDeviceCtor(Ctx& x, GuestPtr self, GuestPtr) { if (self) x.mem.write<uint32_t>(self, 0); }
 void randomDeviceDtor(Ctx&, GuestPtr) {}
-uint32_t randomDeviceNext(Ctx&, GuestPtr) {
-    static thread_local std::random_device rd;
-    return rd();
-}
+uint32_t randomDeviceNext(Ctx& x, GuestPtr) { return uint32_t(x.proc.entropy()); }
 void toStringI(Ctx& x, GuestPtr ret, int32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringU(Ctx& x, GuestPtr ret, uint32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringLL(Ctx& x, GuestPtr ret, int64_t v) { putResult(x, ret, std::to_string(v)); }

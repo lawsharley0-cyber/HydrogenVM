@@ -899,11 +899,11 @@
     },
     {
       "path": "src/runtime/foundation/Security.cpp",
-      "line": 261,
+      "line": 575,
       "registration": "_SecRandomCopyBytes",
       "function": "s_randomBytes",
       "reason": "only constant success/boolean returns",
-      "body_sha256": "f581a248cbeaf38ce1f1f94f7ecc2e1cdf265400ad7bed9f6103a044cd1ac1aa"
+      "body_sha256": "aa825e6ef004b424cfbc765e8d16b2aed6e79cbe2f617d6c74a6e8d916012b7a"
     },
     {
       "path": "src/runtime/foundation/UrlLoading.cpp",
@@ -1907,11 +1907,11 @@
     },
     {
       "path": "src/runtime/libc/System.cpp",
-      "line": 1042,
+      "line": 1274,
       "registration": "_ftime",
       "function": "sys_ftime",
       "reason": "only constant success/boolean returns",
-      "body_sha256": "ebee37932dc4c8cfb1008be51c8dd0f1a4f735d5b84bd65ecfbcfb45038de791"
+      "body_sha256": "115e83790d68ccfeeae0380ea394f0db041077e3dfac483a5028f5a150bfa033"
     },
     {
       "path": "src/runtime/libc/System.cpp",
@@ -2211,11 +2211,11 @@
     },
     {
       "path": "src/runtime/libc/Time.cpp",
-      "line": 137,
+      "line": 140,
       "registration": "_gettimeofday",
       "function": "t_gettimeofday",
       "reason": "only constant success/boolean returns",
-      "body_sha256": "84d57064b2dbbffa4c5f2ff11d6731b26c9dd2761ad2e5e1ff7115cbfaf03771"
+      "body_sha256": "a78dd7db6833596132455410cf300e867960f2c5a5cdb7dc10dd1aea777b6aa1"
     },
     {
       "path": "src/runtime/libc/Time.cpp",
@@ -2251,11 +2251,11 @@
     },
     {
       "path": "src/runtime/libc/Time.cpp",
-      "line": 144,
+      "line": 147,
       "registration": "_clock_gettime",
       "function": "t_clock_gettime",
       "reason": "only constant success/boolean returns",
-      "body_sha256": "f36cbfdeeb38ee3eb257277757f3995a63b6f8e2b7ce38a2bfa70293bd74bd04"
+      "body_sha256": "c3037301c708a251aed2fc06a4138a951ae0479557aa71a595203b96709a329c"
     },
     {
       "path": "src/runtime/libc/Time.cpp",

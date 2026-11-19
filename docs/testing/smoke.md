@@ -30,6 +30,13 @@ relative private directory under the games root, copied for every replay;
 missing seeds skip, and links/paths escaping the root fail. No user home is
 modified, and game networking stays off.
 
+`required_members` pins nonempty content files inside an archive (or relative
+to an extracted fixture directory). Minion Rush requires its restored DLC
+index under `Container/Library/Caches/dlcs/`; an older no-data IPA renamed to
+the expected filename fails before execution rather than producing a misleading
+startup result. For a separately seeded extracted app, provide a private
+scenario describing that layout instead of claiming it is the with-data IPA.
+
 For every screenshot time and the final duration the harness starts a separate
 replay from the same initial home, schedules taps earlier than that endpoint,
 and asks `hvm` for its last presented frame. This avoids depending on an
