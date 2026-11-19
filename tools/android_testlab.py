@@ -236,6 +236,12 @@ def main() -> int:
         shutil.copyfile(java / "native-driver.dex", na_app / "classes.dex")
         bridge_app = build_bundle(work, java / "JniRoundTrip.c", LIB, "JniRoundTrip.app")
         shutil.copyfile(java / "jni.dex", bridge_app / "classes.dex")
+        activity_app = build_bundle(work, java / "DexActivity.c", "libgdx.so", "DexActivity.app", "libGDX")
+        activity_plist = activity_app / "Info.plist"
+        props = plistlib.loads(activity_plist.read_bytes())
+        props["HydrogenVMAndroidLauncherActivity"] = "test.Launcher"
+        activity_plist.write_bytes(plistlib.dumps(props))
+        shutil.copyfile(java / "activity.dex", activity_app / "classes.dex")
         runs = [
             run_import_check(args.hvm, work, args.timeout),
             run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
@@ -251,6 +257,11 @@ def main() -> int:
             bridge_home.mkdir()
             runs.append(run_once(args.hvm, bridge_app, bridge_home, phone, args.timeout,
                                  mode_suffix=" (DEX JNI round-trip)"))
+            runs[-1]["group"] = "java"
+            activity_home = work / ("activity-home-phone" if phone else "activity-home")
+            activity_home.mkdir()
+            runs.append(run_once(args.hvm, activity_app, activity_home, phone, args.timeout,
+                                 extra_args=["--run-for", "1", "--graceful"], mode_suffix=" (DEX activity)"))
             runs[-1]["group"] = "java"
             na_home = work / ("na-home-phone" if phone else "na-home")
             na_home.mkdir()
