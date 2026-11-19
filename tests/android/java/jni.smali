@@ -114,3 +114,125 @@ invoke-virtual Ljava/lang/Thread;->join()V, v1
 sget v0, Ltest/JniWorker;->count:I
 return v0
 .end method
+
+.string item "list value"
+.class Ltest/Collections; 1
+
+.method check()I 9
+.registers 5
+.outs 3
+const/4 v0, 7
+const/4 v1, -2
+const/4 v2, 4
+filled-new-array [I, v0, v1, v2
+move-result-object v3
+invoke-static Ljava/util/Arrays;->sort([I)V, v3
+const/4 v0, 2
+invoke-static Ljava/util/Arrays;->copyOf([II)[I, v3, v0
+move-result-object v3
+const/4 v0, 0
+aget v0, v3, v0
+
+new-instance v1, Ljava/util/ArrayList;
+invoke-direct Ljava/util/ArrayList;-><init>()V, v1
+const-string v2, item
+invoke-interface Ljava/util/List;->add(Ljava/lang/Object;)Z, v1, v2
+invoke-interface Ljava/util/List;->size()I, v1
+move-result v4
+const/4 v3, 0
+invoke-interface Ljava/util/List;->get(I)Ljava/lang/Object;, v1, v3
+move-result-object v2
+check-cast v2, Ljava/lang/String;
+add-int v0, v0, v4
+return v0
+.end method
+
+.string next "next value"
+.method mapCheck()I 9
+.registers 5
+.outs 3
+new-instance v0, Ljava/util/HashMap;
+invoke-direct Ljava/util/HashMap;-><init>()V, v0
+const/4 v1, 0
+const-string v2, item
+const-string v3, next
+invoke-interface Ljava/util/Map;->put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;, v0, v1, v2
+move-result-object v4
+if-nez v4, :fail
+invoke-interface Ljava/util/Map;->put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;, v0, v1, v3
+move-result-object v4
+if-ne v4, v2, :fail
+invoke-interface Ljava/util/Map;->remove(Ljava/lang/Object;)Ljava/lang/Object;, v0, v1
+move-result-object v4
+if-ne v4, v3, :fail
+invoke-interface Ljava/util/Map;->containsKey(Ljava/lang/Object;)Z, v0, v1
+move-result v4
+if-nez v4, :fail
+invoke-interface Ljava/util/Map;->size()I, v0
+move-result v4
+return v4
+:fail
+const/4 v4, -1
+return v4
+.end method
+
+.method orderCheck()I 9
+.registers 5
+.outs 3
+new-instance v0, Ljava/util/ArrayList;
+invoke-direct Ljava/util/ArrayList;-><init>()V, v0
+const-string v1, item
+const-string v2, next
+invoke-interface Ljava/util/List;->add(Ljava/lang/Object;)Z, v0, v1
+invoke-interface Ljava/util/List;->add(Ljava/lang/Object;)Z, v0, v2
+invoke-interface Ljava/util/List;->add(Ljava/lang/Object;)Z, v0, v2
+invoke-static Ljava/util/Collections;->reverse(Ljava/util/List;)V, v0
+const/4 v3, 0
+const/4 v4, 2
+invoke-interface Ljava/util/List;->get(I)Ljava/lang/Object;, v0, v4
+move-result-object v4
+if-ne v4, v1, :fail
+const/4 v4, 2
+invoke-static Ljava/util/Collections;->swap(Ljava/util/List;II)V, v0, v3, v4
+invoke-interface Ljava/util/List;->get(I)Ljava/lang/Object;, v0, v3
+move-result-object v4
+if-ne v4, v1, :fail
+const/4 v4, 1
+return v4
+:fail
+const/4 v4, -1
+return v4
+.end method
+
+.method setCheck()I 9
+.registers 4
+.outs 2
+new-instance v0, Ljava/util/HashSet;
+invoke-direct Ljava/util/HashSet;-><init>()V, v0
+const/4 v1, 0
+invoke-interface Ljava/util/Set;->add(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-eqz v3, :fail
+invoke-interface Ljava/util/Set;->add(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-nez v3, :fail
+invoke-interface Ljava/util/Set;->contains(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-eqz v3, :fail
+const-string v2, item
+invoke-interface Ljava/util/Set;->add(Ljava/lang/Object;)Z, v0, v2
+move-result v3
+if-eqz v3, :fail
+invoke-interface Ljava/util/Set;->remove(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-eqz v3, :fail
+invoke-interface Ljava/util/Set;->contains(Ljava/lang/Object;)Z, v0, v1
+move-result v3
+if-nez v3, :fail
+invoke-interface Ljava/util/Set;->size()I, v0
+move-result v3
+return v3
+:fail
+const/4 v3, -1
+return v3
+.end method

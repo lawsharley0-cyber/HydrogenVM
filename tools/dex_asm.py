@@ -205,6 +205,8 @@ THREE = {"add-int": 0x90, "sub-int": 0x91, "mul-int": 0x92, "div-int": 0x93, "re
          "aget-byte": 0x48, "aput-byte": 0x4f}
 CONSTS = {"const/16": (0x13, 1), "const": (0x14, 2), "const-wide/16": (0x16, 1),
           "const-wide/32": (0x17, 2), "const-wide": (0x18, 4)}
+COMPARE_BRANCHES = {"if-eq": 0x32, "if-ne": 0x33, "if-lt": 0x34,
+                    "if-ge": 0x35, "if-gt": 0x36, "if-le": 0x37}
 BRANCHES = {"if-eqz": 0x38, "if-nez": 0x39, "if-ltz": 0x3a, "if-gez": 0x3b,
             "if-gtz": 0x3c, "if-lez": 0x3d}
 
@@ -242,7 +244,7 @@ def width(op, args):
         return 2
     if op in INVOCATIONS or op == "filled-new-array":
         return 3
-    if op in THREE or op in BRANCHES or op in ("goto/16", "const-string"):
+    if op in THREE or op in BRANCHES or op in COMPARE_BRANCHES or op in ("goto/16", "const-string"):
         return 2
     require(op in ONE or op in TWO or op in ("return-void", "nop", "const/4", "goto"), f"unknown opcode: {op}")
     return 1
@@ -314,6 +316,10 @@ def instruction(op, args, pc, labels, strings, types, fields, methods, registers
         dest, label = args
         delta = offset(label, 32)
         return [0x26 | reg(dest, 255) << 8, delta & 65535, delta >> 16]
+    if op in COMPARE_BRANCHES:
+        first, second, label = args
+        code = COMPARE_BRANCHES[op] | reg(first, 15) << 8 | reg(second, 15) << 12
+        return [code, offset(label, 16)]
     if op in BRANCHES:
         source, label = args
         return [BRANCHES[op] | reg(source, 255) << 8, offset(label, 16)]

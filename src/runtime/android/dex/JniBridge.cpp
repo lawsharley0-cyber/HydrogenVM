@@ -1,4 +1,6 @@
 #include "runtime/android/dex/JniBridge.hpp"
+#include "runtime/android/dex/CoreCollections.hpp"
+#include "runtime/android/dex/CoreRandom.hpp"
 #include "runtime/android/dex/GuestScheduler.hpp"
 
 #include <fstream>
@@ -204,6 +206,7 @@ public:
     }
 
     bool hasClass(std::u16string_view descriptor) {
+        if (CoreCollections::hasClass(descriptor) || CoreRandom::hasClass(descriptor)) return true;
         const std::string cls = className(descriptor);
         auto& j = jni(process);
         {
@@ -251,40 +254,44 @@ public:
     std::optional<Value> external(std::u16string_view owner, std::u16string_view name,
                                   std::u16string_view signature, bool stat, bool native,
                                   std::span<const Value> args) {
-        auto& heap = machine->heap();
-        if (!native && stat && owner == u"Ljava/lang/System;" && name == u"getProperty" &&
-            signature == u"(Ljava/lang/String;)Ljava/lang/String;") {
-            if (!args.front().bits) throw JavaException{u"Ljava/lang/NullPointerException;"};
-            const auto key = heap.string(uint32_t(args.front().bits));
-            if (key.empty()) throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
-            constexpr std::pair<std::u16string_view, std::u16string_view> properties[] = {
-                {u"java.runtime.name", u"Android Runtime"},
-                {u"java.vm.name", u"Dalvik"},
-                {u"java.vendor", u"The Android Project"},
-                {u"os.name", u"Linux"},
-                {u"os.arch", u"armv7l"},
-                {u"file.separator", u"/"},
-                {u"path.separator", u":"},
-                {u"line.separator", u"\n"},
-            };
-            for (const auto& [name, value] : properties)
-                if (key == name) return Value{ValueKind::Reference, heap.newString(std::u16string(value))};
-            return Value{ValueKind::Reference, 0};
-        }
-        const bool contains = name == u"contains" && signature == u"(Ljava/lang/CharSequence;)Z";
-        const bool prefix = name == u"startsWith" && signature == u"(Ljava/lang/String;)Z";
-        const bool equals = name == u"equals" && signature == u"(Ljava/lang/Object;)Z";
-        if (!native && !stat && owner == u"Ljava/lang/String;" && (contains || prefix || equals)) {
-            const auto other = uint32_t(args[1].bits);
-            if (!other && !equals) throw JavaException{u"Ljava/lang/NullPointerException;"};
-            if (other && heap.typeOf(other) == u"Ljava/lang/String;") {
-                const auto text = heap.string(uint32_t(args.front().bits));
-                const auto operand = heap.string(other);
-                const bool matched = contains ? text.find(operand) != std::u16string::npos
-                                   : prefix ? text.starts_with(operand) : text == operand;
-                return Value{ValueKind::Word, matched};
+        if (!native) {
+            if (auto value = collections.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
+            if (auto value = random.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
+            auto& heap = machine->heap();
+            if (stat && owner == u"Ljava/lang/System;" && name == u"getProperty" &&
+                signature == u"(Ljava/lang/String;)Ljava/lang/String;") {
+                if (!args.front().bits) throw JavaException{u"Ljava/lang/NullPointerException;"};
+                const auto key = heap.string(uint32_t(args.front().bits));
+                if (key.empty()) throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
+                constexpr std::pair<std::u16string_view, std::u16string_view> properties[] = {
+                    {u"java.runtime.name", u"Android Runtime"},
+                    {u"java.vm.name", u"Dalvik"},
+                    {u"java.vendor", u"The Android Project"},
+                    {u"os.name", u"Linux"},
+                    {u"os.arch", u"armv7l"},
+                    {u"file.separator", u"/"},
+                    {u"path.separator", u":"},
+                    {u"line.separator", u"\n"},
+                };
+                for (const auto& [propName, value] : properties)
+                    if (key == propName) return Value{ValueKind::Reference, heap.newString(std::u16string(value))};
+                return Value{ValueKind::Reference, 0};
             }
-            if (equals) return Value{ValueKind::Word, 0};
+            const bool contains = name == u"contains" && signature == u"(Ljava/lang/CharSequence;)Z";
+            const bool prefix = name == u"startsWith" && signature == u"(Ljava/lang/String;)Z";
+            const bool equals = name == u"equals" && signature == u"(Ljava/lang/Object;)Z";
+            if (!stat && owner == u"Ljava/lang/String;" && (contains || prefix || equals)) {
+                const auto other = uint32_t(args[1].bits);
+                if (!other && !equals) throw JavaException{u"Ljava/lang/NullPointerException;"};
+                if (other && heap.typeOf(other) == u"Ljava/lang/String;") {
+                    const auto text = heap.string(uint32_t(args.front().bits));
+                    const auto operand = heap.string(other);
+                    const bool matched = contains ? text.find(operand) != std::u16string::npos
+                                       : prefix ? text.starts_with(operand) : text == operand;
+                    return Value{ValueKind::Word, matched};
+                }
+                if (equals) return Value{ValueKind::Word, 0};
+            }
         }
         auto& j = jni(process);
         Ctx x{process, process.currentThread().cpu, process.mem()};
@@ -325,6 +332,8 @@ public:
     std::recursive_mutex references;
     std::unordered_map<jobject, uint32_t> fromJni;
     std::unordered_map<uint32_t, jobject> toJni;
+    CoreCollections collections;
+    CoreRandom random;
     std::unique_ptr<Machine> machine;
 };
 

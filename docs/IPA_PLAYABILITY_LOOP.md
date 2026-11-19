@@ -76,6 +76,10 @@ results.
 - `--tap X,Y@SECONDS` taps at points (the screenshot's pixels divided by 2, in
   the portrait frame) at a time after launch. `--drag X1,Y1,X2,Y2@SECONDS`
   swipes. Several of each are fine.
+- `--device MODEL` sets the platform string (`hw.machine`, default
+  `iPhone5,2`). Use it when a title's own device table predates the default
+  — a March 2012 build may treat `iPhone5,2` as unknown and present the
+  wrong scale, while `iPhone4,1` matches a 3.5-inch retina phone of that era.
 - `--input-file FILE` reads typed text and keys while the game runs. Use
   `tools/bench/input_feed.py FILE 34:type:Lawson 37:backspace 38:return &`.
   The run log prints `Keyboard: shown/hidden` when a game asks for a keyboard.

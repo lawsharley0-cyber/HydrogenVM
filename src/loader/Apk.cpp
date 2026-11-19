@@ -259,6 +259,16 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     std::vector<std::string> outerObbs;
     std::string baseApkPath = apkPath;
     fs::path tempSplitsDir;
+    struct ScopedRemove {
+        fs::path* target;
+        ~ScopedRemove() {
+            if (target && !target->empty()) {
+                std::error_code e;
+                fs::remove_all(*target, e);
+            }
+        }
+    };
+    ScopedRemove cleanSplits{&tempSplitsDir};
 
     if (!outerZip.find("AndroidManifest.xml")) {
         // Split APK archive (.xapk, .apks, .apkm): find nested .apk and .obb entries.
@@ -349,10 +359,11 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     for (char& c : pkg) if (c == '/' || c == '\\' || c == ':') c = '_';
 
     const fs::path container = fs::path(appsRoot) / pkg;
-    const fs::path staging = fs::path(appsRoot) / (pkg + ".importing");
+    fs::path staging = fs::path(appsRoot) / (pkg + ".importing");
     const fs::path app = staging / (folderName + ".app");
     std::error_code ec;
     fs::remove_all(staging, ec);
+    ScopedRemove cleanStaging{&staging};
     fs::create_directories(app);
     if (!lib.empty()) zip.extract("lib/", (app / "lib").string());
     zip.extract("assets/", (app / "assets").string());
@@ -489,6 +500,7 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     }
     fs::remove_all(container, ec);
     fs::rename(staging, container);
+    staging.clear();
     AppInfo info = readBundle((container / (folderName + ".app")).string());
     if (lib.empty() && info.problem.empty()) {
         info.runnable = false;

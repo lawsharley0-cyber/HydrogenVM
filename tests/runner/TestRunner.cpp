@@ -272,6 +272,7 @@ int runThreadLifetimeChild();
 namespace Hydrogen { namespace Runtime { bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c); } }
 int runArenaPoolTests();
 int runCompatProfileTests();
+int runIOSConformanceTests();
 
 namespace {
 
@@ -7232,6 +7233,141 @@ int runFullSubsystemTests() {
         check(presOk && !UIKit::ui(proc).framebuffer.rgba.empty(), "CAEAGLLayer presentRenderbuffer composites into UIKit framebuffer");
     }
 
+    // 2f14. Backing-size fallback: a CAEAGLLayer drawable grows when glViewport
+    // exceeds it, and presentRenderbuffer scales the full frame into the layer
+    // (default kCAGravityResize). A pre-iPhone-5 app without Default-568h already
+    // runs at 320x480 points @2x; a game that then picks a design-sized viewport
+    // (Rayman Origins demo: 1024x682 into a 1x 480x320 drawable on iPhone5,2)
+    // would otherwise clip to a corner of the picture.
+    {
+        auto& uistate = UIKit::ui(cx);
+        const bool savedBar = uistate.statusBarHidden;
+        const auto savedWindows = uistate.windows;
+        uistate.statusBarHidden = true;
+        for (ObjC::id w : savedWindows) r.send(cpu, w, "setHidden:", {1});
+
+        auto callGL = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint64_t {
+            auto addr = proc.lookupSymbol(sym);
+            return proc.callGuest(cpu, *addr, args);
+        };
+
+        const ObjC::Class winCls = r.getClass("UIWindow");
+        const ObjC::id win = UIKit::sendRect(cx, ObjC::id(r.send(cpu, winCls, r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 240, 160});
+        r.send(cpu, win, "makeKeyAndVisible");
+        const ObjC::id glLayer = ObjC::id(r.send(cpu, r.getClass("CAEAGLLayer"), "layer"));
+        UIKit::sendRect(cx, glLayer, r.sel("setFrame:"), {0, 0, 240, 160});
+        r.send(cpu, UIKit::viewLayer(cx, win), "addSublayer:", {glLayer});
+
+        const ObjC::Class ctxCls = r.getClass("EAGLContext");
+        const ObjC::id glCtx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, ctxCls, r.selAlloc)), "initWithAPI:", {2}));
+        r.send(cpu, ctxCls, "setCurrentContext:", {glCtx});
+
+        const uint32_t ids = proc.heap().allocZeroed(32);
+        callGL("_glGenFramebuffers", {1, ids});
+        const uint32_t fbo = proc.mem().read<uint32_t>(ids);
+        callGL("_glBindFramebuffer", {0x8D40, fbo});
+        callGL("_glGenRenderbuffers", {2, ids + 4});
+        const uint32_t colorRb = proc.mem().read<uint32_t>(ids + 4);
+        const uint32_t depthRb = proc.mem().read<uint32_t>(ids + 8);
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        const bool rbOk = (r.send(cpu, glCtx, "renderbufferStorage:fromDrawable:", {0x8D41, glLayer}) & 0xFF) != 0;
+        callGL("_glFramebufferRenderbuffer", {0x8D40, 0x8CE0, 0x8D41, colorRb});
+        callGL("_glBindRenderbuffer", {0x8D41, depthRb});
+        callGL("_glRenderbufferStorage", {0x8D41, 0x81A5 /* GL_DEPTH_COMPONENT16 */, 240, 160});
+        callGL("_glFramebufferRenderbuffer", {0x8D40, 0x8D00, 0x8D41, depthRb});
+        const uint32_t complete0 = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
+
+        const uint32_t q = proc.heap().allocZeroed(8);
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int beforeW = int(proc.mem().read<int32_t>(q)), beforeH = int(proc.mem().read<int32_t>(q + 4));
+
+        callGL("_glViewport", {0, 0, 1024, 682});
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int afterW = int(proc.mem().read<int32_t>(q)), afterH = int(proc.mem().read<int32_t>(q + 4));
+        callGL("_glBindRenderbuffer", {0x8D41, depthRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int depthW = int(proc.mem().read<int32_t>(q)), depthH = int(proc.mem().read<int32_t>(q + 4));
+        const uint32_t complete1 = uint32_t(callGL("_glCheckFramebufferStatus", {0x8D40}));
+        check(rbOk && complete0 == 0x8CD5 && beforeW == 240 && beforeH == 160 &&
+                  afterW >= 1024 && afterH >= 682 && depthW >= 1024 && depthH >= 682 && complete1 == 0x8CD5,
+              "glViewport larger than a CAEAGLLayer drawable grows the color and depth backing and keeps the FBO complete");
+
+        auto clear = [&](float r, float g, float b, int32_t sx, int32_t sy, int32_t sw, int32_t sh) {
+            callGL("_glScissor", {uint32_t(sx), uint32_t(sy), uint32_t(sw), uint32_t(sh)});
+            callGL("_glClearColor", {UIKit::fbits(r), UIKit::fbits(g), UIKit::fbits(b), UIKit::fbits(1.0f)});
+            callGL("_glClear", {0x00004000});
+        };
+        callGL("_glDisable", {0x0C11});
+        callGL("_glClearColor", {UIKit::fbits(0.1f), UIKit::fbits(0.1f), UIKit::fbits(0.1f), UIKit::fbits(1.0f)});
+        callGL("_glClear", {0x00004000});
+        callGL("_glEnable", {0x0C11 /* GL_SCISSOR_TEST */});
+        clear(1, 0, 0, 0, 0, 80, 80);                 // GL bottom-left: red
+        clear(0, 1, 0, 1024 - 80, 0, 80, 80);         // GL bottom-right: green
+        clear(0, 0, 1, 0, 682 - 80, 80, 80);          // GL top-left: blue
+        clear(1, 1, 1, 1024 - 80, 682 - 80, 80, 80);  // GL top-right: white
+        callGL("_glDisable", {0x0C11});
+
+        const bool presOk = (r.send(cpu, glCtx, "presentRenderbuffer:", {0x8D41}) & 0xFF) != 0;
+        UIKit::compositeFrame(cx);
+        const auto& fb = uistate.framebuffer;
+        auto rgb = [&](int x, int y) -> std::array<int, 3> {
+            if (x < 0 || y < 0 || x >= fb.width || y >= fb.height || fb.rgba.empty()) return {0, 0, 0};
+            const uint8_t* p = &fb.rgba[(size_t(y) * size_t(fb.width) + size_t(x)) * 4];
+            return {int(p[0]), int(p[1]), int(p[2])};
+        };
+        auto mostly = [&](std::array<int, 3> p, int r, int g, int b) {
+            return std::abs(p[0] - r) < 40 && std::abs(p[1] - g) < 40 && std::abs(p[2] - b) < 40;
+        };
+        // 240x160-point layer at (0,0) on a 2x screen is 480x320 pixels. 80-pixel
+        // corners of the 1024x682 viewport cover ~37 pixels after kCAGravityResize.
+        const auto tl = rgb(12, 12), tr = rgb(468, 12), bl = rgb(12, 308), br = rgb(468, 308);
+        const bool corners = presOk && fb.width >= 480 && fb.height >= 320 &&
+                             mostly(tl, 0, 0, 255) && mostly(tr, 255, 255, 255) &&
+                             mostly(bl, 255, 0, 0) && mostly(br, 0, 255, 0);
+        if (!corners)
+            std::printf("    backing-size corners tl=%d,%d,%d tr=%d,%d,%d bl=%d,%d,%d br=%d,%d,%d fb=%dx%d\n",
+                        tl[0], tl[1], tl[2], tr[0], tr[1], tr[2], bl[0], bl[1], bl[2], br[0], br[1], br[2],
+                        fb.width, fb.height);
+        check(corners, "presentRenderbuffer scales a grown 1024x682 backing into the layer so all four corners are visible");
+
+        // A viewport inside the original drawable does not shrink it; a large
+        // viewport on an offscreen FBO does not change the on-screen drawable.
+        const int grownW = afterW, grownH = afterH;
+        callGL("_glBindFramebuffer", {0x8D40, fbo});
+        callGL("_glViewport", {0, 0, 80, 60});
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int stayW = int(proc.mem().read<int32_t>(q)), stayH = int(proc.mem().read<int32_t>(q + 4));
+
+        callGL("_glGenFramebuffers", {1, ids + 12});
+        const uint32_t offFbo = proc.mem().read<uint32_t>(ids + 12);
+        callGL("_glGenTextures", {1, ids + 16});
+        const uint32_t offTex = proc.mem().read<uint32_t>(ids + 16);
+        callGL("_glBindTexture", {0x0DE1, offTex});
+        callGL("_glTexImage2D", {0x0DE1, 0, 0x1908 /* GL_RGBA */, 64, 64, 0, 0x1908, 0x1401, 0});
+        callGL("_glBindFramebuffer", {0x8D40, offFbo});
+        callGL("_glFramebufferTexture2D", {0x8D40, 0x8CE0, 0x0DE1, offTex, 0});
+        callGL("_glViewport", {0, 0, 256, 256});
+        callGL("_glBindFramebuffer", {0x8D40, fbo});
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int afterOffW = int(proc.mem().read<int32_t>(q)), afterOffH = int(proc.mem().read<int32_t>(q + 4));
+        check(stayW == grownW && stayH == grownH && afterOffW == grownW && afterOffH == grownH,
+              "a smaller viewport and an offscreen FBO viewport leave the grown drawable size alone");
+
+        r.send(cpu, win, "setHidden:", {1});
+        r.send(cpu, ctxCls, "setCurrentContext:", {0});
+        uistate.statusBarHidden = savedBar;
+        for (ObjC::id w : savedWindows) r.send(cpu, w, "setHidden:", {0});
+    }
+
     // 2f8. OpenAL spatial queries and HVMCFRawDictionary mutators
     {
         auto call_tmp = [&](const char* sym, std::initializer_list<uint32_t> args) -> uint64_t {
@@ -10260,6 +10396,7 @@ int runFullSubsystemTests() {
             check(ranOk, "a detached thread with FMOD's 8 KiB stack runs");
             invoke("_pthread_attr_destroy", {attr});
         }
+
 
         // Verify the configured size on the live guest thread, and the post-start contract.
         {
@@ -14281,11 +14418,96 @@ int runFullSubsystemTests() {
     runMsgSendTests([&](bool ok, const char* what) { check(ok, what); });
     runPageProtectionTests([&](bool ok, const char* what) { check(ok, what); });
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
+    {
+        ProcessConfig cfg; cfg.homePath = "/tmp/hvm-exception-port-metadata";
+        Process p(cfg); auto& c = p.mainThread().cpu;
+        c.r[13] = p.heap().allocZeroed(65536) + 65536 - 16;
+        const auto get = p.lookupSymbol("_thread_get_exception_ports");
+        bool ok = get.has_value() && p.lookupSymbol("_task_get_exception_ports").has_value();
+        auto call = [&](const char* n, std::initializer_list<uint32_t> a) { return uint32_t(p.callGuest(c, *p.lookupSymbol(n), a)); };
+        const auto b = p.heap().allocZeroed(256);
+        auto word = [&](unsigned off) { return p.mem().read<uint32_t>(b + off); };
+        auto query = [&](const char* n, uint32_t target, uint32_t mask, uint32_t cap = 8) {
+            p.mem().write<uint32_t>(b + 32, cap);
+            return call(n, {target, mask, b, b + 32, b + 64, b + 96, b + 128});
+        };
+        if (ok) {
+            const auto thread = call("_mach_thread_self", {});
+            ok &= query("_thread_get_exception_ports", thread, 6) == 0 && word(32) == 0;
+            ok &= call("_mach_port_allocate", {0x103, 1, b + 160}) == 0;
+            const auto a = word(160);
+            ok &= call("_mach_port_insert_right", {0x103, a, a, 20}) == 0;
+            ok &= call("_mach_port_allocate", {0x103, 1, b + 164}) == 0;
+            const auto d = word(164);
+            ok &= call("_mach_port_insert_right", {0x103, d, d, 20}) == 0;
+            ok &= call("_thread_set_exception_ports", {thread, 6, a, 1, 0}) == 0;
+            ok &= call("_mach_port_get_refs", {0x103, a, 0, b + 200}) == 0 && word(200) == 1;
+            ok &= query("_thread_get_exception_ports", thread, 6) == 0 && word(32) == 1 && word(0) == 6 && word(64) == a && word(96) == 1 && word(128) == 0;
+            ok &= call("_mach_port_get_refs", {0x103, a, 0, b + 200}) == 0 && word(200) == 2;
+            call("_mach_port_deallocate", {0x103, a}); // release returned copy, not installed metadata
+            ok &= call("_thread_set_exception_ports", {thread, 4, d, 3, 1}) == 0;
+            ok &= query("_thread_get_exception_ports", thread, 6) == 0 && word(32) == 2 && word(0) == 2 && word(4) == 4 && word(64) == a && word(68) == d && word(100) == 3 && word(132) == 1;
+            call("_mach_port_deallocate", {0x103, a}); call("_mach_port_deallocate", {0x103, d});
+            ok &= query("_task_get_exception_ports", 0x103, 6) == 0 && word(64) == 0;
+            p.mem().write<uint32_t>(b + 32, 8);
+            ok &= call("_thread_swap_exception_ports", {thread, 2, 0, 1, 0, b, b + 32, b + 64, b + 96, b + 128}) == 0 && word(32) == 1 && word(64) == a;
+            call("_mach_port_deallocate", {0x103, a});
+            ok &= query("_thread_get_exception_ports", thread, 2) == 0 && word(64) == 0;
+            ok &= query("_thread_get_exception_ports", 0x103, 2) == 4;
+            ok &= query("_thread_get_exception_ports", thread, 0x80000000) == 4;
+            p.mem().write<uint32_t>(b + 32, 8);
+            ok &= call("_thread_get_exception_ports", {thread, 6, 0xfffffffc, b + 32, b + 64, b + 96, b + 128}) == 1 && word(32) == 8;
+            ok &= query("_thread_get_exception_ports", thread, 6, 0) == 0 && word(32) == 0;
+            call("_mach_port_destroy", {0x103, d});
+            ok &= query("_thread_get_exception_ports", thread, 4) == 0 && word(64) == 0xffffffffu;
+            call("_thread_set_exception_ports", {thread, 6, 0, 1, 0});
+            call("_mach_port_destroy", {0x103, a});
+            call("_mach_port_deallocate", {0x103, thread});
+        }
+        check(ok, "Mach exception queries preserve grouped thread metadata, swap ABI, isolation and checked output");
+    }
     check(runNSStringSearchTests() == 0, "bounded character-set search contract");
     check(runLegacyGlyphTests() == 0, "legacy CGContext glyph outlines and ABI");
     check(runPositionalFormatTests() == 0, "positional formatting arguments and ABI");
     check(runLegacyAnimationTests() == 0, "UIKit animation, window and timer-pool lifetime");
     check(runCompatProfileTests()==0,"documented compatibility profiles preserve existing predicates and defaults");
+    check(runIOSConformanceTests() == 0, "source-cited iOS API conformance contracts");
+    {
+        ProcessConfig icCfg;
+        icCfg.homePath = "/tmp/hvm_icache_test";
+        Process icProc(icCfg);
+        const auto icacheSym = icProc.lookupSymbol("_sys_icache_invalidate");
+        const uint32_t icacheFn = icacheSym ? *icacheSym : 0;
+        const uint32_t code = 0x200000u;
+        const uint32_t flag = 0x201000u;
+        const uint32_t spin = 0x202000u;
+        icProc.mem().map(code, 4096, Memory::kProtRW | Memory::kProtExec);
+        icProc.mem().map(flag, 4096, Memory::kProtRW);
+        icProc.mem().map(spin, 4096, Memory::kProtRW | Memory::kProtExec);
+        icProc.mem().write<uint32_t>(flag, 0);
+        // Guest spin loop: ldr r1, [r0]; cmp r1, #0; beq -8; mov r0, #0; bx lr
+        icProc.mem().write<uint32_t>(spin + 0, 0xe5901000u);
+        icProc.mem().write<uint32_t>(spin + 4, 0xe3510000u);
+        icProc.mem().write<uint32_t>(spin + 8, 0x0afffffcu);
+        icProc.mem().write<uint32_t>(spin + 12, 0xe3a00000u);
+        icProc.mem().write<uint32_t>(spin + 16, 0xe12fff1eu);
+        // Initial guest code: mov r0, #11; bx lr
+        icProc.mem().write<uint32_t>(code + 0, 0xe3a0000bu);
+        icProc.mem().write<uint32_t>(code + 4, 0xe12fff1eu);
+
+        auto& cpu = icProc.mainThread().cpu;
+        const uint32_t worker = icProc.startThread(spin, flag, 64u << 10, false);
+        const uint32_t first = uint32_t(icProc.callGuest(cpu, code, {}));
+        // Overwrite guest code while worker is actively running in Engine::run.
+        icProc.mem().write<uint32_t>(code + 0, 0xe3a00016u);
+        if (icacheFn) icProc.callGuest(cpu, icacheFn, {code, 8});
+        const uint32_t second = uint32_t(icProc.callGuest(cpu, code, {}));
+        icProc.mem().write<uint32_t>(flag, 1);
+        uint32_t workerRet = 1;
+        const bool joined = icProc.joinThread(worker, &workerRet);
+        check(icacheFn != 0 && first == 11 && second == 22 && joined && workerRet == 0,
+              "_sys_icache_invalidate retires stale blocks safely under concurrent execution");
+    }
     std::printf("fulltest: %d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;
 }

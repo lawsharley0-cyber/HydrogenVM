@@ -117,6 +117,22 @@ EXPORT int hvm_test_main(JNIEnv* env, void* vm) {
     void* parallel = worker ? getMethod(env, worker, "parallel", "()I") : 0;
     test("Java Thread.start runs through Process guest workers", parallel &&
          call(env, worker, parallel, 0) == 1000 && !exceptionCheck(env));
+    Object collections = findClass(env, "test/Collections");
+    void* check = collections ? getMethod(env, collections, "check", "()I") : 0;
+    /* The sorted copy starts with -2 and the list contains one string. */
+    test("DEX collections sort, copy, and dispatch ArrayList through List",
+         check && call(env, collections, check, 0) == -1 && !exceptionCheck(env));
+    void* map = getMethod(env, collections, "mapCheck", "()I");
+    test("Map supports a null key, returns the previous value, and removes it",
+         map && call(env, collections, map, 0) == 0 && !exceptionCheck(env));
+    exceptionClear(env);
+    void* order = getMethod(env, collections, "orderCheck", "()I");
+    test("Collections reverse and swap update the ArrayList order",
+         order && call(env, collections, order, 0) == 1 && !exceptionCheck(env));
+    exceptionClear(env);
+    void* set = getMethod(env, collections, "setCheck", "()I");
+    test("Set accepts null, rejects duplicate insertion, and removes membership",
+         set && call(env, collections, set, 0) == 1 && !exceptionCheck(env));
     say("done: JNI round-trip\n");
     return failures;
 }

@@ -161,8 +161,20 @@ def run_import_check(hvm: str, work: Path, timeout: int) -> dict:
     cases = []
     for source, expected in ((base, images[:2]), (split, images)):
         destination = work / ("installed-" + source.stem)
-        run = subprocess.run([hvm, "import", str(source), str(destination)], capture_output=True,
-                             text=True, timeout=timeout)
+        try:
+            run = subprocess.run([hvm, "import", str(source), str(destination)], capture_output=True,
+                                 text=True, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            out_text = ""
+            if isinstance(err, subprocess.TimeoutExpired):
+                for part in (err.stdout, err.stderr):
+                    if isinstance(part, bytes):
+                        out_text += part.decode("utf-8", errors="replace")
+                    elif isinstance(part, str):
+                        out_text += part
+            cases.append({"name": f"import {source.suffix} preserves canonical DEX images in order",
+                          "passed": False, "detail": f"{err}\n{out_text}".strip()})
+            continue
         bundles = list(destination.glob("*/*.app"))
         actual = {str(p.relative_to(bundles[0])): p.read_bytes() for p in bundles[0].rglob("*.dex")} if len(bundles) == 1 else {}
         wanted = dict(zip(("classes.dex", "classes2.dex", "classes3.dex"), expected))
@@ -189,6 +201,7 @@ def run_java_check(work: Path, timeout: int, source: str, label: str) -> dict:
         build = subprocess.run(
             [*compiler, "-std=c++20", "-O2", "-pthread", "-I", str(ROOT / "src"),
              str(fixtures / (source + ".cpp")), str(ROOT / "src/runtime/android/dex/DexFile.cpp"),
+             str(ROOT / "src/runtime/android/dex/CoreRandom.cpp"),
              str(ROOT / "src/runtime/android/dex/Interpreter.cpp"), str(ROOT / "src/runtime/android/dex/Heap.cpp"),
              str(ROOT / "src/runtime/android/dex/Machine.cpp"),
              "-o", str(executable)], capture_output=True, text=True, timeout=timeout,
@@ -234,6 +247,7 @@ def main() -> int:
             run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
             run_java_check(work, args.timeout, "DexExecution", "Dalvik execution"),
             run_java_check(work, args.timeout, "DexLinkage", "Dalvik class linkage and threads"),
+            run_java_check(work, args.timeout, "DexRandom", "java.util.Random"),
         ]
         for phone in ([False, True] if args.phone else [False]):
             home = work / ("home-phone" if phone else "home")

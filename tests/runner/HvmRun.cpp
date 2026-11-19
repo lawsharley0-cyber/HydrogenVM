@@ -1,5 +1,6 @@
 // `hvm run <bundle.app | file.ipa> [--home DIR] [--keep-going] [--trace] [--quiet]
 //          [--run-for SECONDS] [--screenshot FILE.png] [--tap X,Y@T] [--drag X1,Y1,X2,Y2@T]
+//          [--device MODEL]
 //          [--report FILE.json] [--record FILE.hvmrec | --replay FILE.hvmrec] [-- args...]`
 // --record saves the session's seed, start time and every input (runtime/Session.hpp);
 // --replay plays a recording back (taps from the phone included) under the same seed and date.
@@ -84,6 +85,14 @@ int hvmRunMain(int argc, char** argv) {
     double sendAt = -1;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--run-for") && i + 1 < argc) { runFor = std::atof(argv[++i]); continue; }
+        // --device MODEL: hw.machine / UIDevice platform (default iPhone5,2). Apps that
+        // predate a model, or that pick a framebuffer from a device table, need the
+        // matching identifier — a 2012 title may mis-scale on iPhone5,2.
+        if (!std::strcmp(argv[i], "--device") && i + 1 < argc) {
+            cfg.deviceModel = argv[++i];
+            if (cfg.deviceModel.empty()) { std::fprintf(stderr, "--device requires a model such as iPhone4,1\n"); return 2; }
+            continue;
+        }
         if (!std::strcmp(argv[i], "--safe-mode-retry")) { safeModeRetry = true; continue; }
         if (!std::strcmp(argv[i], "--force-crash-without") && i + 1 < argc) { forceCrashWithout = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc) { screenshot = argv[++i]; continue; }
