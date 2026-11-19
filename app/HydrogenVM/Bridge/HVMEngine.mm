@@ -1,6 +1,7 @@
 #import "HVMEngine.h"
 #import "HostGLEAGL.h"
 #import "TlsBridgeApple.h"
+#import "HttpClientApple.h"
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
@@ -8,7 +9,9 @@
 #import <UIKit/UIKit.h>
 #include "core/memory/GuestArena.hpp"
 #include "loader/AppBundle.hpp"
+#include "loader/Apk.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "runtime/uikit/UIKit.hpp"
@@ -66,6 +69,9 @@ static NSString *str(const std::string &s) {
         _iconPath = a.iconPaths.empty() ? nil : str(a.iconPaths.front());
         _runnable = a.runnable;
         _encrypted = a.encrypted;
+        _isAndroid = !a.androidLibrary.empty();
+        _engine = str(a.engine);
+        _engineSupported = a.engineSupport == "driver";
         _problem = str(a.problem);
     }
     return self;
@@ -116,6 +122,42 @@ struct CoreTextBackend final : G::TextBackend {
         }
         [fonts setObject:(__bridge id)base forKey:key];
         return base;
+    }
+
+    // The font's tables, reassembled into a standalone sfnt (system fonts live in .ttc
+    // collections, which the TrueType loader does not read).
+    std::vector<uint8_t> fontFile(const G::FontDesc &f) override {
+        CTFontRef ft = font(f, 1);
+        std::vector<uint8_t> out;
+        if (!ft) return out;
+        CFArrayRef tags = CTFontCopyAvailableTables(ft, kCTFontTableOptionNoOptions);
+        std::vector<std::pair<uint32_t, NSData *>> tables;
+        for (CFIndex i = 0; tags && i < CFArrayGetCount(tags); ++i) {
+            const uint32_t tag = uint32_t(uintptr_t(CFArrayGetValueAtIndex(tags, i)));
+            if (CFDataRef d = CTFontCopyTable(ft, tag, kCTFontTableOptionNoOptions))
+                tables.push_back({tag, (__bridge_transfer NSData *)d});
+        }
+        if (tags) CFRelease(tags);
+        CFRelease(ft);
+        if (tables.empty()) return out;
+        std::sort(tables.begin(), tables.end(), [](auto &a, auto &b) { return a.first < b.first; });
+        auto put16 = [&](uint32_t v) { out.push_back(uint8_t(v >> 8)); out.push_back(uint8_t(v)); };
+        auto put32 = [&](uint32_t v) { put16(v >> 16); put16(v & 0xFFFF); };
+        const uint32_t n = uint32_t(tables.size());
+        uint32_t pow2 = 1, log2 = 0;
+        while (pow2 * 2 <= n) { pow2 *= 2; ++log2; }
+        put32(0x00010000); put16(n); put16(pow2 * 16); put16(log2); put16(n * 16 - pow2 * 16);
+        uint32_t offset = 12 + n * 16;
+        for (auto &[tag, data] : tables) {
+            put32(tag); put32(0); put32(offset); put32(uint32_t(data.length));
+            offset += (uint32_t(data.length) + 3) & ~3u;
+        }
+        for (auto &[tag, data] : tables) {
+            const uint8_t *b = static_cast<const uint8_t *>(data.bytes);
+            out.insert(out.end(), b, b + data.length);
+            while (out.size() % 4) out.push_back(0);
+        }
+        return out;
     }
 
     std::vector<CTLineRef> lines(const std::string &s, CTFontRef ft) {
@@ -482,6 +524,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if ((self = [super init])) {
         _bundlePath = [bundlePath copy];
         _homePath = [homePath copy];
+        _recordingPath = [[homePath stringByAppendingPathComponent:@"Library/HydrogenVM/last-session.hvmrec"] copy];
         _core = std::make_shared<SessionCore>();
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
@@ -505,7 +548,12 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool useGPU = _useGPU;
     const bool playSession = _playSession;
     const bool allowInternet = _allowInternet;
+    const bool unlockFrameRate = _unlockFrameRate;
     const bool glTrace = _glTrace;
+    const bool gles1Emulate = _gles1Emulate;
+    const uint32_t maxTextureSize = _maxTextureSize;
+    const uint64_t memoryBudgetBytes = _memoryBudgetBytes;
+    const std::string safeModeFallback = _safeModeFallback.length > 0 ? _safeModeFallback.UTF8String : "";
 
     auto flushLogs = [core, weakSelf]() {
         std::vector<std::pair<std::string, RT::LogLevel>> batch;
@@ -521,10 +569,30 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
 
     core->logFile = openRunLog(bundle, playSession);
 
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *recDir = [_homePath stringByAppendingPathComponent:@"Library/HydrogenVM"];
+    [fm createDirectoryAtPath:recDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *lastRec = [recDir stringByAppendingPathComponent:@"last-session.hvmrec"];
+    NSString *prevRec = [recDir stringByAppendingPathComponent:@"previous-session.hvmrec"];
+    if ([fm fileExistsAtPath:lastRec]) {
+        [fm removeItemAtPath:prevRec error:nil];
+        [fm moveItemAtPath:lastRec toPath:prevRec error:nil];
+    }
+    NSString *privateRec = [lastRec stringByAppendingPathExtension:@"private"];
+    NSString *prevPrivate = [prevRec stringByAppendingPathExtension:@"private"];
+    [fm removeItemAtPath:prevPrivate error:nil];
+    if ([fm fileExistsAtPath:privateRec]) [fm moveItemAtPath:privateRec toPath:prevPrivate error:nil];
+    const bool detailedRecording = _detailedRecording;
+    const std::string recordPath = detailedRecording ? privateRec.UTF8String : lastRec.UTF8String;
+    const std::string inputPath = detailedRecording ? lastRec.UTF8String : "";
+
     spawnBigStack(^{
         RT::ProcessConfig cfg;
         cfg.bundlePath = bundle;
         cfg.homePath = home;
+        cfg.recordPath = recordPath;
+        cfg.detailedRecording = detailedRecording;
+        cfg.inputRecordingPath = inputPath;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;
@@ -540,8 +608,11 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         }
         cfg.glTrace = glTrace;
         cfg.internetAccess = allowInternet;
+        cfg.unlockFrameRate = unlockFrameRate;
         // Secure connections: the game's old TLS in, the system's modern TLS out (TlsBridgeApple.mm).
         if (allowInternet) cfg.tlsBridge = Hydrogen::App::makeAppleTlsBridge();
+        // Foundation downloads (NSURLConnection / NSURLSession) on the system's own HTTP stack.
+        if (allowInternet) cfg.httpClient = Hydrogen::App::makeAppleHttpClient();
         if (useGPU) {
             // GLES runs on the GPU through OpenGLES.framework; the host layer is
             // handed to the player view, which puts it under the UIKit overlay.
@@ -555,6 +626,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.screenWidth = 320;
         cfg.screenHeight = 568;   // UIKit drops to 480 unless the app opts into 4"
         cfg.screenScale = 2;
+        cfg.rotateAndroidReadback = true;   // the player's screen is portrait
         auto sessionLog = [core, flushLogs](RT::LogLevel lvl, const std::string &msg) {
             std::lock_guard<std::mutex> lk(core->logMu);
             core->logToFile("", msg);
@@ -579,7 +651,11 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             std::shared_ptr<RT::Process> p;
             { std::lock_guard<std::mutex> lk(core->mu); p = core->proc; }
             const NSInteger orientation = p ? RT::UIKit::ui(*p).statusBarOrientation : 1;
-            const CGSize size = CGSizeMake(float(w) / 2, float(h) / 2);
+            // The guest's screen in points (touches are sent in these). Not pixels / 2: an
+            // iPad-only game runs a 768x1024 canvas at scale 1, and halving it put every
+            // touch at half its place (buttons answered away from where they are drawn).
+            const float gw = p ? RT::UIKit::ui(*p).screenW : 0, gh = p ? RT::UIKit::ui(*p).screenH : 0;
+            const CGSize size = gw > 0 && gh > 0 ? CGSizeMake(gw, gh) : CGSizeMake(float(w) / 2, float(h) / 2);
             NSData *pixels = [NSData dataWithBytes:rgba length:size_t(w) * size_t(h) * 4];
             CGDataProviderRef dp = CGDataProviderCreateWithCFData((__bridge CFDataRef)pixels);
             CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
@@ -642,6 +718,11 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             if (!core->stopRequested) {
                 proc->load();
                 core->ready = true;
+                {   // The guest screen in points, before any frame: GPU-presented games never send one.
+                    const CGSize guestScreen = CGSizeMake(RT::UIKit::ui(*proc).screenW, RT::UIKit::ui(*proc).screenH);
+                    if (guestScreen.width > 0 && guestScreen.height > 0)
+                        dispatch_async(dispatch_get_main_queue(), ^{ if (HVMSession *s = weakSelf) s.screenSize = guestScreen; });
+                }
                 if (core->stopRequested) proc->requestStop();
                 hostLog(RT::LogLevel::Info, "[teardown] waiting for the guest run to finish");
                 code = proc->run();
@@ -909,6 +990,26 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p) p->setAcceleration(float(x), float(y), float(z));
 }
 
+- (void)sendAndroidKey:(int32_t)keyCode down:(BOOL)down {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectKey(keyCode, down != NO);
+}
+
+- (void)sendJoystickLX:(float)lx ly:(float)ly rx:(float)rx ry:(float)ry hatX:(float)hatX hatY:(float)hatY {
+    if (!_core->ready) return;
+    std::shared_ptr<RT::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(_core->mu);
+        p = _core->proc;
+    }
+    if (p) p->injectJoystick(lx, ly, rx, ry, hatX, hatY);
+}
+
 @end
 
 // --------------------------------------------------------------- engine ---
@@ -993,6 +1094,17 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     }
 }
 
++ (HVMAppInfo *)importAPK:(NSString *)apkPath intoDirectory:(NSString *)appsRoot error:(NSError **)error {
+    try {
+        auto info = Hydrogen::Loader::importApk(apkPath.UTF8String, appsRoot.UTF8String);
+        return [[HVMAppInfo alloc] initWithInfo:info];
+    } catch (const std::exception &e) {
+        if (error)
+            *error = [NSError errorWithDomain:@"HydrogenVM" code:1 userInfo:@{NSLocalizedDescriptionKey: str(e.what())}];
+        return nil;
+    }
+}
+
 + (HVMAppInfo *)appInfoAtPath:(NSString *)appPath {
     try {
         return [[HVMAppInfo alloc] initWithInfo:Hydrogen::Loader::readBundle(appPath.UTF8String)];
@@ -1022,6 +1134,33 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         G::setTextBackend(std::make_shared<CoreTextBackend>());
         G::setPlatformImageDecoder(&decodeWithImageIO);
     });
+}
+
++ (nullable NSString *)chooseFallbackForCrashReport:(NSString *)crashReport
+                                     internetAccess:(BOOL)internetAccess
+                                    unlockFrameRate:(BOOL)unlockFrameRate
+                                       gles1Emulate:(BOOL)gles1Emulate
+                                     maxTextureSize:(uint32_t)maxTextureSize {
+    RT::ProcessConfig cfg;
+    cfg.internetAccess = internetAccess;
+    cfg.unlockFrameRate = unlockFrameRate;
+    cfg.gles1Emulate = gles1Emulate;
+    cfg.maxTextureSize = maxTextureSize;
+    const std::string text = crashReport.length > 0 ? crashReport.UTF8String : "";
+    auto fb = RT::Compat::chooseFallback(text, cfg);
+    if (!fb) return nil;
+    for (const auto &info : RT::Compat::fallbacks()) {
+        if (info.fallback == *fb) return str(info.id);
+    }
+    return nil;
+}
+
++ (nullable NSString *)fallbackLabelForId:(NSString *)fallbackId {
+    if (fallbackId.length == 0) return nil;
+    if (const auto *info = RT::Compat::findFallback(fallbackId.UTF8String)) {
+        return str(info->label);
+    }
+    return nil;
 }
 
 @end

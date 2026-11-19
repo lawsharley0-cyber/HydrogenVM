@@ -1,6 +1,9 @@
 // HydrogenVM — text: host font backend registry, a built-in 5x7 bitmap font
 // fallback (used by the Linux test runner; the iOS app installs a CoreText
 // backend), and word wrapping.
+#include <iterator>
+#include <cctype>
+#include <fstream>
 #include "Graphics.hpp"
 #include <mutex>
 
@@ -54,7 +57,36 @@ std::vector<uint32_t> codepoints(const std::string& s) {
 }
 
 // Bitmap font scaled to the requested point size: cell is 6x8 units, a unit is size/10 points.
+// Desktop builds: a metric-compatible font installed on the host (Liberation is drawn to
+// Helvetica/Arial, Times and Courier metrics), else DejaVu.
+std::vector<uint8_t> hostFontFile(const FontDesc& f) {
+    std::string n;
+    for (char ch : f.name) n += char(std::tolower(static_cast<unsigned char>(ch)));
+    const bool bold = f.bold || n.find("bold") != std::string::npos || n.find("black") != std::string::npos;
+    const bool italic = f.italic || n.find("italic") != std::string::npos || n.find("oblique") != std::string::npos;
+    std::string family = "Sans";
+    if (n.find("courier") != std::string::npos || n.find("mono") != std::string::npos) family = "Mono";
+    else if (n.find("times") != std::string::npos || n.find("georgia") != std::string::npos || n.find("serif") != std::string::npos &&
+             n.find("sans") == std::string::npos) family = "Serif";
+    const std::string style = bold && italic ? "BoldItalic" : bold ? "Bold" : italic ? "Italic" : "Regular";
+    const std::string dejavuStyle = bold && italic ? "-BoldOblique" : bold ? "-Bold" : italic ? "-Oblique" : "";
+    const std::vector<std::string> candidates = {
+        "/usr/share/fonts/truetype/liberation/Liberation" + family + "-" + style + ".ttf",
+        "/usr/share/fonts/truetype/liberation2/Liberation" + family + "-" + style + ".ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVu" + family + dejavuStyle + ".ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    };
+    for (const auto& path : candidates) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) continue;
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!bytes.empty()) return bytes;
+    }
+    return {};
+}
+
 struct BitmapBackend final : TextBackend {
+    std::vector<uint8_t> fontFile(const FontDesc& f) override { return hostFontFile(f); }
     static float unit(const FontDesc& f) { return std::max(f.size, 1.0f) / 10.0f; }
     TextLayout measure(const std::string& s, const FontDesc& f) override {
         const float u = unit(f);

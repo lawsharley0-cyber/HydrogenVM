@@ -3,12 +3,14 @@
 #include <mutex>
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <random>
 #include <fcntl.h>
+#include <glob.h>
 #include <unistd.h>
 
 namespace Hydrogen::Runtime {
@@ -244,12 +246,25 @@ uint32_t c_bsearch(Ctx& x, GuestPtr key, GuestPtr base, uint32_t n, uint32_t siz
 
 // ---------------------------------------------------------------- random ---
 
+struct IoPolicy {
+    explicit IoPolicy(Process&) {}
+    std::atomic<int32_t> policy[3] = {0, 0, 0};   // process, thread (one value: no per-thread I/O), darwin bg
+};
+int32_t io_setPolicy(Ctx& x, int32_t type, int32_t scope, int32_t policy) {
+    if (type != 0 || scope < 0 || scope > 2 || policy < 0 || policy > 5) { setErrno(x, EINVAL); return -1; }
+    x.proc.service<IoPolicy>().policy[scope] = policy;
+    return 0;
+}
+int32_t io_getPolicy(Ctx& x, int32_t type, int32_t scope) {
+    if (type != 0 || scope < 0 || scope > 2) { setErrno(x, EINVAL); return -1; }
+    return x.proc.service<IoPolicy>().policy[scope];
+}
 struct RandState {
-    explicit RandState(Process&) {}
+    explicit RandState(Process& p) : arc(uint32_t(p.entropy())) {}
     std::mutex mu;
     uint32_t next = 1;            // rand()
     std::mt19937 random{1};       // random()
-    std::mt19937 arc{std::random_device{}()};
+    std::mt19937 arc;              // arc4random: seeded from the session (runtime/Session.hpp)
     double drand = 0;
 };
 // Darwin/FreeBSD rand(): Park–Miller "minimal standard" generator.
@@ -264,9 +279,25 @@ int32_t r_rand(Ctx& x) {
     s.next = uint32_t(v);
     return int32_t(uint32_t(v) % (uint32_t(0x7FFFFFFF) + 1));
 }
-void r_srand(Ctx& x, uint32_t seed) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.next = seed; }
+void r_srand(Ctx& x, uint32_t seed) {
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayRngSeed("srand")) seed = uint32_t(*v);
+    } else if (session.recordingDetails()) {
+        session.recordRngSeed("srand", seed, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.next = seed;
+}
 int32_t r_random(Ctx& x) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); return int32_t(s.random() & 0x7FFFFFFF); }
-void r_srandom(Ctx& x, uint32_t seed) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.random.seed(seed); }
+void r_srandom(Ctx& x, uint32_t seed) {
+    auto& session = x.proc.session();
+    if (session.replayingDetails()) {
+        if (auto v = session.replayRngSeed("srandom")) seed = uint32_t(*v);
+    } else if (session.recordingDetails()) {
+        session.recordRngSeed("srandom", seed, x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); s.random.seed(seed);
+}
 uint32_t r_arc4random(Ctx& x) { auto& s = x.proc.service<RandState>(); std::lock_guard<std::mutex> lk(s.mu); return uint32_t(s.arc()); }
 uint32_t r_arc4random_uniform(Ctx& x, uint32_t upper) {
     if (upper < 2) return 0;
@@ -307,6 +338,78 @@ uint32_t e_realpath(Ctx& x, GuestPtr path, GuestPtr resolved) {
     if (!resolved) return x.proc.allocCString(s);
     x.mem.copyIn(resolved, s.c_str(), std::min<size_t>(s.size() + 1, 1024));
     return resolved;
+}
+// glob(3) over the host's glob, with the pattern mapped to the app's files and the matches
+// mapped back. Darwin's 32-bit glob_t: pathc, matchc, offs, flags, pathv, then five
+// callback pointers (GLOB_ALTDIRFUNC, not supported). The match list is one guest block:
+// the pointer array followed by the strings, released by globfree.
+int32_t e_glob(Ctx& x, GuestPtr pattern, int32_t flags, GuestPtr errfunc, GuestPtr g) {
+    constexpr int kAppend = 0x1, kDoOffs = 0x2, kErr = 0x4, kMark = 0x8, kNoCheck = 0x10, kNoSort = 0x20, kAltDir = 0x40,
+                  kBrace = 0x80, kNoEscape = 0x2000, kTilde = 0x800;
+    if (!pattern || !g || (flags & kAltDir) || errfunc) {
+        if (errfunc || (flags & kAltDir)) x.proc.logf(LogLevel::Warning, "glob: error callbacks and GLOB_ALTDIRFUNC are not supported");
+        if (!pattern || !g || (flags & kAltDir)) return -1;   // GLOB_NOSPACE
+    }
+    const std::string pat = x.proc.readCString(pattern);
+    int hf = 0;
+    if (flags & kErr) hf |= GLOB_ERR;
+    if (flags & kMark) hf |= GLOB_MARK;
+    if (flags & kNoSort) hf |= GLOB_NOSORT;
+    if (flags & kNoEscape) hf |= GLOB_NOESCAPE;
+#ifdef GLOB_BRACE
+    if (flags & kBrace) hf |= GLOB_BRACE;
+#endif
+#ifdef GLOB_TILDE
+    if (flags & kTilde) hf |= GLOB_TILDE;
+#endif
+    const bool absolute = !pat.empty() && pat[0] == '/';
+    const std::string hostPat = absolute ? x.proc.hostPath(pat) : pat;
+    glob_t hg{};
+    const int r = ::glob(hostPat.c_str(), hf, nullptr, &hg);
+    std::vector<std::string> found;
+    if (r == 0) for (size_t i = 0; i < hg.gl_pathc; ++i) found.push_back(absolute ? x.proc.guestPath(hg.gl_pathv[i]) : std::string(hg.gl_pathv[i]));
+    ::globfree(&hg);
+    if (r == GLOB_NOSPACE) return -1;
+    if (r == GLOB_ABORTED) return -2;
+    const bool noMatch = found.empty();
+    if (noMatch && (flags & kNoCheck)) found.push_back(pat);
+    // Keep what an earlier call put there (GLOB_APPEND), then add the new matches.
+    std::vector<std::string> all;
+    const uint32_t offs = (flags & kDoOffs) ? x.mem.read<uint32_t>(g + 8) : 0;
+    const GuestPtr oldv = x.mem.read<uint32_t>(g + 16);
+    if ((flags & kAppend) && oldv) {
+        const uint32_t n = x.mem.read<uint32_t>(g);
+        for (uint32_t i = 0; i < n; ++i) all.push_back(x.proc.readCString(x.mem.read<uint32_t>(oldv + (offs + i) * 4)));
+    }
+    all.insert(all.end(), found.begin(), found.end());
+    if (!(flags & kAppend)) {
+        x.mem.write<uint32_t>(g, 0);
+        x.mem.write<uint32_t>(g + 4, 0);
+        x.mem.write<uint32_t>(g + 16, 0);
+    }
+    if (noMatch && !(flags & kNoCheck)) return -3;   // GLOB_NOMATCH
+    uint32_t bytes = (offs + uint32_t(all.size()) + 1) * 4;
+    for (const auto& s : all) bytes += uint32_t(s.size()) + 1;
+    const GuestPtr block = x.proc.heap().allocZeroed(bytes);
+    if (!block) return -1;
+    GuestPtr str = block + (offs + uint32_t(all.size()) + 1) * 4;
+    for (size_t i = 0; i < all.size(); ++i) {
+        x.mem.write<uint32_t>(block + (offs + uint32_t(i)) * 4, str);
+        x.mem.copyIn(str, all[i].c_str(), all[i].size() + 1);
+        str += uint32_t(all[i].size()) + 1;
+    }
+    if ((flags & kAppend) && oldv) x.proc.heap().free(oldv);
+    x.mem.write<uint32_t>(g, uint32_t(all.size()));
+    x.mem.write<uint32_t>(g + 4, uint32_t(found.size()));
+    x.mem.write<uint32_t>(g + 12, uint32_t(flags));
+    x.mem.write<uint32_t>(g + 16, block);
+    return 0;
+}
+void e_globfree(Ctx& x, GuestPtr g) {
+    if (!g) return;
+    if (const GuestPtr v = x.mem.read<uint32_t>(g + 16)) x.proc.heap().free(v);
+    x.mem.write<uint32_t>(g, 0);
+    x.mem.write<uint32_t>(g + 16, 0);
 }
 uint32_t e_mktemp(Ctx& x, GuestPtr tmpl) {
     std::string t = x.proc.readCString(tmpl);
@@ -419,8 +522,12 @@ void registerLibcStdlib(Process& p) {
     p.def<&r_random>("_random");
     p.def<&r_srandom>("_srandom");
     // srandomdev(): seed random() from the host's entropy.
-    p.def<+[](Ctx& x) { r_srandom(x, std::random_device{}()); }>("_srandomdev");
+    p.def<+[](Ctx& x) { r_srandom(x, uint32_t(x.proc.entropy())); }>("_srandomdev");
     p.def<&r_arc4random>("_arc4random");
+    // setiopolicy_np(iotype, scope, policy) (Crossy Road #532): the host schedules I/O; the policy
+    // is remembered so getiopolicy_np reads it back. IOPOL_TYPE_DISK = 0; IOPOL_DEFAULT = 0.
+    p.def<&io_setPolicy>("_setiopolicy_np");
+    p.def<&io_getPolicy>("_getiopolicy_np");
     p.def<&r_arc4random_uniform>("_arc4random_uniform");
     p.def<&r_arc4random_buf>("_arc4random_buf");
     p.def<&r_drand48>("_drand48");
@@ -432,6 +539,9 @@ void registerLibcStdlib(Process& p) {
     p.def<&e_putenv>("_putenv");
     p.def<&e_realpath>("_realpath");
     p.def<&e_realpath>("_realpath$DARWIN_EXTSN");
+    supportDef<&e_glob>(p, "_glob", SupportStatus::Approx, "host glob on the app's files; no error callback or GLOB_ALTDIRFUNC");
+    supportDef<&e_glob>(p, "_glob$INODE64", SupportStatus::Approx, "host glob on the app's files; no error callback or GLOB_ALTDIRFUNC");
+    supportDef<&e_globfree>(p, "_globfree", SupportStatus::Real, "frees the match list glob made");
     p.def<&e_mktemp>("_mktemp");
     p.def<&e_mkstemp>("_mkstemp");
     p.def<&e_system>("_system");

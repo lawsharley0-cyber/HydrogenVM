@@ -268,7 +268,9 @@ id i_initWithContentsOfFileUsed(Ctx& x, id self, SEL s, id path, GuestPtr usedEn
 }
 id i_initWithContentsOfFile1(Ctx& x, id self, SEL s, id path) { return i_initWithContentsOfFile(x, self, s, path, kNSUTF8, 0); }
 id i_initWithContentsOfURL(Ctx& x, id self, SEL s, id url, uint32_t enc, GuestPtr err) {
-    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+    if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
+        if (auto reply = standInFetch(x, url, "GET")) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(*body)); return self; }
         if (err) x.mem.write<uint32_t>(err, 0);
         rt(x).release(x.cpu, self);
         return 0;
@@ -277,7 +279,9 @@ id i_initWithContentsOfURL(Ctx& x, id self, SEL s, id url, uint32_t enc, GuestPt
     return i_initWithContentsOfFile(x, self, s, path, enc, err);
 }
 id i_initWithContentsOfURLUsed(Ctx& x, id self, SEL s, id url, GuestPtr usedEnc, GuestPtr err) {
-    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+    if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
+        if (auto reply = standInFetch(x, url, "GET")) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { if (err) x.mem.write<uint32_t>(err, 0); setValue(x, self, fromUtf8(*body)); return self; }
         if (err) x.mem.write<uint32_t>(err, 0);
         rt(x).release(x.cpu, self);
         return 0;
@@ -286,7 +290,9 @@ id i_initWithContentsOfURLUsed(Ctx& x, id self, SEL s, id url, GuestPtr usedEnc,
     return i_initWithContentsOfFileUsed(x, self, s, path, usedEnc, err);
 }
 id i_initWithContentsOfURL1(Ctx& x, id self, SEL s, id url) {
-    if (!url || !rt(x).send(x.cpu, url, "isFileURL")) {
+    if (!url || !uint8_t(rt(x).send(x.cpu, url, "isFileURL"))) {
+        if (auto reply = standInFetch(x, url, "GET")) { setValue(x, self, fromUtf8(reply->body)); return self; }
+        if (auto body = onlineFetchContents(x, url)) { setValue(x, self, fromUtf8(*body)); return self; }
         rt(x).release(x.cpu, self);
         return 0;
     }
@@ -308,6 +314,14 @@ id c_stringWithString(Ctx& x, id self, SEL, id o) {
     // so apps that over-release it (The Sandbox) get away with it as on iOS.
     auto& st = S(x);
     if ((self == st.nsString || self == st.cfString) && o && rt(x).classOf(o) == st.constString) return o;
+    // The same for any immutable string: Foundation's initWithString: copies, and copying an
+    // immutable string is the string itself. Minion Rush 5.7's Crashlytics keeps
+    // [NSString stringWithString:<Info.plist value>] without retaining it; on iOS that is the
+    // bundle's own long-lived string, here a new one was freed under it.
+    if ((self == st.nsString || self == st.cfString) && o) {
+        const StringData* d = dataOf(x, o);
+        if (d && !d->isMutable) return autoreleased(x, rt(x).retain(x.cpu, o));
+    }
     return construct(x, self, i_initWithString, o);
 }
 id c_stringWithUTF8String(Ctx& x, id self, SEL, GuestPtr c) { return construct(x, self, i_initWithUTF8String, c); }

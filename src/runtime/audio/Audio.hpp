@@ -7,12 +7,14 @@
 // thread (an AVAudioSourceNode on iOS). Every voice resamples on its own, so
 // sounds at different rates, pitches and volumes overlap freely.
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -40,10 +42,16 @@ struct Mp3Packets {
     uint32_t maxPacketSize = 0;
     uint32_t dataOffset = 0;                      // of the first audio packet
     uint64_t dataBytes = 0;                       // sum of the packet sizes
+    // AudioFilePacketTableInfo ('pnfo'): audible length and the encoder's delay / padding,
+    // from a LAME-compatible Xing or Info tag when the file has one. AudioFile reports
+    // these, not the raw MPEG length (frames * 1152).
+    uint64_t validFrames = 0;
+    int32_t primingFrames = 0;
+    int32_t remainderFrames = 0;
 };
 // Indexes a layer III stream: skips an ID3v2 tag and a Xing/Info header frame, stops at the
 // first thing that is not a frame of the same rate and channel count. False if there is no
-// such stream.
+// such stream. Fills the packet-table fields from a LAME/Xing tag when present.
 bool indexMp3(const uint8_t* data, size_t n, Mp3Packets& out);
 // Decodes MP3 packets as they arrive, keeping the decoder's state between calls.
 struct Mp3Stream;
@@ -56,13 +64,51 @@ int mp3StreamDecode(Mp3Stream& s, const uint8_t* data, size_t n, std::vector<int
 // Unknown formats give no samples and an estimated duration.
 DecodedAudio decode(const uint8_t* data, size_t n);
 
+// One decoder cursor, owned by one player or file reader. PCM output is
+// always interleaved stereo, with mono extended to both channels.
+class AudioSource {
+public:
+    virtual ~AudioSource() = default;
+    int sampleRate() const { return sampleRate_; }
+    int channels() const { return channels_; }
+    uint64_t frames() const { return frames_; }
+    virtual size_t read(uint64_t first, int16_t* stereo, size_t frames) = 0;
+
+protected:
+    AudioSource(int rate, int channels, uint64_t frames)
+        : sampleRate_(rate), channels_(channels), frames_(frames) {}
+
+private:
+    int sampleRate_, channels_;
+    uint64_t frames_;
+};
+
+// Returns null for a small file or an unsupported streaming codec. The caller
+// may fall back to decode(). A successful memory open takes ownership of bytes.
+std::shared_ptr<AudioSource> openStream(const std::string& path);
+std::shared_ptr<AudioSource> openStream(std::vector<uint8_t>& bytes);
+
+// A fixed-size read cache with one extra sample for interpolation at a boundary.
+class SourceWindow {
+public:
+    bool pair(AudioSource&, uint64_t first, int16_t (&current)[2], int16_t (&next)[2], bool loop = false);
+
+private:
+    static constexpr size_t kFrames = 4096;
+    std::array<int16_t, (kFrames + 1) * 2> samples_;
+    uint64_t start_ = 0;
+    size_t count_ = 0;
+    int16_t first_[2] = {};
+    bool haveFirst_ = false;
+};
+
 using Pcm = std::shared_ptr<const std::vector<int16_t>>;   // interleaved stereo
 
 struct VoiceParams {
     float gain = 1.0f;
     float pan = 0.0f;     // -1 left .. +1 right
     float pitch = 1.0f;   // playback rate multiplier
-    bool loop = false;    // non-stream voices: repeat forever
+    bool loop = false;    // file or PCM voices: repeat forever
 };
 
 class Mixer {
@@ -72,6 +118,7 @@ public:
     // A voice that plays `pcm` (recorded at `rate`) once, or looping.
     // autoRelease: forget the voice when it ends (fire-and-forget sounds).
     uint32_t play(Pcm pcm, int rate, const VoiceParams& p, double startSeconds = 0, bool autoRelease = false);
+    uint32_t playSource(std::shared_ptr<AudioSource> source, const VoiceParams& p, double startSeconds = 0);
     // A voice fed with queued buffers (OpenAL buffer queues, audio queues).
     // It starves (plays silence) when the queue runs out.
     uint32_t createStream(const VoiceParams& p);
@@ -99,7 +146,11 @@ public:
 
     // What the app actually made audible (before the player's own volume), for
     // tests. Music = streams, looping voices and sounds of 8 s or more; effects =
-    // the rest. A voice counts once, the first time it is heard.
+    // the rest, and also a sharp energy rise on a stream that already had an
+    // audible bed (a game that mixes effects into one OpenAL queue). A voice
+    // counts once, the first time it is heard; a mixed-in rise can additionally
+    // count as an effect voice. Onset detection is reporting only and does not
+    // change the mixed samples.
     struct Stats {
         uint64_t framesRendered = 0, audibleFrames = 0, musicFrames = 0, effectFrames = 0;
         uint32_t musicVoices = 0, effectVoices = 0;
@@ -118,9 +169,18 @@ private:
     struct Buffer { Pcm pcm; int rate; uint64_t tag; };
     struct Voice {
         std::deque<Buffer> queue;
+        std::shared_ptr<AudioSource> source;
+        std::unique_ptr<SourceWindow> samples;
         double pos = 0;   // in frames of the front buffer
         VoiceParams p;
         bool paused = false, stream = false, autoRelease = false, done = false, heard = false;
+        // Onset detector (reporting only): 10 ms windows, ~400 ms of history.
+        static constexpr int kOnsetHist = 40;
+        static constexpr int kOnsetWindow = kRate / 100;   // 10 ms
+        float onsetRms[kOnsetHist] = {};
+        int onsetFilled = 0, onsetIndex = 0, onsetSamples = 0, effectHoldSamples = 0;
+        double onsetSumSq = 0;
+        bool onsetCounted = false;
         std::vector<uint64_t> processed;
     };
     mutable std::mutex mu_;

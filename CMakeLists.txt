@@ -23,8 +23,10 @@ add_library(hvm_core STATIC
   src/loader/ElfLoader.cpp
   src/loader/MachO.cpp
   src/loader/Zip.cpp
+  src/loader/Apk.cpp
   src/loader/Plist.cpp
   src/loader/AppBundle.cpp
+  src/loader/AndroidEngine.cpp
   src/selftest/SelfTest.cpp
   ${HVM_RUNTIME_SOURCES}
 )
@@ -44,6 +46,7 @@ if(APPLE)
   set_source_files_properties(src/runtime/foundation/HostPredicateRegexApple.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(hvm_core PUBLIC "-framework Foundation" "-framework CoreFoundation")
   target_link_libraries(hvm_core PUBLIC "-framework AudioToolbox")
+  target_link_libraries(hvm_core PUBLIC "-framework Security")   # SecCertificate / SecKey / SecTrust
   target_link_libraries(hvm_core PUBLIC iconv)   # iconv lives in libiconv on Apple
 else()
   find_package(ICU REQUIRED COMPONENTS uc i18n)
@@ -67,7 +70,9 @@ endif()
 # -ffp-contract=off: guest VMLA/VMLS are unfused; never let the host compiler fuse them.
 target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -foptimize-sibling-calls -fno-strict-aliasing -ffp-contract=off)
 
-add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/HostFaultTests.cpp tests/runner/ThreadProgressTests.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/SuspendTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/runner/ArenaPoolTests.cpp tests/host/minimp3_hwcap_test.cpp)
+add_executable(hvm_cpudiff tests/runner/CpuDiff.cpp)
+target_link_libraries(hvm_cpudiff PRIVATE hvm_core)
+add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/HostFaultTests.cpp tests/runner/ThreadProgressTests.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/MsgSendTests.cpp tests/runner/PageProtectionTests.cpp tests/runner/SuspendTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/runner/ArenaPoolTests.cpp tests/host/minimp3_hwcap_test.cpp)
 add_executable(hvm_host_fault_tests tests/runner/HostFaultTests.cpp)
 target_link_libraries(hvm_host_fault_tests PRIVATE hvm_core)
 add_executable(hvm_thread_progress_tests tests/runner/ThreadProgressTests.cpp)
@@ -79,6 +84,10 @@ target_link_libraries(hvm_thread_lifetime_tests PRIVATE hvm_core)
 target_sources(hvm_tests PRIVATE tests/runner/NSStringSearchTests.cpp tests/runner/LegacyGlyphTests.cpp tests/runner/PositionalFormatTests.cpp tests/runner/LegacyAnimationTests.cpp)
 target_compile_definitions(hvm_tests PRIVATE HVM_CANABALT_CASES_NO_MAIN MINIMP3_HWCAP_NO_MAIN HVM_HOST_FAULT_NO_MAIN HVM_THREAD_PROGRESS_NO_MAIN HVM_GUEST_CALL_BOUNDARY_NO_MAIN HVM_THREAD_LIFETIME_NO_MAIN HVM_ARENA_POOL_NO_MAIN)
 target_link_libraries(hvm_tests PRIVATE hvm_core)
+target_sources(hvm_tests PRIVATE tests/runner/CompatProfileTests.cpp)
+add_executable(hvm_compat_profile_tests tests/runner/CompatProfileTests.cpp)
+target_compile_definitions(hvm_compat_profile_tests PRIVATE HVM_COMPAT_PROFILE_MAIN)
+target_link_libraries(hvm_compat_profile_tests PRIVATE hvm_core)
 
 # GNU-style linker wrapping keeps host thread failure injection in the test binary.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -157,3 +166,6 @@ target_link_libraries(hvm PRIVATE hvm_core)
 
 add_executable(hvm_bench tests/runner/Bench.cpp)
 target_link_libraries(hvm_bench PRIVATE hvm_core)
+
+add_executable(hvm_msgsend_bench tests/runner/MsgSendBench.cpp)
+target_link_libraries(hvm_msgsend_bench PRIVATE hvm_core)

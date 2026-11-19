@@ -279,8 +279,28 @@ uint32_t q_rfindChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
     const size_t r = value(x, self).rfind(char(c), pos == kNpos ? std::string::npos : pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
 }
-int32_t q_compareC(Ctx& x, GuestPtr self, GuestPtr s) { const int r = value(x, self).compare(x.proc.readCString(s)); return r < 0 ? -1 : r > 0; }
-int32_t q_compareStr(Ctx& x, GuestPtr self, GuestPtr other) { const int r = value(x, self).compare(value(x, other)); return r < 0 ? -1 : r > 0; }
+// compare as libstdc++ does it: traits::compare over min(size(), other size) bytes, then the
+// sizes. Only those bytes are read. (Copying both whole strings first read a string's full
+// claimed length: Minion Rush 1.0.0 compares a string whose size field is garbage against a
+// short one, which a phone gets away with and HydrogenVM faulted on, past the end of memory.)
+int32_t compareSpans(Ctx& x, uint32_t a, uint32_t la, uint32_t b, uint32_t lb) {
+    const uint32_t n = std::min(la, lb);
+    int r = (n && a && b) ? std::memcmp(x.mem.host(a), x.mem.host(b), n) : 0;
+    if (r == 0) r = la < lb ? -1 : la > lb ? 1 : 0;
+    return r < 0 ? -1 : r > 0;
+}
+int32_t q_compareC(Ctx& x, GuestPtr self, GuestPtr s) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const std::string c = x.proc.readCString(s);
+    const uint32_t ld = len(x, d), n = std::min<uint32_t>(ld, uint32_t(c.size()));
+    int r = n ? std::memcmp(x.mem.host(d), c.data(), n) : 0;
+    if (r == 0) r = ld < c.size() ? -1 : ld > c.size() ? 1 : 0;
+    return r < 0 ? -1 : r > 0;
+}
+int32_t q_compareStr(Ctx& x, GuestPtr self, GuestPtr other) {
+    const uint32_t a = x.mem.read<uint32_t>(self), b = x.mem.read<uint32_t>(other);
+    return compareSpans(x, a, len(x, a), b, len(x, b));
+}
 int32_t q_compareSubStr(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr other) {
     const std::string v = value(x, self);
     checkPos(pos, uint32_t(v.size()), "basic_string::compare");
@@ -395,6 +415,32 @@ template <uint32_t CharSize> void r_setLeaked(Ctx& x, GuestPtr rep) {
     if (rep && rep != empty) x.mem.write<uint32_t>(rep + 8, 0xFFFFFFFFu);
 }
 uint32_t r_emptyRep(Ctx& x) { return x.proc.service<Strings>().emptyRep; }
+
+// Out-of-line members some Unity 4 / GCC builds import instead of inlining.
+// _M_data() is the data pointer, the same as c_str()/data().
+// _M_check_length(n1, n2, s): throw if size-n1 + n2 exceeds max_size, as GCC 4.2.
+// basic_string::_S_empty_rep() is the same storage as _Rep::_S_empty_rep().
+// _S_copy_chars is a memcpy; the iterator overload is the same ABI (a wrapped pointer).
+void m_checkLength(Ctx& x, GuestPtr self, uint32_t n1, uint32_t n2, GuestPtr msg) {
+    const uint32_t size = q_size(x, self);
+    if (kMaxSize - (size - n1) < n2)
+        lengthError(msg ? x.proc.readCString(msg).c_str() : "basic_string::_M_check_length");
+}
+void s_copyChars(Ctx& x, GuestPtr dest, GuestPtr first, GuestPtr last) {
+    if (!dest || last <= first) return;
+    const uint32_t n = last - first;
+    std::memcpy(x.mem.host(dest), x.mem.host(first), n);
+}
+uint32_t m_insertStr(Ctx& x, GuestPtr self, uint32_t pos, GuestPtr other) {
+    const std::string o = value(x, other);
+    return m_insertBuf(x, self, pos, x.mem.read<uint32_t>(other), uint32_t(o.size()));
+}
+uint32_t m_replaceIterators(Ctx& x, GuestPtr self, uint32_t i1, uint32_t i2, GuestPtr k1, GuestPtr k2) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    if (i1 < d || i2 < i1 || k2 < k1) return self;
+    return m_replace(x, self, i1 - d, i2 - i1, k1, k2 - k1);
+}
+
 
 // --------------------------------------------------------------- std::wstring
 // std::basic_string<wchar_t, std::char_traits<wchar_t>, std::allocator<wchar_t>>
@@ -1001,6 +1047,13 @@ void registerLibStdcxxContainers(Process& p) {
     p.def<&r_setSharable<1>>("__ZNSs4_Rep13_M_set_sharableEv");
     p.def<&r_setLeaked<1>>("__ZNSs4_Rep13_M_set_leakedEv");
     p.def<&r_emptyRep>("__ZNSs4_Rep12_S_empty_repEv");
+    p.def<&q_cstr>("__ZNKSs7_M_dataEv");
+    p.def<&m_checkLength>("__ZNKSs15_M_check_lengthEmmPKc");
+    p.def<&r_emptyRep>("__ZNSs12_S_empty_repEv");
+    p.def<&s_copyChars>("__ZNSs13_S_copy_charsEPcPKcS1_");
+    p.def<&s_copyChars>("__ZNSs13_S_copy_charsEPcN9__gnu_cxx17__normal_iteratorIS_SsEES2_");
+    p.def<&m_insertStr>("__ZNSs6insertEmRKSs");
+    p.def<&m_replaceIterators>("__ZNSs7replaceEN9__gnu_cxx17__normal_iteratorIPcSsEES2_NS0_IPKcSsEES5_");
 
     // std::wstring
     p.def<&wc_default>("__ZNSbIwSt11char_traitsIwESaIwEEC1Ev");
@@ -1139,6 +1192,9 @@ void registerLibStdcxxContainers(Process& p) {
     p.mem().write<uint32_t>(vtLg + 12, fnLgD0);
     p.mem().write<uint32_t>(vtLg + 16, fnLgWhat);
 
+    // std::bad_alloc::bad_alloc(): an exception object is its vtable pointer (Kindle #539).
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.mem.write<uint32_t>(self, x.proc.lookupSymbol("__ZTVSt9bad_alloc").value_or(0) + 8); return self; }>("__ZNSt9bad_allocC1Ev");
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.mem.write<uint32_t>(self, x.proc.lookupSymbol("__ZTVSt9bad_alloc").value_or(0) + 8); return self; }>("__ZNSt9bad_allocC2Ev");
     const uint32_t fnBadAllocD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD1Ev");
     p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD2Ev");
     const uint32_t fnBadAllocD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt9bad_allocD0Ev");

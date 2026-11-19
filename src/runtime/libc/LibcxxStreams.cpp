@@ -18,6 +18,9 @@
 #include "runtime/Support.hpp"
 #include "runtime/Process.hpp"
 #include <algorithm>
+#include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -50,6 +53,11 @@ struct LibcxxStreamState {
     uint32_t wctypeId = 0, wctypeVptr = 0, wctype = 0;   // std::ctype<wchar_t>
     uint32_t wideSbVptr = 0;                   // basic_streambuf<wchar_t>'s own vtable
     uint32_t locale = 0;                       // the classic locale's implementation object
+    uint32_t classicObject = 0;                // a std::locale holding it (what locale::classic() returns)
+    // The other "C" locale facets a libc++ app may ask for by id: numpunct, num_put, num_get, collate.
+    uint32_t numpunctId = 0, numPutId = 0, numGetId = 0, collateId = 0;
+    uint32_t numpunctVptr = 0, numPutVptr = 0, numGetVptr = 0, collateVptr = 0;
+    uint32_t numpunct = 0, numPut = 0, numGet = 0, collate = 0;
     std::mutex mu;                             // two threads can make their first stream call together
 };
 // The name is unique on purpose: Process::service finds its object by type name, and clang gives two
@@ -385,6 +393,15 @@ uint32_t classicLocale(Ctx& x) {
     if (!s.locale) s.locale = x.proc.heap().allocZeroed(16);
     return s.locale;
 }
+uint32_t locClassic(Ctx& x) {
+    const uint32_t impl = classicLocale(x);
+    LibcxxStreamState& s = St(x);
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (!s.classicObject) { s.classicObject = x.proc.heap().allocZeroed(4); wr(x, s.classicObject, impl); }
+    return s.classicObject;
+}
+// There is one locale, so two locales are always the same one.
+uint32_t locEqual(Ctx&, GuestPtr, GuestPtr) { return 1; }
 uint32_t locDefault(Ctx& x, GuestPtr self) { wr(x, self, classicLocale(x)); return self; }
 uint32_t locCopy(Ctx& x, GuestPtr self, GuestPtr other) { wr(x, self, rd(x, other)); return self; }
 uint32_t locAssign(Ctx& x, GuestPtr self, GuestPtr other) { wr(x, self, rd(x, other)); return self; }
@@ -417,6 +434,20 @@ uint32_t facetFor(Ctx& x, uint32_t id) {
         }
         return s.wctype;
     }
+    auto simple = [&](uint32_t want, uint32_t& made, uint32_t vptr) -> uint32_t {
+        if (!id || id != want) return 0;
+        if (!made) {
+            const uint32_t f = x.proc.heap().allocZeroed(16);
+            wr(x, f, vptr);
+            wr(x, f + 4, 1);   // never released
+            made = f;
+        }
+        return made;
+    };
+    if (const uint32_t f = simple(s.numpunctId, s.numpunct, s.numpunctVptr)) return f;
+    if (const uint32_t f = simple(s.numPutId, s.numPut, s.numPutVptr)) return f;
+    if (const uint32_t f = simple(s.numGetId, s.numGet, s.numGetVptr)) return f;
+    if (const uint32_t f = simple(s.collateId, s.collate, s.collateVptr)) return f;
     if (id && id == s.codecvtId) {
         if (!s.codecvt) {
             const uint32_t f = x.proc.heap().allocZeroed(8);
@@ -431,7 +462,7 @@ uint32_t facetFor(Ctx& x, uint32_t id) {
 bool locHasFacet(Ctx& x, GuestPtr, GuestPtr id) { return facetFor(x, id) != 0; }
 uint32_t locUseFacet(Ctx& x, GuestPtr, GuestPtr id) {
     const uint32_t f = facetFor(x, id);
-    if (!f) x.proc.log(LogLevel::Warning, "locale::use_facet: only ctype<char> and codecvt<char, char, mbstate_t> exist; this facet is missing");
+    if (!f) x.proc.log(LogLevel::Warning, "locale::use_facet: the \"C\" locale has ctype, codecvt, numpunct, num_put, num_get and collate for char; this facet is missing");
     return f;
 }
 uint32_t facetDtor(Ctx&, GuestPtr self) { return self; }
@@ -641,6 +672,181 @@ uint32_t wo_int(Ctx& x, GuestPtr os, int32_t v) {
     return os;
 }
 
+// ---- numpunct<char>, "C" locale: '.', no grouping, "true"/"false".
+// String results go through r0 (sret), this in r1. A libc++ short string: size<<1 in the first
+// byte, the characters after it.
+void putShortString(Ctx& x, uint32_t ret, const char* s) {
+    const uint32_t n = uint32_t(std::strlen(s));
+    for (uint32_t i = 0; i < 12; i += 4) wr(x, ret + i, 0);
+    x.mem.write<uint8_t>(ret, uint8_t(n << 1));
+    std::memcpy(x.mem.host(ret + 1), s, n);
+}
+uint32_t npDecimal(Ctx&, GuestPtr) { return '.'; }
+uint32_t npThousands(Ctx&, GuestPtr) { return ','; }
+void npGrouping(Ctx& x) { putShortString(x, x.cpu.r[0], ""); }
+void npTrue(Ctx& x) { putShortString(x, x.cpu.r[0], "true"); }
+void npFalse(Ctx& x) { putShortString(x, x.cpu.r[0], "false"); }
+
+// ---- num_put<char>: do_put(this, ostreambuf_iterator s (r1), ios_base& (r2), char fill (r3),
+// value on the stack). Formats like operator<< does, pads with `fill`, returns the iterator
+// (null when the buffer stopped taking characters).
+void numPutEmit(Ctx& x, std::string text, size_t prefix) {
+    const uint32_t sb = x.cpu.r[1], ios = x.cpu.r[2];
+    const char fill = char(x.cpu.r[3] & 0xFF);
+    const int32_t w = int32_t(rd(x, ios + kWidth));
+    wr(x, ios + kWidth, 0);
+    if (w > 0 && size_t(w) > text.size()) {
+        const std::string f(size_t(w) - text.size(), fill);
+        const uint32_t adj = rd(x, ios + kFlags) & (fLeft | fRight | fInternal);
+        text = adj == fLeft ? text + f : adj == fInternal ? text.substr(0, prefix) + f + text.substr(prefix) : f + text;
+    }
+    const bool ok = sb && sbSputn(x, sb, text.data(), uint32_t(text.size())) == text.size();
+    x.cpu.r[0] = ok ? sb : 0;
+}
+uint32_t stackWord(Ctx& x, uint32_t i) { return rd(x, x.cpu.r[CPU::kSP] + 4 * i); }
+int64_t stack64(Ctx& x) { return int64_t((uint64_t(stackWord(x, 1)) << 32) | stackWord(x, 0)); }
+void numPutInt(Ctx& x, int64_t v, bool isSigned, int bits) {
+    size_t prefix = 0;
+    std::string t = hvmIosFormatInt(rd(x, x.cpu.r[2] + kFlags), v, isSigned, bits, prefix);
+    numPutEmit(x, std::move(t), prefix);
+}
+void npBool(Ctx& x) {
+    const bool v = (stackWord(x, 0) & 0xFF) != 0;
+    if (rd(x, x.cpu.r[2] + kFlags) & fBoolalpha) numPutEmit(x, v ? "true" : "false", 0);
+    else numPutInt(x, v ? 1 : 0, true, 32);
+}
+void npLong(Ctx& x) { numPutInt(x, int32_t(stackWord(x, 0)), true, 32); }
+void npULong(Ctx& x) { numPutInt(x, int64_t(stackWord(x, 0)), false, 32); }
+void npLongLong(Ctx& x) { numPutInt(x, stack64(x), true, 64); }
+void npULongLong(Ctx& x) { numPutInt(x, stack64(x), false, 64); }
+void npDouble(Ctx& x) {
+    const uint64_t bits = uint64_t(stack64(x));
+    double d;
+    std::memcpy(&d, &bits, 8);
+    size_t prefix = 0;
+    std::string t = hvmIosFormatDouble(rd(x, x.cpu.r[2] + kFlags), int32_t(rd(x, x.cpu.r[2] + kPrecision)), d, prefix);
+    numPutEmit(x, std::move(t), prefix);
+}
+void npPointer(Ctx& x) {
+    char b[16];
+    std::snprintf(b, sizeof b, "0x%x", stackWord(x, 0));
+    numPutEmit(x, b, 2);
+}
+
+// ---- num_get<char>: do_get(this, in (r1), end (r2), ios_base& (r3), iostate& err, T& v).
+// Reads the longest prefix that can be a number, converts it like strtol/strtod, sets eof when
+// the buffer ran out and fail when nothing (or nothing valid) was read. Returns `in`, or null at end.
+enum class NumKind { Bool, Long, LongLong, UShort, UInt, ULong, ULongLong, Float, Double, LongDouble, Pointer };
+void numGet(Ctx& x, NumKind kind) {
+    const uint32_t sb = x.cpu.r[1], ios = x.cpu.r[3];
+    const uint32_t errAt = stackWord(x, 0), out = stackWord(x, 1);
+    const bool floating = kind == NumKind::Float || kind == NumKind::Double || kind == NumKind::LongDouble;
+    const uint32_t basefield = rd(x, ios + kFlags) & (2u | 8u | 64u);
+    int base = basefield == 8 ? 16 : basefield == 64 ? 8 : basefield == 2 ? 10 : 0;
+    if (floating || kind == NumKind::Bool) base = 10;
+    if (kind == NumKind::Pointer) base = 16;
+    std::string t;
+    int32_t c = sb ? sbSgetc(x, sb) : kEofChar;
+    auto take = [&] { t.push_back(char(c)); sbSbumpc(x, sb); c = sbSgetc(x, sb); };
+    if (kind == NumKind::Bool && (rd(x, ios + kFlags) & fBoolalpha)) {
+        while (c != kEofChar && t.size() < 5 && std::isalpha(c)) take();
+    } else {
+        if (c == '+' || c == '-') take();
+        bool digits = false, dot = false, exp = false;
+        for (; c != kEofChar; ) {
+            const bool hexDigit = std::isxdigit(c) && (base == 16 || base == 0);
+            if (std::isdigit(c) || (hexDigit && !floating)) { digits = true; take(); continue; }
+            if ((c == 'x' || c == 'X') && (base == 16 || base == 0) && !floating && t.size() - (t[0] == '-' || t[0] == '+') == 1 && t.back() == '0') { take(); continue; }
+            if (floating && c == '.' && !dot && !exp) { dot = true; take(); continue; }
+            if (floating && (c == 'e' || c == 'E') && digits && !exp) {
+                exp = true; take();
+                if (c == '+' || c == '-') take();
+                continue;
+            }
+            break;
+        }
+    }
+    uint32_t err = c == kEofChar ? kEof : 0;
+    bool ok = !t.empty();
+    errno = 0;
+    char* end = nullptr;
+    auto writeWord = [&](uint32_t v) { wr(x, out, v); };
+    switch (kind) {
+    case NumKind::Bool:
+        if (rd(x, ios + kFlags) & fBoolalpha) { ok = t == "true" || t == "false"; if (ok) x.mem.write<uint8_t>(out, t == "true"); }
+        else { const long v = ok ? std::strtol(t.c_str(), &end, 10) : 0; ok = ok && *end == 0 && (v == 0 || v == 1); x.mem.write<uint8_t>(out, ok ? uint8_t(v) : 0); }
+        break;
+    case NumKind::Long: { const long long v = ok ? std::strtoll(t.c_str(), &end, base) : 0;
+        ok = ok && *end == 0 && errno == 0 && v >= INT32_MIN && v <= INT32_MAX; writeWord(ok ? uint32_t(int32_t(v)) : 0); break; }
+    case NumKind::LongLong: { const long long v = ok ? std::strtoll(t.c_str(), &end, base) : 0;
+        ok = ok && *end == 0 && errno == 0; x.mem.write<uint64_t>(out, ok ? uint64_t(v) : 0); break; }
+    case NumKind::UShort: case NumKind::UInt: case NumKind::ULong: case NumKind::Pointer: {
+        const unsigned long long v = ok ? std::strtoull(t.c_str(), &end, base) : 0;
+        const unsigned long long top = kind == NumKind::UShort ? 0xFFFF : 0xFFFFFFFFull;
+        ok = ok && *end == 0 && errno == 0 && (v <= top || t[0] == '-');
+        if (kind == NumKind::UShort) x.mem.write<uint16_t>(out, ok ? uint16_t(v) : 0); else writeWord(ok ? uint32_t(v) : 0);
+        break; }
+    case NumKind::ULongLong: { const unsigned long long v = ok ? std::strtoull(t.c_str(), &end, base) : 0;
+        ok = ok && *end == 0 && errno == 0; x.mem.write<uint64_t>(out, ok ? uint64_t(v) : 0); break; }
+    case NumKind::Float: { const float v = ok ? std::strtof(t.c_str(), &end) : 0;
+        ok = ok && *end == 0; uint32_t b; std::memcpy(&b, &v, 4); writeWord(ok ? b : 0); break; }
+    case NumKind::Double: case NumKind::LongDouble: { const double v = ok ? std::strtod(t.c_str(), &end) : 0;
+        ok = ok && *end == 0; uint64_t b; std::memcpy(&b, &v, 8); x.mem.write<uint64_t>(out, ok ? b : 0); break; }
+    }
+    if (!ok) err |= kFail;
+    wr(x, errAt, err);
+    x.cpu.r[0] = c == kEofChar ? 0 : sb;
+}
+void ngBool(Ctx& x) { numGet(x, NumKind::Bool); }
+void ngLong(Ctx& x) { numGet(x, NumKind::Long); }
+void ngLongLong(Ctx& x) { numGet(x, NumKind::LongLong); }
+void ngUShort(Ctx& x) { numGet(x, NumKind::UShort); }
+void ngUInt(Ctx& x) { numGet(x, NumKind::UInt); }
+void ngULong(Ctx& x) { numGet(x, NumKind::ULong); }
+void ngULongLong(Ctx& x) { numGet(x, NumKind::ULongLong); }
+void ngFloat(Ctx& x) { numGet(x, NumKind::Float); }
+void ngDouble(Ctx& x) { numGet(x, NumKind::Double); }
+void ngLongDouble(Ctx& x) { numGet(x, NumKind::LongDouble); }
+void ngPointer(Ctx& x) { numGet(x, NumKind::Pointer); }
+
+// ---- collate<char>, "C" locale: byte order.
+int32_t coCompare(Ctx& x, GuestPtr, GuestPtr lo1, GuestPtr hi1, GuestPtr lo2, GuestPtr hi2) {
+    const uint32_t n1 = hi1 > lo1 ? hi1 - lo1 : 0, n2 = hi2 > lo2 ? hi2 - lo2 : 0;
+    need(x, lo1, n1, Memory::kProtRead, "collate::compare");
+    need(x, lo2, n2, Memory::kProtRead, "collate::compare");
+    const int r = std::memcmp(x.mem.host(lo1), x.mem.host(lo2), std::min(n1, n2));
+    return r < 0 ? -1 : r > 0 ? 1 : n1 < n2 ? -1 : n1 > n2 ? 1 : 0;
+}
+// libc++'s collate<char>::do_hash
+uint32_t coHash(Ctx& x, GuestPtr, GuestPtr lo, GuestPtr hi) {
+    uint32_t h = 0;
+    const uint32_t n = hi > lo ? hi - lo : 0;
+    need(x, lo, n, Memory::kProtRead, "collate::hash");
+    for (uint32_t i = 0; i < n; ++i) {
+        h = (h << 4) + x.mem.read<uint8_t>(lo + i);
+        const uint32_t g = h & 0xF0000000u;
+        h ^= g | (g >> 24);
+    }
+    return h;
+}
+// do_transform(this, lo, hi) -> string: through r0, this r1, lo r2, hi r3. "C": the same bytes.
+void coTransform(Ctx& x) {
+    const uint32_t ret = x.cpu.r[0], lo = x.cpu.r[2], hi = x.cpu.r[3];
+    const uint32_t n = hi > lo ? hi - lo : 0;
+    need(x, lo, n, Memory::kProtRead, "collate::transform");
+    std::string s(n, '\0');
+    if (n) std::memcpy(s.data(), x.mem.host(lo), n);
+    if (n <= 10) { putShortString(x, ret, s.c_str()); x.cpu.r[0] = ret; return; }
+    const uint32_t buf = x.proc.heap().alloc(n + 1);
+    std::memcpy(x.mem.host(buf), s.data(), n);
+    x.mem.write<uint8_t>(buf + n, 0);
+    const uint32_t cap = (n + 16) & ~15u;
+    wr(x, ret, cap | 1);   // long string: capacity with the long bit, size, data
+    wr(x, ret + 4, n);
+    wr(x, ret + 8, buf);
+    x.cpu.r[0] = ret;
+}
+
 } // namespace
 
 void registerLibcxxStreams(Process& p) {
@@ -675,6 +881,31 @@ void registerLibcxxStreams(Process& p) {
          cvOneFn, cvOneFn,
          p.def<&cvLength>("__ZNKSt3__17codecvtIcc11__mbstate_tE9do_lengthERS1_PKcS5_m"),
          cvOneFn});
+    // numpunct, num_put, num_get and collate for char in the "C" locale
+    auto fn = [&](const char* name, Process::HostFn f) { return p.defineFunction(std::string("__hvm_libcxx_") + name, f); };
+    s.numpunctId = p.defineDataBlock("__ZNSt3__18numpunctIcE2idE", 8);
+    s.numPutId = p.defineDataBlock("__ZNSt3__17num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE", 8);
+    s.numGetId = p.defineDataBlock("__ZNSt3__17num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE", 8);
+    s.collateId = p.defineDataBlock("__ZNSt3__17collateIcE2idE", 8);
+    s.numpunctVptr = vtable("__ZTVNSt3__18numpunctIcEE",
+        {fD1, fD0, fZero, supportDef<&npDecimal>(p, "__ZNKSt3__18numpunctIcE16do_decimal_pointEv", SupportStatus::Real, "\"C\" locale: '.'"),
+         supportDef<&npThousands>(p, "__ZNKSt3__18numpunctIcE16do_thousands_sepEv", SupportStatus::Real, "\"C\" locale: ','"),
+         fn("numpunct_grouping", npGrouping), fn("numpunct_truename", npTrue), fn("numpunct_falsename", npFalse)});
+    s.numPutVptr = vtable("__ZTVNSt3__17num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEEE",
+        {fD1, fD0, fZero, fn("num_put_bool", npBool), fn("num_put_long", npLong), fn("num_put_ulong", npULong),
+         fn("num_put_longlong", npLongLong), fn("num_put_ulonglong", npULongLong), fn("num_put_double", npDouble),
+         fn("num_put_longdouble", npDouble), fn("num_put_pointer", npPointer)});
+    s.numGetVptr = vtable("__ZTVNSt3__17num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEEE",
+        {fD1, fD0, fZero, fn("num_get_bool", ngBool), fn("num_get_long", ngLong), fn("num_get_longlong", ngLongLong),
+         fn("num_get_ushort", ngUShort), fn("num_get_uint", ngUInt), fn("num_get_ulong", ngULong),
+         fn("num_get_ulonglong", ngULongLong), fn("num_get_float", ngFloat), fn("num_get_double", ngDouble),
+         fn("num_get_longdouble", ngLongDouble), fn("num_get_pointer", ngPointer)});
+    s.collateVptr = vtable("__ZTVNSt3__17collateIcEE",
+        {fD1, fD0, fZero, supportDef<&coCompare>(p, "__ZNKSt3__17collateIcE10do_compareEPKcS3_S3_S3_", SupportStatus::Real, "\"C\" locale: byte order"),
+         fn("collate_transform", coTransform),
+         supportDef<&coHash>(p, "__ZNKSt3__17collateIcE7do_hashEPKcS3_", SupportStatus::Real, "libc++'s hash")});
+    supportDef<&locClassic>(p, "__ZNSt3__16locale7classicEv", SupportStatus::Real, "the one \"C\" locale");
+    supportDef<&locEqual>(p, "__ZNKSt3__16localeeqERKS0_", SupportStatus::Real, "there is one locale: any two compare equal");
     p.def<&locDefault>("__ZNSt3__16localeC1Ev");
     p.def<&locDefault>("__ZNSt3__16localeC2Ev");
     p.def<&locCopy>("__ZNSt3__16localeC1ERKS0_");
@@ -686,6 +917,8 @@ void registerLibcxxStreams(Process& p) {
     p.def<&locUseFacet>("__ZNKSt3__16locale9use_facetERNS0_2idE");
     p.defineFunction("__ZNKSt3__18ios_base6getlocEv", iosGetloc);
     p.def<&b_clear>("__ZNSt3__18ios_base5clearEj");
+    p.def<&streamDtor>("__ZNSt3__18ios_baseD2Ev");   // the streams own nothing an ios_base would release
+    p.def<&streamDtor>("__ZNSt3__18ios_baseD1Ev");
 
     // ostream
     const std::string OS = "NSt3__113basic_ostreamIcNS_11char_traitsIcEEE";

@@ -1,7 +1,7 @@
 # Backlog
 
 - November 13 owner IPA queue: Super Hexagon 1.0.0, issue #438,
-  `codex/super-hexagon-compat` (initially based on Canabalt #437).
+  `codex/super-hexagon-compat` (retargeted to `main` after Canabalt #437 merged).
   Fresh launch stops at missing `thread_get_exception_ports` before a frame.
   Implement shared checked Mach exception metadata queries/set/swap, label
   undelivered exception-message limitations, and add runner plus TL-AN red/green
@@ -20,6 +20,16 @@
   outlier/device notes; draft for independent review, not merged by Codex.
   No game assets or saves
   in Git; no hotspot edit planned.
+- Owner priority override, November 13: Desktop/IPA/Get these working comes
+  before the earlier game queue. First: Angry Birds Hatchery Island HD1.7.0,
+  issue #442, branch `codex/angry-birds-island-compat`, GroupD single editor.
+  iPad-only UIDeviceFamily[2] currently gets a phone idiom and 320x480 screen,
+  clipping menu artwork/controls. Shared tablet profile plus legacy location
+  query now pass runner/TL-AO/AP coverage and the six-minute Linux playability
+  loop: earned clear, save/relaunch, audio, drag/pinch and average 21.15 ms.
+  Fulltest805/TestLab35 and all available launch gates pass. See
+  `docs/ANGRY_BIRDS_ISLAND_PLAYABILITY_2026-11-13.md` for outlier/device notes.
+  No game assets or save edits; parked Super Hexagon stays on its own branch.
 
 Latest owner-prioritized modding continuation: [MOD_LAB.md](../clash-royale/MOD_LAB.md) records the guest editor prototype, native wallet/relaunch/backup checks, reversible unit tuning and 45 focused tests. Custom cards and independent weapon/projectile visual size remain pending. The owner confirms the iPhone keyboard never appears; current main's custom UIKeyInput gap is documented for a shared-runtime fix. This supersedes earlier modding-after-playability scheduling; original training stays protected.
 
@@ -289,8 +299,8 @@ Player continuation on `codex/player-viewport-hud` (stacked on draft #18):
 
 | ID | Item | Impact | Sev | Cx | Score | Group | Depends on | Parallel | State |
 |---|---|---:|---:|---:|---:|---|---|---|---|
-| B-101 | Enforce guest 4 KB permissions on loads and stores, including the 16 KB host-page case. | 5 | 5 | 3 | 8.33 | A | None, but one owner for the whole group | Not with B-102, B-201, or B-208 | Planned |
-| B-102 | Precise fault PC. Do not `siglongjmp` out of an HLE frame that has live C++ objects. | 4 | 5 | 3 | 6.67 | A | Same owner as B-101, after or inside that design | Not with B-101 | Planned |
+| B-101 | Enforce guest 4 KB permissions on loads and stores, including the 16 KB host-page case. | 5 | 5 | 3 | 8.33 | A | None, but one owner for the whole group | Not with B-102, B-201, or B-208 | I6 PR (2026-11-18): host `mprotect` per host page where its guest pages agree; split 16 KB pages keep the union (unchecked); host-code writes lift the page; real `mprotect` and `vm_protect(VM_PROT_NONE)`. Split-page shadow check still open |
+| B-102 | Precise fault PC. Do not `siglongjmp` out of an HLE frame that has live C++ objects. | 4 | 5 | 3 | 6.67 | A | Same owner as B-101, after or inside that design | Not with B-101 | Precise PC done in the I6 PR (fault context matched to the block's ops, block start as fallback). The HLE-frame `siglongjmp` for unmapped pages is still open |
 | B-103 | Homogeneous near-plane clip. `OpenGLES.cpp:2320` is only a zero-W guard. Lines 2449–2452 rasterize the bbox of already-projected vertices; there is no near-plane clip. | 4 | 4 | 3 | 5.33 | B | None | Not with B-104, B-105, or B-111 | Merged in PR #4 on main; homogeneous view-volume clipping is implemented. Follow-ups still share Group B |
 | B-104 | Widen the GLSL ES 1.00 subset only against a checked-in shader corpus. No guessed sampler roles. | 5 | 4 | 3 | 6.67 | B | B-103. Dump with `HVM_DUMP_SHADERS` first | Not with other B | Initial translator and bounded execution merged in PRs #8/#9. PRs #11/#12 are merged; retain corpus/unsupported-syntax coverage |
 | B-105 | Raster and composite cost: SIMD triangles, threaded slices, dirty-rect present, upload-time texture conversion. Plus CPU-side ideas in `docs/PERFORMANCE.md` that are not Group A (those are B-201). | 5 | 3 | 3 | 5.0 | B | B-103 | Not with other B | Planned |

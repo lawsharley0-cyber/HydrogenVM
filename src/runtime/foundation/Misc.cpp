@@ -660,14 +660,9 @@ id pi_environment(Ctx& x, id, SEL) {
     }
     return makeDict(x, e);
 }
-std::string randomUuid() {
-    static std::mt19937_64 rng{std::random_device{}()};
-    static std::mutex mu;
+std::string randomUuid(Ctx& x) {   // from the session's entropy (runtime/Session.hpp)
     uint8_t b[16];
-    {
-        std::lock_guard<std::mutex> lk(mu);
-        for (int i = 0; i < 16; i += 8) { const uint64_t v = rng(); std::memcpy(b + i, &v, 8); }
-    }
+    for (int i = 0; i < 16; i += 8) { const uint64_t v = x.proc.entropy(); std::memcpy(b + i, &v, 8); }
     b[6] = (b[6] & 0x0F) | 0x40;
     b[8] = (b[8] & 0x3F) | 0x80;
     char s[37];
@@ -675,7 +670,7 @@ std::string randomUuid() {
                   b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
     return s;
 }
-id pi_guid(Ctx& x, id, SEL) { return makeString(x, randomUuid()); }
+id pi_guid(Ctx& x, id, SEL) { return makeString(x, randomUuid(x)); }
 id pi_hostName(Ctx& x, id, SEL) { return makeString(x, "localhost"); }
 id pi_osVersionString(Ctx& x, id, SEL) { return makeString(x, "Version " + x.proc.config().systemVersion + " (Build 10B141)"); }
 int32_t pi_pid(Ctx&, id, SEL) { return int32_t(getpid() & 0x7FFF); }
@@ -713,6 +708,10 @@ struct LockData : ObjC::HostObject {
     bool recursive = false;
     int32_t condition = 0;
     id name = 0;
+    // NSCondition: threads in -wait, and signals given to them but not yet taken. The cv is shared
+    // with threads waiting to take the lock, so a signal must be counted: notify_one could wake a
+    // lock waiter instead, and the -wait it was meant for slept on.
+    uint32_t condWaiters = 0, condSignals = 0;
 };
 LockData& ld(Ctx& x, id self) { return rt(x).host<LockData>(self); }
 
@@ -759,8 +758,9 @@ void lock_dealloc(Ctx& x, id self, SEL) {
     rt(x).disposeInstance(x.cpu, self);
 }
 // NSCondition: wait releases the lock, waits for signal, reacquires.
-bool condWait(Ctx& x, LockData& d, double timeout) {
+bool condWait(Ctx& x, LockData& d, double timeout, id self) {
     GuestThread* me = &x.proc.currentThread();
+    BlockedScope blocked(x.proc, "-[NSCondition wait]", self);
     std::unique_lock<std::mutex> lk(d.m);
     const uint32_t depth = d.depth;
     d.owner = nullptr;
@@ -768,14 +768,16 @@ bool condWait(Ctx& x, LockData& d, double timeout) {
     d.cv.notify_all();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(timeout < 0 ? 1e7 : timeout));
     bool signalled = false;
-    // Wait for one signal (spurious wakeups are allowed by NSCondition's contract).
     if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     const auto step = std::chrono::milliseconds(50);
+    ++d.condWaiters;
+    struct Leave { LockData& d; ~Leave() { --d.condWaiters; } } leave{d};
     while (!signalled) {
+        if (d.condSignals) { --d.condSignals; signalled = true; break; }
         const auto now2 = std::chrono::steady_clock::now();
         if (now2 >= deadline) break;
         const std::chrono::steady_clock::time_point until = std::min<std::chrono::steady_clock::time_point>(deadline, now2 + step);
-        signalled = d.cv.wait_until(lk, until) == std::cv_status::no_timeout;
+        d.cv.wait_until(lk, until);
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     }
     while (d.owner) {
@@ -786,10 +788,19 @@ bool condWait(Ctx& x, LockData& d, double timeout) {
     d.depth = depth ? depth : 1;
     return signalled;
 }
-void cond_wait(Ctx& x, id self, SEL) { condWait(x, ld(x, self), -1); }
-bool cond_waitUntil(Ctx& x, id self, SEL, id date) { return condWait(x, ld(x, self), std::max(0.0, dateInterval(x, date) - now())); }
-void cond_signal(Ctx& x, id self, SEL) { ld(x, self).cv.notify_one(); }
-void cond_broadcast(Ctx& x, id self, SEL) { ld(x, self).cv.notify_all(); }
+void cond_wait(Ctx& x, id self, SEL) { condWait(x, ld(x, self), -1, self); }
+bool cond_waitUntil(Ctx& x, id self, SEL, id date) { return condWait(x, ld(x, self), std::max(0.0, dateInterval(x, date) - now()), self); }
+// -signal wakes one waiting thread, -broadcast all; with no thread waiting they do nothing.
+void cond_signal(Ctx& x, id self, SEL) {
+    LockData& d = ld(x, self);
+    { std::lock_guard<std::mutex> lk(d.m); if (d.condSignals < d.condWaiters) ++d.condSignals; }
+    d.cv.notify_all();
+}
+void cond_broadcast(Ctx& x, id self, SEL) {
+    LockData& d = ld(x, self);
+    { std::lock_guard<std::mutex> lk(d.m); d.condSignals = d.condWaiters; }
+    d.cv.notify_all();
+}
 int32_t clock_condition(Ctx& x, id self, SEL) { return ld(x, self).condition; }
 void clock_lockWhen(Ctx& x, id self, SEL, int32_t c) { auto& d = ld(x, self); acquire(x, d, -1, [&] { return d.condition == c; }); }
 bool clock_tryWhen(Ctx& x, id self, SEL, int32_t c) { auto& d = ld(x, self); return acquire(x, d, 0, [&] { return d.condition == c; }); }
@@ -941,7 +952,7 @@ void parseUuid(const std::string& s, uint8_t out[16], bool* ok) {
 id uuid_init(Ctx& x, id self, SEL) {
     auto h = std::make_unique<UuidData>();
     bool ok;
-    parseUuid(randomUuid(), h->b, &ok);
+    parseUuid(randomUuid(x), h->b, &ok);
     rt(x).setHost(self, std::move(h));
     return self;
 }
@@ -1011,6 +1022,27 @@ id loc_objectForKey(Ctx& x, id, SEL, id key) {
     return 0;
 }
 id loc_initWithIdentifier(Ctx&, id self, SEL, id) { return self; }
+// +componentsFromLocaleIdentifier: "zh_Hant_TW" or "en-US" -> {language, script, country},
+// keyed by the NSLocale*Code constants (whose values here are their own names).
+id locc_components(Ctx& x, id, SEL, id ident) {
+    std::string s = utf8(x, ident);
+    s = s.substr(0, s.find('@'));
+    std::vector<std::string> parts;
+    for (size_t i = 0; i <= s.size();) {
+        size_t e = s.find_first_of("_-", i);
+        if (e == std::string::npos) e = s.size();
+        if (e > i) parts.push_back(s.substr(i, e - i));
+        i = e + 1;
+    }
+    std::vector<std::pair<id, id>> entries;
+    auto add = [&](const char* k, const std::string& v) { entries.emplace_back(makeString(x, k), makeString(x, v)); };
+    if (!parts.empty()) add("NSLocaleLanguageCode", parts[0]);
+    for (size_t i = 1; i < parts.size(); ++i) {
+        if (parts[i].size() == 4) add("NSLocaleScriptCode", parts[i]);
+        else if (parts[i].size() == 2 || parts[i].size() == 3) { add("NSLocaleCountryCode", parts[i]); break; }
+    }
+    return makeDict(x, entries);
+}
 id locc_withIdentifier(Ctx& x, id, SEL, id) { return loc_current(x, 0, 0); }
 id loc_displayName(Ctx& x, id, SEL, id, id value) { return value; }
 
@@ -1071,9 +1103,12 @@ id f_stringFromClass(Ctx& x, Class c) { return c ? makeString(x, rt(x).className
 // far as the app can tell: apps probe for optional frameworks this way.
 Class f_classFromString(Ctx& x, id s) {
     if (!s) return 0;
-    const Class c = rt(x).getClass(utf8(x, s));
+    const std::string name = utf8(x, s);
+    const Class c = rt(x).getClass(name);
     const ObjC::ClassInfo* ci = c ? rt(x).info(c) : nullptr;
-    return ci && ci->stub ? 0 : c;
+    const Class found = ci && ci->stub ? 0 : c;
+    if (!found) ObjC::noteAbsentClass(x, "NSClassFromString", name);
+    return found;
 }
 id f_stringFromSelector(Ctx& x, SEL s) { return s ? makeString(x, rt(x).selName(s)) : 0; }
 
@@ -1432,11 +1467,11 @@ void registerMisc(Process& p, ObjC::Runtime& r) {
     loc.cm<&loc_current>("currentLocale").cm<&loc_current>("systemLocale").cm<&loc_current>("autoupdatingCurrentLocale")
        .cm<&locc_preferredLanguages>("preferredLanguages").cm<&locc_available>("availableLocaleIdentifiers")
        .cm<&locc_characterDirection>("characterDirectionForLanguage:")
-       .cm<&locc_withIdentifier>("localeWithLocaleIdentifier:");
+       .cm<&locc_withIdentifier>("localeWithLocaleIdentifier:").cm<&locc_components>("componentsFromLocaleIdentifier:");
     loc.m<&loc_identifier>("localeIdentifier").m<&loc_objectForKey>("objectForKey:").m<&loc_initWithIdentifier>("initWithLocaleIdentifier:")
        .m<&loc_displayName>("displayNameForKey:value:").m<&retainedCopy>("copyWithZone:");
     for (const char* n : {"NSLocaleCountryCode", "NSLocaleLanguageCode", "NSLocaleCurrencyCode", "NSLocaleCurrencySymbol",
-                          "NSLocaleDecimalSeparator", "NSLocaleGroupingSeparator", "NSLocaleUsesMetricSystem", "NSLocaleIdentifier",
+                          "NSLocaleDecimalSeparator", "NSLocaleGroupingSeparator", "NSLocaleUsesMetricSystem", "NSLocaleIdentifier", "NSLocaleScriptCode",
                           "NSCurrentLocaleDidChangeNotification"}) {
         const uint32_t cell = p.defineDataBlock(std::string("_") + n, 4);
         p.mem().write<uint32_t>(cell, constString(p, n));

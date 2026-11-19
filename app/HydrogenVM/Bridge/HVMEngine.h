@@ -23,6 +23,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy, nullable) NSString *iconPath;
 @property (nonatomic, readonly) BOOL runnable;
 @property (nonatomic, readonly) BOOL encrypted;
+/// An Android game imported from an .apk (its native library runs; Java is played by HydrogenVM).
+@property (nonatomic, readonly) BOOL isAndroid;
+/// Android: the game's engine ("Unity (Mono)", "EA Blast", "Cocos2d-x"…), empty if unknown.
+@property (nonatomic, readonly, copy) NSString *engine;
+/// Android: YES when HydrogenVM has a driver for that engine.
+@property (nonatomic, readonly) BOOL engineSupported;
 /// Why the app can't run (encrypted, 64-bit only, missing executable…), empty when runnable.
 @property (nonatomic, readonly, copy) NSString *problem;
 @end
@@ -93,15 +99,29 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 /// A game the player is playing (not a Test All Games run). Its run log is kept under
 /// Documents/Logs/Play, apart from test logs, so a test export can include it. Takes effect at start.
 @property (nonatomic) BOOL playSession;
+/// Capture a private replay with guest file contents and network replies for this launch.
+@property (nonatomic) BOOL detailedRecording;
 /// The player's per-game "Allow internet" switch: real sockets and name lookups instead of the
 /// offline network. Off by default. Takes effect at start.
 @property (nonatomic) BOOL allowInternet;
+/// Experimental, per game: display links every frame and 30 fps timers at 60 (game may run fast).
+@property (nonatomic) BOOL unlockFrameRate;
 /// Test runs: check every GL call for errors and count draws (slower). Read the
 /// results from diagnostics (glErrors, glDraws, glEmptyPresents, glLastFrameDraws)
 /// and glErrorLog. Set before start.
 @property (nonatomic) BOOL glTrace;
 /// glTrace: the first distinct GL errors, "call -> 0xCODE [main|worker]".
 @property (nonatomic, readonly, copy) NSArray<NSString *> *glErrorLog;
+/// Path to the current session's input/seed recording (`last-session.hvmrec`).
+@property (nonatomic, readonly, copy, nullable) NSString *recordingPath;
+/// Safe-mode fallback identifier (e.g. "gles1-emulation"), if launched with one.
+@property (nonatomic, copy, nullable) NSString *safeModeFallback;
+/// Safe-mode fallback: force GLES1-over-ES2 emulation.
+@property (nonatomic) BOOL gles1Emulate;
+/// Safe-mode fallback: cap reported GL_MAX_TEXTURE_SIZE (0 = default 4096).
+@property (nonatomic) uint32_t maxTextureSize;
+/// Safe-mode fallback: override guest memory budget in bytes (0 = default).
+@property (nonatomic) uint64_t memoryBudgetBytes;
 @property (nonatomic, copy, nullable) void (^onLog)(NSString *line, HVMLogLevel level);
 /// exitCode is the guest's exit status; crashReport is non-nil when it crashed (or failed to load).
 @property (nonatomic, copy, nullable) void (^onExit)(NSInteger exitCode, NSString *_Nullable crashReport);
@@ -172,6 +192,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 - (void)touch:(HVMTouchPhase)phase x:(float)x y:(float)y finger:(NSUInteger)finger;
 /// Accelerometer in g, device axes (portrait), like UIAcceleration.
 - (void)setAccelerationX:(double)x y:(double)y z:(double)z;
+/// Android key event (e.g. KEYCODE_BACK = 4, controller buttons).
+- (void)sendAndroidKey:(int32_t)keyCode down:(BOOL)down;
+/// Android joystick axes (-1...1).
+- (void)sendJoystickLX:(float)lx ly:(float)ly rx:(float)rx ry:(float)ry hatX:(float)hatX hatY:(float)hatY;
 @end
 
 @interface HVMCrashJournal : NSObject
@@ -193,12 +217,22 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 + (HVMSelfTestResult *)runSelfTest;
 /// Extract an .ipa into appsRoot/<bundle id>/<Name>.app. Call off the main thread.
 + (nullable HVMAppInfo *)importIPA:(NSString *)ipaPath intoDirectory:(NSString *)appsRoot error:(NSError **)error;
+/// Import an Android .apk (32-bit ARM native code) into the same Apps folder.
++ (nullable HVMAppInfo *)importAPK:(NSString *)apkPath intoDirectory:(NSString *)appsRoot error:(NSError **)error;
 /// Inspect an already extracted .app.
 + (nullable HVMAppInfo *)appInfoAtPath:(NSString *)appPath;
 /// Decode an image file with the engine's decoder (handles Xcode-crushed CgBI PNGs).
 + (nullable CGImageRef)decodeImageAtPath:(NSString *)path CF_RETURNS_RETAINED;
 /// Install the CoreText text renderer and ImageIO decoder (call once at launch).
 + (void)installPlatformServices;
+/// Choose ONE safe-mode fallback id from a crash report/log and current session settings.
++ (nullable NSString *)chooseFallbackForCrashReport:(NSString *)crashReport
+                                     internetAccess:(BOOL)internetAccess
+                                    unlockFrameRate:(BOOL)unlockFrameRate
+                                       gles1Emulate:(BOOL)gles1Emulate
+                                     maxTextureSize:(uint32_t)maxTextureSize;
+/// Human-readable label for a safe-mode fallback id.
++ (nullable NSString *)fallbackLabelForId:(NSString *)fallbackId;
 @end
 
 NS_ASSUME_NONNULL_END

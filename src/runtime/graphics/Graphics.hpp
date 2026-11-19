@@ -170,6 +170,10 @@ struct TextBackend {
     virtual ~TextBackend() = default;
     virtual TextLayout measure(const std::string& utf8, const FontDesc& f) = 0;
     virtual std::shared_ptr<Image> render(const std::string& utf8, const FontDesc& f, float scale, TextLayout* layout) = 0;   // RGBA mask (alpha = coverage)
+    // The host font's TrueType file (an sfnt) for a font name, for games that draw glyphs
+    // themselves (CGFontCreateWithFontName + the font's 'cmap' + CGContextShowGlyphs).
+    // Empty when the host has none.
+    virtual std::vector<uint8_t> fontFile(const FontDesc&) { return {}; }
 };
 void setTextBackend(std::shared_ptr<TextBackend> backend);
 TextBackend& textBackend();   // the host's, or the built-in bitmap font

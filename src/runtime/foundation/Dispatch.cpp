@@ -12,6 +12,7 @@
 #include "Foundation.hpp"
 #include <chrono>
 #include <future>
+#include <optional>
 #include <queue>
 #include <thread>
 
@@ -23,7 +24,7 @@ using Job = std::function<void(Ctx&)>;
 using SteadyClock = std::chrono::steady_clock;
 
 uint64_t nowNs() { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(SteadyClock::now().time_since_epoch()).count()); }
-uint64_t wallNs() { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count()); }
+uint64_t wallNs() { return uint64_t(guestWallNowNs()); }   // shifted on replay (runtime/Session.hpp)
 
 constexpr uint64_t kTimeNow = 0, kTimeForever = ~uint64_t(0);
 
@@ -249,6 +250,7 @@ void enqueue(Process& p, id q, Job fn, bool barrier = false) {
 }
 
 void waitFor(Ctx& x, std::future<void>& f) {
+    BlockedScope blocked(x.proc, "dispatch_sync (waiting for the block on another queue)");
     while (f.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
     f.get();   // rethrows a guest crash in the block
@@ -297,6 +299,7 @@ void runSync(Ctx& x, id q, Job fn, bool barrier) {
     }
     {
         std::unique_lock<std::mutex> gl(gate->m);
+        BlockedScope blocked(x.proc, "dispatch_sync (waiting for the queue to reach this block)");
         while (!gate->ready) {
             if (x.proc.stopping()) throw ProcessExit(0, "stopping");
             gate->cv.wait_for(gl, std::chrono::milliseconds(50));
@@ -459,6 +462,7 @@ void d_once(Ctx& x, GuestPtr pred, uint32_t block, uint32_t fn, bool isFn) {
             throw ObjC::ObjCError("dispatch_once called recursively from its own initializer");
         }
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
+        BlockedScope blocked(x.proc, "dispatch_once (another thread is running it)", pred);
         d.onceCv.wait_for(lk, std::chrono::milliseconds(20));
     }
     x.mem.write<uint32_t>(pred, x.proc.currentThread().self);   // "in progress, owned by this thread"
@@ -576,6 +580,7 @@ int32_t g_wait(Ctx& x, id g, uint64_t timeout) {
     std::unique_lock<std::mutex> lk(d.mu);
     GroupData* s = gd(x, g);
     if (!s) return 0;
+    BlockedScope blocked(x.proc, "dispatch_group_wait", g);
     while (s->count > 0) {
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
         const uint64_t n = nowNs();
@@ -612,6 +617,8 @@ int32_t s_wait(Ctx& x, id sem, uint64_t timeout) {
     std::unique_lock<std::mutex> lk(d.mu);
     SemData* s = sd(x, sem);
     if (!s) return 0;
+    std::optional<BlockedScope> blocked;
+    if (s->value <= 0 && timeout != 0) blocked.emplace(x.proc, "dispatch_semaphore_wait", sem);
     while (s->value <= 0) {
         if (x.proc.stopping()) throw ProcessExit(0, "stopping");
         const uint64_t n = nowNs();

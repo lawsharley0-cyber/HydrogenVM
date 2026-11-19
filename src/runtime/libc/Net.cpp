@@ -1,3 +1,4 @@
+#include "runtime/compat/Profiles.hpp"
 // HydrogenVM — BSD sockets, name resolution and network interfaces.
 //
 // By default HydrogenVM runs apps offline (reachability reports no network), so
@@ -31,6 +32,9 @@
 #include <map>
 #include <mutex>
 #include <poll.h>
+#include <optional>
+#include <sys/ioctl.h>
+#include <tuple>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -39,7 +43,7 @@ namespace Hydrogen::Runtime {
 namespace {
 
 void setErrno(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, uint32_t(e)); }
-constexpr int kEBADF = 9, kEINVAL = 22, kENETDOWN = 50, kEAFNOSUPPORT = 47, kENOSPC = 28, kEMFILE = 24;
+constexpr int kEBADF = 9, kEINVAL = 22, kENETDOWN = 50, kEAFNOSUPPORT = 47, kENOSPC = 28, kEMFILE = 24, kENXIO = 6, kEADDRNOTAVAIL = 49;
 constexpr int kAF_UNIX = 1, kAF_INET = 2, kAF_INET6 = 30, kAF_LINK = 18;
 
 int32_t failWith(Ctx& x, int e) { setErrno(x, e); return -1; }
@@ -77,7 +81,7 @@ bool span(Ctx& x, GuestPtr ptr, uint32_t n, uint8_t prot) {
         if ((x.mem.protAt(uint32_t(a)) & prot) != prot) return false;
     return true;
 }
-bool internet(Ctx& x) { return x.proc.config().internetAccess; }
+bool internet(Ctx& x) { return Compat::internetAccess(x.proc); }
 void tellInternetOnce(Ctx& x) {
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) x.proc.logf(LogLevel::Info, "Internet: allowed for this game (its \"Allow internet\" switch is on)");
@@ -109,6 +113,38 @@ struct BridgeLogState {
     ~BridgeLogState() { std::lock_guard lock(sink->mu); sink->proc = nullptr; }
     std::shared_ptr<BridgeLogSink> sink;
 };
+// ---- kqueue / kevent (Darwin's event queue; asio's reactor runs on it), over poll.
+// Each queue is a host descriptor (so close works) plus a table of registrations. Read and
+// write filters report what poll reports; EV_CLEAR (edge-triggered) is kept by reporting a
+// registration again only after something changed: the descriptor was read from or written to
+// (any send/recv/read/write on it bumps its generation) or, for reads, the byte count changed.
+struct KqueueState {
+    explicit KqueueState(Process&) {}
+    struct Reg { int16_t filter; uint16_t flags; uint32_t fflags; uint32_t udata; bool enabled; bool triggered;
+                 uint64_t seenGen; int64_t seenAvail; bool reported; };
+    struct Queue { std::map<std::pair<uint32_t, int16_t>, Reg> regs; };
+    std::mutex mu;
+    std::map<int, Queue> queues;
+    std::map<int, uint64_t> ioGen;   // fd -> I/O generation
+};
+void bumpIoGen(Process& p, int fd) {
+    auto& k = p.service<KqueueState>();
+    std::lock_guard lock(k.mu);
+    if (!k.queues.empty()) ++k.ioGen[fd];
+}
+// Plain (unencrypted) web traffic of a game allowed online gets the same play-log lines as a
+// bridged connection: what was asked, what came back, how it ended.
+struct PlainHttpState {
+    explicit PlainHttpState(Process&) {}
+    std::mutex mu;
+    std::map<int, std::unique_ptr<HttpLog>> byFd;
+};
+void plainHttpChunk(Process& p, int fd, bool fromGame, const void* data, size_t n) {
+    auto& s = p.service<PlainHttpState>();
+    std::lock_guard lock(s.mu);
+    auto it = s.byFd.find(fd);
+    if (it != s.byFd.end() && n) it->second->chunk(fromGame, static_cast<const char*>(data), n);
+}
 bool isUdp(Ctx& x, int fd) { auto& s = x.proc.service<SocketState>(); std::lock_guard lock(s.mu); return s.udp.count(fd) != 0; }
 int32_t n_socket(Ctx& x, int32_t family, int32_t type, int32_t protocol) {
     if (family == kAF_INET && type == SOCK_DGRAM && (protocol == 0 || protocol == IPPROTO_UDP)) {
@@ -252,7 +288,13 @@ int32_t n_connect(Ctx& x, int32_t fd, GuestPtr addr, uint32_t len) {
         host.sin_port = htons(local);
     } else if ((ntohl(host.sin_addr.s_addr) >> 24) != 127 && internet(x)) {
         tellInternetOnce(x);
-        x.proc.logf(LogLevel::Info, "Internet: connecting to %s:%d", ipBuf, origPort);
+        const std::string server = nameFor(x, host.sin_addr.s_addr);
+        x.proc.logf(LogLevel::Info, "Internet: connecting to %s (%s:%d)", server.c_str(), ipBuf, origPort);
+        auto sink = x.proc.service<BridgeLogState>().sink;
+        auto& plain = x.proc.service<PlainHttpState>();
+        std::lock_guard lock(plain.mu);
+        plain.byFd[fd] = std::make_unique<HttpLog>(server + ":" + std::to_string(origPort),
+            [sink](const std::string& line) { std::lock_guard l(sink->mu); if (sink->proc) sink->proc->log(LogLevel::Info, line); });
     } else if ((ntohl(host.sin_addr.s_addr) >> 24) != 127) {
         x.proc.logf(LogLevel::Warning, "connect rejected: non-loopback %s:%d", ipBuf, origPort);
         return failWith(x, 51);
@@ -302,7 +344,7 @@ int32_t n_send(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
     bool nonblocking = (flags & 128) || (::fcntl(fd, F_GETFL) & O_NONBLOCK);
     for (;;) {
         ssize_t out = ::send(fd, x.mem.host(buf), n, hostFlags | MSG_DONTWAIT);
-        if (out >= 0) return int32_t(out);
+        if (out >= 0) { plainHttpChunk(x.proc, fd, true, x.mem.host(buf), size_t(out)); bumpIoGen(x.proc, fd); return int32_t(out); }
         if (errno != EAGAIN || nonblocking) return hostFailure(x);
         if (!waitSocket(x, fd, POLLOUT)) return -1;
     }
@@ -317,7 +359,9 @@ int32_t n_recv(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n, uint32_t flags) {
     uint32_t received = 0;
     for (;;) {
         ssize_t out = ::recv(fd, x.mem.host(buf + received), n - received, hostFlags | MSG_DONTWAIT);
+        bumpIoGen(x.proc, fd);
         if (out >= 0) {
+            if (out > 0 && !(hostFlags & MSG_PEEK)) plainHttpChunk(x.proc, fd, false, x.mem.host(buf + received), size_t(out));
             received += uint32_t(out);
             if (!out || received == n || nonblocking || !(flags & 64)) return int32_t(received);
         } else if (errno != EAGAIN || nonblocking) return received ? int32_t(received) : hostFailure(x);
@@ -560,6 +604,31 @@ uint32_t n_gethostbyname(Ctx& x, GuestPtr namePtr) {
 uint32_t n_nullHost3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
 // Interfaces a phone has: lo0 and en0 (Wi-Fi). Apps read en0's MAC address
 // through sysctl(NET_RT_IFLIST) (System.cpp) and fail when en0 is missing.
+// link_ntoa(const struct sockaddr_dl*) (Goat Simulator #536): BSD's text form of a link-level
+// address, "name:a.b.c..." with each byte in hex without a leading zero, in a static buffer.
+// struct sockaddr_dl: len, family, index(2), type, nlen, alen, slen, data[12] (name then address).
+uint32_t n_linkNtoa(Ctx& x, GuestPtr sdl) {
+    static const char kBuf = 0;
+    uint32_t& buf = x.proc.processSlot(&kBuf);
+    if (!buf) buf = x.proc.allocStatic(64);
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    if (sdl) {
+        const uint8_t nlen = x.mem.read<uint8_t>(sdl + 5), alen = x.mem.read<uint8_t>(sdl + 6);
+        for (uint32_t i = 0; i < nlen && out.size() < 40; ++i) out += char(x.mem.read<uint8_t>(sdl + 8 + i));
+        if (nlen && alen) out += ':';
+        for (uint32_t i = 0; i < alen && out.size() < 60; ++i) {
+            if (i) out += '.';
+            const uint8_t b = x.mem.read<uint8_t>(sdl + 8 + nlen + i);
+            if (b > 0xf) out += hex[b >> 4];
+            out += hex[b & 0xf];
+        }
+    }
+    out.resize(std::min<size_t>(out.size(), 63));
+    for (size_t i = 0; i < out.size(); ++i) x.mem.write<uint8_t>(buf + uint32_t(i), uint8_t(out[i]));
+    x.mem.write<uint8_t>(buf + uint32_t(out.size()), 0);
+    return buf;
+}
 uint32_t n_ifNameToIndex(Ctx& x, GuestPtr name) {
     if (!name) return 0;
     const std::string n = x.proc.readCString(name);
@@ -586,6 +655,17 @@ uint32_t n_inetNtoa(Ctx& x, uint32_t addr) {
     x.mem.copyIn(buf, s, std::strlen(s) + 1);
     return buf;
 }
+// ether_ntoa: Darwin prints each byte in hex without zero padding ("2:0:0:0:0:0").
+uint32_t n_etherNtoa(Ctx& x, GuestPtr mac) {
+    static const char bufKey = 0; uint32_t& buf = x.proc.threadSlot(&bufKey);
+    if (!buf) buf = x.proc.heap().alloc(20);
+    uint8_t b[6] = {};
+    if (mac) x.mem.copyOut(b, mac, 6);
+    char s[20];
+    std::snprintf(s, sizeof s, "%x:%x:%x:%x:%x:%x", b[0], b[1], b[2], b[3], b[4], b[5]);
+    x.mem.copyIn(buf, s, std::strlen(s) + 1);
+    return buf;
+}
 int32_t n_inetPton(Ctx& x, int32_t af, GuestPtr src, GuestPtr dst) {
     const std::string s = x.proc.readCString(src);
     if (af == kAF_INET) { in_addr a{}; if (inet_pton(AF_INET, s.c_str(), &a) != 1) return 0; x.mem.copyIn(dst, &a, 4); return 1; }
@@ -603,12 +683,15 @@ uint32_t n_inetNtop(Ctx& x, int32_t af, GuestPtr src, GuestPtr dst, uint32_t siz
     return dst;
 }
 
-// ---- getifaddrs: lo0 only (AF_LINK + AF_INET 127.0.0.1).
-// struct ifaddrs { next, name, flags, addr, netmask, dstaddr, data } (28 bytes).
+// ---- getifaddrs: the interfaces a phone lists. lo0 (AF_LINK + 127.0.0.1) and en0, the Wi-Fi
+// interface: its AF_LINK entry carries the MAC address iOS 7+ gives apps (02:00:00:00:00:00),
+// the same one sysctl(NET_RT_IFLIST) reports. Games read it as a device id and crash on nil
+// when en0 is missing (Groove Coaster Zero). en0 gets an IPv4 address (a home Wi-Fi one) only
+// when the player allowed the game online; offline, it is a Wi-Fi interface that is not joined.
+// struct ifaddrs { next, name, flags, addr, netmask, dstaddr, data } (28 bytes); every node
+// owns its name and addresses.
 int32_t n_getifaddrs(Ctx& x, GuestPtr out) {
     auto& h = x.proc.heap();
-    const uint32_t name = h.alloc(4);
-    x.mem.copyIn(name, "lo0", 4);
     auto sockIn = [&](uint32_t ip) {
         const uint32_t a = h.alloc(16);
         for (uint32_t i = 0; i < 16; i += 4) x.mem.write<uint32_t>(a + i, 0);
@@ -618,33 +701,42 @@ int32_t n_getifaddrs(Ctx& x, GuestPtr out) {
         return a;
     };
     // sockaddr_dl { len, family, index(2), type, nlen, alen, slen, data[12] }
-    const uint32_t dl = h.alloc(20);
-    for (uint32_t i = 0; i < 20; i += 4) x.mem.write<uint32_t>(dl + i, 0);
-    x.mem.write<uint8_t>(dl, 20);
-    x.mem.write<uint8_t>(dl + 1, kAF_LINK);
-    x.mem.write<uint16_t>(dl + 2, 1);
-    x.mem.write<uint8_t>(dl + 4, 24);   // IFT_LOOP
-    x.mem.write<uint8_t>(dl + 5, 3);
-    x.mem.copyIn(dl + 8, "lo0", 3);
-    const uint32_t flags = 0x1 | 0x8 | 0x40 | 0x8000;   // UP | LOOPBACK | RUNNING | MULTICAST
-    auto node = [&](uint32_t next, uint32_t addr, uint32_t mask) {
+    auto link = [&](uint16_t index, const char* name, bool ether) {
+        const uint32_t dl = h.alloc(20);
+        for (uint32_t i = 0; i < 20; i += 4) x.mem.write<uint32_t>(dl + i, 0);
+        x.mem.write<uint8_t>(dl, 20);
+        x.mem.write<uint8_t>(dl + 1, kAF_LINK);
+        x.mem.write<uint16_t>(dl + 2, index);
+        x.mem.write<uint8_t>(dl + 4, ether ? 6 : 24);   // IFT_ETHER / IFT_LOOP
+        x.mem.write<uint8_t>(dl + 5, 3);
+        x.mem.write<uint8_t>(dl + 6, ether ? 6 : 0);    // sdl_alen
+        x.mem.copyIn(dl + 8, name, 3);
+        if (ether) x.mem.write<uint8_t>(dl + 11, 0x02); // 02:00:00:00:00:00
+        return dl;
+    };
+    auto node = [&](uint32_t next, const char* name, uint32_t flags, uint32_t addr, uint32_t mask, uint32_t dst) {
+        const uint32_t nm = h.alloc(4);
+        x.mem.copyIn(nm, name, 4);
         const uint32_t n = h.alloc(28);
-        const uint32_t v[7] = {next, name, flags, addr, mask, 0, 0};
+        const uint32_t v[7] = {next, nm, flags, addr, mask, dst, 0};
         for (uint32_t i = 0; i < 7; ++i) x.mem.write<uint32_t>(n + i * 4, v[i]);
         return n;
     };
-    const uint32_t inet = node(0, sockIn(0x7F000001), sockIn(0xFF000000));
-    x.mem.write<uint32_t>(out, node(inet, dl, 0));
+    const uint32_t loFlags = 0x1 | 0x8 | 0x40 | 0x8000;            // UP | LOOPBACK | RUNNING | MULTICAST
+    const uint32_t enFlags = 0x1 | 0x2 | 0x40 | 0x800 | 0x8000;    // UP | BROADCAST | RUNNING | SIMPLEX | MULTICAST
+    uint32_t list = 0;
+    if (internet(x)) list = node(list, "en0", enFlags, sockIn(0xC0A80102), sockIn(0xFFFFFF00), sockIn(0xC0A801FF));
+    list = node(list, "en0", enFlags, link(2, "en0", true), 0, 0);
+    list = node(list, "lo0", loFlags, sockIn(0x7F000001), sockIn(0xFF000000), 0);
+    list = node(list, "lo0", loFlags, link(1, "lo0", false), 0, 0);
+    x.mem.write<uint32_t>(out, list);
     return 0;
 }
 void n_freeifaddrs(Ctx& x, GuestPtr p) {
     auto& h = x.proc.heap();
-    bool first = true;
     while (p) {
         const uint32_t next = x.mem.read<uint32_t>(p);
-        if (first) h.free(x.mem.read<uint32_t>(p + 4));   // the shared name
-        first = false;
-        for (uint32_t off : {12u, 16u}) if (uint32_t a = x.mem.read<uint32_t>(p + off)) h.free(a);
+        for (uint32_t off : {4u, 12u, 16u, 20u}) if (uint32_t a = x.mem.read<uint32_t>(p + off)) h.free(a);
         h.free(p);
         p = next;
     }
@@ -657,6 +749,9 @@ void sleepFor(Ctx& x, int64_t us) {
         std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(end - std::chrono::steady_clock::now(), std::chrono::milliseconds(50)));
 }
 int32_t pollHost(Ctx& x, std::vector<pollfd>& fds, int32_t timeoutMs) {
+    std::optional<BlockedScope> blocked;
+    if (timeoutMs != 0) blocked.emplace(x.proc, fds.size() == 1 ? "a socket wait (poll/recv/send/accept/connect)" : "poll/select/kevent on sockets",
+                                        fds.empty() ? 0u : uint32_t(fds[0].fd));
     if (fds.empty()) {
         if (timeoutMs < 0) { while (!x.proc.stopping()) std::this_thread::sleep_for(std::chrono::milliseconds(50)); return 0; }
         sleepFor(x, int64_t(timeoutMs) * 1000);
@@ -674,6 +769,126 @@ int32_t pollHost(Ctx& x, std::vector<pollfd>& fds, int32_t timeoutMs) {
         if (r != 0) return r < 0 ? failWith(x, errno == EBADF ? kEBADF : kEINVAL) : r;
         if (x.proc.stopping() || (timeoutMs >= 0 && std::chrono::steady_clock::now() >= end)) return 0;
     }
+}
+constexpr int16_t kEvfiltRead = -1, kEvfiltWrite = -2, kEvfiltUser = -10;
+constexpr uint16_t kEvAdd = 0x1, kEvDelete = 0x2, kEvEnable = 0x4, kEvDisable = 0x8, kEvOneshot = 0x10, kEvClear = 0x20,
+                   kEvError = 0x4000, kEvEof = 0x8000;
+constexpr uint32_t kNoteTrigger = 0x01000000;
+int32_t n_kqueue(Ctx& x) {
+    const int fd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);   // a descriptor number that close() releases
+    if (fd < 0) return hostFailure(x);
+    auto& k = x.proc.service<KqueueState>();
+    std::lock_guard lock(k.mu);
+    k.queues[fd] = {};
+    return fd;
+}
+// struct kevent (32-bit): ident 4, filter 2, flags 2, fflags 4, data 4, udata 4 = 20 bytes.
+int32_t n_kevent(Ctx& x, int32_t kq, GuestPtr changes, int32_t nchanges, GuestPtr events, int32_t nevents, GuestPtr timeout) {
+    auto& k = x.proc.service<KqueueState>();
+    int32_t timeoutMs = -1;
+    if (timeout) {
+        const int64_t sec = int32_t(x.mem.read<uint32_t>(timeout)), nsec = int32_t(x.mem.read<uint32_t>(timeout + 4));
+        timeoutMs = int32_t(std::clamp<int64_t>(sec * 1000 + (nsec + 999999) / 1000000, 0, INT32_MAX));
+    }
+    using Out = std::tuple<uint32_t, int16_t, uint16_t, uint32_t, int32_t, uint32_t>;   // ident, filter, flags, fflags, data, udata
+    std::vector<Out> out;
+    {
+        std::lock_guard lock(k.mu);
+        auto q = k.queues.find(kq);
+        if (q == k.queues.end()) return failWith(x, kEBADF);
+        for (int32_t i = 0; i < nchanges; ++i) {
+            const GuestPtr c = changes + uint32_t(i) * 20;
+            const uint32_t ident = x.mem.read<uint32_t>(c);
+            const int16_t filter = int16_t(x.mem.read<uint16_t>(c + 4));
+            const uint16_t flags = x.mem.read<uint16_t>(c + 6);
+            const uint32_t fflags = x.mem.read<uint32_t>(c + 8), udata = x.mem.read<uint32_t>(c + 16);
+            const auto key = std::make_pair(ident, filter);
+            auto it = q->second.regs.find(key);
+            if (flags & kEvDelete) { if (it != q->second.regs.end()) q->second.regs.erase(it); continue; }
+            if (flags & kEvAdd) {
+                KqueueState::Reg r{filter, flags, fflags, udata, true, false, ~0ull, -1, false};
+                if (it != q->second.regs.end()) r.triggered = it->second.triggered;
+                it = q->second.regs.insert_or_assign(key, r).first;
+            }
+            if (it == q->second.regs.end()) continue;
+            if (flags & kEvEnable) it->second.enabled = true;
+            if (flags & kEvDisable) it->second.enabled = false;
+            if (filter == kEvfiltUser && (fflags & kNoteTrigger)) it->second.triggered = true;
+            it->second.udata = udata;
+        }
+    }
+    if (nevents <= 0) return 0;
+    std::optional<BlockedScope> blocked;
+    if (timeoutMs != 0) blocked.emplace(x.proc, "kevent (waiting for socket or user events)", uint32_t(kq));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs < 0 ? 0 : timeoutMs);
+    for (;;) {
+        std::vector<pollfd> fds;
+        std::vector<std::pair<uint32_t, int16_t>> keys;
+        {
+            std::lock_guard lock(k.mu);
+            auto q = k.queues.find(kq);
+            if (q == k.queues.end()) return failWith(x, kEBADF);
+            for (auto& [key, r] : q->second.regs) {
+                if (!r.enabled) continue;
+                if (r.filter == kEvfiltUser) {
+                    if (r.triggered && out.size() < size_t(nevents)) {
+                        out.emplace_back(key.first, r.filter, uint16_t(r.flags & (kEvClear | kEvOneshot)), 0, 0, r.udata);
+                        if (r.flags & kEvClear) r.triggered = false;
+                    }
+                    continue;
+                }
+                if (r.filter != kEvfiltRead && r.filter != kEvfiltWrite) continue;
+                fds.push_back(pollfd{int(key.first), short(r.filter == kEvfiltRead ? POLLIN : POLLOUT), 0});
+                keys.push_back(key);
+            }
+        }
+        if (!fds.empty() && ::poll(fds.data(), nfds_t(fds.size()), 0) < 0 && errno != EINTR) return hostFailure(x);
+        {
+            std::lock_guard lock(k.mu);
+            auto q = k.queues.find(kq);
+            if (q == k.queues.end()) return failWith(x, kEBADF);
+            for (size_t i = 0; i < fds.size() && out.size() < size_t(nevents); ++i) {
+                auto it = q->second.regs.find(keys[i]);
+                if (it == q->second.regs.end()) continue;
+                KqueueState::Reg& r = it->second;
+                if (!fds[i].revents) { r.reported = false; continue; }
+                const int fd = int(keys[i].first);
+                int avail = 0;
+                if (r.filter == kEvfiltRead) ::ioctl(fd, FIONREAD, &avail);
+                const uint64_t gen = k.ioGen[fd];
+                const bool eof = fds[i].revents & (POLLHUP | POLLERR | POLLNVAL);
+                if ((r.flags & kEvClear) && r.reported && gen == r.seenGen && (r.filter != kEvfiltRead || avail == r.seenAvail)) continue;
+                r.reported = true; r.seenGen = gen; r.seenAvail = avail;
+                uint16_t f = uint16_t(r.flags & (kEvClear | kEvOneshot));
+                if (eof) f |= kEvEof;
+                if (fds[i].revents & POLLNVAL) f |= kEvError;
+                out.emplace_back(keys[i].first, r.filter, f, 0, r.filter == kEvfiltRead ? avail : 0, r.udata);
+                if (r.flags & kEvOneshot) q->second.regs.erase(it);
+            }
+        }
+        if (!out.empty() || timeoutMs == 0 || (timeoutMs > 0 && std::chrono::steady_clock::now() >= deadline) || x.proc.stopping()) break;
+        // Nothing to report yet: wait until a descriptor changes, in short slices so user
+        // events from other threads and EV_CLEAR re-arms (after I/O) are seen promptly.
+        int32_t slice = 10;
+        if (timeoutMs > 0)
+            slice = int32_t(std::clamp<int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count(), 0, slice));
+        bool anyClearReported = false;
+        {
+            std::lock_guard lock(k.mu);
+            auto q = k.queues.find(kq);
+            if (q != k.queues.end()) for (auto& [key, r] : q->second.regs) anyClearReported |= r.reported;
+        }
+        if (fds.empty() || anyClearReported) sleepFor(x, int64_t(slice) * 1000);
+        else ::poll(fds.data(), nfds_t(fds.size()), slice);
+    }
+    const size_t n = std::min(out.size(), size_t(nevents));
+    for (size_t i = 0; i < n; ++i) {
+        const GuestPtr e = events + uint32_t(i) * 20;
+        const auto& [ident, filter, flags, fflags, data, udata] = out[i];
+        x.mem.write<uint32_t>(e, ident); x.mem.write<uint16_t>(e + 4, uint16_t(filter)); x.mem.write<uint16_t>(e + 6, flags);
+        x.mem.write<uint32_t>(e + 8, fflags); x.mem.write<uint32_t>(e + 12, uint32_t(data)); x.mem.write<uint32_t>(e + 16, udata);
+    }
+    return int32_t(n);
 }
 constexpr short kPollMask = POLLIN | POLLPRI | POLLOUT | POLLERR | POLLHUP | POLLNVAL;
 int32_t n_poll(Ctx& x, GuestPtr fds, uint32_t n, int32_t timeout) {
@@ -749,10 +964,92 @@ uint32_t n_backtraceSymbols(Ctx& x, GuestPtr, int32_t) { return x.proc.heap().al
 bool isNetworkSocket(Process& p, int fd) {
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu); return s.fds.count(fd) != 0;
 }
-int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_recv(x, fd, buffer, count, 0); }
+bool networkInterfaceIoctl(Ctx& x, unsigned int req, unsigned int arg, int& result) {
+    // The interfaces as (name, family, ip, mask) rows; AF_LINK rows carry en0's MAC.
+    struct If { const char* name; uint8_t family; uint32_t ip, mask; uint16_t index; };
+    std::vector<If> ifs = {{"lo0", kAF_LINK, 0, 0, 1}, {"lo0", kAF_INET, 0x7F000001, 0xFF000000, 1}, {"en0", kAF_LINK, 0, 0, 2}};
+    if (internet(x)) ifs.push_back({"en0", kAF_INET, 0xC0A80102, 0xFFFFFF00, 2});
+    auto writeSockaddr = [&](uint32_t at, const If& f, uint32_t ip) -> uint32_t {   // returns its length
+        if (f.family == kAF_LINK) {
+            uint8_t dl[20] = {};
+            dl[0] = 20; dl[1] = kAF_LINK; std::memcpy(dl + 2, &f.index, 2);
+            const bool ether = f.index == 2;
+            dl[4] = ether ? 6 : 24; dl[5] = 3; dl[6] = ether ? 6 : 0;
+            std::memcpy(dl + 8, f.name, 3);
+            if (ether) dl[11] = 0x02;   // 02:00:00:00:00:00
+            x.mem.copyIn(at, dl, sizeof dl);
+            return 20;
+        }
+        uint8_t in[16] = {};
+        in[0] = 16; in[1] = kAF_INET;
+        const uint32_t be = htonl(ip);
+        std::memcpy(in + 4, &be, 4);
+        x.mem.copyIn(at, in, sizeof in);
+        return 16;
+    };
+    auto findInet = [&](const std::string& name) -> const If* {
+        for (const If& f : ifs) if (name == f.name && f.family == kAF_INET) return &f;
+        return nullptr;
+    };
+    if (!arg) return false;
+    switch (req) {
+        case 0xC0086924: {   // SIOCGIFCONF: struct ifconf { int len; char* buf; } of ifreq (name[16] + sockaddr)
+            const uint32_t room = x.mem.read<uint32_t>(arg), buf = x.mem.read<uint32_t>(arg + 4);
+            uint32_t used = 0;
+            for (const If& f : ifs) {
+                const uint32_t size = 16 + (f.family == kAF_LINK ? 20u : 16u);
+                if (!buf || used + size > room) break;
+                char name[16] = {};
+                std::memcpy(name, f.name, 3);
+                x.mem.copyIn(buf + used, name, 16);
+                writeSockaddr(buf + used + 16, f, f.ip);
+                used += size;
+            }
+            x.mem.write<uint32_t>(arg, used);
+            result = 0;
+            return true;
+        }
+        case 0xC0206911: {   // SIOCGIFFLAGS: struct ifreq { name[16]; short flags; }
+            const std::string name = x.proc.readCString(arg);
+            if (name != "lo0" && name != "en0") { result = failWith(x, kENXIO); return true; }
+            x.mem.write<uint16_t>(arg + 16, uint16_t(name == "lo0" ? 0x8049 : 0x8863));
+            result = 0;
+            return true;
+        }
+        case 0xC0206921:     // SIOCGIFADDR
+        case 0xC0206925: {   // SIOCGIFNETMASK
+            const std::string name = x.proc.readCString(arg);
+            const If* f = findInet(name);
+            if (!f) { result = failWith(x, name == "en0" ? kEADDRNOTAVAIL : kENXIO); return true; }
+            writeSockaddr(arg + 16, *f, req == 0xC0206921 ? f->ip : f->mask);
+            result = 0;
+            return true;
+        }
+    }
+    return false;
+}
+int networkRead(Ctx& x, int fd, unsigned int buffer, unsigned int count) {
+    if (x.proc.session().replayingDetails() && internet(x)) {
+        if (count > INT32_MAX || !span(x, buffer, count, Memory::kProtWrite)) return failWith(x, 14);
+        if (auto rec = x.proc.session().replayNetAnswer(count)) {
+            if (!rec->empty()) x.mem.copyIn(buffer, rec->data(), rec->size());
+            return int(rec->size());
+        }
+    }
+    const int r = n_recv(x, fd, buffer, count, 0);
+    if (x.proc.session().recordingDetails() && r > 0 && internet(x)) {
+        x.proc.session().recordNetAnswer(x.mem.host(buffer), size_t(r),
+                                           x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+    }
+    return r;
+}
 int networkWrite(Ctx& x, int fd, unsigned int buffer, unsigned int count) { return n_send(x, fd, buffer, count, 0); }
 int closeNetworkSocket(Process& p, int fd) {
-    p.logf(LogLevel::Debug, "guest closeNetworkSocket fd=%d", fd);
+    {
+        auto& plain = p.service<PlainHttpState>();
+        std::lock_guard lock(plain.mu);
+        if (auto it = plain.byFd.find(fd); it != plain.byFd.end()) { it->second->ended("closed by the game"); plain.byFd.erase(it); }
+    }
     auto& s = p.service<SocketState>(); std::lock_guard lock(s.mu);
     if (!s.fds.erase(fd)) return -2;
     s.udp.erase(fd);
@@ -782,14 +1079,18 @@ void registerLibcNet(Process& p) {
     supportDef<&n_gethostbyname>(p, "_gethostbyname", SupportStatus::Real, "IPv4 resolver; names other than numeric/localhost resolve only when the game is allowed online");
     p.def<&n_nullHost3>("_gethostbyaddr");
     p.def<&n_ifNameToIndex>("_if_nametoindex");
+    p.def<&n_linkNtoa>("_link_ntoa");
     p.def<&n_inetAddr>("_inet_addr");
     p.def<&n_inetAton>("_inet_aton");
     p.def<&n_inetNtoa>("_inet_ntoa");
     p.def<&n_inetPton>("_inet_pton");
     p.def<&n_inetNtop>("_inet_ntop");
     p.def<&n_getifaddrs>("_getifaddrs");
+    p.def<&n_etherNtoa>("_ether_ntoa");
     p.def<&n_freeifaddrs>("_freeifaddrs");
     p.def<&n_poll>("_poll");
+    supportDef<&n_kqueue>(p, "_kqueue", SupportStatus::Approx, "kqueue over poll: read, write and user filters; EV_CLEAR reports again after I/O on the descriptor");
+    supportDef<&n_kevent>(p, "_kevent", SupportStatus::Approx, "kqueue over poll: read, write and user filters; EV_CLEAR reports again after I/O on the descriptor");
     p.def<&n_select>("_select");
     p.def<&n_select>("_select$DARWIN_EXTSN");
     p.def<&n_pipe>("_pipe");

@@ -168,6 +168,37 @@ int main(int argc, char** argv) {
         check("nested_app_dir", z.build(), false, "");
     }
 
+    {
+        // A "with data" IPA: Container/ next to Payload/ goes into the app's home; a file the
+        // app already has there (a save from an earlier install) is kept.
+        const char* plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>"
+                            "<key>CFBundleIdentifier</key><string>com.example.withdata</string>"
+                            "<key>CFBundleExecutable</key><string>MyApp</string></dict></plist>";
+        ZipBuilder z;
+        z.add("Payload/MyApp.app/Info.plist", plist);
+        z.add("Payload/MyApp.app/MyApp", "x");
+        z.add("Container/Library/Caches/dlcs/pack_1.jpk", "cache bytes");
+        z.add("Container/Documents/save.dat", "from the ipa");
+        const fs::path ipaPath = root / "with_data.ipa";
+        fs::remove_all(appsRoot, ec);
+        fs::create_directories(appsRoot / "com.example.withdata" / "Documents", ec);
+        { std::ofstream keep(appsRoot / "com.example.withdata" / "Documents" / "save.dat"); keep << "player save"; }
+        { const auto data = z.build(); std::ofstream file(ipaPath, std::ios::binary); file.write(reinterpret_cast<const char*>(data.data()), data.size()); }
+        bool ok = false;
+        try {
+            AppInfo info = importIpa(ipaPath.string(), appsRoot.string());
+            const fs::path home = appsRoot / "com.example.withdata";
+            std::ifstream cache(home / "Library" / "Caches" / "dlcs" / "pack_1.jpk"), save(home / "Documents" / "save.dat");
+            std::string c((std::istreambuf_iterator<char>(cache)), {}), sv((std::istreambuf_iterator<char>(save)), {});
+            ok = c == "cache bytes" && sv == "player save" && info.restoredDataFiles == 1 && fs::exists(home / "MyApp.app" / "MyApp");
+            if (!ok) std::printf("  cache '%s', save '%s', restored %zu\n", c.c_str(), sv.c_str(), info.restoredDataFiles);
+        } catch (const std::exception& e) { std::printf("  exception: %s\n", e.what()); }
+        fs::remove(ipaPath, ec);
+        fs::remove_all(appsRoot, ec);
+        std::printf("%s with_data_container\n", ok ? "PASS" : "FAIL");
+        ok ? ++passed : ++failed;
+    }
+
     std::printf("AppBundle tests: %d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;
 }

@@ -10,6 +10,14 @@ games pass (21 missing fixtures skipped). Fresh 230 s gameplay earns
 553 m and survives a clean relaunch; average 7.23 ms, p99 23.33 ms, maximum
 69.74 ms. Phone qualification and frame outliers remain explicit notes.
 [Full reproduction and evidence](../CANABALT_PLAYABILITY_2026-11-13.md).
+November 13 priority-folder bench: Angry Birds Hatchery Island HD 1.7.0 passes
+the Linux playability loop on main `27f2d818` plus shared iPad-profile and
+legacy location-query fixes. Six-minute fresh session, earned first clear,
+save/relaunch, music/effects, pinch and pause/resume pass; average 21.15 ms,
+p99 26.74 ms, with loading outliers and phone limits explicit. Gates: 805
+fulltest, 35 Test Lab, 47 support, 12 heap, 494 pytest (6 skipped; 725 subtests),
+no new stub findings, zero harness regressions, 14 available must-launch pass
+(21 missing fixtures skipped). [Evidence](../ANGRY_BIRDS_ISLAND_PLAYABILITY_2026-11-13.md).
 
 Latest November 6 draw continuation: [DRAW_CHECKPOINTS.md](../clash-royale/DRAW_CHECKPOINTS.md)
 records the new native draw save path, battle-avatar wallet correction, 41

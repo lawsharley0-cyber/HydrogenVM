@@ -24,6 +24,21 @@ int runLegacyAnimationTests() {
     if(calls!=1 || finished!=1 || context!=0x12345678 || name!=ident) {
         std::printf("FAIL: animation completion ABI calls=%u finished=%x context=%x\n",calls,finished,context); return 1;
     }
+    // Declared NSNumber * (UIKit's documented type): an object answering -boolValue YES.
+    // Minecraft: Story Mode sends it -boolValue; a raw 1 crashed at address 1.
+    unsigned objCalls=0; uint32_t finishedObj=0;
+    auto objCls=r.defineClass("AnimationProbeObject", "NSObject");
+    objCls.method("done:finished:context:", [&](Ctx& c) { ++objCalls; finishedObj=c.cpu.r[3]; }, "v@:@@^v");
+    auto objProbe=r.send(cpu,objCls.cls(),"new");
+    r.send(cpu,view,"beginAnimations:context:",{ident,0});
+    r.send(cpu,view,"setAnimationDelegate:",{uint32_t(objProbe)});
+    r.send(cpu,view,"setAnimationDidStopSelector:",{r.sel("done:finished:context:")});
+    r.send(cpu,view,"commitAnimations");
+    Foundation::mainRunLoop(p).runUntil(cpu,Foundation::now()+0.3);
+    if(objCalls!=1 || finishedObj<0x1000 || (r.objectClassName(finishedObj).find("Number")==std::string::npos && r.objectClassName(finishedObj).find("Boolean")==std::string::npos)
+       || uint32_t(r.send(cpu,finishedObj,"boolValue"))!=1) {
+        std::printf("FAIL: NSNumber finished calls=%u value=%x class=%s\n",objCalls,finishedObj,finishedObj>=0x1000?r.objectClassName(finishedObj).c_str():"-"); return 1;
+    }
     const auto pool=uint32_t(r.send(cpu,r.getClass("NSAutoreleasePool"),"new"));
     const auto window=uint32_t(r.send(cpu,r.getClass("UIWindow"),"new"));
     const auto ownership=r.retainCount(window);

@@ -4,6 +4,7 @@
 //
 // CG objects are Objective-C instances of private host classes so CFRetain /
 // CFRelease / CFGetTypeID work on them like on iOS.
+#include <map>
 #include "CoreGraphics.hpp"
 #include "runtime/Support.hpp"
 #include "runtime/graphics/TrueType.hpp"
@@ -20,6 +21,7 @@ using ObjC::rt;
 struct CGState {
     explicit CGState(Process&) {}
     Class context = 0, image = 0, colorSpace = 0, color = 0, provider = 0, path = 0, gradient = 0, font = 0, ctfont = 0, descriptor = 0, text = 0;
+    Class function = 0, shading = 0, layer = 0;
     id rgbSpace = 0, graySpace = 0;
 };
 CGState& S(Ctx& x) { return x.proc.service<CGState>(); }
@@ -674,8 +676,87 @@ void ctx_setAA(Ctx& x, id c, bool v) { if (ContextData* d = cx(x, c)) d->gs().an
 void ctx_setInterp(Ctx& x, id c, int32_t q) { if (ContextData* d = cx(x, c)) d->gs().smoothImages = q != 1; }
 int32_t ctx_getInterp(Ctx& x, id c) { ContextData* d = cx(x, c); return d && !d->gs().smoothImages ? 1 : 0; }
 void ctx_ignore1(Ctx&, id, uint32_t) {}
-void ctx_setShadow(Ctx& x, id, CGSize, float) { x.proc.reportMissing("CGContextSetShadow (shadows are not drawn)"); }
-void ctx_setShadowColor(Ctx& x, id, CGSize, float, id) { x.proc.reportMissing("CGContextSetShadowWithColor (shadows are not drawn)"); }
+// Shadows. The offset is in the context's base space, not affected by the CTM: one unit is one
+// device pixel times the context's own scale (2 for a @2x UIKit context). Base space is y-up in a
+// bitmap context; a UIKit context draws y-down, and there (iOS 3.2+) a positive height moves the
+// shadow down. A NULL color turns shadows off.
+void setShadow(Ctx& x, id c, CGSize off, float blur, G::Color col) {
+    ContextData* d = cx(x, c);
+    if (!d) return;
+    GState& g = d->gs();
+    const float scale = std::max(0.01f, d->baseScale);
+    g.shadowDX = off.width * scale;
+    g.shadowDY = (d->baseYDown ? off.height : -off.height) * scale;
+    g.shadowBlur = std::max(0.0f, blur) * scale;
+    g.shadowColor = col;
+}
+void ctx_setShadow(Ctx& x, id c, CGSize off, float blur) { setShadow(x, c, off, blur, {0, 0, 0, 1.0f / 3.0f}); }
+void ctx_setShadowColor(Ctx& x, id c, CGSize off, float blur, id color) {
+    setShadow(x, c, off, blur, color ? colorOf(x, color) : G::Color{0, 0, 0, 0});
+}
+
+// Runs `draw` (which paints into d.surface with the current state) with the current shadow: the
+// shape is first painted alone, its coverage blurred, tinted and composited at the offset, then
+// the shape itself is painted.
+template <class F> void shadowed(ContextData& d, F&& draw) {
+    GState& g = d.gs();
+    if (g.shadowColor.a <= 0 || (g.shadowDX == 0 && g.shadowDY == 0 && g.shadowBlur <= 0) ||
+        d.surface.width <= 0 || d.surface.height <= 0) {
+        draw();
+        return;
+    }
+    const int w = d.surface.width, h = d.surface.height;
+    G::Image shape;
+    shape.width = w;
+    shape.height = h;
+    shape.rgba.assign(size_t(w) * size_t(h) * 4, 0);
+    const G::Surface saved = d.surface;
+    const GState savedState = g;
+    d.surface = shape.surface();
+    g.clip = G::Clip{0, 0, w, h, nullptr};
+    g.blend = G::BlendMode::Normal;
+    g.shadowColor.a = 0;
+    draw();
+    d.surface = saved;
+    d.gs() = savedState;
+    // Coverage → blurred alpha (three box passes approximate a Gaussian of sigma blur/2).
+    std::vector<float> a(size_t(w) * size_t(h)), tmp(a.size());
+    for (size_t i = 0; i < a.size(); ++i) a[i] = shape.rgba[i * 4 + 3] / 255.0f;
+    const int r = int(std::lround(d.gs().shadowBlur / 2.0f));
+    for (int pass = 0; r > 0 && pass < 3; ++pass) {
+        for (int y = 0; y < h; ++y) {
+            float sum = 0;
+            const float* row = &a[size_t(y) * w];
+            for (int x = -r; x <= r; ++x) sum += row[std::clamp(x, 0, w - 1)];
+            for (int x = 0; x < w; ++x) {
+                tmp[size_t(y) * w + x] = sum / float(2 * r + 1);
+                sum += row[std::min(x + r + 1, w - 1)] - row[std::max(x - r, 0)];
+            }
+        }
+        for (int x = 0; x < w; ++x) {
+            float sum = 0;
+            for (int y = -r; y <= r; ++y) sum += tmp[size_t(std::clamp(y, 0, h - 1)) * w + x];
+            for (int y = 0; y < h; ++y) {
+                a[size_t(y) * w + x] = sum / float(2 * r + 1);
+                sum += tmp[size_t(std::min(y + r + 1, h - 1)) * w + x] - tmp[size_t(std::max(y - r, 0)) * w + x];
+            }
+        }
+    }
+    const G::Color sc = d.gs().shadowColor;
+    G::Image shadow;
+    shadow.width = w;
+    shadow.height = h;
+    shadow.rgba.resize(shape.rgba.size());
+    for (size_t i = 0; i < a.size(); ++i) {
+        const float cov = a[i] * sc.a;
+        shadow.rgba[i * 4 + 0] = uint8_t(std::lround(std::clamp(sc.r * cov, 0.0f, 1.0f) * 255));
+        shadow.rgba[i * 4 + 1] = uint8_t(std::lround(std::clamp(sc.g * cov, 0.0f, 1.0f) * 255));
+        shadow.rgba[i * 4 + 2] = uint8_t(std::lround(std::clamp(sc.b * cov, 0.0f, 1.0f) * 255));
+        shadow.rgba[i * 4 + 3] = uint8_t(std::lround(std::clamp(cov, 0.0f, 1.0f) * 255));
+    }
+    G::drawImage(d.surface, shadow, G::Affine::translate(d.gs().shadowDX, d.gs().shadowDY), d.gs().clip, 1, false, d.gs().blend);
+    draw();
+}
 
 // ---- path construction (device space)
 void ctx_beginPath(Ctx& x, id c) { if (ContextData* d = cx(x, c)) d->path = {}; }
@@ -732,8 +813,13 @@ G::Path devStroke(ContextData& d, const G::Path& devPath) {
     for (float& v : dash) v *= s;
     return G::strokeToPath(devPath, std::max(g.lineWidth * s, 0.35f), g.lineCap, g.lineJoin, g.miterLimit, dash, g.dashPhase * s);
 }
-void doFill(ContextData& d, const G::Path& p, bool eo) { G::fillPath(d.surface, p, eo, d.gs().fill, d.gs().clip, d.gs().blend, d.gs().alpha); }
-void doStroke(ContextData& d, const G::Path& p) { G::fillPath(d.surface, devStroke(d, p), false, d.gs().stroke, d.gs().clip, d.gs().blend, d.gs().alpha); }
+void doFill(ContextData& d, const G::Path& p, bool eo) {
+    shadowed(d, [&] { G::fillPath(d.surface, p, eo, d.gs().fill, d.gs().clip, d.gs().blend, d.gs().alpha); });
+}
+void doStroke(ContextData& d, const G::Path& p) {
+    const G::Path stroked = devStroke(d, p);
+    shadowed(d, [&] { G::fillPath(d.surface, stroked, false, d.gs().stroke, d.gs().clip, d.gs().blend, d.gs().alpha); });
+}
 
 void ctx_fillPath(Ctx& x, id c) { if (ContextData* d = cx(x, c)) { doFill(*d, d->path, false); d->path = {}; } }
 void ctx_eoFillPath(Ctx& x, id c) { if (ContextData* d = cx(x, c)) { doFill(*d, d->path, true); d->path = {}; } }
@@ -754,7 +840,8 @@ void ctx_fillRect(Ctx& x, id c, CGRect r) {
     G::Path p;
     p.addRect(toG(r));
     G::Path dev = p.transformed(d->gs().ctm);
-    if (d->gs().ctm.axisAligned()) G::fillRect(d->surface, dev.bounds(), d->gs().fill, d->gs().clip, d->gs().blend, d->gs().alpha);
+    if (d->gs().ctm.axisAligned())
+        shadowed(*d, [&] { G::fillRect(d->surface, dev.bounds(), d->gs().fill, d->gs().clip, d->gs().blend, d->gs().alpha); });
     else doFill(*d, dev, false);
 }
 void ctx_fillRects(Ctx& x, id c, GuestPtr rects, uint32_t n) { for (uint32_t i = 0; i < n; ++i) ctx_fillRect(x, c, readStruct<CGRect>(x, rects + i * 16)); }
@@ -849,7 +936,7 @@ void drawImageUser(ContextData& d, const G::Image& img, const G::Rect& r, bool y
     if (img.width <= 0 || img.height <= 0) return;
     const G::Affine toUser = yDown ? G::Affine{r.w / float(img.width), 0, 0, r.h / float(img.height), r.x, r.y}
                                    : G::Affine{r.w / float(img.width), 0, 0, -r.h / float(img.height), r.x, r.maxY()};
-    G::drawImage(d.surface, img, toUser.then(d.gs().ctm), d.gs().clip, alpha * d.gs().alpha, d.gs().smoothImages, m, tint);
+    shadowed(d, [&] { G::drawImage(d.surface, img, toUser.then(d.gs().ctm), d.gs().clip, alpha * d.gs().alpha, d.gs().smoothImages, m, tint); });
 }
 void ctx_drawImage(Ctx& x, id c, CGRect r, id image) {
     ContextData* d = cx(x, c);
@@ -903,6 +990,71 @@ void ctx_linearGradient(Ctx& x, id c, id grad, CGPoint s, CGPoint e, uint32_t op
         return true;
     });
 }
+// ---- CGFunction / CGShading (axial): the function is the game's own callback, sampled once when
+// the shading is made into gradient stops; drawing then works like CGContextDrawLinearGradient.
+struct FunctionData : ObjC::HostObject {
+    uint32_t info = 0, evaluate = 0, releaseInfo = 0, rangeDim = 0;
+    float domain0 = 0, domain1 = 1;
+};
+struct ShadingData : ObjC::HostObject {
+    GradientData gradient;
+    CGPoint start{}, end{};
+    uint32_t options = 0;   // kCGGradientDrawsBeforeStartLocation | AfterEndLocation
+};
+void function_dealloc(Ctx& x, id self, SEL) {
+    if (FunctionData* f = hd<FunctionData>(x, self)) if (f->releaseInfo) x.proc.callGuest(x.cpu, f->releaseInfo, {f->info});
+    rt(x).disposeInstance(x.cpu, self);
+}
+// CGFunctionCreate(info, domainDimension, domain, rangeDimension, range, callbacks{version, evaluate, releaseInfo})
+uint32_t fn_create(Ctx& x, uint32_t info, uint32_t domainDim, GuestPtr domain, uint32_t rangeDim, GuestPtr, GuestPtr callbacks) {
+    if (!callbacks || domainDim != 1 || rangeDim == 0 || rangeDim > 16) return 0;
+    auto h = std::make_unique<FunctionData>();
+    h->info = info;
+    h->evaluate = x.mem.read<uint32_t>(callbacks + 4);
+    h->releaseInfo = x.mem.read<uint32_t>(callbacks + 8);
+    h->rangeDim = rangeDim;
+    if (domain) { h->domain0 = x.mem.read<float>(domain); h->domain1 = x.mem.read<float>(domain + 4); }
+    if (!h->evaluate) return 0;
+    return newObject(x, S(x).function, std::move(h));
+}
+uint32_t shading_createAxial(Ctx& x, id space, CGPoint start, CGPoint end, id function, bool extendStart, bool extendEnd) {
+    FunctionData* f = hd<FunctionData>(x, function);
+    if (!f) return 0;
+    const uint32_t comps = space ? cs_components(x, space) : 3;
+    auto h = std::make_unique<ShadingData>();
+    h->start = start;
+    h->end = end;
+    h->options = (extendStart ? 1u : 0u) | (extendEnd ? 2u : 0u);
+    const uint32_t in = x.proc.heap().alloc(4), out = x.proc.heap().alloc(16 * 4);
+    constexpr int kSamples = 64;
+    for (int i = 0; i <= kSamples; ++i) {
+        const float t = float(i) / kSamples;
+        x.mem.write<float>(in, f->domain0 + (f->domain1 - f->domain0) * t);
+        for (uint32_t k = 0; k < 16; ++k) x.mem.write<float>(out + k * 4, 0);
+        x.proc.callGuest(x.cpu, f->evaluate, {f->info, in, out});
+        float v[16];
+        for (uint32_t k = 0; k < f->rangeDim; ++k) v[k] = x.mem.read<float>(out + k * 4);
+        G::Color c;
+        if (comps == 1) c = {v[0], v[0], v[0], f->rangeDim > 1 ? v[1] : 1};
+        else c = {v[0], f->rangeDim > 1 ? v[1] : 0, f->rangeDim > 2 ? v[2] : 0, f->rangeDim > 3 ? v[3] : 1};
+        h->gradient.stops.push_back({t, c});
+    }
+    x.proc.heap().free(in);
+    x.proc.heap().free(out);
+    return newObject(x, S(x).shading, std::move(h));
+}
+void ctx_drawShading(Ctx& x, id c, id shading) {
+    ContextData* d = cx(x, c);
+    ShadingData* sh = hd<ShadingData>(x, shading);
+    if (!d || !sh) return;
+    const CGPoint s = sh->start, e = sh->end;
+    const float dx = e.x - s.x, dy = e.y - s.y, len2 = dx * dx + dy * dy;
+    drawGradient(*d, sh->gradient, sh->options, [&](G::Point u, float& t) {
+        t = len2 > 0 ? ((u.x - s.x) * dx + (u.y - s.y) * dy) / len2 : 0;
+        return true;
+    });
+}
+
 void ctx_radialGradient(Ctx& x, id c, id grad, CGPoint c0, float r0, CGPoint c1, float r1, uint32_t options) {
     ContextData* d = cx(x, c);
     GradientData* g = hd<GradientData>(x, grad);
@@ -942,12 +1094,17 @@ void showText(Ctx& x, ContextData& d, const std::string& s, G::Point pos) {
         // image pixels (y down) → text space (y up, baseline at 0)
         const G::Affine imgToText{1 / scale, 0, 0, -1 / scale, 0, lay.ascent};
         const G::Color fill = g.fill;
-        G::drawImage(d.surface, *mask, imgToText.then(textToDevice), g.clip, g.alpha, true, g.blend, &fill);
+        shadowed(d, [&] { G::drawImage(d.surface, *mask, imgToText.then(textToDevice), d.gs().clip, d.gs().alpha, true, d.gs().blend, &fill); });
     }
     d.textPos = {pos.x + lay.width + g.charSpacing * float(s.size()), pos.y};
 }
+std::shared_ptr<G::TrueTypeFont> systemFace(Ctx& x, const std::string& name);
 void ctx_selectFont(Ctx& x, id c, GuestPtr name, float size, uint32_t) {
-    if (ContextData* d = cx(x, c)) { d->gs().fontName = x.proc.readCString(name); d->gs().fontSize = size; d->gs().fontFace.reset(); }
+    if (ContextData* d = cx(x, c)) {
+        d->gs().fontName = x.proc.readCString(name);
+        d->gs().fontSize = size;
+        d->gs().fontFace = systemFace(x, d->gs().fontName);
+    }
 }
 void ctx_setFontSize(Ctx& x, id c, float size) { if (ContextData* d = cx(x, c)) d->gs().fontSize = size; }
 struct FontData : ObjC::HostObject {
@@ -1013,9 +1170,27 @@ void ctx_showGlyphs(Ctx& x, id c, GuestPtr glyphs, uint32_t count) {
 void ctx_showGlyphsAt(Ctx& x, id c, float px, float py, GuestPtr glyphs, uint32_t count) {
     if (auto* d = cx(x,c)) { d->textPos = {px,py}; ctx_showGlyphs(x,c,glyphs,count); }
 }
+// The host's outlines for a system font name (cached), so that a game reading the font's 'cmap'
+// and drawing with CGContextShowGlyphs gets glyphs. Army of Darkness Defense draws its HUD text
+// that way; without outlines its panels stayed empty.
+std::shared_ptr<G::TrueTypeFont> systemFace(Ctx& x, const std::string& name) {
+    static std::mutex mu;
+    static std::map<std::string, std::shared_ptr<G::TrueTypeFont>> cache;
+    std::lock_guard<std::mutex> lk(mu);
+    auto it = cache.find(name);
+    if (it != cache.end()) return it->second;
+    G::FontDesc f;
+    f.name = name;
+    f.size = 12;
+    auto face = G::TrueTypeFont::load(G::textBackend().fontFile(f));
+    if (face) x.proc.logf(LogLevel::Info, "Font \"%s\": drawing glyphs with the host's %s", name.c_str(), face->name().c_str());
+    cache[name] = face;
+    return face;
+}
 uint32_t font_createWithName(Ctx& x, id name) {
     auto h = std::make_unique<FontData>();
     h->name = name ? Foundation::utf8(x, name) : "Helvetica";
+    h->face = systemFace(x, h->name);
     return newObject(x, S(x).font, std::move(h));
 }
 uint32_t font_createWithProvider(Ctx& x, id provider) {
@@ -1122,18 +1297,37 @@ uint32_t ct_createName(Ctx& x, id name, float size, GuestPtr matrix) {
     rt(x).release(x.cpu, cg);
     return ct;
 }
-// Applies a CTFontDescriptor attribute dictionary. Only kCTFontNameAttribute is modelled; any other key is
-// reported as missing rather than silently dropped.
+// Applies a CTFontDescriptor attribute dictionary. The name, family and symbolic bold/italic traits are
+// modelled (family plus traits picks a PostScript-style "<Family>-Bold" name, which is how the system fonts
+// the text backend knows are named); any other key is reported as missing rather than silently dropped.
 void applyDescriptorAttributes(Ctx& x, FontData& h, id attrs) {
     if (!attrs) return;
+    std::string name, family;
+    uint32_t traits = 0;
+    bool hasTraits = false;
     for (auto [key, value] : Foundation::dictEntries(x, attrs)) {
         const std::string k = Foundation::utf8(x, key);
-        if (k == "kCTFontNameAttribute") {
-            const std::string name = Foundation::utf8(x, value);
-            if (name != h.name) h.face.reset();   // a custom face belongs to the old name; render the new one by name
-            h.name = name;
+        if (k == "kCTFontNameAttribute") name = Foundation::utf8(x, value);
+        else if (k == "kCTFontFamilyNameAttribute") family = Foundation::utf8(x, value);
+        else if (k == "kCTFontTraitsAttribute") {
+            for (auto [tk, tv] : Foundation::dictEntries(x, value)) {
+                if (Foundation::utf8(x, tk) == "kCTFontSymbolicTrait" && Foundation::isNumber(x, tv)) {
+                    traits = uint32_t(Foundation::numberInt(x, tv)); hasTraits = true;
+                }
+                else x.proc.reportMissing("CTFontDescriptor trait " + Foundation::utf8(x, tk));
+            }
         }
+        else if (k == "kCTFontSizeAttribute" && Foundation::isNumber(x, value)) h.size = float(Foundation::numberDouble(x, value));
         else x.proc.reportMissing("CTFontDescriptor attribute " + k);
+    }
+    if (name.empty() && !family.empty()) {
+        name = family;
+        const bool bold = hasTraits && (traits & 2u), italic = hasTraits && (traits & 1u);
+        if (bold || italic) name += std::string("-") + (bold ? "Bold" : "") + (italic ? "Italic" : "");
+    }
+    if (!name.empty()) {
+        if (name != h.name) h.face.reset();   // a custom face belongs to the old name; render the new one by name
+        h.name = name;
     }
 }
 uint32_t ct_descriptorCopyWithAttributes(Ctx& x, id desc, id attrs) {
@@ -1148,6 +1342,26 @@ uint32_t ct_descriptorWithAttributes(Ctx& x, id attrs) {
     h->name = "Helvetica";   // same default as CGFontCreateWithFontName(nil)
     applyDescriptorAttributes(x, *h, attrs);
     return newObject(x, S(x).descriptor, std::move(h));
+}
+// The text backend resolves any name to a usable face, so the descriptor itself is the best match; the
+// mandatory-attribute set only narrows which of several candidates is returned on Apple.
+uint32_t ct_matchingDescriptor(Ctx& x, id desc, id /*mandatory*/) {
+    auto* f = hd<FontData>(x, desc);
+    return f ? newObject(x, S(x).descriptor, std::make_unique<FontData>(*f)) : 0;
+}
+uint32_t ct_descriptorCopyAttribute(Ctx& x, id desc, id attr) {
+    auto* f = hd<FontData>(x, desc);
+    if (!f || !attr) return 0;
+    const std::string k = Foundation::utf8(x, attr);
+    if (k == "kCTFontNameAttribute" || k == "kCTFontDisplayNameAttribute")
+        return Foundation::makeString(x, f->face ? f->face->name(false) : f->name, true);
+    if (k == "kCTFontFamilyNameAttribute") {
+        if (f->face) return Foundation::makeString(x, f->face->name(true), true);
+        return Foundation::makeString(x, f->name.substr(0, f->name.find('-')), true);
+    }
+    if (k == "kCTFontSizeAttribute") return Foundation::makeNumberDouble(x, f->size, true);
+    x.proc.reportMissing("CTFontDescriptorCopyAttribute " + k);
+    return 0;
 }
 uint32_t ct_copyDescriptor(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
@@ -1410,6 +1624,49 @@ uint32_t bm_info(Ctx& x, id c) { ContextData* d = cx(x, c); return d ? d->bitmap
 uint32_t bm_alphaInfo(Ctx& x, id c) { return bm_info(x, c) & 0x1F; }
 uint32_t bm_space(Ctx& x, id c) { ContextData* d = cx(x, c); return d && d->colorSpace ? d->colorSpace : cs_rgb(x); }
 uint32_t bm_createImage(Ctx& x, id c) { ContextData* d = cx(x, c); return d ? newImage(x, G::snapshot(d->surface)) : 0; }
+
+// ---- CGLayer: an offscreen context at the resolution of the context it was made for.
+struct LayerData : ObjC::HostObject {
+    id context = 0;
+    float width = 0, height = 0;   // in user units
+};
+void layer_dealloc(Ctx& x, id self, SEL) {
+    if (LayerData* l = hd<LayerData>(x, self)) { const id c = l->context; l->context = 0; if (c) rt(x).release(x.cpu, c); }
+    rt(x).disposeInstance(x.cpu, self);
+}
+uint32_t layer_create(Ctx& x, id ctx, CGSize size, id) {
+    ContextData* parent = cx(x, ctx);
+    if (!parent || size.width <= 0 || size.height <= 0) return 0;
+    const float scale = std::max(1.0f, parent->baseScale);
+    const id c = createBitmapContext(x, 0, int(std::ceil(size.width * scale)), int(std::ceil(size.height * scale)), 0,
+                                     1 /* kCGImageAlphaPremultipliedLast */, false, false);
+    ContextData* d = cx(x, c);
+    if (!d) return 0;
+    d->gs().ctm = G::Affine::scale(scale, scale).then(d->gs().ctm);
+    d->baseScale = scale;
+    auto h = std::make_unique<LayerData>();
+    h->context = c;
+    h->width = size.width;
+    h->height = size.height;
+    return newObject(x, S(x).layer, std::move(h));
+}
+uint32_t layer_context(Ctx& x, id layer) { LayerData* l = hd<LayerData>(x, layer); return l ? l->context : 0; }
+void layer_size(Ctx& x, GuestPtr ret, id layer) {
+    LayerData* l = hd<LayerData>(x, layer);
+    writeStruct(x, ret, CGSize{l ? l->width : 0, l ? l->height : 0});
+}
+void drawLayer(Ctx& x, id ctx, id layer, const G::Rect& r) {
+    ContextData* d = cx(x, ctx);
+    LayerData* l = hd<LayerData>(x, layer);
+    ContextData* src = l ? cx(x, l->context) : nullptr;
+    if (!d || !src) return;
+    if (auto img = G::snapshot(src->surface)) drawImageUser(*d, *img, r, false, 1, d->gs().blend);
+}
+void ctx_drawLayerAtPoint(Ctx& x, id ctx, CGPoint p, id layer) {
+    LayerData* l = hd<LayerData>(x, layer);
+    if (l) drawLayer(x, ctx, layer, {p.x, p.y, l->width, l->height});
+}
+void ctx_drawLayerInRect(Ctx& x, id ctx, CGRect r, id layer) { drawLayer(x, ctx, layer, toG(r)); }
 void ctx_noop(Ctx&, id) {}
 void ctx_dealloc(Ctx& x, id self, SEL) {
     if (ContextData* d = cx(x, self)) { const id cs = d->colorSpace; d->colorSpace = 0; if (cs) rt(x).release(x.cpu, cs); }
@@ -1556,8 +1813,10 @@ void fillRect(Ctx& x, id ctx, const G::Rect& r, G::Color c, G::BlendMode m) {
     G::Path p;
     p.addRect(r);
     const G::Path dev = p.transformed(d->gs().ctm);
-    if (d->gs().ctm.axisAligned()) G::fillRect(d->surface, dev.bounds(), c, d->gs().clip, m, d->gs().alpha);
-    else G::fillPath(d->surface, dev, false, c, d->gs().clip, m, d->gs().alpha);
+    shadowed(*d, [&] {
+        if (d->gs().ctm.axisAligned()) G::fillRect(d->surface, dev.bounds(), c, d->gs().clip, m, d->gs().alpha);
+        else G::fillPath(d->surface, dev, false, c, d->gs().clip, m, d->gs().alpha);
+    });
 }
 void drawImageInRect(Ctx& x, id ctx, const G::Image& img, const G::Rect& r, bool yDown, float alpha, G::BlendMode m) {
     if (ContextData* d = context(x, ctx)) drawImageUser(*d, img, r, yDown, alpha, m);
@@ -1569,7 +1828,7 @@ G::Size drawTextUIKit(Ctx& x, id ctx, const std::string& s, const G::FontDesc& f
     const G::Affine toDevice = G::Affine::translate(p.x, p.y).then(d->gs().ctm);
     const float scale = std::max(ctmScale(toDevice), 0.01f);
     auto mask = G::textBackend().render(s, f, scale, &lay);
-    if (mask) G::drawImage(d->surface, *mask, G::Affine::scale(1 / scale, 1 / scale).then(toDevice), d->gs().clip, d->gs().alpha, true, d->gs().blend, &c);
+    if (mask) shadowed(*d, [&] { G::drawImage(d->surface, *mask, G::Affine::scale(1 / scale, 1 / scale).then(toDevice), d->gs().clip, d->gs().alpha, true, d->gs().blend, &c); });
     return {lay.width, lay.height};
 }
 void setUIKitCTM(Ctx& x, id ctx, float pointHeight, float scale) {
@@ -1577,6 +1836,8 @@ void setUIKitCTM(Ctx& x, id ctx, float pointHeight, float scale) {
     if (!d) return;
     (void)pointHeight;
     d->gs().ctm = G::Affine::scale(scale, scale);   // y down, origin top-left: device space scaled
+    d->baseScale = scale;
+    d->baseYDown = true;
 }
 
 void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
@@ -1593,6 +1854,9 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     s.provider = cls("__HVMCGDataProvider", &dp_dealloc);
     s.path = cls("__HVMCGPath", nullptr);
     s.gradient = cls("__HVMCGGradient", nullptr);
+    s.function = cls("__HVMCGFunction", &function_dealloc);
+    s.shading = cls("__HVMCGShading", nullptr);
+    s.layer = cls("__HVMCGLayer", &layer_dealloc);
     s.font = cls("__HVMCGFont", nullptr);
     s.ctfont = cls("__HVMCTFont", nullptr);
     s.descriptor = cls("__HVMCTFontDescriptor", nullptr);
@@ -1636,8 +1900,19 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&cs_components>("_CGColorSpaceGetNumberOfComponents");
     p.def<&cs_model>("_CGColorSpaceGetModel");
     for (const char* n : {"_CGColorSpaceRelease", "_CGColorRelease", "_CGImageRelease", "_CGDataProviderRelease", "_CGPathRelease",
-                          "_CGGradientRelease", "_CGFontRelease", "_CGContextRelease"})
+                          "_CGGradientRelease", "_CGFontRelease", "_CGContextRelease", "_CGFunctionRelease", "_CGShadingRelease",
+                          "_CGLayerRelease"})
         p.def<&cf_release>(n);
+    for (const char* n : {"_CGFunctionRetain", "_CGShadingRetain", "_CGLayerRetain"}) p.def<&cf_retain>(n);
+    p.def<&fn_create>("_CGFunctionCreate");
+    p.def<&shading_createAxial>("_CGShadingCreateAxial");
+    supportDef<&ctx_drawShading>(p, "_CGContextDrawShading", SupportStatus::Approx,
+                                 "Axial shadings: the CGFunction is sampled at 65 points when the shading is made");
+    p.def<&layer_create>("_CGLayerCreateWithContext");
+    p.def<&layer_context>("_CGLayerGetContext");
+    p.def<&layer_size>("_CGLayerGetSize");
+    p.def<&ctx_drawLayerAtPoint>("_CGContextDrawLayerAtPoint");
+    p.def<&ctx_drawLayerInRect>("_CGContextDrawLayerInRect");
     for (const char* n : {"_CGColorSpaceRetain", "_CGColorRetain", "_CGImageRetain", "_CGDataProviderRetain", "_CGPathRetain",
                           "_CGGradientRetain", "_CGFontRetain", "_CGContextRetain"})
         p.def<&cf_retain>(n);
@@ -1811,7 +2086,7 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ctx_getTextPos>("_CGContextGetTextPosition");
     p.def<&ctx_showTextAt>("_CGContextShowTextAtPoint");
     p.def<&ctx_showText>("_CGContextShowText");
-    supportDef<&ctx_showGlyphs>(p, "_CGContextShowGlyphs", SupportStatus::Approx, "Draws selected outline-font glyphs with text state and clipping; unavailable system outlines report missing");
+    supportDef<&ctx_showGlyphs>(p, "_CGContextShowGlyphs", SupportStatus::Approx, "Draws selected outline-font glyphs with text state and clipping; system font names use the host's outlines (CoreText, or Liberation/DejaVu on desktop)");
     supportDef<&ctx_showGlyphsAt>(p, "_CGContextShowGlyphsAtPoint", SupportStatus::Approx, "Positions and draws selected outline-font glyphs with the legacy ABI; unavailable outlines report missing");
     p.def<&font_createWithName>("_CGFontCreateWithFontName");
     p.def<&font_createWithProvider>("_CGFontCreateWithDataProvider");
@@ -1835,6 +2110,9 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ct_copyDescriptor>("_CTFontCopyFontDescriptor");
     p.def<&ct_descriptorCopyWithAttributes>("_CTFontDescriptorCreateCopyWithAttributes");
     p.def<&ct_descriptorWithAttributes>("_CTFontDescriptorCreateWithAttributes");
+    p.def<&ct_descriptorCopyAttribute>("_CTFontDescriptorCopyAttribute");
+    supportDef<&ct_matchingDescriptor>(p, "_CTFontDescriptorCreateMatchingFontDescriptor", SupportStatus::Approx,
+        "returns a copy of the descriptor; the text backend resolves every name to a face");
     p.def<&ct_createDescriptor>("_CTFontCreateWithFontDescriptor");
     p.def<&ct_family>("_CTFontCopyFamilyName");
     p.def<&ct_traits>("_CTFontGetSymbolicTraits");
