@@ -44,6 +44,10 @@ struct GlossToggleRow: View {
     }
 }
 
+enum AppIcon {
+    static func load(_ path: String) -> UIImage? { UIImage(contentsOfFile: path) }
+}
+
 @Observable @MainActor
 final class PlayerProbe {
     static let shared = PlayerProbe()
