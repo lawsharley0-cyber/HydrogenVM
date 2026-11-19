@@ -1,5 +1,6 @@
 #include "runtime/android/dex/JniBridge.hpp"
 #include "runtime/android/dex/CoreCollections.hpp"
+#include "runtime/android/dex/CoreRandom.hpp"
 #include "runtime/android/dex/GuestScheduler.hpp"
 
 #include <fstream>
@@ -205,7 +206,7 @@ public:
     }
 
     bool hasClass(std::u16string_view descriptor) {
-        if (CoreCollections::hasClass(descriptor)) return true;
+        if (CoreCollections::hasClass(descriptor) || CoreRandom::hasClass(descriptor)) return true;
         const std::string cls = className(descriptor);
         auto& j = jni(process);
         std::lock_guard lock(j.mu);
@@ -251,6 +252,7 @@ public:
                                   std::span<const Value> args) {
         if (!native) {
             if (auto value = collections.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
+            if (auto value = random.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
         }
         auto& j = jni(process);
         Ctx x{process, process.currentThread().cpu, process.mem()};
@@ -289,6 +291,7 @@ public:
     std::unordered_map<jobject, uint32_t> fromJni;
     std::unordered_map<uint32_t, jobject> toJni;
     CoreCollections collections;
+    CoreRandom random;
     std::unique_ptr<Machine> machine;
 };
 
