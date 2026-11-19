@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Forty-one automated cases (TL-A--TL-AM plus TL-AO/TL-AP); see docs/TEST_LAB.md for the
+// Forty-two automated cases (TL-A--TL-AM plus TL-AO, TL-AP and TL-AR); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
@@ -97,6 +97,7 @@ static const char *kAppBuild        = "1";
 #define CASE_AO @"TL-AO"
 #define CASE_AP @"TL-AP"
 #define CASE_AQ @"TL-AQ"
+#define CASE_AR @"TL-AR"
 #define CASE_T  @"TL-T"
 #define CASE_U  @"TL-U"
 #define CASE_V  @"TL-V"
@@ -1855,6 +1856,51 @@ static TLResult *runCaseAH(void) {
     return r;
 }
 
+// CGDataProvider.h defines getBytes as returning the count actually copied and
+// zero at EOF. releaseInfo receives the original pointer on final release.
+struct TLStream { size_t position; unsigned releases; };
+static const unsigned char tlStreamBytes[] = {0, 2, 0xff, 4, 5, 6, 7};
+static size_t tlStreamRead(void *info, void *buffer, size_t count) {
+    struct TLStream *stream = info;
+    size_t n = sizeof(tlStreamBytes) - stream->position;
+    if (n > count) n = count;
+    if (n > 2) n = 2;
+    memcpy(buffer, tlStreamBytes + stream->position, n);
+    stream->position += n;
+    return n;
+}
+static void tlStreamRewind(void *info) { ((struct TLStream *)info)->position = 0; }
+static void tlStreamRelease(void *info) { ++((struct TLStream *)info)->releases; }
+
+static TLResult *runCaseAR(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AR version:1];
+    writeCheckpoint(CASE_AR); r.checkpointWritten = YES;
+    double start = monoMs();
+    struct TLStream stream = {0};
+    CGDataProviderSequentialCallbacks callbacks = {0, tlStreamRead, NULL, tlStreamRewind, tlStreamRelease};
+    CGDataProviderRef provider = CGDataProviderCreateSequential(&stream, &callbacks);
+    callbacks.getBytes = NULL;
+    BOOL ok = provider != NULL;
+    if (provider) {
+        CFRetain(provider);
+        CFRelease(provider);
+        for (unsigned i = 0; i < 2; ++i) {
+            CFDataRef copy = CGDataProviderCopyData(provider);
+            ok = ok && copy && CFDataGetLength(copy) == sizeof(tlStreamBytes) &&
+                memcmp(CFDataGetBytePtr(copy), tlStreamBytes, sizeof(tlStreamBytes)) == 0;
+            if (copy) CFRelease(copy);
+        }
+        ok = ok && stream.releases == 0;
+        CFRelease(provider);
+    }
+    ok = ok && stream.releases == 1;
+    r.expected = @"two complete seven-byte copies and one final release";
+    r.actual = ok ? @"delivered all bytes and released the stream" : @"sequential provider mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
 static TLResult *runCaseAI(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_AI version:1];
     writeCheckpoint(CASE_AI); r.checkpointWritten = YES;
@@ -2469,7 +2515,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP, CASE_AR];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -2554,6 +2600,8 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseAL()];
         } else if ([cid isEqualToString:CASE_AM]) {
             [results addObject:runCaseAM()];
+        } else if ([cid isEqualToString:CASE_AR]) {
+            [results addObject:runCaseAR()];
         } else if ([cid isEqualToString:CASE_AP]) {
             [results addObject:runCaseAP()];
         } else if ([cid isEqualToString:CASE_AE]) {
@@ -2621,6 +2669,7 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_AL]) return runCaseAL();
     if ([caseId isEqualToString:CASE_AM]) return runCaseAM();
     if ([caseId isEqualToString:CASE_AO]) return runCaseAO();
+    if ([caseId isEqualToString:CASE_AR]) return runCaseAR();
     if ([caseId isEqualToString:CASE_AP]) return runCaseAP();
     if ([caseId isEqualToString:CASE_AE]) return runCaseAE();
     if ([caseId isEqualToString:CASE_AD]) return runCaseAD();
@@ -2664,8 +2713,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AH: String search", @"AI: Legacy glyphs", @"AJ: Indexed format", @"AK: Animation BOOL", @"AL: Window lifetime", @"AM: Timer pool", @"AP: Location query" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP, CASE_AR ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AH: String search", @"AI: Legacy glyphs", @"AJ: Indexed format", @"AK: Animation BOOL", @"AL: Window lifetime", @"AM: Timer pool", @"AP: Location query", @"AR: Sequential provider" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -2708,6 +2757,7 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_AL version:1],
         [[TLResult alloc] initWithId:CASE_AM version:1],
         [[TLResult alloc] initWithId:CASE_AP version:1],
+        [[TLResult alloc] initWithId:CASE_AR version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
 
@@ -2768,7 +2818,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP, CASE_AR]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);
