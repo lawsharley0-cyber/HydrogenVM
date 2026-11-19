@@ -35,6 +35,7 @@ public:
     virtual uint32_t array(std::u16string type, int32_t length) = 0;
     virtual std::u16string typeOf(uint32_t reference) const = 0;
     virtual std::u16string string(uint32_t reference) const = 0;
+    virtual void setString(uint32_t reference, std::u16string text) = 0;
     virtual uint32_t length(uint32_t reference) const = 0;
     virtual Value element(uint32_t reference, int32_t index) const = 0;
     virtual void setElement(uint32_t reference, int32_t index, Value value) = 0;
@@ -55,6 +56,7 @@ public:
     uint32_t array(std::u16string type, int32_t length) override;
     std::u16string typeOf(uint32_t reference) const override;
     std::u16string string(uint32_t reference) const override;
+    void setString(uint32_t reference, std::u16string text) override;
     uint32_t length(uint32_t reference) const override;
     Value element(uint32_t reference, int32_t index) const override;
     void setElement(uint32_t reference, int32_t index, Value value) override;
