@@ -1,4 +1,5 @@
 // HydrogenVM — UIResponder, UIView, UIWindow, UIScreen, UIViewController.
+#include <cctype>
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 
@@ -249,20 +250,26 @@ void notifyMoveToWindow(Ctx& x, id view, id newWindow, bool will) {
     for (id s : std::vector<id>(V(x, view).subviews)) notifyMoveToWindow(x, s, newWindow, will);
 }
 void vcAppearance(Ctx& x, id view, bool appearing) {
-    const id vc = V(x, view).viewController;
-    if (vc) {
-        VCData& c = VC(x, vc);
-        if (appearing && !c.appeared) {
-            c.appeared = true;
-            rt(x).send(x.cpu, vc, "viewWillAppear:", {0});
-            rt(x).send(x.cpu, vc, "viewDidAppear:", {0});
-        } else if (!appearing && c.appeared) {
-            c.appeared = false;
-            rt(x).send(x.cpu, vc, "viewWillDisappear:", {0});
-            rt(x).send(x.cpu, vc, "viewDidDisappear:", {0});
+    std::vector<id> controllers;
+    std::function<void(id)> collect = [&](id v) {
+        const id vc = V(x, v).viewController;
+        if (vc && VC(x, vc).appeared != appearing) {
+            VC(x, vc).appeared = appearing;
+            controllers.push_back(vc);
         }
+        for (id child : std::vector<id>(V(x, v).subviews)) collect(child);
+    };
+    collect(view);
+    for (id vc : controllers) {
+        if (VC(x, vc).appeared == appearing) rt(x).send(x.cpu, vc, appearing ? "viewWillAppear:" : "viewWillDisappear:", {0});
     }
-    for (id s : std::vector<id>(V(x, view).subviews)) vcAppearance(x, s, appearing);
+    // Initial layout is synchronous with showing the hierarchy. In particular,
+    // a GL view allocates its drawable and notifies its director during layout;
+    // code after makeKeyAndVisible must not see an uninitialized scene.
+    if (appearing) layoutIfNeeded(x, view);
+    for (id vc : controllers) {
+        if (VC(x, vc).appeared == appearing) rt(x).send(x.cpu, vc, appearing ? "viewDidAppear:" : "viewDidDisappear:", {0});
+    }
 }
 
 void insertSubview(Ctx& x, id self, id view, long index) {
@@ -514,6 +521,33 @@ void vc_begin(Ctx& x, id, SEL, id animID, uint32_t ctx) {
     b.context = ctx;
     AS(x).stack.push_back(b);
 }
+// The `finished` argument of a +setAnimationDidStopSelector: callback. UIKit documents it as an
+// NSNumber (animationDidStop:finished:(NSNumber *)finished context:), and code that sends it
+// -boolValue crashes on a raw 1 (Minecraft: Story Mode's ActivityIndicator). Other apps declare
+// it BOOL and test the register's low byte, which an NSNumber pointer can leave 0 (Canabalt's
+// Scores overlay stayed up). The method's own type encoding says which it declared.
+uint32_t finishedArg(Ctx& x, id delegate, SEL sel) {
+    std::string types = rt(x).methodTypes(rt(x).classOf(delegate), sel);
+    std::string args;   // return, self, _cmd, then the arguments, without the offsets
+    for (size_t i = 0; i < types.size(); ++i) {
+        const char c = types[i];
+        if (std::isdigit(static_cast<unsigned char>(c)) || c == 'r' || c == 'n' || c == 'N' || c == 'o' || c == 'O' || c == 'R' || c == 'V') continue;
+        args += c;
+        if (c == '^') { if (i + 1 < types.size()) args += types[++i]; }   // ^v: one argument
+        else if (c == '@' && i + 1 < types.size() && types[i + 1] == '?') ++i;   // block
+    }
+    // args: [ret][@][:][animationID][finished][context]; pointer types take two characters.
+    size_t pos = 0, index = 0;
+    char finishedType = 0;
+    while (pos < args.size()) {
+        const char c = args[pos];
+        if (index == 4) { finishedType = c; break; }
+        pos += c == '^' ? 2 : 1;
+        ++index;
+    }
+    if (finishedType == 'c' || finishedType == 'B' || finishedType == 'C' || finishedType == 'i' || finishedType == 'I') return 1;
+    return Foundation::makeBool(x, true);
+}
 void vc_commit(Ctx& x, id, SEL) {
     auto& st = AS(x).stack;
     if (st.empty()) return;
@@ -527,7 +561,7 @@ void vc_commit(Ctx& x, id, SEL) {
         Process* p = &x.proc;
         Foundation::mainRunLoop(x.proc).addTimer(b.duration + b.delay, 0, false, [p, b](CPU::Cpu& c) {
             Ctx cx{*p, c, p->mem()};
-            rt(cx).send(c, b.delegate, b.didStop, {b.animID, Foundation::makeBool(cx, true), b.context});
+            rt(cx).send(c, b.delegate, b.didStop, {b.animID, finishedArg(cx, b.delegate, b.didStop), b.context});
             rt(cx).release(c, b.delegate);
             if (b.animID) rt(cx).release(c, b.animID);
         });
@@ -563,14 +597,14 @@ void setVisible(Ctx& x, id self, bool vis) {
     auto& u = ui(x);
     if (vis) {
         if (std::find(u.windows.begin(), u.windows.end(), self) == u.windows.end()) u.windows.push_back(self);
-        rt(x).retain(x.cpu, self);   // visible windows are kept alive by the app
+        // UIApplication tracks windows without owning them. The application
+        // must retain its windows; releasing a visible overlay dismisses it.
         layerData(x, viewLayer(x, self)).hidden = false;
         vcAppearance(x, self, true);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeVisibleNotification", self);
     } else {
         vcAppearance(x, self, false);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeHiddenNotification", self);
-        rt(x).release(x.cpu, self);
     }
     setNeedsComposite(x);
 }
@@ -634,11 +668,14 @@ void layoutRootView(Ctx& x, id window, id vc) {
     const G::Size old{l.bounds.w, l.bounds.h};
     if (o == 3 || o == 4) {
         // LandscapeRight (3): the view's top turns to the device's right edge (+90 degrees).
-        l.transform = from2D(G::Affine::rotate(o == 3 ? kPi / 2 : -kPi / 2));
+        // Interface orientation is a discrete quarter-turn. Computing cos(pi/2)
+        // in float leaves a residual skew, turning pixel-aligned backgrounds
+        // into general paths and adding antialiasing drift at screen edges.
+        l.transform = from2D(o == 3 ? G::Affine{0, 1, -1, 0, 0, 0} : G::Affine{0, -1, 1, 0, 0, 0});
         l.bounds = {0, 0, af.h, af.w};
         l.position = {af.x + af.w / 2, af.y + af.h / 2};
     } else if (o == 2) {
-        l.transform = from2D(G::Affine::rotate(kPi));
+        l.transform = from2D(G::Affine{-1, 0, 0, -1, 0, 0});
         l.bounds = {0, 0, af.w, af.h};
         l.position = {af.x + af.w / 2, af.y + af.h / 2};
     } else {
@@ -648,6 +685,9 @@ void layoutRootView(Ctx& x, id window, id vc) {
     }
     boundsSizeChanged(x, view, old, {l.bounds.w, l.bounds.h});
     (void)window;
+    // Laid out for this orientation: rotateLegacyControllers must not turn it a second time
+    // if the controller later stops being a window's root.
+    VC(x, vc).legacyOrientation = o;
     setNeedsComposite(x);
 }
 const char* orientationName(int o) {
@@ -694,7 +734,19 @@ void w_setRoot(Ctx& x, id self, SEL, id vc) {
     const int want = u.initialOrientation;
     int chosen = u.statusBarOrientation;
     if (controllerSupports(x, vc, want)) chosen = want;
-    else for (int o : {1, 3, 4, 2}) if (controllerSupports(x, vc, o)) { chosen = o; break; }
+    else for (int o : {1, 3, 4, 2}) {
+        if (!controllerSupports(x, vc, o)) continue;
+        if (u.plistLandscapeOnly && o <= 2) {
+            // A controller that accepts portrait only, in an app that lists landscape only: iOS
+            // keeps the app in landscape. Choosing portrait here turned the whole game and left
+            // it there (a controller shown for Minecraft PE's keyboard).
+            x.proc.logf(LogLevel::Info, "Orientation: stays %s (root view controller %s accepts portrait only, but the app's Info.plist allows landscape only)",
+                        orientationName(u.statusBarOrientation), rt(x).objectClassName(vc).c_str());
+            continue;
+        }
+        chosen = o;
+        break;
+    }
     changeOrientation(x, chosen, vc, "setRootViewController:");
     VC(x, vc).modalStyle = 0;
     const id view = id(rt(x).send(x.cpu, vc, "view"));
@@ -942,6 +994,7 @@ void vc_present(Ctx& x, id self, SEL, id vc, bool, uint32_t completion) {
     if (d.presented) { x.proc.log(LogLevel::Warning, "presentViewController: already presenting"); return; }
     d.presented = rt(x).retain(x.cpu, vc);
     VC(x, vc).presenting = self;
+    if (!presentPhotoPicker(x, vc) && !presentDocumentPicker(x, vc)) {
     // Show it full screen in the presenter's window.
     id window = 0;
     if (d.view) window = viewWindow(x, d.view);
@@ -950,6 +1003,7 @@ void vc_present(Ctx& x, id self, SEL, id vc, bool, uint32_t completion) {
     if (window && view) {
         layoutRootView(x, window, vc);
         insertSubview(x, window, view, -1);
+    }
     }
     if (completion) {
         const uint32_t b = ObjC::blockCopy(x, completion);
@@ -965,6 +1019,8 @@ void vc_dismiss(Ctx& x, id self, SEL, bool, uint32_t completion) {
     VCData& d = VC(x, presenter);
     const id vc = d.presented;
     if (vc) {
+        dismissPhotoPicker(x, vc);
+        dismissDocumentPicker(x, vc);
         d.presented = 0;
         VC(x, vc).presenting = 0;
         if (const id view = VC(x, vc).view) rt(x).send(x.cpu, view, "removeFromSuperview");
@@ -1047,6 +1103,11 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
 // from those callbacks; without them it drew landscape scenes unrotated in portrait.
 void rotateLegacyControllers(Ctx& x, const char* cause) {
     auto& u = ui(x);
+    // An app built for iPhone OS 2 turns its own picture: its view stays portrait and it draws
+    // rotated (PvZ reads the status bar orientation and rotates in OpenGL). UIKit only began
+    // turning a launch-landscape controller's view for apps built for 3.0 and later; doing it
+    // for PvZ turned its title a second time, upside down and half off the screen.
+    if (u.builtForIOS2) return;
     const int o = u.statusBarOrientation;
     for (id win : std::vector<id>(u.windows)) {
         ViewData& wd = V(x, win);
@@ -1054,6 +1115,21 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
         const id view = wd.subviews.front();
         const id vc = viewControllerOfView(x, view);
         if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o || !controllerSupports(x, vc, o)) continue;
+        // A view the app has already turned itself (a transform, or landscape-shaped bounds for
+        // a landscape orientation) is left as it is. Turning it again showed the whole game
+        // sideways, and nothing turned it back (a view that became the window's first subview
+        // while Minecraft PE's keyboard was up).
+        {
+            const LayerData& l = layerData(x, viewLayer(x, view));
+            const bool landscape = o == 3 || o == 4;
+            const bool turned = std::fabs(l.transform.m11 - 1.0f) > 1e-4f || std::fabs(l.transform.m12) > 1e-4f ||
+                                (landscape && l.bounds.w > l.bounds.h + 0.5f);
+            if (turned) {
+                x.proc.logf(LogLevel::Info, "Orientation: %s keeps its own layout for %s (%s)", rt(x).objectClassName(vc).c_str(), orientationName(o), cause);
+                VC(x, vc).legacyOrientation = o;
+                continue;
+            }
+        }
         const int from = VC(x, vc).legacyOrientation;
         x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, window-subview controller %s)", orientationName(from),
                     orientationName(o), cause, rt(x).objectClassName(vc).c_str());
@@ -1061,7 +1137,21 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
         const uint32_t noTime[2] = {0, 0};   // duration 0.0 (a double, after the int in r2: r3 and the stack)
         r.send(x.cpu, vc, "willRotateToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
         layoutRootView(x, win, vc);
-        r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        // iOS 2 had a two-step rotation, and a controller that implements it and not the
+        // one-step method gets those callbacks instead. PvZ runs its own turn between the two
+        // halves; without them it stayed half-turned and drew its title upside down.
+        const SEL oneStep = r.sel("willAnimateRotationToInterfaceOrientation:duration:");
+        const SEL firstHalf = r.sel("willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:");
+        const bool ownOneStep = r.lookup(r.classOf(vc), oneStep) != r.lookup(u.viewController, oneStep);
+        if (!ownOneStep && r.respondsTo(vc, firstHalf)) {
+            r.send(x.cpu, vc, "willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+            if (r.respondsTo(vc, r.sel("didAnimateFirstHalfOfRotationToInterfaceOrientation:")))
+                r.send(x.cpu, vc, "didAnimateFirstHalfOfRotationToInterfaceOrientation:", {uint32_t(o)});
+            if (r.respondsTo(vc, r.sel("willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:")))
+                r.send(x.cpu, vc, "willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:", {uint32_t(from), noTime[0], noTime[1]});
+        } else {
+            r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        }
         VC(x, vc).legacyOrientation = o;
         r.send(x.cpu, vc, "didRotateFromInterfaceOrientation:", {uint32_t(from)});
     }

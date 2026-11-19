@@ -1,5 +1,21 @@
 # Clash Royale solo restoration investigation
 
+November 11 music continuation. [Custom menu and battle music](clash-royale/CUSTOM_MUSIC_2026-11-11.md) records independent menu/battle assignments, training-preserving aliases, shared Files bridge and native validation status.
+
+November 11. [Custom spell creation](clash-royale/SPELL_FORGE_2026-11-11.md) covers Fireball and Rocket clones, private projectiles, Photos icons and native validation.
+
+November 11. [Mod Lab workshop](clash-royale/MOD_WORKSHOP_2026-11-11.md) covers editor navigation, spell templates, mutation, preset exchange and the native comparison harness.
+
+November 10 update. [Spell Lab](clash-royale/SPELL_LAB_2026-11-10.md) documents the guest spell controls, save compatibility and native battle checks. [Sandbox roadmap](clash-royale/SANDBOX_ROADMAP_2026-11-10.md) includes custom music import.
+
+November 10 current: [Phone Photos](clash-royale/PHONE_PHOTOS_2026-11-10.md) adds direct iPhone photo selection for custom-card icons and static troop art. The generic host picker and guest-side encoder require updated Hydrogen and Clash packages; existing game/Forge/mechanics data are retained. ART2 atomically switches immutable art generations and accepts legacy ART1. Shared gates: 690 runtime checks/26 Test Lab; focused guest tests: 71. Actual phone presentation, iCloud and conversion latency remain device qualification tasks.
+
+November 9 current: [Card behavior + custom PNG images](clash-royale/MOD_CUSTOMIZATION_2026-11-09.md) records the Spawns controls, MCH1 optional profile, ART1 image packs, 67 focused checks, native two-troop deployment, image battle/relaunch and retained-file fallback. Overrides must match bundled res/sc source assets, never decompressed swfcache/sc files. PNG import currently uses the computer packer; static troop art and phone qualification limits are explicit. Keep original training and definition-linked saves intact.
+
+November 8 troop-save crash follow-up: [MOD_SIZE_ABORT_2026-11-08.md](clash-royale/MOD_SIZE_ABORT_2026-11-08.md) records the reproduced Knight-size Apply abort, checked binary32 correction, 60 focused tests and recovery of the exact retained profile without resetting progression. The earlier Card Forge download is superseded for size edits. Remaining modifier/phone breadth is explicitly unqualified.
+
+November 8 current: [CARD_FORGE_2026-11-08.md](clash-royale/CARD_FORGE_2026-11-08.md) records the working guest creator/loader, CRG2+FGR1 save contract, 59 focused tests, native creation/tuning/Use/battle/relaunch and save-preserving corruption guards. Branch `codex/clash-forge-runtime` starts at main `588eebb`; #366/#381 were closed and integrated through #382. Preserve newer engine/audio fixes. Main runtime gates: 682 fulltest/26 Test Lab. Phone creation and remaining mod/visual/performance work stay unqualified. Keyboard accessory follow-up is #390; its inherited skipped test must run before a Done claim.
+
 November 7 custom-card foundation: [CUSTOM_CARDS.md](clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
 
 November 7 keyboard continuation: shared host [PR #381](https://github.com/lawsharley0-cyber/HydrogenVM/pull/381) implements custom UIKeyInput and composed deletion. Clean latest-main integration passes 657 runtime checks/26 Test Lab cases and actual native clan edit/send/save/clean quit/relaunch. Phone presentation/macOS CI remain separate; guest Mod Lab/custom-card scope is recorded in [MOD_LAB.md](clash-royale/MOD_LAB.md).

@@ -12,6 +12,7 @@
 // registers. Instead we pin only what every handler needs: cpu, op and the
 // arena base.
 #pragma once
+#include <chrono>
 #include "Cpu.hpp"
 #include <cstring>
 #include <climits>
@@ -19,8 +20,9 @@
 namespace Hydrogen::CPU {
 
 // Implemented by the Engine.
-Block* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
+const Op* hvmEnterBlock(Cpu* c, uint32_t key);   // lookup-or-decode; nullptr => stop
 void   hvmCallHle(Cpu* c, uint32_t index);
+bool   hvmFastHle(Cpu* c, uint32_t index);   // Engine::tryFastHle
 void   hvmObserveEntry(Cpu* c, uint32_t address);
 
 #define HVM_H(name) inline HVM_HOT_ABI void name(Cpu* c, const Op* op, uint8_t* m)
@@ -179,13 +181,11 @@ HVM_H(H_TableBranch) {
         const Op* _f = __atomic_load_n(&op->link, __ATOMIC_ACQUIRE);              \
         if (__builtin_expect(_f == nullptr, 0)) {                                 \
             c->r[kPC] = op->imm; c->thumb = op->a;                                \
-            Block* _nb = hvmEnterBlock(c, op->imm | op->a);                       \
-            if (!_nb) return;                                                     \
-            _f = _nb->ops.data();                                                 \
+            _f = hvmEnterBlock(c, op->imm | op->a);                               \
+            if (!_f) return;                                                      \
             __atomic_store_n(&op->link, _f, __ATOMIC_RELEASE);                    \
         }                                                                         \
         c->block_pc = op->imm;                                                    \
-        c->recordFaultRegisters(op->imm);                                         \
         HVM_MUSTTAIL return _f->fn(c, _f, m);                              \
     } while (0)
 
@@ -293,6 +293,22 @@ HVM_H(H_CmpBranch) {
 //                          c = 1: stay in current state (BranchWritePC)
 // b = insns retired. The per-thread block cache is probed inline (returns and
 // computed jumps nearly always hit); misses go through the engine.
+// The first op of a block whose guest code was rewritten (Engine::invalidateRange): links and
+// lookup caches still reaching it go on to the block decoded from the new code. imm = key.
+HVM_H(H_Stale) {
+    const uint32_t key = op->imm;
+    c->r[kPC] = key & ~1u;
+    c->thumb = key & 1;
+    if (c->fast) {
+        FastEntry& fe = c->fast[fastIndex(key)];
+        if (fe.first == op) fe.key = kFastEmpty;
+    }
+    const Op* first = hvmEnterBlock(c, key);
+    if (!first) return;
+    c->block_pc = key & ~1u;
+    HVM_MUSTTAIL return first->fn(c, first, m);
+}
+
 HVM_H(H_BranchIndirect) {
     uint32_t t = c->r[op->a];
     if (op->c == 0) c->thumb = t & 1;
@@ -306,12 +322,10 @@ HVM_H(H_BranchIndirect) {
     if (__builtin_expect(fe.key == key, 1)) {
         first = fe.first;
     } else {
-        Block* nb = hvmEnterBlock(c, key);
-        if (!nb) return;
-        first = nb->ops.data();
+        first = hvmEnterBlock(c, key);
+        if (!first) return;
     }
     c->block_pc = t;
-    c->recordFaultRegisters(t);
     HVM_MUSTTAIL return first->fn(c, first, m);
 }
 
@@ -332,12 +346,10 @@ HVM_H(H_CallIndirect) {
     if (__builtin_expect(fe.key == key, 1)) {
         first = fe.first;
     } else {
-        Block* nb = hvmEnterBlock(c, key);
-        if (!nb) return;
-        first = nb->ops.data();
+        first = hvmEnterBlock(c, key);
+        if (!first) return;
     }
     c->block_pc = t;
-    c->recordFaultRegisters(t);
     HVM_MUSTTAIL return first->fn(c, first, m);
 }
 
@@ -372,7 +384,7 @@ HVM_H(H_FetchFault) {
 HVM_H(H_Hle) {
     c->r[kPC] = op->pc;
     c->r[kTmp3] = c->r[kLR];
-    hvmCallHle(c, op->imm);
+    if (!hvmFastHle(c, op->imm)) hvmCallHle(c, op->imm);
     if (c->exit != Exit::None) return;
     HVM_NEXT();
 }
@@ -381,6 +393,23 @@ HVM_H(H_Hle) {
 HVM_H(H_ReadTpid) { c->r[op->a] = op->imm == 2 ? c->tpidrurw : c->tpidruro; HVM_NEXT(); }
 // MCR p15 TPIDRURW (only the RW one is writable from user mode). a = rt
 HVM_H(H_WriteTpid) { c->tpidrurw = c->r[op->a]; HVM_NEXT(); }
+
+// ARMv7 generic timer, as user mode reads it. MRRC p15 CNTPCT / CNTVCT: a = rt (low word),
+// b = rt2 (high word); the count is the host's monotonic clock at kGenericTimerHz.
+// MRC p15 CNTFRQ: a = rt.
+constexpr uint32_t kGenericTimerHz = 24'000'000;
+inline uint64_t genericTimerCount() {
+    const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    return ns / 1000 * (kGenericTimerHz / 1'000'000) + (ns % 1000) * (kGenericTimerHz / 1'000'000) / 1000;
+}
+HVM_H(H_ReadGenericTimer) {
+    const uint64_t v = genericTimerCount();
+    c->r[op->a] = uint32_t(v);
+    c->r[op->b] = uint32_t(v >> 32);
+    HVM_NEXT();
+}
+HVM_H(H_ReadGenericTimerFreq) { c->r[op->a] = kGenericTimerHz; HVM_NEXT(); }
 
 HVM_H(H_Fence) { __atomic_thread_fence(__ATOMIC_SEQ_CST); HVM_NEXT(); }
 
@@ -882,12 +911,10 @@ HVM_H(H_MultiPopPc) {
     if (__builtin_expect(fe.key == key, 1)) {
         first = fe.first;
     } else {
-        Block* nb = hvmEnterBlock(c, key);
-        if (!nb) return;
-        first = nb->ops.data();
+        first = hvmEnterBlock(c, key);
+        if (!first) return;
     }
     c->block_pc = t;
-    c->recordFaultRegisters(t);
     HVM_MUSTTAIL return first->fn(c, first, m);
 }
 

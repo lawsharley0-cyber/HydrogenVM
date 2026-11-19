@@ -52,6 +52,7 @@ targetTemplates:
       - sdk: CoreText.framework
       - sdk: CoreFoundation.framework
       - sdk: ImageIO.framework
+      - sdk: PhotosUI.framework                     # selection-only system photo picker
       - sdk: CoreMotion.framework
       - sdk: Intents.framework                      # Add to Home Screen via Shortcuts (AddToHomeScreen.swift)
       - sdk: IntentsUI.framework
@@ -59,6 +60,9 @@ targetTemplates:
       - sdk: AVFoundation.framework
       - sdk: OpenGLES.framework                    # GLES on the GPU (Bridge/HostGLEAGL.mm)
       - sdk: QuartzCore.framework
+      - sdk: Security.framework                    # TLS bridge for games allowed online (Bridge/TlsBridgeApple.mm)
+      - sdk: GameController.framework              # On-screen GCVirtualController (VirtualController.swift)
+      - sdk: BackgroundTasks.framework             # Continued background imports (LibraryView.swift)
     settings:
       configs:
         Release:

@@ -1,7 +1,8 @@
 # HydrogenVM Test Lab
 
 A 32-bit ARMv7 iOS guest app for compatibility testing and performance measurement.
-Version 1.0 · 26 automated cases (TL-A–TL-Z) · schema version 1.
+Version 1.0 · 39 automated cases (TL-A–TL-AM) · schema version 1.
+Version 1.0 · 35 automated cases (TL-A–TL-AG plus TL-AO/TL-AP) · schema version 1.
 
 ## Contents
 
@@ -23,9 +24,12 @@ toolchain as the other iOS guests (`tools/ios_build.py`).  When imported into
 HydrogenVM on an iPhone it shows a menu; in automated mode each case runs as a
 separate process with an external timeout.
 
-The automated suite now covers 23 case IDs, including import integrity, CPU
+The automated suite now covers 39 case IDs, including import integrity, CPU
 correctness, graphics, audio, persistence, threading, input, and lifecycle.
-TL-L is a host-driven termination check; 22 cases are guest-selectable.
+TL-L is a host-driven termination check; 38 cases are guest-selectable.
+The automated suite now covers 35 case IDs, including import integrity, CPU
+correctness, graphics, audio, persistence, threading, input, and lifecycle.
+TL-L is a host-driven termination check and TL-AO uses an iPad-only fixture; 33 cases are guest-selectable.
 
 ---
 
@@ -54,6 +58,38 @@ TL-L is a host-driven termination check; 22 cases are guest-selectable.
 | TL-X | Player-item readiness | Requires Initial KVO to report Unknown before player creation, followed by an observed ReadyToPlay transition that can start the assigned player; reproduces the UE3 startup-movie wait in Goat Simulator. Oracle: Apple's documented AVPlayerItem status lifecycle |
 | TL-Y | libstdc++ 4.2 ABI | Calls the GCC 4.2 libstdc++ entry points directly: std::string COW `_Rep` (empty rep, refcopy, dispose), `std::list` node hook/unhook, red-black tree insert/rebalance and increment, and the SJLJ unwinder frame chain. Oracle: the libstdc++ 4.2 ABI layouts the app binaries are compiled against |
 | TL-Z | Custom UIKeyInput | A UIView implementing UIKeyInput focuses, handles its own insert/delete, resigns and observes software-keyboard show/hide notifications. Proven red on main ff24df3 (focus/text/resign succeed, shown=hidden=0). The guest deletion also exercises NSString composed ranges for accents/surrogates; the fulltest covers joined emoji, flags, Hangul, CRLF and rejected bounds. Separate fulltest cases verify host requests, Unicode protocol forwarding, traits, focus identity and refused resignation. Phone keyboard presentation remains a device check. |
+| TL-AQ | Termination run-loop work | Host-driven 1-second graceful termination; `applicationWillTerminate:` creates an offline `NSURLConnection` and pumps `-[NSRunLoop runMode:beforeDate:]` until `connection:didFailWithError:` runs. Proven red before the `RunLoop` termination fix (#496) |
+
+### BADLAND regression cases
+
+| ID | Name | Independent oracle |
+|---|---|---|
+| TL-AA | NSString byte conversion | UTF-16 ranges, partial UTF-8 scalar conversion, byte limits and sizing queries follow NSString's conversion contract |
+| TL-AB | CGRect dictionaries | Signed fractional X/Y/Width/Height fields round-trip; malformed dictionaries fail |
+| TL-AC | Mobile shader preambles | Unconditional extension directives in generated preambles compile after translation; strict compiler validation remains enabled |
+| TL-AD | Initial and navigation layout | Layout occurs between appearance callbacks; managed navigation content fills landscape bounds without an autoresizing mask |
+| TL-AE | GKScore coding | Local category, date, signed 64-bit score, context and default-board properties survive keyed archiving |
+| TL-AF | Struct-valued KVC | Declared struct getters/setters preserve authored size and point values through NSValue boxing |
+| TL-AG | CMTime arithmetic | Rational sums/differences, scale, rounding, overflow and nonnumeric values follow CoreMedia's public contract |
+
+These cases reproduce shared framework failures found in BADLAND. Each was
+demonstrated failing before its runtime fix. Additional runner tests cover
+opaque quarter-turn presentation and the conservative shader translation rules.
+See [the investigation](BADLAND_PLAYABILITY_2026-11-12.md) for real-game evidence
+and the remaining playability limits.
+
+### Canabalt regressions
+
+| ID | Name | Independent oracle |
+|---|---|---|
+| TL-AH | Bounded character-set search | Literal UTF-16 newline positions, forward/backward/anchored search and caught nil/range exceptions; reproduces Canabalt menu text wrapping |
+| TL-AI | Legacy CGContext glyphs | The project-authored CC0 triangle font has units/em=1000 and advance=600; size-20 glyphs must paint known interior pixels, advance the text position and survive provider/font wrapper release. Also checks the float/pointer ABI of ShowGlyphsAtPoint |
+| TL-AJ | Positional formatting | Authored object order/repetition and numeric width/precision oracles check `%n$` formatting through an actual NSString variadic call |
+
+All three guest cases fail before their shared runtime corrections. Focused runners
+also cover supplementary scalar membership through a custom character set,
+protected output/read spans, text matrices, saved font state, invisible text and
+glyph clipping. TL-AA–TL-AG are the integrated BADLAND cases; this batch adds AH–AM.
 
 ### Objective-C conformance (T8)
 
@@ -75,7 +111,8 @@ The host runner retains these dictionaries and the oracle description in its
 report. A pass marker without a fresh complete guest result (or followed by a
 nonzero exit) is a failure. `objc_conformance.m` uses ARC;
 `objc_lifetime_mrc.m` is independently compiled with MRC by the existing filename
-convention. The menu scrolls so all 22 selectable cases and footer controls remain
+convention. The menu scrolls so all 38 selectable cases and footer controls remain
+convention. The menu scrolls so all 33 selectable cases and footer controls remain
 reachable.
 
 These five cases pass on unchanged main; that is new coverage, not a runtime
@@ -470,3 +507,42 @@ nothing in the schema unless fields change, and add the row to this file.
 - Empty zip entries are stored by some tools and deflated by others. Both must import (TL-A).
 - Re-importing an IPA must keep `Documents/`, `Library/` and `tmp/`; it replaces only the `.app` bundle (TL-E).
 - When you see "no `TESTLAB` line in stdout", run the case by hand: the failure is usually an import or loader error on stderr.
+### TL-AK — legacy UIView animation delegate ABI
+
+Checks deferred delivery exactly once, scalar BOOL YES, and preserved animation ID/context. Canabalt Scores dismissal exposed an NSNumber pointer passed as BOOL; the callback then left its overlay window active. Both guest and runner fail before the scalar correction.
+
+### TL-AL / TL-AM — window ownership and UIKit timer pools
+
+TL-AL checks that the last application reference can release a visible window. TL-AM explicitly transfers an owned object into the autorelease pool from a timer and checks deallocation before the outer pool drains. Visibility must not own UIWindow, and UIKit must drain pools around the whole main-loop turn, including timers, queued work and nested main-loop pumps. Independent Foundation/worker loops remain caller-managed. Both cases fail on the corresponding pre-fix binaries.
+
+### Priority-folder regressions (AO/AP)
+
+TL-AO imports a separate project-authored TestLab iPad variant with device
+family [2], a generic portrait key, and an iPad-specific landscape-left key.
+It checks iPad idiom/model, 768x1024 logical points, scale1 and device-specific
+orientation. It fails on the original phone-only runtime. The generated variant
+changes only the owned fixture metadata, preserves its executable/resources,
+uses an isolated home, and records its own SHA256 in case diagnostics. AO is
+host-driven rather than a normal phone-fixture menu item. The runner also checks
+scalar family2, phone/universal/absent/empty/malformed family defaults.
+
+TL-AP reproduces Angry Birds Island HD delayed legacy CoreLocation availability
+query: class and deprecated instance getters must both report the configured
+disabled location source, without asking for GPS or fabricating coordinates.
+It interrupts on the original missing instance selector and passes after the
+shared compatibility method. AH–AN are reserved by the separate Canabalt #437
+and parked Super Hexagon #438 work; these IDs avoid integration collisions.
+
+### TL-AN — Mach exception metadata
+
+Super Hexagon queries thread exception configuration during startup. The case checks an initially empty thread, grouped masks after metadata setup, scalar behavior/flavor values, and invalid-mask rejection. The runner additionally checks task isolation, send-right copies, swap ABI, destroyed endpoints and checked output spans. Metadata setup does not implement Mach exception message delivery; non-null handlers report that unavailable behavior explicitly.
+
+### TL-AR — Sequential Core Graphics data provider
+
+Dead Space 1.0.2 stops on an unresolved `CGDataProviderCreateSequential` call.
+An authored seven-byte stream returns at most two bytes per callback. Two
+`CGDataProviderCopyData` calls must deliver the complete stream, including the
+embedded zero. The release callback must receive the original context once,
+after the final provider reference is released. The callback ABI and
+end-of-stream semantics come from Apple's
+[CGDataProvider.h](https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.10.sdk/System/Library/Frameworks/CoreGraphics.framework/Versions/A/Headers/CGDataProvider.h).

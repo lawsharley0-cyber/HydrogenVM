@@ -19,15 +19,47 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace Hydrogen::Runtime {
 class Process;
+struct Ctx;
 namespace ObjC { class Runtime; }
 }
 
 namespace Hydrogen::Runtime::HostGL {
+
+// Keeps GL presents from outrunning the display. Apple's driver blocks a game that presents
+// faster than the screen refreshes; a game that renders in a tight loop (Angry Birds) would
+// otherwise spin at thousands of frames a second.
+//
+// The limit is a schedule of deadlines, not a gap measured from when the last present returned:
+// a sleep always overshoots a little, and measuring from the overshoot made every paced frame
+// slightly longer than a display frame. A game driven by the 60 Hz frame loop then fell behind
+// it, skipped a slot every few frames, and ran at 50-55 fps with nothing to do. The period is a
+// little under a display frame, so a game already paced at 60 Hz reaches each deadline late and
+// is never held.
+struct PresentPacer {
+    static constexpr int64_t kPeriodNs = 16'500'000;
+    int64_t dueNs = 0;   // earliest time of the next present; 0 before the first
+    // Called at each present with the current time. Returns the time to sleep until, or 0 to
+    // present at once.
+    // A present up to this much early goes ahead (frames from a 60 Hz timer arrive a little
+    // early or late); the schedule still advances by one period, so the average rate holds.
+    static constexpr int64_t kEarlyNs = 2'000'000;
+    int64_t next(int64_t nowNs) {
+        if (dueNs && nowNs < dueNs) {
+            const int64_t until = dueNs;
+            dueNs += kPeriodNs;
+            return nowNs < until - kEarlyNs ? until : 0;
+        }
+        dueNs = nowNs + kPeriodNs;
+        return 0;
+    }
+};
+
 
 class Platform {
 public:
@@ -98,6 +130,15 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup);
 
 // A guest thread is ending: release a retired worker context it still has current.
 void threadExit(Process& p);
+
+struct CompressedTextureSupport {
+    bool native;
+    bool unpackSubimage;
+    bool pixelUnpackBuffer;
+};
+
+// Exact format and unpack capabilities of the current driver. Empty for software GL.
+std::optional<CompressedTextureSupport> compressedTextureSupport(Ctx& x, uint32_t format);
 
 // Registers the forwarded `_gl*` symbols (overriding the software ones).
 void registerFunctions(Process& p);

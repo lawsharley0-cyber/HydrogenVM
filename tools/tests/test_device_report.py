@@ -56,10 +56,93 @@ class DeviceReportTests(unittest.TestCase):
                 self.assertEqual(device_report.main([str(new), '--previous', str(old)]), 0)
             self.assertIn('fixed (1):', out.getvalue())
 
+    def test_partial_run_lists_unselected_games_as_not_tested(self):
+        # Previous full run: a, b, c, d (gpu) and a (software). This run picked a and b only;
+        # b did not finish (no row), a's picture is fixed. Worked out by hand:
+        #   c, d were not picked -> not tested this run; b was picked but has no row -> removed.
+        with tempfile.TemporaryDirectory() as t:
+            old = self.write(Path(t) / 'old', report([app('a', signal='all-black'), app('a', renderer='software'),
+                                                      app('b'), app('c', crashed=True), app('d')]))
+            part = report([app('a'), app('a', renderer='software')])
+            part['options'] = {'seconds': 10, 'selection': {'partial': True, 'selected': ['a', 'b'], 'libraryGames': 4}}
+            new = self.write(Path(t) / 'new', part)
+            self.assertEqual(device_report.selection(device_report.load(new)), {'a', 'b'})
+            diff = device_report.compare(device_report.summarize(device_report.load(new)),
+                                         device_report.summarize(device_report.load(old)),
+                                         device_report.selection(device_report.load(new)))
+            self.assertEqual(diff['untested'], ['c [gpu]', 'd [gpu]'])
+            self.assertEqual(diff['removed'], ['b [gpu]'])
+            self.assertEqual(diff['fixed'], [('a [gpu]', 'picture: all-black')])
+            self.assertEqual(diff['new'], [])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(device_report.main([str(new), '--previous', str(old)]), 0)
+            text = out.getvalue()
+            self.assertIn('partial run: 2 of 4 games selected', text)
+            self.assertIn('not tested this run (2): c [gpu], d [gpu]', text)
+            self.assertIn('only in the previous run: b [gpu]', text)
+            self.assertNotIn('c [gpu]', text.split('only in the previous run:')[1].split('\n')[0])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                device_report.main([str(new), '--previous', str(old), '--json'])
+            data = json.loads(out.getvalue())
+            self.assertEqual(data['selection'], ['a', 'b'])
+            self.assertEqual(data['diff']['untested'], ['c [gpu]', 'd [gpu]'])
+
+    def test_full_runs_and_old_reports_have_no_selection(self):
+        old_style = report([app('a')])   # written before the app recorded a selection
+        self.assertIsNone(device_report.selection(old_style))
+        full = report([app('a')])
+        full['options'] = {'selection': {'partial': False, 'selected': [], 'libraryGames': 1}}
+        self.assertIsNone(device_report.selection(full))
+        diff = device_report.compare(device_report.summarize(report([app('a')])),
+                                     device_report.summarize(report([app('a'), app('gone')])), None)
+        self.assertEqual(diff['removed'], ['gone [gpu]'])
+        self.assertEqual(diff['untested'], [])
+
     def test_gl_errors_compare_without_arguments(self):
         self.assertEqual(device_report.gl_key('glBindTexture(0x0de1, 1) -> 0x0502 [main]'), 'glBindTexture -> 0x0502 [main]')
         self.assertEqual(device_report.gl_key('glClear -> 0x0506 [main] (framebuffer 1 status 0x8cd6: color0 renderbuffer 1 0x0 0x8056)'),
                          'glClear -> 0x0506 [main]')
+
+    def test_crash_clues_point_at_the_host_function_and_its_source(self):
+        report = ("Crash: bad memory access at 0x00000004 (NULL pointer)\n  pc 0x00123456 crossy+1193046 foo + 0x10\n"
+                  "  backtrace:\n    0x00123456 crossy+1193046\n  last host calls (oldest first):\n"
+                  "    _malloc -> 0x10001000 from 0x00100000 crossy+1\n"
+                  "    _CFBundleCopyResourceURL -> 0x00000000 from 0x00100004 crossy+5\n"
+                  "  likely cause: _CFBundleCopyResourceURL returned 0 just before: if the app expected an object or buffer, that function is the likely cause\n")
+        row = app('c', crashed=True)
+        row.update(signature='crash-fault', crashReport=report)
+        self.assertEqual(device_report.crash_key(row), 'Crash: bad memory access at 0x (NULL pointer) at crossy+1193046')
+        c = device_report.clues(row)
+        self.assertEqual(len(c['calls']), 2)
+        self.assertTrue(c['likely'][0].startswith('_CFBundleCopyResourceURL returned 0'))
+        self.assertEqual(device_report.implicated(row), ['_CFBundleCopyResourceURL'])
+        where = device_report.locate('_CFBundleCopyResourceURL')
+        self.assertIsNotNone(where)
+        self.assertTrue(where.startswith('src/'))
+
+    def test_objective_c_method_names_are_kept_whole(self):
+        row = app('m', crashed=True)
+        row['crashReport'] = ("Crash: bad memory access at 0x00000000 (NULL pointer)\n  last host calls (oldest first):\n"
+                              "    -[NSBundle pathForResource:ofType:] -> 0x00000000 from 0x00001000 m+1\n"
+                              "  likely cause: -[NSBundle pathForResource:ofType:] returned 0 just before: if the app expected ...\n")
+        self.assertEqual(device_report.implicated(row), ['-[NSBundle pathForResource:ofType:]'])
+        row['crashReport'] = ("Crash: bad memory access at 0x00000010\n  last host calls (oldest first):\n"
+                              "    -[UIImage drawInRect:] (did not return) from 0x00001000 m+1\n")
+        self.assertEqual(device_report.implicated(row), ['-[UIImage drawInRect:]'])
+
+    def test_shared_causes_rank_problems_several_games_have(self):
+        cur = {'a [gpu]': {'problems': ['gl-error: glClear -> 0x0506 [main]', 'fail: Music'], 'implicated': ['_x']},
+               'b [gpu]': {'problems': ['gl-error: glClear -> 0x0506 [main]'], 'implicated': ['_x']},
+               'b [software]': {'problems': ['gl-error: glClear -> 0x0506 [main]'], 'implicated': []},
+               'c [gpu]': {'problems': ['fail: Music', 'warn: Sound'], 'implicated': []},
+               'd [gpu]': {'problems': ['warn: Sound'], 'implicated': []}}
+        common = device_report.shared(cur)
+        self.assertEqual(common[0], ('crash near host function _x', ['a', 'b']))
+        self.assertNotIn('fail: Music', [p for p, _ in common])   # a symptom, not a cause
+        self.assertIn(('gl-error: glClear -> 0x0506 [main]', ['a', 'b']), common)
+        self.assertNotIn('warn: Sound', [p for p, _ in common])
 
     def test_rejects_other_json(self):
         with tempfile.TemporaryDirectory() as t:

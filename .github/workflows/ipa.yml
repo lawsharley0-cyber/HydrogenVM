@@ -1,0 +1,56 @@
+name: Device IPA only
+
+# Builds just the unsigned device .ipa, without the Linux suite, the Apple
+# speed report or the simulator runs that the CI workflow does first. For
+# getting a build onto a phone quickly once CI has already passed for the
+# commit. Manual only: it uses a macOS runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    name: Build unsigned device IPA
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: app
+        run: xcodegen
+      - name: Build for device (unsigned, Release)
+        working-directory: app
+        run: |
+          rc=0
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
+            -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
+          grep -E "error:" device-build.log | sort -u | head -20 | while IFS= read -r line; do
+            echo "::error title=xcodebuild::${line//%/%25}"
+          done
+          exit $rc
+      - name: Package unsigned IPA for sideloading
+        working-directory: app
+        run: |
+          APP="xbuild/Release-iphoneos/HydrogenVM.app"
+          test -d "$APP"
+          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
+          unzip -l HydrogenVM-unsigned.ipa | tail -1
+          python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
+      - name: Upload validated unsigned device package
+        uses: actions/upload-artifact@v4
+        with:
+          name: HydrogenVM-device-ipa
+          if-no-files-found: error
+          path: |
+            app/HydrogenVM-unsigned.ipa
+            app/HydrogenVM-unsigned.manifest.json
+            app/HydrogenVM-unsigned.manifest.sha256

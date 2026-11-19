@@ -1,0 +1,137 @@
+// HydrogenVM — the JNI layer for Android games (internal to runtime/android).
+//
+// Java objects are host objects behind opaque handles; Java methods are host functions
+// looked up by class, name and signature. A method nobody implemented that the library
+// itself exports as a native (Java_<class>_<name>) is called there, as a VM would.
+#pragma once
+#include "runtime/android/Android.hpp"
+#include "runtime/Process.hpp"
+#include <any>
+#include <atomic>
+#include <cstring>
+#include <functional>
+#include <map>
+#include <set>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace Hydrogen::Runtime::Android {
+
+using jobject = uint32_t;   // a handle; 0 is null
+
+struct JObject {
+    std::string cls;                       // Java class name, slash form: java/lang/String
+    bool isClass = false;                  // a jclass (cls is the class it stands for)
+    std::string str;                       // java/lang/String (modified UTF-8 kept as UTF-8)
+    char elem = 0;                         // arrays: element type (Z B C S I J F D, or L)
+    std::vector<uint8_t> data;             // primitive array contents
+    std::vector<jobject> refs;             // object arrays
+    std::map<std::string, uint64_t> fields;
+    std::any host;                         // host state (an open asset, an audio track, ...)
+    bool permanent = false;                // never deleted by Delete*Ref
+};
+
+// A Java value: the raw bits, as JNI passes them.
+using JValue = uint64_t;
+inline JValue jfloat(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
+inline float asFloat(JValue v) { const uint32_t b = uint32_t(v); float f; std::memcpy(&f, &b, 4); return f; }
+inline JValue jdouble(double d) { uint64_t b; std::memcpy(&b, &d, 8); return b; }
+
+class Jni;
+using JMethod = std::function<JValue(Jni& j, Ctx& x, jobject self, const std::vector<JValue>& args)>;
+
+class Jni {
+public:
+    explicit Jni(Process& p);
+    Process& proc;
+    // Retained APK bytecode must never override a hand-written native engine driver.
+    std::atomic<bool> interpretsDex{false};
+
+    // Objects.
+    jobject add(JObject o);
+    JObject* get(jobject h);
+    void remove(jobject h);
+    jobject classFor(const std::string& name);         // the (permanent) jclass for a class name
+    jobject newString(const std::string& s);
+    jobject newArray(char elem, uint32_t length);
+    jobject newObject(const std::string& cls);
+    std::string string(jobject h);                      // "" for null / not a string
+
+    // Methods implemented here: "class.name(sig)ret".
+    void method(const std::string& cls, const std::string& name, const std::string& sig, JMethod fn);
+    // Call a method by id (from Call*Method / NewObject); `self` is the object or class.
+    JValue invoke(Ctx& x, uint32_t methodId, jobject self, const std::vector<JValue>& args);
+    JValue invoke(Ctx& x, uint32_t methodId, jobject self, const std::vector<JValue>& args, bool nonvirtual);
+    uint32_t methodId(const std::string& cls, const std::string& name, const std::string& sig, bool isStatic);
+    uint32_t fieldId(const std::string& cls, const std::string& name, const std::string& sig, bool isStatic);
+
+    // Guest tables.
+    uint32_t vm = 0;                                     // JavaVM*
+    uint32_t envFor(Process& p);                         // JNIEnv* of the calling guest thread
+
+    // Calls the library's exported native `Java_<cls>_<name>` with (env, self, args...).
+    // Returns false when the library has no such function.
+    bool callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
+                    const std::vector<uint32_t>& words, JValue* result = nullptr);
+    bool callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
+                    const std::vector<uint32_t>& words, JValue* result, const std::string& signature,
+                    bool clearException = true);
+    bool dexNative(Ctx& x, const std::string& cls, const std::string& name, const std::string& sig,
+                   jobject self, const std::vector<JValue>& args, JValue& result);
+
+    void traceOnce(const std::string& what);
+    // Class hierarchy: the superclass of a class (java/lang/Object for one HydrogenVM doesn't
+    // know, android/app/Activity for an unknown *Activity), and subclass tests for IsInstanceOf.
+    std::map<std::string, std::string> superclasses;
+    std::string superOf(const std::string& cls) const;
+    bool isSubclass(const std::string& cls, const std::string& of) const;
+    // Classes whose methods all answer 0 / false / null without a missing-API report.
+    std::set<std::string> quietClasses;
+    std::set<std::string> traced;
+    std::recursive_mutex mu;
+    struct MethodInfo { std::string cls, name, sig; bool isStatic; };
+    std::vector<MethodInfo> methods;
+    struct FieldInfo { std::string cls, name, sig; bool isStatic; };
+    std::vector<FieldInfo> fieldInfos;
+    std::map<std::string, uint64_t> staticFields;        // "class.name"
+    std::map<std::string, JMethod> impls;               // "class.name(sig)"
+    std::unordered_map<jobject, JObject> objects;
+    std::unordered_map<std::string, jobject> classes;
+    std::map<std::string, uint32_t> registeredNatives;  // "class.name(sig)" -> guest fn (RegisterNatives)
+    uint32_t nextHandle = 0x10000;
+    uint32_t envTable = 0;
+};
+
+Jni& jni(Process& p);
+// Argument types of a method signature ("(ILjava/lang/String;[BF)V" -> "IL[F"), and its return type.
+std::string argTypes(const std::string& sig);
+// Not a platform class (android/, java/, ...): a game's own or a third-party SDK's Java class.
+bool isPluginClass(const std::string& cls);
+char returnType(const std::string& sig);
+
+// The Java classes the game's native code uses (App.cpp), and the platform ones every engine
+// shares (Java.cpp).
+void registerJavaClasses(Jni& j);
+void registerJavaPlatform(Jni& j);
+// Framework services: Build, system services, SharedPreferences, Intent, PackageManager, Locale,
+// interface proxies (JavaServices.cpp).
+void registerJavaServices(Jni& j);
+// Android UI, OS, and java.nio buffers (JavaUi.cpp), stdlib (JavaStdlib.cpp), and GLSurfaceView/EGL10/GLES20 (JavaGles.cpp).
+void registerJavaUi(Jni& j);
+void registerJavaStdlib(Jni& j);
+void registerJavaGles(Jni& j);
+jobject glSurfaceViewRenderer(Process& p);
+void drainGlSurfaceViewEvents(Jni& j, Ctx& x);
+// Generated Java placeholders (Placeholders.cpp); registered last, never over a real method.
+void registerJniPlaceholders(Jni& j);
+// A method call on a JNIBridge interface proxy: forwarded to the library's JNIBridge.invoke.
+JValue invokeProxy(Jni& j, Ctx& x, jobject self, const std::string& name, const std::string& sig,
+                   const std::vector<JValue>& args);
+// An android.view.MotionEvent of one pointer, for engines that take Java input events (Java.cpp).
+// The caller removes it after use.
+jobject makeMotionEvent(Jni& j, TouchPhase phase, float x, float y, uint32_t id, uint32_t pointersDown);
+
+} // namespace Hydrogen::Runtime::Android

@@ -1,7 +1,7 @@
 name: CI
 
-# Linux runs on every push. The macOS job (Apple-toolchain engine build + speed
-# on Apple Silicon, Xcode device/simulator builds, simulator run) costs 10x the
+# Linux runs on every push. The macOS jobs (Apple-toolchain engine build + speed
+# on Apple Silicon, parallel device package, simulator builds/run) cost 10x the
 # Actions minutes on a private repo, so it runs when a commit message contains
 # "[mac]", when a pull request is labelled "mac" or its title contains "[mac]",
 # on manual dispatch, or once a week. The pull-request opt-in exists so the
@@ -36,10 +36,23 @@ jobs:
         # 2026-10-26: this step hung for 30+ minutes on a hosted runner while
         # the same step takes ~30 s normally. Bound the hang with a step
         # timeout and retry transient apt failures with backoff.
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq libicu-dev clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema
+          # Ubuntu mirrors sometimes stall mid-download: bounded attempts with retries and a
+          # connection timeout instead of one install that runs into the step limit.
+          APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for attempt in 1 2 3; do
+            timeout 300 sudo apt-get $APT update -q && timeout 420 sudo apt-get $APT install -yq libicu-dev clang lld llvm cmake ninja-build zlib1g-dev libssl-dev libsqlite3-dev pkg-config libavformat-dev libavcodec-dev libavutil-dev ffmpeg uuid-dev python3 python3-jsonschema python3-pil && break
+            echo "apt attempt $attempt failed; retrying on another mirror"; sleep 10
+            # The runner's regional mirror has stalled for whole attempts (2026-11-18); try the
+            # other one GitHub-hosted runners use instead of the same mirror again.
+            if [ "$attempt" = 1 ]; then MIRROR=http://azure.archive.ubuntu.com/ubuntu; else MIRROR=http://archive.ubuntu.com/ubuntu; fi
+            # GitHub's images list mirrors in /etc/apt/apt-mirrors.txt (sources use mirror+file:);
+            # older ones name the mirror in the sources files. Point both at the new mirror.
+            if [ -f /etc/apt/apt-mirrors.txt ]; then echo "$MIRROR" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null; fi
+            sudo sed -i -E "s#http://[a-zA-Z0-9.-]*archive\.ubuntu\.com/ubuntu/?#$MIRROR/#g" /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list 2>/dev/null || true
+          done
+          dpkg -s clang cmake ninja-build >/dev/null
           command -v llvm-nm && llvm-nm --version | head -1
       - name: Verify IPA packaging checks
         run: python3 -m unittest discover -s tools/tests -p 'test_verify_ipa.py'
@@ -80,6 +93,11 @@ jobs:
         run: python3 -m unittest discover -s tools/tests
       - name: Support registration tests
         run: build/hvm_support_tests
+      - name: Android Test Lab (desktop and phone mode)
+        # Android games run on the GPU renderer, which needs host OpenGL ES (Mesa, headless).
+        run: |
+          sudo apt-get install -yq libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri
+          python3 tools/android_testlab.py --phone --out report/android-testlab
       - name: Guest termination watchdog is a failed run
         run: python3 tools/test_shutdown_watchdog.py --hvm build/hvm
       - name: HostGL sequential process lifetime
@@ -104,6 +122,66 @@ jobs:
         with:
           name: ios-test-apps
           path: build/ios/*.app
+
+  # Build-only artifacts are available without waiting for runtime reports.
+  # All Linux, Apple runtime and simulator gates remain separate jobs.
+  device-package:
+    name: iPhone — unsigned package (build only)
+    runs-on: macos-26
+    timeout-minutes: 30
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
+      contains(github.event.head_commit.message, '[mac]') ||
+      (github.event_name == 'pull_request' &&
+       (contains(github.event.pull_request.labels.*.name, 'mac') ||
+        contains(github.event.pull_request.title, '[mac]')))
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: app
+        run: xcodegen
+      - name: Build for device (unsigned, Release)
+        working-directory: app
+        run: |
+          rc=0
+          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
+            -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
+          # Surface compiler errors as public annotations so they are readable without log access.
+          grep -E "error:" device-build.log | sort -u | head -20 | while IFS= read -r line; do
+            echo "::error title=xcodebuild::${line//%/%25}"
+          done
+          exit $rc
+      - name: Package unsigned IPA for sideloading
+        working-directory: app
+        run: |
+          APP="xbuild/Release-iphoneos/HydrogenVM.app"
+          test -d "$APP"
+          rm -f HydrogenVM-unsigned.ipa HydrogenVM-unsigned.manifest.json HydrogenVM-unsigned.manifest.sha256
+          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
+          unzip -l HydrogenVM-unsigned.ipa | tail -1
+          python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
+      - name: Upload validated unsigned device package
+        # Right after packaging, so the .ipa can be downloaded while the
+        # independent runtime/simulator diagnostics are still running.
+        uses: actions/upload-artifact@v4
+        with:
+          name: HydrogenVM-device-ipa
+          if-no-files-found: error
+          path: |
+            app/HydrogenVM-unsigned.ipa
+            app/HydrogenVM-unsigned.manifest.json
+            app/HydrogenVM-unsigned.manifest.sha256
+      - name: Upload device build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-build-log
+          path: app/device-build.log
+          if-no-files-found: warn
 
   macos:
     name: macOS — Apple Silicon speed, Xcode build, simulator run
@@ -141,39 +219,6 @@ jobs:
       - name: Generate Xcode project
         working-directory: app
         run: xcodegen
-      - name: Build for device (unsigned, Release)
-        working-directory: app
-        run: |
-          rc=0
-          xcodebuild -project HydrogenVM.xcodeproj -target HydrogenVM -configuration Release \
-            -sdk iphoneos SYMROOT="$PWD/xbuild" CODE_SIGNING_ALLOWED=NO build >device-build.log 2>&1 || rc=$?
-          grep -E "error:|BUILD (SUCCEEDED|FAILED)" device-build.log | head -200
-          # Surface compiler errors as public annotations so they are readable without log access.
-          grep -E "error:" device-build.log | sort -u | head -20 | while IFS= read -r line; do
-            echo "::error title=xcodebuild::${line//%/%25}"
-          done
-          exit $rc
-      - name: Package unsigned IPA for sideloading
-        working-directory: app
-        run: |
-          APP="xbuild/Release-iphoneos/HydrogenVM.app"
-          test -d "$APP"
-          rm -f HydrogenVM-unsigned.ipa HydrogenVM-unsigned.manifest.json HydrogenVM-unsigned.manifest.sha256
-          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
-          (cd ipa && zip -qry "$PWD/../HydrogenVM-unsigned.ipa" Payload)
-          unzip -l HydrogenVM-unsigned.ipa | tail -1
-          python3 ../tools/verify_ipa.py HydrogenVM-unsigned.ipa --out HydrogenVM-unsigned.manifest.json --source-commit "$(git rev-parse HEAD)"
-      - name: Upload validated unsigned device package
-        # Right after packaging, so the .ipa can be downloaded while the
-        # simulator diagnostics below are still running.
-        uses: actions/upload-artifact@v4
-        with:
-          name: HydrogenVM-device-ipa
-          if-no-files-found: error
-          path: |
-            app/HydrogenVM-unsigned.ipa
-            app/HydrogenVM-unsigned.manifest.json
-            app/HydrogenVM-unsigned.manifest.sha256
       - name: Build for simulator
         working-directory: app
         run: |
@@ -240,13 +285,22 @@ jobs:
         if: always()
         run: |
           mkdir -p report/xcode report/simulator
-          cp app/device-build.log app/sim-build.log report/xcode/ 2>/dev/null || true
-          grep -E "error:|warning:" app/device-build.log app/sim-build.log 2>/dev/null | sort -u | head -300 > report/xcode/diagnostics.txt || true
+          cp app/sim-build.log report/xcode/ 2>/dev/null || true
+          grep -E "error:|warning:" app/sim-build.log 2>/dev/null | sort -u | head -300 > report/xcode/diagnostics.txt || true
           cp -R sim-out/. report/simulator/ 2>/dev/null || true
           mkdir -p report/simulator-gl && cp -R sim-gl-out/. report/simulator-gl/ 2>/dev/null || true
           mkdir -p report/simulator-gl-emu && cp -R sim-gl-emu-out/. report/simulator-gl-emu/ 2>/dev/null || true
           mkdir -p report/simulator-gl-landscape && cp -R sim-gl-landscape-out/. report/simulator-gl-landscape/ 2>/dev/null || true
           mkdir -p report/simulator-batch && cp -R sim-batch-out/. report/simulator-batch/ 2>/dev/null || true
+          # Cold-start URL handoff: text logs, markers and the screenshot only (no
+          # .xcresult bundles), so a failure on main can be read from ci-reports.
+          mkdir -p report/cold-start
+          cp build/cold-start-build.log build/cold-start-prompt-build.log report/cold-start/ 2>/dev/null || true
+          if [ -d build/cold-start-diagnostics ]; then
+            find build/cold-start-diagnostics -maxdepth 1 -type f \
+              \( -name '*.log' -o -name '*.txt' -o -name '*.png' -o -name 'cold-start-*' \) \
+              -exec cp {} report/cold-start/ \;
+          fi
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -254,7 +308,6 @@ jobs:
           name: macos-results
           path: |
             report/
-            app/device-build.log
             app/sim-build.log
             sim-out/
             build/cold-start-build.log

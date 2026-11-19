@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "angry-birds-island",
+  "bundle_id": "com.rovio.angrybirdsislandhd",
+  "version": "1.7.0",
+  "ipa": "Angry Birds Hatchery Island.ipa",
+  "source": "docs/ANGRY_BIRDS_ISLAND_PLAYABILITY_2026-11-13.md: portrait points, PLAY/episode/level/tutorial timings",
+  "home_setup": "Fresh home. iPad-only app chooses 768x1024 @1 automatically.",
+  "run_seconds": 60,
+  "rss_limit_mb": 1024,
+  "taps": [[425, 512, 20], [380, 512, 26], [115, 936, 32], [558, 338, 42]],
+  "screenshots": [{"at": 45, "reference": "angry-birds-island/45.png", "max_mae": 0.04}, {"at": 60, "reference": "angry-birds-island/60.png", "max_mae": 0.04}],
+  "todos": ["This checks level entry only. Add drag/pinch/save assertions before claiming the full documented playability scenario."]
+}

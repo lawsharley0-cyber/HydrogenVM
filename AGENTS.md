@@ -1,5 +1,11 @@
 # Agent instructions
 
+November 10 update. [Spell Lab](docs/clash-royale/SPELL_LAB_2026-11-10.md) documents the guest spell controls, save compatibility and native battle checks. [Sandbox roadmap](docs/clash-royale/SANDBOX_ROADMAP_2026-11-10.md) includes custom music import.
+
+November 9 current: [Card behavior + custom PNG images](docs/clash-royale/MOD_CUSTOMIZATION_2026-11-09.md) records the Spawns controls, MCH1 optional profile, ART1 image packs, 67 focused checks, native two-troop deployment, image battle/relaunch and retained-file fallback. Overrides must match bundled res/sc source assets, never decompressed swfcache/sc files. PNG import currently uses the computer packer; static troop art and phone qualification limits are explicit. Keep original training and definition-linked saves intact.
+
+November 8 current: [CARD_FORGE_2026-11-08.md](docs/clash-royale/CARD_FORGE_2026-11-08.md) records the working guest creator/loader, CRG2+FGR1 save contract, 59 focused tests, native creation/tuning/Use/battle/relaunch and save-preserving corruption guards. Branch `codex/clash-forge-runtime` starts at main `588eebb`; #366/#381 were closed and integrated through #382. Preserve newer engine/audio fixes. Main runtime gates: 682 fulltest/26 Test Lab. Phone creation and remaining mod/visual/performance work stay unqualified. Keyboard accessory follow-up is #390; its inherited skipped test must run before a Done claim.
+
 Custom keyboard continuation (November 7): read [KEYBOARD_COMPATIBILITY_2026-11-07.md](docs/KEYBOARD_COMPATIBILITY_2026-11-07.md) for the owner-confirmed missing-keyboard symptom, custom UIView/UIKeyInput bridge, composed-character deletion, fail-before cases and exact native/host/device limits. The offline guest/editor is separate on PR #366. Preserve original training and source saves; do not turn Linux input callbacks into a phone-keyboard claim.
 
 November 7 custom-card foundation: [CUSTOM_CARDS.md](docs/clash-royale/CUSTOM_CARDS.md) records the append-only definition generator, save-prefix identity checks, 51 focused tests and native component probes. Generated Forge Knight data/name/ownership resolve; discovery achievements settle after relaunch. The end-user forge, mandatory guest registry/loader and custom-card battle qualification remain pending. Keep private probe saves away from the normal guest.
@@ -67,6 +73,13 @@ Read [docs/TEST_LAB.md](docs/TEST_LAB.md), especially "Agent guide": what each c
 5. **Draft until the gates pass.** Open the PR as a draft, then mark it ready for review once the gates in this file have run and their output is in the PR body. Do not merge it yourself.
 
 ## Build and test
+
+Scripted game smoke harness: `python3 -m unittest discover -s tools/tests -p
+test_smoke.py` is part of the existing tools test gate. Run private scenarios
+with `python3 -m tools.smoke.run --hvm build/hvm` when `HVM_SMOKE_GAMES` is
+available; absent fixtures and screenshot references are skips, never game or
+visual passes. See [docs/testing/smoke.md](docs/testing/smoke.md). This does not
+replace Test Lab, fulltest or the compatibility baseline.
 
 Linux, Clang, CMake, Ninja. This image needs `libstdc++-14-dev` even when the 13 package is installed. `libsqlite3-dev`, `libssl-dev`, `libicu-dev`, `zlib1g-dev`, `uuid-dev`, `lld`, and `llvm` are also required. The compat workflow installs that set. ICU supplies Unicode predicate regular expressions on Linux; Apple hosts use native Foundation.
 
@@ -139,7 +152,7 @@ The integration line for this system is `main`. `docs/HANDOFF.md` now separates 
 - Do not trade a passing test, or an app the baseline already runs, for a one-off win. Prefer a fix that helps many apps over a special case for one title.
 - Do not mark a backlog row, a status line, or a bug resolved without a reproducible run that shows the new result. The issue generator (`python3 tools/hvm_compat.py issues`) is a dry run. It does not file GitHub issues.
 - Do not weaken `fulltest`, and do not change the emulator, in order to make a baseline look green. The harness records. A crash that was already in the baseline stays recorded. A new one fails the diff.
-- No FairPlay decryption. `CCCrypt` is forwarded to the host platform library (system CommonCrypto on Apple, OpenSSL on Linux); never add cipher code to the emulator. There is no general outbound network. Loopback IPv4 TCP exists only when that flag is set.
+- No FairPlay decryption. `CCCrypt` is forwarded to the host platform library (system CommonCrypto on Apple, OpenSSL on Linux); never add cipher code to the emulator. There is no general outbound network by default. Loopback IPv4 TCP exists only when that flag is set. The one exception is the owner-approved (2026-11-12, for preservation) per-game "Allow internet" switch in the app (`ProcessConfig::internetAccess`, `hvm run --internet`): off unless the player turns it on for that game, and then real IPv4 sockets and name lookups. Never turn it on by default or for a game the player did not choose. With the switch on, guest TCP to port 443 goes through the TLS bridge (`src/runtime/libc/TlsBridge.hpp`): the game's old TLS terminates locally and a modern, certificate-checked TLS connection goes to the server, all through the host TLS library (OpenSSL on Linux, Security.framework on the phone).
 
 ## Where to record status
 

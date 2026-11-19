@@ -30,13 +30,15 @@ int compare(Ctx& x, id a, id b) {
     return (result > 0) - (result < 0);
 }
 // A predicate is a tree: comparisons (key op value) joined by AND / OR / NOT, with
-// parentheses, as NSPredicate's format grammar has them. Constructs outside that
-// subset (BETWEEN, IN, CONTAINS, aggregates, functions) still raise explicitly.
+// parentheses, as NSPredicate's format grammar has them, plus the string operators
+// (BEGINSWITH, ENDSWITH, CONTAINS, LIKE with [c]/[d]/[cd]) and IN. Constructs outside
+// that subset (BETWEEN, aggregates, functions) still raise explicitly.
 struct PNode {
     enum Kind { Const, Cmp, And, Or, Not, Block } kind = Const;
     uint32_t block = 0;           // Block: a copied BOOL (^)(id evaluatedObject, NSDictionary* bindings)
     bool result = false;          // Const
     std::string key, operation;   // Cmp
+    bool foldCase = false, foldDiacritics = false;   // Cmp string operators: [c], [d]
     id rhs = 0;                   // Cmp, retained
     std::shared_ptr<const HostPredicateRegex> expression;   // Cmp MATCHES / MATCHES[c]: full ICU matching
     std::vector<std::shared_ptr<PNode>> kids;   // And / Or: any number (a chain is one node); Not: one
@@ -157,6 +159,23 @@ template <class Next> struct PredicateParser {
             }
             return n;
         }
+        // String operators, and IN (the key's value is a member of the collection on the right).
+        for (const char* word : {"BEGINSWITH", "ENDSWITH", "CONTAINS", "LIKE", "IN"}) {
+            if (!keyword(word)) continue;
+            n->operation = word;
+            if (sym("[")) {
+                while (i < t.size() && t[i] != ']') {
+                    const char c = char(std::tolower(uint8_t(t[i++])));
+                    if (c == 'c') n->foldCase = true;
+                    else if (c == 'd') n->foldDiacritics = true;
+                    else if (c != 'n') fail();   // [n]: normalized, already the case here
+                }
+                if (!sym("]")) fail();
+            }
+            n->rhs = literal();
+            if (n->rhs) { rt(x).retain(x.cpu, n->rhs); retained.push_back(n->rhs); }
+            return n;
+        }
         static const char* const ops[] = {"==", "!=", "<>", ">=", "=>", "<=", "=<", "=", ">", "<"};
         const char* op = nullptr;
         for (const char* o : ops) if (sym(o)) { op = o; break; }
@@ -238,6 +257,52 @@ id predicate_array(Ctx& x, Class cls, SEL, id format, id arguments) {
     auto values = arrayItems(x, arguments); size_t i = 0;
     return parse(x, cls, format, [&](char) -> id { if (i >= values.size()) throw ObjC::ObjCError("not enough NSPredicate arguments"); return values[i++]; });
 }
+// A string as the string operators compare it: [c] lowercases; [d] drops combining
+// marks and folds the accented Latin-1 letters to their base letter (é -> e).
+std::string foldedText(Ctx& x, id s, bool foldCase, bool foldDiacritics) {
+    if (foldCase && s) s = id(send(x, s, "lowercaseString"));
+    std::string out = s ? utf8(x, s) : std::string();
+    if (!foldDiacritics) return out;
+    // U+00C0..U+00FF base letters ('*' keeps the character: Æ, Ð, ×, Þ, ß, æ, ð, ÷, þ).
+    static const char kBase[] = "AAAAAA*CEEEEIIII*NOOOOO*OUUUUY**aaaaaa*ceeeeiiii*nooooo*ouuuuy*y";
+    std::string kept;
+    for (size_t i = 0; i < out.size(); ++i) {
+        const uint8_t a = uint8_t(out[i]), b = i + 1 < out.size() ? uint8_t(out[i + 1]) : 0;
+        const uint32_t cp = (a & 0xE0) == 0xC0 && (b & 0xC0) == 0x80 ? (uint32_t(a & 0x1F) << 6) | (b & 0x3F) : 0;
+        if (cp >= 0x300 && cp <= 0x36F) { ++i; continue; }   // a combining mark
+        if (cp >= 0xC0 && cp <= 0xFF && kBase[cp - 0xC0] != '*') { kept += kBase[cp - 0xC0]; ++i; continue; }
+        kept += out[i];
+    }
+    return kept;
+}
+// LIKE: * is any run of characters, ? exactly one (UTF-8 bytes; patterns are ASCII in practice).
+bool likeMatch(const std::string& text, const std::string& pattern) {
+    size_t t = 0, p = 0, star = std::string::npos, mark = 0;
+    while (t < text.size()) {
+        if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == text[t])) { ++t; ++p; continue; }
+        if (p < pattern.size() && pattern[p] == '*') { star = p++; mark = t; continue; }
+        if (star == std::string::npos) return false;
+        p = star + 1;
+        t = ++mark;
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+bool stringOperator(Ctx& x, const PNode& n, id lhs) {
+    if (n.operation == "IN") {
+        if (!n.rhs) return false;
+        if (isString(x, n.rhs)) return isString(x, lhs) && foldedText(x, n.rhs, n.foldCase, n.foldDiacritics).find(foldedText(x, lhs, n.foldCase, n.foldDiacritics)) != std::string::npos;
+        return (send(x, n.rhs, "containsObject:", {lhs}) & 0xff) != 0;
+    }
+    if (n.operation == "CONTAINS" && lhs && !isString(x, lhs))   // a collection on the left: membership
+        return (send(x, lhs, "containsObject:", {n.rhs}) & 0xff) != 0;
+    if (!isString(x, lhs) || !isString(x, n.rhs)) return false;
+    const std::string a = foldedText(x, lhs, n.foldCase, n.foldDiacritics), b = foldedText(x, n.rhs, n.foldCase, n.foldDiacritics);
+    if (n.operation == "BEGINSWITH") return a.compare(0, b.size(), b) == 0;
+    if (n.operation == "ENDSWITH") return a.size() >= b.size() && a.compare(a.size() - b.size(), b.size(), b) == 0;
+    if (n.operation == "CONTAINS") return a.find(b) != std::string::npos;
+    return likeMatch(a, b);   // LIKE
+}
 bool evalNode(Ctx& x, const PNode& n, id object) {
     switch (n.kind) {
         case PNode::Const: return n.result;
@@ -249,6 +314,8 @@ bool evalNode(Ctx& x, const PNode& n, id object) {
     }
     const id lhs = value(x, object, n.key);
     if (n.expression) return isString(x, lhs) && n.expression->matches(utf8(x, lhs));
+    if (n.operation == "BEGINSWITH" || n.operation == "ENDSWITH" || n.operation == "CONTAINS" || n.operation == "LIKE" || n.operation == "IN")
+        return stringOperator(x, n, lhs);
     if (n.operation == "==") return objectsEqual(x, lhs, n.rhs);
     if (n.operation == "!=") return !objectsEqual(x, lhs, n.rhs);
     const int order = compare(x, lhs, n.rhs);

@@ -1,0 +1,200 @@
+{
+  "name": "spell-workshop",
+  "steps": [
+    {
+      "id": "settings",
+      "expected": "settings",
+      "actions": [
+        {
+          "tap": [
+            290,
+            52
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "mod-lab",
+      "expected": "mod lab",
+      "actions": [
+        {
+          "tap": [
+            230,
+            250
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "spell-lab",
+      "expected": "spell lab",
+      "actions": [
+        {
+          "tap": [
+            160,
+            373
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "copy-fireball",
+      "expected": "copy fireball",
+      "actions": [
+        {
+          "tap": [
+            80,
+            450
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "select-arrows",
+      "expected": "select arrows",
+      "actions": [
+        {
+          "tap": [
+            290,
+            78
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "paste-arrows",
+      "expected": "paste arrows",
+      "actions": [
+        {
+          "tap": [
+            235,
+            450
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "editors",
+      "expected": "editors",
+      "actions": [
+        {
+          "tap": [
+            193,
+            29
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "resume-draft",
+      "expected": "resume draft",
+      "actions": [
+        {
+          "tap": [
+            160,
+            373
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "reach-tools",
+      "expected": "reach tools",
+      "actions": [
+        {
+          "tap": [
+            251,
+            121
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "wide-area",
+      "expected": "wide area",
+      "actions": [
+        {
+          "tap": [
+            80,
+            165
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "lock-radius",
+      "expected": "lock radius",
+      "actions": [
+        {
+          "tap": [
+            161,
+            354
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "shuffle",
+      "expected": "shuffle",
+      "actions": [
+        {
+          "tap": [
+            252,
+            400
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "undo-shuffle",
+      "expected": "undo shuffle",
+      "actions": [
+        {
+          "tap": [
+            231,
+            216
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "return-to-values",
+      "expected": "return to values",
+      "actions": [
+        {
+          "tap": [
+            165,
+            460
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    },
+    {
+      "id": "apply",
+      "expected": "apply",
+      "actions": [
+        {
+          "tap": [
+            80,
+            402
+          ]
+        }
+      ],
+      "settleSeconds": 2
+    }
+  ]
+}
