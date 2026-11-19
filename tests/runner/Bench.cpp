@@ -1,5 +1,6 @@
 // HydrogenVM micro-benchmark: runs every t_* function of a test ELF repeatedly
 // and reports guest MIPS (millions of guest instructions per host second).
+#include <cstdlib>
 #include "core/cpu/Engine.hpp"
 #include "loader/ElfLoader.hpp"
 #include <chrono>
@@ -11,6 +12,9 @@ using namespace Hydrogen;
 int main(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "usage: %s <elf> [iterations]\n", argv[0]); return 2; }
     const int iters = argc > 2 ? std::atoi(argv[2]) : 20;
+    // HVM_BENCH_FPSCR=0x03000000: start each call in RunFast (flush-to-zero + default NaN), as iOS
+    // threads do (Process.cpp); the default 0 is IEEE mode, as Android and bare test ELFs use.
+    const uint32_t fpscr = std::getenv("HVM_BENCH_FPSCR") ? uint32_t(std::strtoul(std::getenv("HVM_BENCH_FPSCR"), nullptr, 0)) : 0;
     Memory::GuestArena mem;
     CPU::Engine engine(mem);
     auto img = Loader::loadElf(mem, Loader::readFile(argv[1]));
@@ -26,6 +30,7 @@ int main(int argc, char** argv) {
                                 name.rfind("v_", 0) == 0 || name.rfind("vf_", 0) == 0;
             if (!isTest || name.find('.') != std::string::npos) continue;
             CPU::Cpu c;
+        c.fpscr = fpscr;
             c.r[CPU::kSP] = top - 64; c.r[CPU::kLR] = halt;
             c.r[CPU::kPC] = addr & ~1u; c.thumb = addr & 1;
             if (engine.run(c) != CPU::Exit::Halt) { std::fprintf(stderr, "%s failed\n", name.c_str()); return 1; }

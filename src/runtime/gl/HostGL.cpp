@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <set>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -701,13 +702,42 @@ void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
     if (pname == kImplementationColorReadFormat) *out = kRgba;
 }
 
-static bool hostHasPvrtc(HostContext* hc) {
+static bool hostHasCompressedFormat(HostContext* hc, uint32_t format) {
+    if (!hc->fn.glGetIntegerv) return false;
     int32_t n = 0;
     hc->fn.glGetIntegerv(kNumCompressedTextureFormats, &n);
     if (n <= 0) return false;
     std::vector<int32_t> fmts(static_cast<size_t>(n));
     hc->fn.glGetIntegerv(kCompressedTextureFormats, fmts.data());
-    return std::find(fmts.begin(), fmts.end(), int32_t(kPvrtcRgba4)) != fmts.end();
+    return std::find(fmts.begin(), fmts.end(), int32_t(format)) != fmts.end();
+}
+
+std::optional<CompressedTextureSupport> compressedTextureSupport(Ctx& x, uint32_t format) {
+    auto* hc = hgCurrent(x);
+    if (!hc) return std::nullopt;
+    const auto getString = reinterpret_cast<const uint8_t* (*)(uint32_t)>(x.proc.config().hostGL->proc(hc->handle, "glGetString"));
+    const char* version = getString ? reinterpret_cast<const char*>(getString(0x1F02 /*GL_VERSION*/)) : nullptr;
+    constexpr std::string_view es = "OpenGL ES ";
+    const std::string_view profile = version ? version : "";
+    const bool es3 = profile.starts_with(es) && profile.size() > es.size() && profile[es.size()] >= '3';
+    bool unpackSubimage = hc->desktop || es3;
+    if (!unpackSubimage && getString) {
+        const char* extensions = reinterpret_cast<const char*>(getString(0x1F03 /*GL_EXTENSIONS*/));
+        std::string_view remaining = extensions ? extensions : "";
+        while (!remaining.empty()) {
+            const auto sep = remaining.find(' ');
+            if (remaining.substr(0, sep) == "GL_EXT_unpack_subimage") {
+                unpackSubimage = true;
+                break;
+            }
+            if (sep == std::string_view::npos) break;
+            remaining.remove_prefix(sep + 1);
+        }
+    }
+    // ETC2 and EAC are core in GLES 3, including drivers that omit core formats from the list.
+    const bool core = es3 && format >= 0x9270 && format <= 0x9279;
+    return CompressedTextureSupport{hc->fn.glCompressedTexImage2D && (core || hostHasCompressedFormat(hc, format)),
+                                    unpackSubimage, hc->desktop || es3};
 }
 
 static bool isPvrtc(uint32_t f) { return f >= kPvrtcRgb4 && f <= kPvrtcRgba2; }
@@ -715,7 +745,7 @@ static bool isPvrtc(uint32_t f) { return f >= kPvrtcRgb4 && f <= kPvrtcRgba2; }
 void hg_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height,
                                int32_t border, int32_t imageSize, GuestPtr data) {
     HG_BEGIN(glCompressedTexImage2D)
-    if (isPvrtc(internalformat) && !hostHasPvrtc(hc) && hc->fn.glTexImage2D) {
+    if (isPvrtc(internalformat) && !hostHasCompressedFormat(hc, internalformat) && hc->fn.glTexImage2D) {
         const bool twoBpp = internalformat == kPvrtcRgb2 || internalformat == kPvrtcRgba2;
         const bool alpha = internalformat == kPvrtcRgba4 || internalformat == kPvrtcRgba2;
         std::vector<uint8_t> rgba;
@@ -729,7 +759,7 @@ void hg_glCompressedTexImage2D(Ctx& x, uint32_t target, int32_t level, uint32_t 
 void hg_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xo, int32_t yo, int32_t width, int32_t height,
                                   uint32_t format, int32_t imageSize, GuestPtr data) {
     HG_BEGIN(glCompressedTexSubImage2D)
-    if (isPvrtc(format) && !hostHasPvrtc(hc) && hc->fn.glTexSubImage2D) {
+    if (isPvrtc(format) && !hostHasCompressedFormat(hc, format) && hc->fn.glTexSubImage2D) {
         const bool twoBpp = format == kPvrtcRgb2 || format == kPvrtcRgba2;
         const bool alpha = format == kPvrtcRgba4 || format == kPvrtcRgba2;
         std::vector<uint8_t> rgba;
@@ -896,6 +926,17 @@ void hg_glShaderSource(Ctx& x, uint32_t shader, int32_t count, GuestPtr strings,
         else fullSource.append(p);
     }
 
+    if (const char* dbg = std::getenv("HVM_SHADER_DEBUG"); dbg && *dbg && *dbg != '0') {
+        // The first bytes as the guest sent them (escaped), to tell a malformed source from GLSL
+        // the driver doesn't accept.
+        std::string head;
+        for (unsigned char ch : fullSource.substr(0, 96)) {
+            if (ch >= 32 && ch < 127) head.push_back(char(ch));
+            else { char b[8]; std::snprintf(b, sizeof b, "\\x%02x", ch); head += b; }
+        }
+        x.proc.log(LogLevel::Info, "GPU: shader " + std::to_string(shader) + " source (" + std::to_string(fullSource.size()) +
+                                       " bytes, " + std::to_string(count) + " strings) begins: " + head);
+    }
     fullSource = Shader::normalizeMobileSource(fullSource);
 
     // Mesa and desktop GLSL reject duplicate #define directives without an intervening #undef,

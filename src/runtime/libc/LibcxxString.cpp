@@ -32,6 +32,9 @@
 #include <stdexcept>
 #include <random>
 #include <string>
+#include <cstdlib>
+#include <climits>
+#include <cerrno>
 #include <vector>
 
 namespace Hydrogen::Runtime {
@@ -570,18 +573,48 @@ void plusPtrStr(Ctx& x, GuestPtr ret, GuestPtr lhs, GuestPtr rhs) {
     putResult(x, ret, (lhs ? x.proc.readCString(lhs, 1u << 30) : std::string()) + hostOf(x, rhs));
 }
 void plusCharStr(Ctx& x, GuestPtr ret, uint32_t c, GuestPtr rhs) { putResult(x, ret, std::string(1, char(c)) + hostOf(x, rhs)); }
-// std::random_device: libc++'s object is one int (a /dev/urandom descriptor); the host's
-// random device supplies the numbers, so the guest object needs nothing in it.
+// std::random_device: libc++'s object is one int (a /dev/urandom descriptor); the
+// session's entropy (runtime/Session.hpp) supplies the numbers, so the guest object needs nothing in it.
 void randomDeviceCtor(Ctx& x, GuestPtr self, GuestPtr) { if (self) x.mem.write<uint32_t>(self, 0); }
 void randomDeviceDtor(Ctx&, GuestPtr) {}
-uint32_t randomDeviceNext(Ctx&, GuestPtr) {
-    static thread_local std::random_device rd;
-    return rd();
-}
+uint32_t randomDeviceNext(Ctx& x, GuestPtr) { return uint32_t(x.proc.entropy()); }
 void toStringI(Ctx& x, GuestPtr ret, int32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringU(Ctx& x, GuestPtr ret, uint32_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringLL(Ctx& x, GuestPtr ret, int64_t v) { putResult(x, ret, std::to_string(v)); }
 void toStringULL(Ctx& x, GuestPtr ret, uint64_t v) { putResult(x, ret, std::to_string(v)); }
+// std::stoi and friends: strtol-family parsing of a std::string. Leading space and a sign are
+// allowed, *idx gets how many characters were used. No digits throws invalid_argument and a
+// value that does not fit throws out_of_range, as in libc++ (here as a host error report).
+template <class T, class Parse>
+T stoParse(Ctx& x, GuestPtr str, GuestPtr idx, const char* name, Parse parse) {
+    const std::string s = hostOf(x, str);
+    errno = 0;
+    char* end = nullptr;
+    const T v = parse(s.c_str(), &end);
+    if (end == s.c_str()) throw std::runtime_error(std::string("std::invalid_argument: ") + name + ": no conversion");
+    if (errno == ERANGE) outOfRange(name);
+    if (idx) x.mem.write<uint32_t>(idx, uint32_t(end - s.c_str()));
+    return v;
+}
+uint32_t stoI(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    const long long v = stoParse<long long>(x, s, idx, "stoi", [&](const char* c, char** e) { return std::strtoll(c, e, base); });
+    if (v < INT32_MIN || v > INT32_MAX) outOfRange("stoi");
+    return uint32_t(int32_t(v));
+}
+uint32_t stoUL(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    const unsigned long long v = stoParse<unsigned long long>(x, s, idx, "stoul", [&](const char* c, char** e) { return std::strtoull(c, e, base); });
+    const bool negative = hostOf(x, s).find('-') != std::string::npos;
+    if (!negative && v > UINT32_MAX) outOfRange("stoul");   // a 32-bit unsigned long; "-1" wraps as in C
+    return uint32_t(v);
+}
+uint64_t stoLL(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    return uint64_t(stoParse<long long>(x, s, idx, "stoll", [&](const char* c, char** e) { return std::strtoll(c, e, base); }));
+}
+uint64_t stoULL(Ctx& x, GuestPtr s, GuestPtr idx, int32_t base) {
+    return stoParse<unsigned long long>(x, s, idx, "stoull", [&](const char* c, char** e) { return std::strtoull(c, e, base); });
+}
+float stoF(Ctx& x, GuestPtr s, GuestPtr idx) { return stoParse<float>(x, s, idx, "stof", [](const char* c, char** e) { return std::strtof(c, e); }); }
+double stoD(Ctx& x, GuestPtr s, GuestPtr idx) { return stoParse<double>(x, s, idx, "stod", [](const char* c, char** e) { return std::strtod(c, e); }); }
 void toStringD(Ctx& x, GuestPtr ret, double v) {
     char b[512];
     std::snprintf(b, sizeof b, "%f", v);
@@ -721,6 +754,17 @@ void registerLibcxxString(Process& p) {
     p.def<&toStringULL>("__ZNSt3__19to_stringEy");
     p.def<&toStringF>("__ZNSt3__19to_stringEf");
     p.def<&toStringD>("__ZNSt3__19to_stringEd");
+    {
+        const std::string str = "ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEEPm";
+        const char* why = "strtol-family parse of a std::string; bad input or overflow reports invalid_argument/out_of_range";
+        supportDef<&stoI>(p, "__ZNSt3__14stoi" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoI>(p, "__ZNSt3__14stol" + str + "i", SupportStatus::Real, why);   // long is 32 bits here
+        supportDef<&stoUL>(p, "__ZNSt3__15stoul" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoLL>(p, "__ZNSt3__15stoll" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoULL>(p, "__ZNSt3__16stoull" + str + "i", SupportStatus::Real, why);
+        supportDef<&stoF>(p, "__ZNSt3__14stof" + str, SupportStatus::Real, why);
+        supportDef<&stoD>(p, "__ZNSt3__14stod" + str, SupportStatus::Real, why);
+    }
     p.def<&toStringD>("__ZNSt3__19to_stringEe");
     registerErrorCategories(p);
 }

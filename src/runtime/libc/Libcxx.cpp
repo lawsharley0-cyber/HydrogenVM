@@ -221,8 +221,7 @@ void sw_dtor(Ctx&, GuestPtr) {}
 
 void sys_clock_now(Ctx& x) {
     // Darwin libc++ system_clock counts microseconds (steady_clock counts nanoseconds).
-    auto t = std::chrono::system_clock::now();
-    int64_t us = std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count();
+    const int64_t us = x.proc.wallNowNs() / 1000;
     x.cpu.r[0] = uint32_t(us);
     x.cpu.r[1] = uint32_t(us >> 32);
 }

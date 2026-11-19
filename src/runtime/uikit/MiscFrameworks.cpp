@@ -1,7 +1,7 @@
 // HydrogenVM — small framework pieces apps touch at launch:
 //   UIWebView (no web engine: remote loads fail offline, HTML loads "finish"),
 //   CoreTelephony (no carrier), SystemConfiguration's CaptiveNetwork (no Wi-Fi info),
-//   Security certificates/keys (unavailable), +attemptRotationToDeviceOrientation.
+//   +attemptRotationToDeviceOrientation.
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 #include <cctype>
@@ -66,9 +66,6 @@ void ct_ignore(Ctx&, id, SEL, uint32_t) {}
 
 // ---- misc C functions
 uint32_t z1(Ctx&, uint32_t) { return 0; }
-uint32_t z2(Ctx&, uint32_t, uint32_t) { return 0; }
-int32_t secUnimplemented6(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) { return -4; }   // errSecUnimplemented
-int32_t secUnimplemented3(Ctx&, uint32_t, uint32_t, uint32_t) { return -4; }
 void vc_attemptRotation(Ctx& x, id, SEL) { reevaluateRootOrientation(x, "attemptRotationToDeviceOrientation", true); }
 
 // ---- MobileCoreServices: uniform type identifiers for common file types.
@@ -122,6 +119,36 @@ void later(Ctx& x, id keep, double delay, std::function<void(Ctx&)> fn) {
         fn(cx);
         rt(cx).release(c, keep);
     });
+}
+
+// ---- NSNetService / NSNetServiceBrowser: Bonjour on a network with no other devices. A browser
+// starts searching (the delegate hears netServiceBrowserWillSearch:) and never finds a service; a
+// published or resolved service hears nothing back, as when no peer answers.
+struct NetServiceData : ObjC::HostObject { id delegate = 0, name = 0, type = 0, domain = 0; int32_t port = -1; };
+id ns_delegate(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).delegate; }
+void ns_setDelegate(Ctx& x, id self, SEL, id d) { rt(x).host<NetServiceData>(self).delegate = d; }
+id ns_initService(Ctx& x, id self, SEL, id domain, id type, id name, int32_t port) {
+    auto& d = rt(x).host<NetServiceData>(self);
+    d.domain = id(rt(x).send(x.cpu, domain, "copy")); d.type = id(rt(x).send(x.cpu, type, "copy"));
+    d.name = id(rt(x).send(x.cpu, name, "copy")); d.port = port;
+    return self;
+}
+id ns_initServiceNoPort(Ctx& x, id self, SEL s, id domain, id type, id name) { return ns_initService(x, self, s, domain, type, name, -1); }
+id ns_name(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).name; }
+id ns_type(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).type; }
+id ns_domain(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).domain; }
+int32_t ns_port(Ctx& x, id self, SEL) { return rt(x).host<NetServiceData>(self).port; }
+void ns_dealloc(Ctx& x, id self, SEL) {
+    if (auto* d = rt(x).hostIf<NetServiceData>(self)) for (id o : {d->name, d->type, d->domain}) if (o) rt(x).release(x.cpu, o);
+    rt(x).sendSuper(x.cpu, self, rt(x).getClass("NSObject"), rt(x).sel("dealloc"));
+}
+void nsb_search(Ctx& x, id self, SEL, id, id) {
+    const id d = rt(x).host<NetServiceData>(self).delegate;
+    if (d && rt(x).respondsTo(d, rt(x).sel("netServiceBrowserWillSearch:"))) rt(x).send(x.cpu, d, "netServiceBrowserWillSearch:", {self});
+}
+void nsb_stop(Ctx& x, id self, SEL) {
+    const id d = rt(x).host<NetServiceData>(self).delegate;
+    if (d && rt(x).respondsTo(d, rt(x).sel("netServiceBrowserDidStopSearch:"))) rt(x).send(x.cpu, d, "netServiceBrowserDidStopSearch:", {self});
 }
 
 // ---- CLLocationManager: location services are off. Updates fail with kCLErrorDenied.
@@ -332,6 +359,27 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
     registerPhotoPicker(p, r);
     registerDocumentPicker(p, r);
 
+    ObjC::ClassBuilder nsvc = r.defineClass("NSNetService", "NSObject");
+    nsvc.m<&ns_initService>("initWithDomain:type:name:port:").m<&ns_initServiceNoPort>("initWithDomain:type:name:")
+        .m<&ns_delegate>("delegate").m<&ns_setDelegate>("setDelegate:", "v@:@")
+        .m<&ns_name>("name").m<&ns_type>("type").m<&ns_domain>("domain").m<&ns_port>("port", "i@:")
+        .m<&ns_dealloc>("dealloc", "v@:");
+    // No Bonjour peers exist: nothing resolves, publishing is never confirmed and no addresses are known.
+    struct NoPeer { const char* sel; const char* types; };
+    for (const NoPeer& np : {NoPeer{"hostName", "@@:"}, {"addresses", "@@:"}, {"TXTRecordData", "@@:"}})
+        supportMethod(p, nsvc, "NSNetService", np.sel, [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Unavailable,
+                      "no Bonjour peer has resolved this service, so it has no host, addresses or TXT record", np.types);
+    for (const NoPeer& np : {NoPeer{"publish", "v@:"}, {"resolve", "v@:"}, {"stop", "v@:"}, {"resolveWithTimeout:", "v@:d"},
+                             {"scheduleInRunLoop:forMode:", "v@:@@"}, {"removeFromRunLoop:forMode:", "v@:@@"}})
+        supportMethod(p, nsvc, "NSNetService", np.sel, [](Ctx&) {}, SupportStatus::Unavailable,
+                      "no Bonjour network: requests are accepted and no peer ever answers", np.types);
+    ObjC::ClassBuilder nsbr = r.defineClass("NSNetServiceBrowser", "NSObject");
+    nsbr.m<&ns_delegate>("delegate").m<&ns_setDelegate>("setDelegate:", "v@:@")
+        .m<&nsb_search>("searchForServicesOfType:inDomain:", "v@:@@").m<&nsb_stop>("stop", "v@:");
+    for (const NoPeer& np : {NoPeer{"searchForBrowsableDomains", "v@:"}, {"searchForRegistrationDomains", "v@:"},
+                             {"scheduleInRunLoop:forMode:", "v@:@@"}, {"removeFromRunLoop:forMode:", "v@:@@"}})
+        supportMethod(p, nsbr, "NSNetServiceBrowser", np.sel, [](Ctx&) {}, SupportStatus::Unavailable,
+                      "no Bonjour network: searches never find a domain or service", np.types);
     ObjC::ClassBuilder lm = r.defineClass("CLLocationManager", "NSObject");
     // iOS 3.x exposed this availability query on the manager instance.
     supportMethod(p,lm,"CLLocationManager","locationServicesEnabled",[](Ctx& x) {
@@ -371,6 +419,11 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
       .m<&mp_dealloc>("dealloc", "v@:");
     ObjC::ClassBuilder mpvc = r.defineClass("MPMoviePlayerViewController", "UIViewController");
     mpvc.m<&mpvc_initWithURL>("initWithContentURL:").m<&mpvc_player>("moviePlayer");
+    // MPVolumeSettingsAlertShow / Hide / IsVisible (Tap Tap Revenge 2 #546): the system volume
+    // alert. The player's volume is the phone's own; there's no alert to show, so none is visible.
+    p.def<+[](Ctx&) {}>("_MPVolumeSettingsAlertShow");
+    p.def<+[](Ctx&) {}>("_MPVolumeSettingsAlertHide");
+    p.def<+[](Ctx&) -> uint32_t { return 0; }>("_MPVolumeSettingsAlertIsVisible");
     ObjC::ClassBuilder mus = r.defineClass("MPMusicPlayerController", "NSObject");
     mus.cm<&mus_shared>("applicationMusicPlayer").cm<&mus_shared>("iPodMusicPlayer").cm<&mus_shared>("systemMusicPlayer")
        .cm<&mus_shared>("applicationQueuePlayer")
@@ -406,20 +459,6 @@ void registerMiscFrameworks(Process& p, ObjC::Runtime& r) {
       .m<&ad_uuid>("advertisingIdentifier")
       .m<&ad_trackingEnabled>("isAdvertisingTrackingEnabled", "c@:");
 
-    // Security: certificates and public-key operations aren't available.
-    p.def<&z2>("_SecCertificateCreateWithData");
-    p.def<&z1>("_SecCertificateCopySubjectSummary");
-    p.def<&z1>("_SecCertificateCopyData");
-    p.def<&z1>("_SecKeyGetBlockSize");
-    p.def<&secUnimplemented6>("_SecKeyEncrypt");
-    p.def<&secUnimplemented6>("_SecKeyDecrypt");
-    p.def<&secUnimplemented6>("_SecKeyRawVerify");
-    p.def<&secUnimplemented3>("_SecTrustCreateWithCertificates");
-    p.def<&secUnimplemented3>("_SecTrustEvaluate");
-    p.def<&z1>("_SecTrustCopyPublicKey");
-    p.def<&z1>("_SecTrustGetCertificateCount");
-    p.def<&z2>("_SecTrustGetCertificateAtIndex");
-    p.def<&secUnimplemented3>("_SecPolicyCreateBasicX509");
 }
 
 } // namespace Hydrogen::Runtime::UIKit

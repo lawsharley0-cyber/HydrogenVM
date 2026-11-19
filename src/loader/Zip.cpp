@@ -156,7 +156,7 @@ std::vector<uint8_t> ZipReader::read(const ZipEntry& e) const {
     return out;
 }
 
-size_t ZipReader::extract(const std::string& prefix, const std::string& destDir) const {
+size_t ZipReader::extract(const std::string& prefix, const std::string& destDir, bool overwrite) const {
     size_t n = 0;
     for (const auto& e : entries_) {
         if (e.name.compare(0, prefix.size(), prefix) != 0) continue;
@@ -165,6 +165,7 @@ size_t ZipReader::extract(const std::string& prefix, const std::string& destDir)
         if (!safeRelative(rel)) throw ZipError("unsafe path in archive: " + e.name);
         const fs::path dst = fs::path(destDir) / rel;
         if (e.isDirectory()) { fs::create_directories(dst); continue; }
+        if (!overwrite) { std::error_code ec; if (fs::exists(fs::symlink_status(dst, ec))) continue; }
         fs::create_directories(dst.parent_path());
         const auto data = read(e);
         if (e.isSymlink()) {

@@ -1,6 +1,6 @@
 // HydrogenVM Test Lab — guest app (32-bit ARMv7 iOS)
 //
-// Thirty-five automated cases (TL-A--TL-AG plus TL-AO/TL-AP); see docs/TEST_LAB.md for the
+// Forty-one automated cases (TL-A--TL-AM plus TL-AO/TL-AP); see docs/TEST_LAB.md for the
 // complete list and independent oracles. The original five cases are:
 //   TL-A  Import and launch  — verifies this IPA was properly imported and its
 //                              bundle metadata is intact.
@@ -48,6 +48,7 @@ extern unsigned int alarm(unsigned int);
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include "../../../runner/TestFont.hpp"
 #include <time.h>
 
 // ─────────────────────────── protocol version ────────────────────────────────
@@ -87,6 +88,12 @@ static const char *kAppBuild        = "1";
 #define CASE_AE @"TL-AE"
 #define CASE_AF @"TL-AF"
 #define CASE_AG @"TL-AG"
+#define CASE_AH @"TL-AH"
+#define CASE_AI @"TL-AI"
+#define CASE_AJ @"TL-AJ"
+#define CASE_AK @"TL-AK"
+#define CASE_AL @"TL-AL"
+#define CASE_AM @"TL-AM"
 #define CASE_AO @"TL-AO"
 #define CASE_AP @"TL-AP"
 #define CASE_T  @"TL-T"
@@ -1821,6 +1828,172 @@ static TLResult *runObjCCase(NSString *caseId, void (*fixture)(TLObjCObservation
 - (void)shown:(NSNotification *)note { self.shown++; }
 - (void)hidden:(NSNotification *)note { self.hidden++; }
 @end
+static TLResult *runCaseAH(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AH version:1];
+    writeCheckpoint(CASE_AH); r.checkpointWritten = YES;
+    double start = monoMs();
+    NSString *s = @"ab\ncd\nz";
+    NSCharacterSet *set = [NSCharacterSet newlineCharacterSet];
+    NSRange a = [s rangeOfCharacterFromSet:set options:0 range:NSMakeRange(3,3)];
+    NSRange b = [s rangeOfCharacterFromSet:set options:4 range:NSMakeRange(0,7)];
+    NSRange c = [s rangeOfCharacterFromSet:set options:8];
+    NSRange d = [s rangeOfCharacterFromSet:set options:12 range:NSMakeRange(0,6)];
+    BOOL nilCaught = NO, rangeCaught = NO;
+    @try { [s rangeOfCharacterFromSet:nil options:0 range:NSMakeRange(0,7)]; }
+    @catch (NSException *exception) { nilCaught = [exception.name isEqualToString:@"NSInvalidArgumentException"]; }
+    @try { [s rangeOfCharacterFromSet:set options:0 range:NSMakeRange(8,1)]; }
+    @catch (NSException *exception) { rangeCaught = [exception.name isEqualToString:@"NSRangeException"]; }
+    // Literal positions in the authored string, independent of emulator output.
+    BOOL ok = a.location == 5 && a.length == 1 && b.location == 5 && b.length == 1 &&
+        c.location == NSNotFound && c.length == 0 && d.location == 5 && d.length == 1 && nilCaught && rangeCaught;
+    r.expected = @"bounded/backwards={5,1}, anchored=not found, backwards anchored={5,1}; nil/range exceptions caught";
+    r.actual = ok ? @"character-set search and exceptions correct" : @"character-set search contract mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Canabalt text-wrapping search regression";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static TLResult *runCaseAI(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AI version:1];
+    writeCheckpoint(CASE_AI); r.checkpointWritten = YES;
+    double start = monoMs();
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL,kTestFont,sizeof(kTestFont),NULL);
+    CGFontRef font = CGFontCreateWithDataProvider(provider);
+    CGContextRef context = CGBitmapContextCreate(NULL,64,48,8,64,NULL,7);
+    CGContextSetFont(context,font); CGContextSetFontSize(context,20);
+    CFRelease(font); CFRelease(provider);
+    CGGlyph glyph = 2;
+    CGContextSetTextPosition(context,4,8);
+    CGContextShowGlyphs(context,&glyph,1);
+    CGPoint a = CGContextGetTextPosition(context);
+    unsigned char *pixels = CGBitmapContextGetData(context);
+    // Original CC0 triangle (100,0),(300,700),(500,0), advance=600,
+    // units/em=1000. At size 20 these interior/background probes are exact.
+    BOOL first = pixels[35*64+10] >= 250 && pixels[35*64+4] == 0 && a.x == 16 && a.y == 8;
+    CGContextShowGlyphsAtPoint(context,20,8,&glyph,1);
+    CGPoint b = CGContextGetTextPosition(context);
+    BOOL ok = first && pixels[35*64+26] >= 250 && b.x == 32 && b.y == 8;
+    r.expected = @"real triangle glyphs at both baselines; advances 16 then 32; font outlives provider release";
+    r.actual = ok ? @"legacy glyph drawing and ABI correct" : @"legacy glyph drawing mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Canabalt blank-menu-label regression";
+    CFRelease(context);
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static unsigned animationCalls;
+static BOOL animationFinished;
+static void *animationContext;
+static NSString *animationName;
+@interface TLAnimationProbe : NSObject
+- (void)done:(NSString *)name finished:(BOOL)finished context:(void *)context;
+@end
+@implementation TLAnimationProbe
+- (void)done:(NSString *)name finished:(BOOL)finished context:(void *)context {
+    ++animationCalls; animationFinished = finished; animationContext = context; animationName = name;
+}
+@end
+static unsigned releasedWindows;
+@interface TLWindowProbe : UIWindow
+@end
+@implementation TLWindowProbe
+- (void)dealloc { ++releasedWindows; }
+@end
+static unsigned releasedTimerObjects;
+@interface TLTransientProbe : NSObject
++ (id)transient;
+@end
+@implementation TLTransientProbe
++ (id)transient { return [[self alloc] init]; }
+- (void)dealloc { ++releasedTimerObjects; }
+@end
+@interface TLTimerPoolProbe : NSObject
+- (void)fire:(NSTimer *)timer;
+@end
+@implementation TLTimerPoolProbe
+- (void)fire:(NSTimer *)timer {
+    // Explicit +1 crossing the ARC boundary, balanced by the guest pool.
+    // Discarding an ordinary +0 ARC return can release it immediately instead.
+    void *raw = (__bridge_retained void *)[[TLTransientProbe alloc] init];
+    ((void (*)(void *, SEL))objc_msgSend)(raw, sel_registerName("autorelease"));
+}
+@end
+static TLResult *runCaseAM(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AM version:1];
+    writeCheckpoint(CASE_AM); r.checkpointWritten = YES;
+    double start = monoMs(); releasedTimerObjects = 0;
+    TLTimerPoolProbe *probe = [[TLTimerPoolProbe alloc] init];
+    [NSTimer scheduledTimerWithTimeInterval:0.01 target:probe selector:@selector(fire:) userInfo:nil repeats:NO];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    BOOL ok = releasedTimerObjects == 1;
+    r.expected = @"UIKit main-loop timer autoreleases drained before outer pool";
+    r.actual = ok ? @"timer object released" : @"timer object retained in outer pool";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Canabalt timer-driven window notification lifetime regression";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static TLResult *runCaseAL(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AL version:1];
+    writeCheckpoint(CASE_AL); r.checkpointWritten = YES;
+    double start = monoMs();
+    releasedWindows = 0;
+    UIWindow *original = [UIApplication sharedApplication].keyWindow;
+    @autoreleasepool {
+        TLWindowProbe *window = [[TLWindowProbe alloc] initWithFrame:CGRectMake(0,0,320,480)];
+        [window makeKeyAndVisible];
+    }
+    BOOL ok = releasedWindows == 1;
+    [original makeKeyAndVisible];
+    r.expected = @"visible window deallocated after last application reference";
+    r.actual = ok ? @"visible window released" : @"visible window leaked";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Canabalt Scores window ownership regression";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static TLResult *runCaseAK(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AK version:1];
+    writeCheckpoint(CASE_AK); r.checkpointWritten = YES;
+    double start = monoMs();
+    animationCalls = 0; animationFinished = NO;
+    TLAnimationProbe *probe = [[TLAnimationProbe alloc] init];
+    [UIView beginAnimations:@"probe" context:(void *)0x12345678];
+    [UIView setAnimationDuration:0.01];
+    [UIView setAnimationDelegate:probe];
+    [UIView setAnimationDidStopSelector:@selector(done:finished:context:)];
+    [UIView commitAnimations];
+    BOOL deferred = animationCalls == 0;
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    BOOL ok = deferred && animationCalls == 1 && animationFinished == YES &&
+        animationContext == (void *)0x12345678 && [animationName isEqualToString:@"probe"];
+    r.expected = @"deferred callback once; finished YES; original ID and context";
+    r.actual = ok ? @"legacy animation callback correct" : @"legacy animation callback mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Canabalt Scores dismissal BOOL ABI regression";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
+static TLResult *runCaseAJ(void) {
+    TLResult *r = [[TLResult alloc] initWithId:CASE_AJ version:1];
+    writeCheckpoint(CASE_AJ); r.checkpointWritten = YES;
+    double start = monoMs();
+    NSString *a = [NSString stringWithFormat:@"%2$@/%1$@/%2$@",@"RUN",@"MACH"];
+    NSString *b = [NSString stringWithFormat:@"%3$*1$.*2$f",10,2,3.5];
+    BOOL ok = [a isEqualToString:@"MACH/RUN/MACH"] && [b isEqualToString:@"      3.50"];
+    r.expected = @"MACH/RUN/MACH; six spaces followed by 3.50";
+    r.actual = ok ? @"positional values and indexed width/precision correct" : @"positional format mismatch";
+    r.status = ok ? @"passed" : @"failed";
+    if (!ok) r.reason = @"Canabalt Now Playing format regression";
+    clearCheckpoint(); r.durationMs = monoMs() - start;
+    return r;
+}
+
 // TL-AA: independently specified UTF-8 bytes and UTF-16 character counts.
 static TLResult *runCaseAA(void) {
     TLResult *r = [[TLResult alloc] initWithId:CASE_AA version:1];
@@ -2295,7 +2468,7 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
     NSMutableArray *results = [NSMutableArray array];
     // Check for pre-existing checkpoint (interrupted case from prior launch)
     NSString *interrupted = interruptedCaseId();
-    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AP];
+    NSArray *allIds = @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP];
     for (NSString *cid in allIds) {
         if (interrupted && [interrupted isEqualToString:cid]) {
             TLResult *r = [[TLResult alloc] initWithId:cid version:1];
@@ -2352,10 +2525,34 @@ static NSArray *runAllCases(BOOL automatedSingleRunMode) {
             [results addObject:runCaseX()];
         } else if ([cid isEqualToString:CASE_Y]) {
             [results addObject:runCaseY()];
+        } else if ([cid isEqualToString:CASE_Z]) {
+            [results addObject:runCaseZ()];
+        } else if ([cid isEqualToString:CASE_AA]) {
+            [results addObject:runCaseAA()];
+        } else if ([cid isEqualToString:CASE_AB]) {
+            [results addObject:runCaseAB()];
+        } else if ([cid isEqualToString:CASE_AC]) {
+            [results addObject:runCaseAC()];
+        } else if ([cid isEqualToString:CASE_AD]) {
+            [results addObject:runCaseAD()];
+        } else if ([cid isEqualToString:CASE_AE]) {
+            [results addObject:runCaseAE()];
         } else if ([cid isEqualToString:CASE_AF]) {
             [results addObject:runCaseAF()];
         } else if ([cid isEqualToString:CASE_AG]) {
             [results addObject:runCaseAG()];
+        } else if ([cid isEqualToString:CASE_AH]) {
+            [results addObject:runCaseAH()];
+        } else if ([cid isEqualToString:CASE_AI]) {
+            [results addObject:runCaseAI()];
+        } else if ([cid isEqualToString:CASE_AJ]) {
+            [results addObject:runCaseAJ()];
+        } else if ([cid isEqualToString:CASE_AK]) {
+            [results addObject:runCaseAK()];
+        } else if ([cid isEqualToString:CASE_AL]) {
+            [results addObject:runCaseAL()];
+        } else if ([cid isEqualToString:CASE_AM]) {
+            [results addObject:runCaseAM()];
         } else if ([cid isEqualToString:CASE_AP]) {
             [results addObject:runCaseAP()];
         } else if ([cid isEqualToString:CASE_AE]) {
@@ -2408,8 +2605,20 @@ static TLResult *runSingleCase(NSString *caseId) {
     if ([caseId isEqualToString:CASE_W]) return runObjCCase(caseId, TLObjCLifetime);
     if ([caseId isEqualToString:CASE_X]) return runCaseX();
     if ([caseId isEqualToString:CASE_Y]) return runCaseY();
+    if ([caseId isEqualToString:CASE_Z]) return runCaseZ();
+    if ([caseId isEqualToString:CASE_AA]) return runCaseAA();
+    if ([caseId isEqualToString:CASE_AB]) return runCaseAB();
+    if ([caseId isEqualToString:CASE_AC]) return runCaseAC();
+    if ([caseId isEqualToString:CASE_AD]) return runCaseAD();
+    if ([caseId isEqualToString:CASE_AE]) return runCaseAE();
     if ([caseId isEqualToString:CASE_AF]) return runCaseAF();
     if ([caseId isEqualToString:CASE_AG]) return runCaseAG();
+    if ([caseId isEqualToString:CASE_AH]) return runCaseAH();
+    if ([caseId isEqualToString:CASE_AI]) return runCaseAI();
+    if ([caseId isEqualToString:CASE_AJ]) return runCaseAJ();
+    if ([caseId isEqualToString:CASE_AK]) return runCaseAK();
+    if ([caseId isEqualToString:CASE_AL]) return runCaseAL();
+    if ([caseId isEqualToString:CASE_AM]) return runCaseAM();
     if ([caseId isEqualToString:CASE_AO]) return runCaseAO();
     if ([caseId isEqualToString:CASE_AP]) return runCaseAP();
     if ([caseId isEqualToString:CASE_AE]) return runCaseAE();
@@ -2454,8 +2663,8 @@ static UIColor *colorForStatus(NSString *s) {
     scroll.scrollEnabled = YES;
     [self.view addSubview:scroll];
 
-    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AP ];
-    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AP: Location query" ];
+    NSArray *caseIds    = @[ CASE_A,       CASE_B,     CASE_C,       CASE_D,      CASE_E,        CASE_F,        CASE_G,         CASE_H,      CASE_I,       CASE_J,     CASE_K,     CASE_M,   CASE_N,     CASE_O,        CASE_P,       CASE_Q,          CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP ];
+    NSArray *caseLabels = @[ @"A: Import", @"B: CPU",  @"C: GLES",   @"D: Audio", @"E: Persist", @"F: Thread",  @"G: Keychain", @"H: Files", @"I: Textures", @"J: Perf", @"K: Controls", @"M: Sort", @"N: EAGL", @"O: AudioUnit", @"P: VCMP", @"Q: AudioThread", @"R: DepthStencil", @"S: Selectors", @"T: Class graph", @"U: Method lookup", @"V: Add/replace", @"W: Associations", @"X: Player item", @"Y: LibStdcxx", @"Z: Key input", @"AA: String bytes", @"AB: Rect dictionary", @"AC: Mobile shader", @"AD: Initial layout", @"AE: Offline score", @"AF: KVC structs", @"AG: Media time", @"AH: String search", @"AI: Legacy glyphs", @"AJ: Indexed format", @"AK: Animation BOOL", @"AL: Window lifetime", @"AM: Timer pool", @"AP: Location query" ];
 
     self.labels  = [NSMutableArray array];
     self.results = [NSMutableArray arrayWithArray:@[
@@ -2491,6 +2700,12 @@ static UIColor *colorForStatus(NSString *s) {
         [[TLResult alloc] initWithId:CASE_AE version:1],
         [[TLResult alloc] initWithId:CASE_AF version:1],
         [[TLResult alloc] initWithId:CASE_AG version:1],
+        [[TLResult alloc] initWithId:CASE_AH version:1],
+        [[TLResult alloc] initWithId:CASE_AI version:1],
+        [[TLResult alloc] initWithId:CASE_AJ version:1],
+        [[TLResult alloc] initWithId:CASE_AK version:1],
+        [[TLResult alloc] initWithId:CASE_AL version:1],
+        [[TLResult alloc] initWithId:CASE_AM version:1],
         [[TLResult alloc] initWithId:CASE_AP version:1],
     ]];
     for (TLResult *r in self.results) r.status = @"pending";
@@ -2552,7 +2767,7 @@ static UIColor *colorForStatus(NSString *s) {
 
 - (void)forceDiagnosticCrash:(id)sender { __builtin_trap(); }
 
-- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AP]; }
+- (NSArray *)caseIds { return @[CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F, CASE_G, CASE_H, CASE_I, CASE_J, CASE_K, CASE_M, CASE_N, CASE_O, CASE_P, CASE_Q, CASE_R, CASE_S, CASE_T, CASE_U, CASE_V, CASE_W, CASE_X, CASE_Y, CASE_Z, CASE_AA, CASE_AB, CASE_AC, CASE_AD, CASE_AE, CASE_AF, CASE_AG, CASE_AH, CASE_AI, CASE_AJ, CASE_AK, CASE_AL, CASE_AM, CASE_AP]; }
 
 - (void)runCase:(UIButton *)sender {
     int idx = (int)(sender.tag - 100);

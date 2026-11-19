@@ -307,6 +307,13 @@ int32_t s_ioctl(Ctx& x, int32_t fd, uint32_t req, GuestPtr arg) {
         }
         if (req == kSIOCGIFCONF) return ioctlIfconf(x, arg);
     }
+    if (isNetworkSocket(x.proc, fd) || ((req >> 8) & 0xFF) == 'i') {
+        int result = 0;
+        if (networkInterfaceIoctl(x, req, arg, result)) return result;
+    }
+    char what[96];
+    std::snprintf(what, sizeof what, "ioctl(request 0x%08x) is not known (answered 0, did nothing)", req);
+    x.proc.reportDefaulted(what);
     return 0;
 }
 int32_t s_zero(Ctx&) { return 0; }
@@ -368,8 +375,9 @@ int32_t sysctlValue(Ctx& x, const std::string& name, GuestPtr oldp, GuestPtr old
     if (name == "kern.ostype") return str("Darwin");
     if (name == "kern.hostname") return str(si.hostname);
     if (name == "kern.version") return str("Darwin Kernel Version 13.0.0: HydrogenVM; root:xnu/RELEASE_ARM_S5L8950X");
-    if (name == "kern.boottime") { const uint32_t tv[2] = {uint32_t(std::time(nullptr) - 86400), 0}; return writeSysctl(x, oldp, oldlenp, tv, 8); }
+    if (name == "kern.boottime") { const uint32_t tv[2] = {uint32_t(x.proc.wallNowNs() / 1000000000 - 86400), 0}; return writeSysctl(x, oldp, oldlenp, tv, 8); }
     if (name == "kern.maxproc") return u32(512);
+    x.proc.reportDefaulted("sysctl \"" + name + "\" is not known (answered ENOENT)");
     setErrno(x, ENOENT);
     return -1;
 }
@@ -424,6 +432,7 @@ int32_t s_sysctl(Ctx& x, GuestPtr mib, uint32_t n, GuestPtr oldp, GuestPtr oldle
         if (en0) sdl[11] = 0x02;         // 02:00:00:00:00:00
         return writeSysctl(x, oldp, oldlenp, msg, sizeof msg);
     }
+    x.proc.reportDefaulted("sysctl mib {" + std::to_string(a) + ", " + std::to_string(b) + "} is not known (answered ENOENT)");
     setErrno(x, ENOENT);
     return -1;
 }
@@ -512,7 +521,7 @@ void s_noop(Ctx&) {}
 struct OpenFds {
     explicit OpenFds(Process&) {}
     std::mutex mu;
-    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; };
+    struct FdTrack { uint64_t fileHandle = 0; int64_t bytesRead = 0; std::string path; bool inBundle = false; };
     std::unordered_map<int32_t, FdTrack> tracks;
 };
 
@@ -567,9 +576,21 @@ int32_t f_open(Ctx& x, GuestPtr path, uint32_t flags, VarArgs va) {
         assetReadAhead(fd, hp, flags, st);
     }
     const uint64_t h = x.proc.recordFileOpen(gp, "open", 0, sz, 0, true);
+    std::string replayPath;
+    bool inBundle = false;
+    if (x.proc.session().detailsActive()) {
+        const auto& bundle = x.proc.bundlePath();
+        const auto& home = x.proc.homePath();
+        inBundle = !bundle.empty() && (hp == bundle || hp.starts_with(bundle + "/"));
+        // Phone and bench installs have different UUIDs. Use the same logical path on both.
+        if (inBundle) replayPath = "@bundle" + hp.substr(bundle.size());
+        else if (!home.empty() && (hp == home || hp.starts_with(home + "/")))
+            replayPath = "@home" + hp.substr(home.size());
+        else replayPath = x.proc.absoluteGuestPath(gp);
+    }
     auto& ofs = x.proc.service<OpenFds>();
     std::lock_guard<std::mutex> lk(ofs.mu);
-    ofs.tracks[fd] = {h, 0};
+    ofs.tracks[fd] = {h, 0, std::move(replayPath), inBundle};
     return fd;
 }
 // POSIX shared memory: Unity's Mono runtime opens a shared-handle segment at startup (Subway
@@ -630,9 +651,42 @@ void waitUntilReadable(Ctx& x, int fd) {
 int32_t f_read(Ctx& x, int32_t fd, GuestPtr buf, uint32_t n) {
     if (fd == 0) return 0;
     if (isNetworkSocket(x.proc, fd)) return networkRead(x, fd, buf, n);
+    std::optional<std::string> trackedPath;
+    bool trackedInBundle = false;
+    uint64_t trackedOff = 0;
+    if (x.proc.session().detailsActive()) {
+        auto& ofs = x.proc.service<OpenFds>();
+        std::lock_guard<std::mutex> lk(ofs.mu);
+        auto it = ofs.tracks.find(fd);
+        if (it != ofs.tracks.end()) {
+            trackedPath = it->second.path;
+            trackedInBundle = it->second.inBundle;
+            const off_t cur = ::lseek(fd, 0, SEEK_CUR);
+            trackedOff = cur >= 0 ? uint64_t(cur) : uint64_t(it->second.bytesRead);
+        }
+    }
+    if (trackedPath && !trackedInBundle && x.proc.session().replayingDetails()) {
+        if (auto rec = x.proc.session().replayFileRead(*trackedPath, trackedOff, n)) {
+            const size_t got = rec->size();
+            if (got > 0) x.mem.copyIn(buf, rec->data(), got);
+            ::lseek(fd, off_t(got), SEEK_CUR);
+            auto& ofs = x.proc.service<OpenFds>();
+            std::lock_guard<std::mutex> lk(ofs.mu);
+            auto it = ofs.tracks.find(fd);
+            if (it != ofs.tracks.end()) {
+                it->second.bytesRead += int64_t(got);
+                x.proc.updateFileRead(it->second.fileHandle, it->second.bytesRead);
+            }
+            return int32_t(got);
+        }
+    }
     waitUntilReadable(x, fd);
     const ssize_t r = ::read(fd, x.mem.host(buf), n);
     if (r > 0) {
+        if (trackedPath && x.proc.session().recordingDetails()) {
+            x.proc.session().recordFileRead(*trackedPath, trackedOff, x.mem.host(buf), size_t(r), trackedInBundle,
+                                              x.proc.sessionMs(), x.proc.sessionSwaps(), x.proc.sessionHooks());
+        }
         auto& ofs = x.proc.service<OpenFds>();
         std::lock_guard<std::mutex> lk(ofs.mu);
         auto it = ofs.tracks.find(fd);
@@ -922,6 +976,18 @@ int32_t m_munmap(Ctx& x, GuestPtr a, uint32_t len) {
     return 0;
 }
 int32_t m_ok3(Ctx&, GuestPtr, uint32_t, int32_t) { return 0; }
+// mprotect(2): the guest permissions of whole 4 KB pages. GuestArena pushes them into host page
+// protection where a host page can express them, so later loads and stores are checked by the MMU.
+int32_t m_mprotect(Ctx& x, GuestPtr addr, uint32_t len, int32_t prot) {
+    if ((addr & 4095u) || (prot & ~7)) { setErrno(x, EINVAL); return -1; }
+    if (!len) return 0;
+    const uint64_t end = (uint64_t(addr) + len + 4095u) & ~uint64_t(4095u);
+    if (end > (1ull << 32) || end > Memory::GuestArena::kHleBase) { setErrno(x, ENOMEM); return -1; }
+    for (uint64_t page = addr; page < end; page += 4096)
+        if (!x.mem.isMapped(uint32_t(page))) { setErrno(x, ENOMEM); return -1; }
+    x.mem.protect(addr, uint32_t(end - addr), uint8_t(prot));
+    return 0;
+}
 int32_t m_ok2(Ctx&, GuestPtr, uint32_t) { return 0; }
 
 // --------------------------------------------------------------- signals ---
@@ -986,6 +1052,49 @@ bool deliverGuestFault(Process& p, CPU::Cpu& c) {
     if (pc == lastPc && addr == lastAddr) { if (++repeats > 8) return false; }   // the handler isn't fixing it
     else { lastPc = pc; lastAddr = addr; repeats = 0; }
     auto& m = p.mem();
+    if (p.isAndroid()) {
+        // Linux ARM frame: siginfo {signo, errno, code, addr}; ucontext {flags, link, stack{sp, flags,
+        // size}, sigcontext {trap_no, error_code, oldmask, r0-r10, fp, ip, sp, lr, pc, cpsr,
+        // fault_address}, sigmask[128], regspace[128]}. Linux SIGBUS is 7.
+        const int linuxSig = sig == 10 ? 7 : sig;
+        const uint32_t ucl = (c.r[CPU::kSP] - 128 - 768) & ~15u;
+        const uint32_t sil = (ucl - 128) & ~15u;
+        const uint32_t spl = (sil - 16) & ~15u;
+        std::memset(m.host(sil), 0, ucl + 768 - sil);
+        m.write<uint32_t>(sil + 0, uint32_t(linuxSig));
+        m.write<uint32_t>(sil + 8, linuxSig == 11 ? 1u : 2u);   // SEGV_MAPERR / BUS_ADRERR
+        m.write<uint32_t>(sil + 12, addr);
+        const uint32_t sc = ucl + 20;
+        m.write<uint32_t>(sc + 0, 14);                          // trap_no: data abort
+        for (int i = 0; i < 16; ++i) m.write<uint32_t>(sc + 12 + 4 * i, c.r[i]);
+        m.write<uint32_t>(sc + 76, c.cpsr() | (c.thumb ? 0x20u : 0u));
+        m.write<uint32_t>(sc + 80, addr);
+        if (pc >= Memory::GuestArena::kHleBase)
+            p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x in %s (lr 0x%08x)", linuxSig, addr,
+                   p.engine().hleName((pc - Memory::GuestArena::kHleBase) / 4).c_str(), c.r[CPU::kLR]);
+        else
+            p.logf(LogLevel::Info, "Signal %d to the app's handler for a fault at 0x%08x (pc 0x%08x)", linuxSig, addr, pc);
+        p.perf().faultsToApp++;
+        const uint32_t savedSp = c.r[CPU::kSP];
+        c.r[CPU::kSP] = spl;
+        ++depth;
+        try {
+            p.engine().callGuest(c, a.handler, {uint32_t(linuxSig), sil, ucl});
+        } catch (...) {
+            --depth;
+            c.r[CPU::kSP] = savedSp;
+            return false;
+        }
+        --depth;
+        for (int i = 0; i < 16; ++i) c.r[i] = m.read<uint32_t>(sc + 12 + 4 * i);
+        const uint32_t cpsr = m.read<uint32_t>(sc + 76);
+        c.setApsrFlags(cpsr);
+        c.thumb = ((cpsr >> 5) & 1) | (c.r[CPU::kPC] & 1);
+        c.r[CPU::kPC] &= ~1u;
+        c.exit = CPU::Exit::None;
+        c.exit_info = 0;
+        return true;
+    }
     // Frame below the red zone: mcontext (340), ucontext (32), siginfo (64).
     const uint32_t mc = (c.r[CPU::kSP] - 128 - 340) & ~15u;
     const uint32_t uc = (mc - 32) & ~15u;
@@ -1230,8 +1339,7 @@ int32_t k_vm_remap(Ctx& x, uint32_t, GuestPtr targetAddrPtr, uint32_t size, uint
 int32_t k_zero4(Ctx&, uint32_t, uint32_t, uint32_t, uint32_t) { return 0; }
 uint32_t sys_ftime(Ctx& x, GuestPtr tp) {
     if (tp) {
-        const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        const uint64_t now = uint64_t(x.proc.wallNowNs() / 1000000);
         x.mem.write<uint32_t>(tp + 0, uint32_t(now / 1000));
         x.mem.write<uint16_t>(tp + 4, uint16_t(now % 1000));
         x.mem.write<uint16_t>(tp + 6, 0);
@@ -1258,12 +1366,6 @@ int32_t k_mach_wait_until(Ctx& x, uint64_t deadline) {
     return 0;
 }
 
-// POSIX named semaphores are not implemented (there is no sem_open), so no handle can name an open
-// semaphore: every close is EINVAL rather than a silent success.
-int32_t sys_sem_close(Ctx& x, uint32_t) {
-    setErrno(x, 22);   // EINVAL
-    return -1;
-}
 
 } // namespace
 
@@ -1276,9 +1378,8 @@ void registerLibcSystem(Process& p) {
     p.def<&s_strsignal>("_strsignal");
     p.def<&f_writev>("_writev");
     p.def<&f_flock>("_flock");
-    std::random_device rd;
     const uint32_t guard = p.defineDataBlock("___stack_chk_guard", 4);
-    p.mem().write<uint32_t>(guard, (rd() & 0xFFFFFF00u) | 0x0A);
+    p.mem().write<uint32_t>(guard, (uint32_t(p.entropy()) & 0xFFFFFF00u) | 0x0A);
     p.def<&s_error>("___error");
     p.def<&s_stack_chk_fail>("___stack_chk_fail");
     p.def<&s_noop>("__hvm_noop");
@@ -1317,7 +1418,6 @@ void registerLibcSystem(Process& p) {
     p.def<&s_sysconf>("_sysconf");
     p.def<&s_getrlimit>("_getrlimit");
     p.def<&s_ok2>("_setrlimit");
-    p.def<&sys_sem_close>("_sem_close");
     p.def<&s_getrusage>("_getrusage");
     p.def<&s_sysctl>("_sysctl");
     p.def<&s_sysctlbyname>("_sysctlbyname");
@@ -1374,8 +1474,7 @@ void registerLibcSystem(Process& p) {
     for (const char* n : {"_closedir", "_closedir$UNIX2003"}) p.def<&f_closedir>(n);
     p.def<&m_mmap>("_mmap");
     p.def<&m_munmap>("_munmap");
-    supportDef<&m_ok3>(p, "_mprotect", SupportStatus::Stub,
-        "Returns success without changing guest or host page protections");
+    p.def<&m_mprotect>("_mprotect");
     supportDef<&m_ok3>(p, "_madvise", SupportStatus::Stub,
         "Returns success without applying a memory advice policy");
     supportDef<&m_ok3>(p, "_msync", SupportStatus::Stub,

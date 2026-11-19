@@ -53,6 +53,11 @@ struct LayerData : ObjC::HostObject {
     G::Color background{0, 0, 0, 0}, border{0, 0, 0, 1};
     G::ImagePtr backgroundPattern;
     id contents = 0;                 // retained (CGImage)
+    // CAGradientLayer: colors/locations as the app set them (retained arrays), the stops built
+    // from them, and the axis in unit coordinates of the bounds.
+    id gradientColors = 0, gradientLocations = 0;
+    std::vector<std::pair<float, G::Color>> gradientStops;
+    G::Point gradientStart{0.5f, 0.0f}, gradientEnd{0.5f, 1.0f};
     G::Rect contentsRect{0, 0, 1, 1}, contentsCenter{0, 0, 1, 1};
     int gravity = kGravityResize;
     bool magnifyNearest = false;
@@ -145,6 +150,7 @@ struct UIState {
     // display links
     struct Link { id obj; id target; SEL sel; int interval; bool paused; int counter; };
     std::vector<Link> links;
+    bool unlockLogged = false;   // "Unlock frame rate" said once that it overrode an interval
     // touches
     struct TouchRec { id touch; id view; uint32_t hostId; };
     std::vector<TouchRec> activeTouches;
@@ -319,6 +325,8 @@ void registerOpenGLES(Process& p, ObjC::Runtime& r);
 void registerUIWidgets(Process& p, ObjC::Runtime& r);
 void registerGameKit(Process& p, ObjC::Runtime& r);
 void registerMiscFrameworks(Process& p, ObjC::Runtime& r);
+void registerLegacySdks(Process& p, ObjC::Runtime& r);
+void applyLegacySdkOverrides(Process& p, ObjC::Runtime& r);
 
 // NIB loading (Nib.cpp): returns the top-level objects (autoreleased array) or 0.
 id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObjects);

@@ -86,6 +86,38 @@ int main() {
               "the original block can still be freed after a failed realloc");
     }
 
+    {
+        // Small blocks are tracked by run class and a live bitmap, not per-block maps.
+        Memory::GuestArena mem;
+        Heap heap(mem, 0x10000000, 0x11000000);
+        const uint32_t big = heap.alloc(5000);          // leaves top_ unaligned before the next run
+        const uint32_t a = heap.alloc(40), b = heap.alloc(40), c = heap.alloc(2000);
+        check(a && b && c && heap.blockSize(a) == 48 && heap.blockSize(c) == 2048 &&
+              heap.blockSize(a + 16) == 0, "small blocks report their class size, interior pointers none");
+        const auto bad = heap.stats().badFrees;
+        heap.free(a + 16);
+        heap.free(a);
+        heap.free(a);
+        check(heap.stats().badFrees == bad + 2 && heap.blockSize(a) == 0 && heap.blockSize(b) == 48,
+              "interior and double frees of small blocks are rejected");
+        check(heap.copyCStringWithinAllocation(b + 8, "1234567890123456789012345678901234567", 39) &&
+                  !heap.copyCStringWithinAllocation(b + 8, "1234567890123456789012345678901234567890", 40) &&
+                  !heap.copyCStringWithinAllocation(a + 8, "x", 1),
+              "string bounds come from the small block containing the pointer");
+        const uint32_t again = heap.alloc(33);
+        check(again == a, "a freed small block is reused by its class");
+        const uint32_t big2 = heap.alloc(3000);
+        check(big2 && heap.blockSize(big2) == 3072 && heap.blockSize(big) == 5120,
+              "big blocks share the space with aligned small runs");
+        heap.free(again); heap.free(b); heap.free(c); heap.free(big); heap.free(big2);
+        check(heap.stats().liveBlocks == 0 && heap.stats().liveBytes == 0, "every block was released");
+        // iOS's rounding: 16-byte steps to 496, 512-byte steps to 15 KB, then pages.
+        check(heap.blockSize(heap.alloc(496)) == 496 && heap.blockSize(heap.alloc(497)) == 512 &&
+                  heap.blockSize(heap.alloc(1852)) == 2048 && heap.blockSize(heap.alloc(15 * 1024)) == 15 * 1024 &&
+                  heap.blockSize(heap.alloc(15 * 1024 + 1)) == 16 * 1024,
+              "block sizes follow iOS's allocator (a 1852-byte object gets 2048 bytes)");
+    }
+
     const auto home = std::filesystem::temp_directory_path() / ("hvm-heap-tests-" + std::to_string(getpid()));
     {
         ProcessConfig cfg;

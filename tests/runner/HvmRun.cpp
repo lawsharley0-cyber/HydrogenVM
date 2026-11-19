@@ -1,12 +1,16 @@
 // `hvm run <bundle.app | file.ipa> [--home DIR] [--keep-going] [--trace] [--quiet]
 //          [--run-for SECONDS] [--screenshot FILE.png] [--tap X,Y@T] [--drag X1,Y1,X2,Y2@T]
 //          [--device MODEL]
-//          [--report FILE.json] [-- args...]`
+//          [--report FILE.json] [--record FILE.hvmrec | --replay FILE.hvmrec] [-- args...]`
+// --record saves the session's seed, start time and every input (runtime/Session.hpp);
+// --replay plays a recording back (taps from the phone included) under the same seed and date.
 // --report writes a machine-readable summary: exit status, crash report, every
 // warning/error the runtime logged, missing functions, and performance counters.
 #include "runtime/gl/HostGL.hpp"
 #include "loader/AppBundle.hpp"
+#include "loader/Apk.hpp"
 #include "runtime/Process.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include "runtime/graphics/Graphics.hpp"
 #include "AudioOutput.hpp"
 #include "EntryTrace.hpp"
@@ -15,8 +19,11 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <unistd.h>
+#include <random>
 #include <filesystem>
 #include "runtime/libc/TlsBridge.hpp"
+#include "runtime/libc/HttpClient.hpp"
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -56,6 +63,8 @@ std::string jsonList(const std::vector<std::string>& v) {
 int hvmRunMain(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "usage: hvm run <app|ipa> [--home DIR] [--keep-going] [--trace] [-- args]\n"); return 2; }
     std::string target = argv[1], home;
+    bool phone = false;
+    int phoneMemoryMB = 1536;
     Runtime::ProcessConfig cfg;
     bool quiet = false;
     double runFor = 0;
@@ -64,6 +73,8 @@ int hvmRunMain(int argc, char** argv) {
     int launches = 1;         // run the app this many times in one host process (like reopening it in the iOS app)
     struct LifeEvent { bool background; double at; };
     std::vector<LifeEvent> lifeEvents;
+    bool safeModeRetry = false;
+    std::string forceCrashWithout;
     std::string screenshot, reportPath, frameFile, inputFile;
     int audioFd = -1;
     std::string photoLibraryImage, documentImport;
@@ -82,6 +93,8 @@ int hvmRunMain(int argc, char** argv) {
             if (cfg.deviceModel.empty()) { std::fprintf(stderr, "--device requires a model such as iPhone4,1\n"); return 2; }
             continue;
         }
+        if (!std::strcmp(argv[i], "--safe-mode-retry")) { safeModeRetry = true; continue; }
+        if (!std::strcmp(argv[i], "--force-crash-without") && i + 1 < argc) { forceCrashWithout = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc) { screenshot = argv[++i]; continue; }
         if (!std::strcmp(argv[i], "--tap") && i + 1 < argc) {
             Gesture g{};
@@ -152,6 +165,11 @@ int hvmRunMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--loopback-network")) cfg.loopbackNetwork = true;
         else if (!std::strcmp(argv[i], "--offline-clash")) cfg.offlineClash = true;
         else if (!std::strcmp(argv[i], "--internet")) cfg.internetAccess = true;
+        else if (!std::strcmp(argv[i], "--phone")) phone = true;
+        else if (!std::strcmp(argv[i], "--phone-memory") && i + 1 < argc) { phone = true; phoneMemoryMB = std::max(64, std::atoi(argv[++i])); }
+        else if (!std::strcmp(argv[i], "--unlock-fps")) cfg.unlockFrameRate = true;
+        else if (!std::strcmp(argv[i], "--record") && i + 1 < argc) cfg.recordPath = argv[++i];
+        else if (!std::strcmp(argv[i], "--replay") && i + 1 < argc) cfg.replayPath = argv[++i];
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--guest-libs")) cfg.guestLibs = true;
         else if (!std::strcmp(argv[i], "--guest-lib-dir") && i + 1 < argc) { cfg.guestLibDir = argv[++i]; cfg.guestLibs = true; }
@@ -165,6 +183,7 @@ int hvmRunMain(int argc, char** argv) {
         const char* noVerify = std::getenv("HVM_TLS_BRIDGE_NOVERIFY");
         cfg.tlsBridge = Hydrogen::Runtime::makeOpenSslTlsBridge(!(noVerify && *noVerify == '1'), &why);
         if (!cfg.tlsBridge) std::fprintf(stderr, "TLS bridge unavailable: %s\n", why.c_str());
+        cfg.httpClient = Hydrogen::Runtime::makeOpenSslHttpClient();   // Foundation downloads (libc/HttpClient.hpp)
     }
     if (!cfg.loopbackAliases.empty() && !cfg.loopbackNetwork) {
         std::fprintf(stderr, "--loopback-alias requires --loopback-network\n"); return 2;
@@ -173,9 +192,46 @@ int hvmRunMain(int argc, char** argv) {
         std::fprintf(stderr, "--input-file requires an existing regular file and a single launch\n");
         return 2;
     }
+    if (phone) {
+        // Phone mode: act like the iPhone where a Linux host differs (see ProcessConfig::phoneMode).
+        cfg.phoneMode = true;
+        cfg.hostPageSize = 16384;
+        cfg.memoryBudgetBytes = uint64_t(phoneMemoryMB) << 20;
+        ::setenv("HVM_GL1_EMULATE", "1", 1);   // the GLES1-over-ES2 path newer iPhones need
+        // iOS can move an app's data container to a new path (reinstalls, updates): reach the
+        // home through a fresh alias each run and drop the old ones, so anything that stored an
+        // absolute path from an earlier run points nowhere, as it would on the phone.
+        const fs::path real = fs::weakly_canonical(home.empty() ? fs::temp_directory_path() / "hvm-apps" : fs::path(home));
+        std::error_code ec;
+        fs::create_directories(real, ec);
+        const fs::path aliases = fs::temp_directory_path() / "hvm-phone-containers";
+        fs::create_directories(aliases, ec);
+        for (const auto& e : fs::directory_iterator(aliases, ec)) {
+            std::error_code rc;
+            if (fs::is_symlink(e.symlink_status(rc)) && fs::read_symlink(e.path(), rc) == real) fs::remove(e.path(), rc);
+        }
+        char id[40];
+        std::snprintf(id, sizeof id, "%08X-%04X-%08X", unsigned(std::random_device{}()), unsigned(::getpid() & 0xFFFF),
+                      unsigned(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const fs::path alias = aliases / id;
+        fs::create_directory_symlink(real, alias, ec);
+        if (ec) { std::fprintf(stderr, "--phone: can't make the container alias (%s)\n", ec.message().c_str()); return 2; }
+        home = alias.string();
+        std::fprintf(stderr, "phone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, "
+                             "%d MB memory, container %s\n", phoneMemoryMB, home.c_str());
+    }
     if (target.size() > 4 && target.compare(target.size() - 4, 4, ".ipa") == 0) {
         const std::string root = home.empty() ? (fs::temp_directory_path() / "hvm-apps").string() : home;
         auto info = Loader::importIpa(target, root);
+        if (!info.runnable) { std::fprintf(stderr, "can't run: %s\n", info.problem.c_str()); return 3; }
+        target = info.bundlePath;
+        home.clear();
+    }
+    std::string targetExt = fs::path(target).extension().string();
+    for (char& c : targetExt) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (targetExt == ".apk" || targetExt == ".xapk" || targetExt == ".apks" || targetExt == ".apkm") {
+        const std::string root = home.empty() ? (fs::temp_directory_path() / "hvm-apps").string() : home;
+        auto info = Loader::importApk(target, root);
         if (!info.runnable) { std::fprintf(stderr, "can't run: %s\n", info.problem.c_str()); return 3; }
         target = info.bundlePath;
         home.clear();
@@ -233,6 +289,7 @@ int hvmRunMain(int argc, char** argv) {
     // Missing-API hits of the launches finished so far: each launch has its own Process, but the report file is
     // rewritten by every launch, so a hit in launch 1 must still taint the final report.
     Runtime::MissingApiLog earlierLaunches;
+    Runtime::MissingApiLog earlierDefaulted;
     // One launch = one Process (as the iOS app does each time a game is opened).
     auto runOnce = [&](int launch) -> int {
         if (launches > 1 && !quiet) std::fprintf(stderr, "[hvm] ---- launch %d of %d ----\n", launch, launches);
@@ -317,10 +374,25 @@ int hvmRunMain(int argc, char** argv) {
             f << "  \"exitStatus\": " << status << ",\n";
             f << "  \"stillRunning\": " << (timedStop ? "true" : "false") << ",\n";   // reached --run-for without failing
             f << "  \"crashed\": " << (proc.crashed() ? "true" : "false") << ",\n";
+            f << "  \"replayDiverged\": " << (proc.session().firstDivergence() ? "true" : "false") << ",\n";
+            f << "  \"replayMatchedCheckpoints\": " << proc.session().matchedCheckpointCount() << ",\n";
+            f << "  \"replayRecordedCheckpoints\": " << proc.session().recordedCheckpointCount() << ",\n";
+            if (const auto div = proc.session().firstDivergence()) {
+                f << "  \"replayDivergenceFrame\": " << div->frame << ",\n";
+                f << "  \"replayDivergence\": \"" << jsonEscape(proc.session().formatDivergence()) << "\",\n";
+            }
+            f << "  \"safeModeFallback\": " << (cfg.safeModeFallback.empty() ? "null" : ("\"" + jsonEscape(cfg.safeModeFallback) + "\"")) << ",\n";
+            if (!cfg.safeModeFallback.empty())
+                f << "  \"launchedWithFallback\": \"launched with fallback " << jsonEscape(cfg.safeModeFallback) << "\",\n";
             f << "  \"crashReport\": \"" << jsonEscape(proc.crashReport()) << "\",\n";
             f << "  \"signature\": \"" << proc.crashSignature() << "\",\n";
             f << "  \"crashBundle\": " << proc.crashBundle() << ",\n";
             f << "  \"runtimeMemorySamples\": " << proc.memorySamplesJson() << ",\n";
+            // Guest page permissions in host protection (I6): host pages host code had to lift back to
+            // read/write, and 16 KB host pages whose guest pages disagree.
+            f << "  \"pageProtection\": {\"enabled\": " << (proc.mem().hostProtectionEnabled() ? "true" : "false")
+              << ", \"liftedHostPages\": " << proc.mem().liftedHostPages()
+              << ", \"splitHostPages\": " << proc.mem().splitHostPages() << "},\n";
             f << "  \"threadLiveness\": " << proc.threadLivenessJson() << ",\n";
             f << "  \"loadError\": \"" << jsonEscape(loadError) << "\",\n";
             f << "  \"missingFunctions\": " << jsonList(proc.missingSymbols()) << ",\n";
@@ -328,6 +400,10 @@ int hvmRunMain(int argc, char** argv) {
             allLaunches.absorb(earlierLaunches);
             allLaunches.absorb(proc.missingApis());
             f << allLaunches.reportFields("  ") << ",\n";
+            Runtime::MissingApiLog allDefaulted;   // host functions that answered with a made-up default
+            allDefaulted.absorb(earlierDefaulted);
+            allDefaulted.absorb(proc.defaultedApis());
+            f << "  " << allDefaulted.listField("defaultedApis", "  ") << ",\n";
             f << "  \"unimplementedImports\": " << jsonList(proc.unimplementedImports()) << ",\n";
             f << "  \"warnings\": " << pairs(warnings) << ",\n";
             f << "  \"errors\": " << pairs(errors) << ",\n";
@@ -459,7 +535,8 @@ int hvmRunMain(int argc, char** argv) {
                 waitUntil(runFor);
                 if (!done) {
                     timedStop = true;
-                    if (graceful) proc.requestGracefulStop(); else proc.requestStop();
+                    if (graceful) proc.requestGracefulStop();
+                    else { proc.logStopSnapshot("--run-for stopped the game"); proc.requestStop(); }
                 }
             }
             while (!inputFile.empty() && !done) { pumpInput(); std::this_thread::sleep_for(milliseconds(5)); }
@@ -506,7 +583,35 @@ int hvmRunMain(int argc, char** argv) {
                 r.send(c, target, name.c_str());
             });
         });
-        const int r = proc.run();
+        bool forcedCrash = false;
+        std::string forcedCrashReason;
+        if (!forceCrashWithout.empty()) {
+            const auto* fb = Runtime::Compat::findFallback(forceCrashWithout);
+            if (!fb) {
+                std::fprintf(stderr, "unknown fallback id for --force-crash-without: %s\n", forceCrashWithout.c_str());
+                return 2;
+            }
+            bool active = false;
+            switch (fb->fallback) {
+                case Runtime::Compat::Fallback::Gles1Emulation: active = cfg.gles1Emulate; break;
+                case Runtime::Compat::Fallback::FrameRateCap: active = !cfg.unlockFrameRate; break;
+                case Runtime::Compat::Fallback::InternetOff: active = !cfg.internetAccess; break;
+                case Runtime::Compat::Fallback::ReducedTextureResolution: active = (cfg.maxTextureSize > 0 && cfg.maxTextureSize <= 1024); break;
+                case Runtime::Compat::Fallback::ExtraMemoryHeadroom: active = (cfg.safeModeFallback == fb->id); break;
+            }
+            if (!active) {
+                forcedCrash = true;
+                switch (fb->fallback) {
+                    case Runtime::Compat::Fallback::Gles1Emulation: forcedCrashReason = "OpenGL ES fixed-function shader error 0x0502"; break;
+                    case Runtime::Compat::Fallback::FrameRateCap: forcedCrashReason = "CADisplayLink timer stall at 60 fps"; break;
+                    case Runtime::Compat::Fallback::InternetOff: forcedCrashReason = "NSURLConnection TLS handshake failed"; break;
+                    case Runtime::Compat::Fallback::ReducedTextureResolution: forcedCrashReason = "glTexImage2D GL_OUT_OF_MEMORY 0x0505"; break;
+                    case Runtime::Compat::Fallback::ExtraMemoryHeadroom: forcedCrashReason = "guest memory budget exceeded (oom)"; break;
+                }
+                proc.log(Runtime::LogLevel::Error, forcedCrashReason);
+            }
+        }
+        const int r = forcedCrash ? 70 : proc.run();
         done = true;
         driver.join();
         if (sender.joinable()) sender.join();
@@ -523,7 +628,7 @@ int hvmRunMain(int argc, char** argv) {
         }
         // A timed stop can itself fail (for example the save watchdog). Preserve
         // that failure instead of claiming a successful --run-for observation.
-        const int status = proc.crashed() ? 70 : timedStop ? 0 : r;
+        const int status = (proc.crashed() || forcedCrash) ? 70 : timedStop ? 0 : r;
         if (timedStop && !quiet) std::fprintf(stderr, "[hvm] still running after %.0f s (stopped by --run-for)\n", runFor);
         // A run that called missing or approximated APIs is not a clean pass, whatever its exit status says.
         if (proc.tainted())
@@ -532,12 +637,29 @@ int hvmRunMain(int argc, char** argv) {
                          proc.missingApis().distinct());
         writeReport(status);
         earlierLaunches.absorb(proc.missingApis());
+        earlierDefaulted.absorb(proc.defaultedApis());
+        if (safeModeRetry && (proc.crashed() || forcedCrash) && cfg.safeModeFallback.empty()) {
+            const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
+            if (elapsed <= 180.0) {
+                std::string sigText = proc.crashReport() + "\n" + forcedCrashReason;
+                for (const auto& e : errors) sigText += "\n" + e.first;
+                if (auto fb = Runtime::Compat::chooseFallback(sigText, cfg)) {
+                    Runtime::Compat::applyFallback(cfg, *fb);
+                    std::fprintf(stderr, "[hvm] safe-mode retry: relaunching with fallback %s\n", cfg.safeModeFallback.c_str());
+                    return -99; // sentinel: retry once
+                }
+            }
+        }
         return status;
     };
     int status = 0;
     for (int launch = 1; launch <= launches; ++launch) {
         timedStop = false;
         status = runOnce(launch);
+        if (status == -99) {
+            timedStop = false;
+            status = runOnce(launch);
+        }
         if (status != 0) break;
     }
     return status;

@@ -25,6 +25,7 @@ struct DiagnosticsView: View {
                         Text(arenaError).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                ProblemReportSettings()
                 Section("CPU core") {
                     Button(running ? "Running…" : "Run self-test") { runSelfTest() }
                         .disabled(running || arenaOK != true)

@@ -6,8 +6,11 @@
 // connection does: the client callback (or NSStreamDelegate) gets an error
 // event on the run loop the stream was scheduled on. CFHTTPMessage objects are
 // real enough to build requests and read them back.
+#include <filesystem>
+#include <mutex>
 #include "Foundation.hpp"
 #include "runtime/Support.hpp"
+#include "runtime/compat/Profiles.hpp"
 #include <fstream>
 #include <iterator>
 
@@ -42,13 +45,9 @@ uint32_t scr_createPair(Ctx& x, uint32_t a, GuestPtr p, GuestPtr) { return scr_c
 bool scr_getFlags(Ctx& x, uint32_t ref, GuestPtr flags) {
     if (!ref) return false;
     if (flags) {
-        // Not reachable: nothing leaves the emulator, so this is the truth, and it is what an
-        // offline iPhone says. Saying "reachable" while every request fails left games waiting
-        // forever for downloads (Minion Rush polled for its content index for minutes instead
-        // of showing its "no Internet connection" message). Geometry Dash, the game the
-        // "reachable" answer was added for, starts the same either way.
-        // With the game's "Allow internet" switch on, the network is real: reachable (2).
-        x.mem.write<uint32_t>(flags, x.proc.config().internetAccess ? 2u : 0u);
+        // Profile predicates preserve offline reachability compatibility without enabling sockets.
+        const bool reachable = Compat::internetAccess(x.proc) || Compat::restoredContentReachable(x.proc);
+        x.mem.write<uint32_t>(flags, reachable ? 2u : 0u);
     }
     return true;
 }
@@ -125,7 +124,8 @@ enum Event : uint32_t { evNone = 0, evOpen = 1, evBytes = 2, evCanAccept = 4, ev
 constexpr int32_t kENETDOWN = 50;
 
 struct Stream : ObjC::HostObject {
-    enum Kind { Memory, OutMemory, Network } kind = Memory;
+    enum Kind { Memory, OutMemory, OutFile, Network } kind = Memory;
+    std::string path;   // OutFile: the host file written to
     bool input = true;
     int32_t status = kNotOpen;
     std::vector<uint8_t> data;   // input bytes, or what was written
@@ -177,6 +177,10 @@ bool streamOpen(Ctx& x, id s) {
         else h->status = kError;
         return true;
     }
+    if (h->kind == Stream::OutFile) {   // created or emptied on open, as CFWriteStream does without append
+        std::ofstream f(h->path, std::ios::binary | std::ios::trunc);
+        if (!f) { h->status = kError; if (h->loop) deliver(x, s, evError); return false; }
+    }
     h->status = kOpen;
     if (h->loop) {
         deliver(x, s, evOpen);
@@ -207,6 +211,12 @@ int32_t streamWrite(Ctx& x, id s, GuestPtr buf, int32_t n) {
     Stream* h = st(x, s);
     if (!h || h->input || h->status != kOpen || h->kind == Stream::Network) return -1;
     const uint8_t* p = x.mem.host(buf);
+    if (h->kind == Stream::OutFile) {
+        std::ofstream f(h->path, std::ios::binary | std::ios::app);
+        if (!f.write(reinterpret_cast<const char*>(p), std::max(n, 0))) return -1;
+        deliver(x, s, evCanAccept);
+        return n;
+    }
     h->data.insert(h->data.end(), p, p + std::max(n, 0));
     deliver(x, s, evCanAccept);
     return n;
@@ -239,6 +249,13 @@ uint32_t cfs_createWithFile(Ctx& x, uint32_t, id url) {
     return newStream(x, Stream::Memory, true, std::vector<uint8_t>(std::istreambuf_iterator<char>(f), {}));
 }
 uint32_t cfs_writeToMemory(Ctx& x, uint32_t) { return newStream(x, Stream::OutMemory, false); }
+uint32_t cfs_writeToFile(Ctx& x, uint32_t, id url) {
+    const id path = url ? id(R(x).send(x.cpu, url, "path")) : 0;
+    if (!path) return 0;
+    const id s = newStream(x, Stream::OutFile, false);
+    st(x, s)->path = x.proc.hostPath(utf8(x, path));
+    return s;
+}
 uint32_t cfs_true3(Ctx&, id, id, id) { return 1; }
 uint32_t cfs_copyProperty(Ctx& x, id s, id key) {
     Stream* h = st(x, s);
@@ -413,6 +430,7 @@ void registerNetwork(Process& p, ObjC::Runtime& r) {
     p.def<&cfs_createWithBytes>("_CFReadStreamCreateWithBytesNoCopy");
     p.def<&cfs_createWithFile>("_CFReadStreamCreateWithFile");
     p.def<&cfs_writeToMemory>("_CFWriteStreamCreateWithAllocatedBuffers");
+    p.def<&cfs_writeToFile>("_CFWriteStreamCreateWithFile");
     for (const char* k : {"Read", "Write"}) {
         const std::string pre = std::string("_CF") + k + "Stream";
         p.def<&cfs_true3>(pre + "SetProperty");
@@ -462,7 +480,7 @@ void registerNetwork(Process& p, ObjC::Runtime& r) {
     p.def<&scr_createWithAddress>("_SCNetworkReachabilityCreateWithAddress");
     p.def<&scr_createPair>("_SCNetworkReachabilityCreateWithAddressPair");
     supportDef<&scr_getFlags>(p, "_SCNetworkReachabilityGetFlags", SupportStatus::Real,
-        "Reports not reachable for any non-null reference: the emulator has no outbound network");
+        "Not reachable offline (reachable with the game's internet switch on, or when a Gameloft game's restored content index exists, to stop it re-reading that index every second)");
     p.def<&scr_setCallback>("_SCNetworkReachabilitySetCallback");
     p.def<&scr_schedule>("_SCNetworkReachabilityScheduleWithRunLoop");
     p.def<&scr_schedule>("_SCNetworkReachabilityUnscheduleFromRunLoop");

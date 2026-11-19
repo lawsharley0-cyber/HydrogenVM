@@ -389,7 +389,16 @@ R coprocessor(BlockBuilder& bb, uint32_t insn) {
         return R::End;
     }
     const uint32_t cp = bits(insn, 11, 8);
+    if (cp == 15 && bits(insn, 27, 20) == 0xC5 && bits(insn, 3, 0) == 14 && bits(insn, 7, 4) <= 1) {
+        // MRRC p15, {0,1}, Rt, Rt2, c14: CNTPCT / CNTVCT (ARMv7 generic timer)
+        bb.emit(&H_ReadGenericTimer, bits(insn, 15, 12), bits(insn, 19, 16));
+        return R::Continue;
+    }
     if (cp == 15 && bits(insn, 27, 24) == 0xE && bit(insn, 4)) {
+        if (bit(insn, 20) && bits(insn, 23, 21) == 0 && bits(insn, 19, 16) == 14 && bits(insn, 3, 0) == 0 && bits(insn, 7, 5) == 0) {
+            bb.emit(&H_ReadGenericTimerFreq, bits(insn, 15, 12));   // MRC p15, 0, Rt, c14, c0, 0: CNTFRQ
+            return R::Continue;
+        }
         if (bits(insn, 23, 21) == 0 && bits(insn, 19, 16) == 13 && bits(insn, 3, 0) == 0) {
             const uint32_t opc2 = bits(insn, 7, 5), rt = bits(insn, 15, 12);
             if (bit(insn, 20) && (opc2 == 2 || opc2 == 3)) { bb.emit(&H_ReadTpid, rt, 0, 0, 0, opc2); return R::Continue; }

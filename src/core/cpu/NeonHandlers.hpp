@@ -330,7 +330,9 @@ HVM_H(H_NCvtFixed) {
                 double x = std::trunc(double(nIn(bitsf(v[i]))) * up);
                 uint32_t s = 0;
                 v[i] = fpToInt(x, !UNSIGNED, 32, s);
-                if (s) setQC(c);
+                // Out of range is an Invalid Operation (FPSCR.IOC), not integer saturation: QC
+                // belongs to the saturating integer instructions (ARM ARM, FPToFixed).
+                if (s) c->fpscr |= 1u;
             } else {
                 double x = UNSIGNED ? double(v[i]) : double(int32_t(v[i]));
                 v[i] = fbits(nOut(float(x * down)));

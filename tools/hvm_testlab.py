@@ -12,7 +12,7 @@ usage:
         [--timeout 30] [--skip-build]
         [--home DIR]
 
-    # Omit --case to execute the complete TL-A through TL-AG plus TL-AO/TL-AP suite.
+    # Omit --case to execute the complete TL-A through TL-AM plus TL-AO/TL-AP suite.
     python3 tools/hvm_testlab.py validate REPORT.json
 
 Exit status:
@@ -47,7 +47,7 @@ TESTLAB_SRC = ROOT / "tests" / "ios" / "apps" / "testlab"
 SCHEMA_MOD  = str(ROOT / "tools" / "testlab_schema")
 
 OBJC_CASE_IDS = ("TL-S", "TL-T", "TL-U", "TL-V", "TL-W")
-CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M", "TL-N", "TL-O", "TL-P", "TL-Q", "TL-R", *OBJC_CASE_IDS, "TL-X", "TL-Y", "TL-Z", "TL-AA", "TL-AB", "TL-AC", "TL-AD", "TL-AE", "TL-AF", "TL-AG", "TL-AO", "TL-AP"]
+CASE_IDS = ["TL-A", "TL-B", "TL-C", "TL-D", "TL-E", "TL-F", "TL-G", "TL-H", "TL-I", "TL-J", "TL-K", "TL-L", "TL-M", "TL-N", "TL-O", "TL-P", "TL-Q", "TL-R", *OBJC_CASE_IDS, "TL-X", "TL-Y", "TL-Z", "TL-AA", "TL-AB", "TL-AC", "TL-AD", "TL-AE", "TL-AF", "TL-AG", "TL-AH", "TL-AI", "TL-AJ", "TL-AK", "TL-AL", "TL-AM", "TL-AO", "TL-AP"]
 # Wall-clock timeout (seconds) per case process, including hvm startup.
 DEFAULT_TIMEOUT = 30
 # TL-E phase 1 is fast; allow extra for the full two-launch cycle.

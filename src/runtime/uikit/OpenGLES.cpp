@@ -849,6 +849,7 @@ void noteLayerPresented(Ctx& x, id layer) {
 void publishFrame(Ctx& x, id layer, const uint8_t* rgbaBottomLeft, int width, int height);
 
 bool ctx_presentRenderbuffer(Ctx& x, id self, SEL, uint32_t target) {
+    x.proc.perf().gameSwaps++;
     (void)target;
     if (HostGL::isHostContext(x.proc, self)) {
         uint32_t layer = 0;
@@ -1310,7 +1311,11 @@ void gl_getIntegerv(Ctx& x, uint32_t pname, GuestPtr params) {
     ContextData* c = currentCtx(x);
     auto wr = [&](int32_t v, int idx = 0) { x.mem.write<int32_t>(params + uint32_t(idx * 4), v); };
     switch (pname) {
-        case GL_MAX_TEXTURE_SIZE: case GL_MAX_RENDERBUFFER_SIZE: wr(4096); break;
+        case GL_MAX_TEXTURE_SIZE: case GL_MAX_RENDERBUFFER_SIZE: {
+            const uint32_t cap = x.proc.config().maxTextureSize;
+            wr(cap ? int32_t(cap) : 4096);
+            break;
+        }
         case GL_MAX_VIEWPORT_DIMS: wr(4096, 0); wr(4096, 1); break;
         case GL_MAX_TEXTURE_UNITS: case GL_MAX_TEXTURE_IMAGE_UNITS: case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS: wr(8); break;
         case GL_MAX_VERTEX_ATTRIBS: wr(16); break;
@@ -1978,6 +1983,12 @@ void gl_texSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_t xoffset, i
     Texture2D& tx = sg->textures[tid];
     std::vector<uint8_t> sub;
     unpackPixelsToRGBA(x, width, height, format, type, c->unpackAlignment, pixels, sub);
+    if (const char* dir = std::getenv("HVM_DUMP_TEX")) {   // as glTexImage2D: each update as raw RGBA
+        static int n = 0;
+        char name[512];
+        std::snprintf(name, sizeof name, "%s/sub%03d_tex%u_%dx%d_at%d,%d.rgba", dir, n++, tid, width, height, xoffset, yoffset);
+        if (std::FILE* f = std::fopen(name, "wb")) { std::fwrite(sub.data(), 1, sub.size(), f); std::fclose(f); }
+    }
     for (int y = 0; y < height; ++y) {
         const int dy = yoffset + y;
         if (dy < 0 || dy >= tx.height) continue;

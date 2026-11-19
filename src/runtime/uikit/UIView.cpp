@@ -1,4 +1,5 @@
 // HydrogenVM — UIResponder, UIView, UIWindow, UIScreen, UIViewController.
+#include <cctype>
 #include "UIKit.hpp"
 #include "runtime/Support.hpp"
 
@@ -520,6 +521,33 @@ void vc_begin(Ctx& x, id, SEL, id animID, uint32_t ctx) {
     b.context = ctx;
     AS(x).stack.push_back(b);
 }
+// The `finished` argument of a +setAnimationDidStopSelector: callback. UIKit documents it as an
+// NSNumber (animationDidStop:finished:(NSNumber *)finished context:), and code that sends it
+// -boolValue crashes on a raw 1 (Minecraft: Story Mode's ActivityIndicator). Other apps declare
+// it BOOL and test the register's low byte, which an NSNumber pointer can leave 0 (Canabalt's
+// Scores overlay stayed up). The method's own type encoding says which it declared.
+uint32_t finishedArg(Ctx& x, id delegate, SEL sel) {
+    std::string types = rt(x).methodTypes(rt(x).classOf(delegate), sel);
+    std::string args;   // return, self, _cmd, then the arguments, without the offsets
+    for (size_t i = 0; i < types.size(); ++i) {
+        const char c = types[i];
+        if (std::isdigit(static_cast<unsigned char>(c)) || c == 'r' || c == 'n' || c == 'N' || c == 'o' || c == 'O' || c == 'R' || c == 'V') continue;
+        args += c;
+        if (c == '^') { if (i + 1 < types.size()) args += types[++i]; }   // ^v: one argument
+        else if (c == '@' && i + 1 < types.size() && types[i + 1] == '?') ++i;   // block
+    }
+    // args: [ret][@][:][animationID][finished][context]; pointer types take two characters.
+    size_t pos = 0, index = 0;
+    char finishedType = 0;
+    while (pos < args.size()) {
+        const char c = args[pos];
+        if (index == 4) { finishedType = c; break; }
+        pos += c == '^' ? 2 : 1;
+        ++index;
+    }
+    if (finishedType == 'c' || finishedType == 'B' || finishedType == 'C' || finishedType == 'i' || finishedType == 'I') return 1;
+    return Foundation::makeBool(x, true);
+}
 void vc_commit(Ctx& x, id, SEL) {
     auto& st = AS(x).stack;
     if (st.empty()) return;
@@ -533,7 +561,7 @@ void vc_commit(Ctx& x, id, SEL) {
         Process* p = &x.proc;
         Foundation::mainRunLoop(x.proc).addTimer(b.duration + b.delay, 0, false, [p, b](CPU::Cpu& c) {
             Ctx cx{*p, c, p->mem()};
-            rt(cx).send(c, b.delegate, b.didStop, {b.animID, Foundation::makeBool(cx, true), b.context});
+            rt(cx).send(c, b.delegate, b.didStop, {b.animID, finishedArg(cx, b.delegate, b.didStop), b.context});
             rt(cx).release(c, b.delegate);
             if (b.animID) rt(cx).release(c, b.animID);
         });
@@ -569,14 +597,14 @@ void setVisible(Ctx& x, id self, bool vis) {
     auto& u = ui(x);
     if (vis) {
         if (std::find(u.windows.begin(), u.windows.end(), self) == u.windows.end()) u.windows.push_back(self);
-        rt(x).retain(x.cpu, self);   // visible windows are kept alive by the app
+        // UIApplication tracks windows without owning them. The application
+        // must retain its windows; releasing a visible overlay dismisses it.
         layerData(x, viewLayer(x, self)).hidden = false;
         vcAppearance(x, self, true);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeVisibleNotification", self);
     } else {
         vcAppearance(x, self, false);
         if (d.isWindow) Foundation::postNotification(x, "UIWindowDidBecomeHiddenNotification", self);
-        rt(x).release(x.cpu, self);
     }
     setNeedsComposite(x);
 }

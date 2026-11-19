@@ -279,8 +279,28 @@ uint32_t q_rfindChar(Ctx& x, GuestPtr self, uint32_t c, uint32_t pos) {
     const size_t r = value(x, self).rfind(char(c), pos == kNpos ? std::string::npos : pos);
     return r == std::string::npos ? kNpos : uint32_t(r);
 }
-int32_t q_compareC(Ctx& x, GuestPtr self, GuestPtr s) { const int r = value(x, self).compare(x.proc.readCString(s)); return r < 0 ? -1 : r > 0; }
-int32_t q_compareStr(Ctx& x, GuestPtr self, GuestPtr other) { const int r = value(x, self).compare(value(x, other)); return r < 0 ? -1 : r > 0; }
+// compare as libstdc++ does it: traits::compare over min(size(), other size) bytes, then the
+// sizes. Only those bytes are read. (Copying both whole strings first read a string's full
+// claimed length: Minion Rush 1.0.0 compares a string whose size field is garbage against a
+// short one, which a phone gets away with and HydrogenVM faulted on, past the end of memory.)
+int32_t compareSpans(Ctx& x, uint32_t a, uint32_t la, uint32_t b, uint32_t lb) {
+    const uint32_t n = std::min(la, lb);
+    int r = (n && a && b) ? std::memcmp(x.mem.host(a), x.mem.host(b), n) : 0;
+    if (r == 0) r = la < lb ? -1 : la > lb ? 1 : 0;
+    return r < 0 ? -1 : r > 0;
+}
+int32_t q_compareC(Ctx& x, GuestPtr self, GuestPtr s) {
+    const uint32_t d = x.mem.read<uint32_t>(self);
+    const std::string c = x.proc.readCString(s);
+    const uint32_t ld = len(x, d), n = std::min<uint32_t>(ld, uint32_t(c.size()));
+    int r = n ? std::memcmp(x.mem.host(d), c.data(), n) : 0;
+    if (r == 0) r = ld < c.size() ? -1 : ld > c.size() ? 1 : 0;
+    return r < 0 ? -1 : r > 0;
+}
+int32_t q_compareStr(Ctx& x, GuestPtr self, GuestPtr other) {
+    const uint32_t a = x.mem.read<uint32_t>(self), b = x.mem.read<uint32_t>(other);
+    return compareSpans(x, a, len(x, a), b, len(x, b));
+}
 int32_t q_compareSubStr(Ctx& x, GuestPtr self, uint32_t pos, uint32_t n, GuestPtr other) {
     const std::string v = value(x, self);
     checkPos(pos, uint32_t(v.size()), "basic_string::compare");
@@ -1172,6 +1192,9 @@ void registerLibStdcxxContainers(Process& p) {
     p.mem().write<uint32_t>(vtLg + 12, fnLgD0);
     p.mem().write<uint32_t>(vtLg + 16, fnLgWhat);
 
+    // std::bad_alloc::bad_alloc(): an exception object is its vtable pointer (Kindle #539).
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.mem.write<uint32_t>(self, x.proc.lookupSymbol("__ZTVSt9bad_alloc").value_or(0) + 8); return self; }>("__ZNSt9bad_allocC1Ev");
+    p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.mem.write<uint32_t>(self, x.proc.lookupSymbol("__ZTVSt9bad_alloc").value_or(0) + 8); return self; }>("__ZNSt9bad_allocC2Ev");
     const uint32_t fnBadAllocD1 = p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD1Ev");
     p.def<+[](Ctx&, uint32_t self) -> uint32_t { return self; }>("__ZNSt9bad_allocD2Ev");
     const uint32_t fnBadAllocD0 = p.def<+[](Ctx& x, uint32_t self) -> uint32_t { x.proc.heap().free(self); return self; }>("__ZNSt9bad_allocD0Ev");
