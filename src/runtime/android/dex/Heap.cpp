@@ -116,9 +116,17 @@ uint32_t Arena::array(std::u16string type, int32_t length) {
 std::u16string Arena::typeOf(uint32_t reference) const { return storage_->get(reference).type; }
 
 std::u16string Arena::string(uint32_t reference) const {
-    const auto& object = storage_->get(reference);
+    auto& object = storage_->get(reference);
     if (object.type != u"Ljava/lang/String;") throw FormatError("reference is not a string");
+    std::lock_guard lock(object.mutex);
     return object.text;
+}
+
+void Arena::setString(uint32_t reference, std::u16string text) {
+    auto& object = storage_->get(reference);
+    if (object.type != u"Ljava/lang/String;") throw FormatError("reference is not a string");
+    std::lock_guard lock(object.mutex);
+    object.text = std::move(text);
 }
 
 uint32_t Arena::length(uint32_t reference) const {
@@ -205,16 +213,22 @@ bool Arena::assignable(std::u16string_view from, std::u16string_view to) const {
             return assignable(from.substr(1), to.substr(1));
         return false;
     }
-    // Bootstrap exceptions are supplied by the VM, without class_def entries.
+    if (to == u"Ljava/lang/CharSequence;" &&
+        (from == u"Ljava/lang/String;" || from == u"Ljava/lang/StringBuilder;" || from == u"Ljava/lang/StringBuffer;"))
+        return true;
+    // Bootstrap exceptions and java.lang core classes supplied by the VM, without class_def entries.
     static const std::map<std::u16string_view, std::u16string_view> parents{
         {u"Ljava/lang/AbstractMethodError;", u"Ljava/lang/IncompatibleClassChangeError;"},
         {u"Ljava/lang/ArithmeticException;", u"Ljava/lang/RuntimeException;"},
         {u"Ljava/lang/ArrayIndexOutOfBoundsException;", u"Ljava/lang/IndexOutOfBoundsException;"},
         {u"Ljava/lang/ArrayStoreException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/Byte;", u"Ljava/lang/Number;"},
         {u"Ljava/lang/ClassCastException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/Double;", u"Ljava/lang/Number;"},
         {u"Ljava/lang/Error;", u"Ljava/lang/Throwable;"},
         {u"Ljava/lang/Exception;", u"Ljava/lang/Throwable;"},
         {u"Ljava/lang/ExceptionInInitializerError;", u"Ljava/lang/LinkageError;"},
+        {u"Ljava/lang/Float;", u"Ljava/lang/Number;"},
         {u"Ljava/lang/IllegalArgumentException;", u"Ljava/lang/RuntimeException;"},
         {u"Ljava/lang/IllegalMonitorStateException;", u"Ljava/lang/RuntimeException;"},
         {u"Ljava/lang/IllegalStateException;", u"Ljava/lang/RuntimeException;"},
@@ -222,15 +236,20 @@ bool Arena::assignable(std::u16string_view from, std::u16string_view to) const {
         {u"Ljava/lang/IncompatibleClassChangeError;", u"Ljava/lang/LinkageError;"},
         {u"Ljava/lang/IndexOutOfBoundsException;", u"Ljava/lang/RuntimeException;"},
         {u"Ljava/lang/InstantiationError;", u"Ljava/lang/IncompatibleClassChangeError;"},
+        {u"Ljava/lang/Integer;", u"Ljava/lang/Number;"},
         {u"Ljava/lang/LinkageError;", u"Ljava/lang/Error;"},
+        {u"Ljava/lang/Long;", u"Ljava/lang/Number;"},
         {u"Ljava/lang/NegativeArraySizeException;", u"Ljava/lang/RuntimeException;"},
         {u"Ljava/lang/NoClassDefFoundError;", u"Ljava/lang/LinkageError;"},
         {u"Ljava/lang/NoSuchFieldError;", u"Ljava/lang/IncompatibleClassChangeError;"},
         {u"Ljava/lang/NoSuchMethodError;", u"Ljava/lang/IncompatibleClassChangeError;"},
         {u"Ljava/lang/NullPointerException;", u"Ljava/lang/RuntimeException;"},
+        {u"Ljava/lang/NumberFormatException;", u"Ljava/lang/IllegalArgumentException;"},
         {u"Ljava/lang/OutOfMemoryError;", u"Ljava/lang/VirtualMachineError;"},
         {u"Ljava/lang/RuntimeException;", u"Ljava/lang/Exception;"},
+        {u"Ljava/lang/Short;", u"Ljava/lang/Number;"},
         {u"Ljava/lang/StackOverflowError;", u"Ljava/lang/VirtualMachineError;"},
+        {u"Ljava/lang/StringIndexOutOfBoundsException;", u"Ljava/lang/IndexOutOfBoundsException;"},
         {u"Ljava/lang/UnsatisfiedLinkError;", u"Ljava/lang/LinkageError;"},
         {u"Ljava/lang/UnsupportedOperationException;", u"Ljava/lang/RuntimeException;"},
         {u"Ljava/lang/VirtualMachineError;", u"Ljava/lang/Error;"},
