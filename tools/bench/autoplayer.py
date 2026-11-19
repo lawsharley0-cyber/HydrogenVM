@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import plistlib
 import random
@@ -18,6 +19,8 @@ import struct
 import subprocess
 import sys
 import time
+
+from autoplayer_vision import Vision, current_view
 
 
 @dataclass
@@ -27,8 +30,10 @@ class Frame:
     scale: float
     thumb: bytes  # RGB, 96 by 64
 
+    rgba: bytes = b''
+
     @classmethod
-    def read(cls, path):
+    def read(cls, path, keep_pixels=False):
         with path.open('rb') as src:
             header = src.read(16)
             if len(header) != 16:
@@ -44,7 +49,7 @@ class Frame:
                 for x in range(96):
                     i = ((y * h // 64) * w + x * w // 96) * 4
                     thumb.extend(rgba[i:i + 3])
-            return cls(w, h, scale, bytes(thumb))
+            return cls(w, h, scale, bytes(thumb), rgba if keep_pixels else b'')
 
     def label_points(self):
         # Count short horizontal intensity transitions within each tile. Words
@@ -123,6 +128,7 @@ def run(args):
     report = out / 'record.json'
     frame_path = out / 'live.hvf'
     rng = random.Random(args.seed)
+    vision = Vision(args.vision_model, args.goal, args.vision_budget) if args.vision_model else None
     steps = 0
     deadline = time.monotonic() + args.seconds + 30
     timed_out = False
@@ -138,11 +144,22 @@ def run(args):
                     timed_out = True
                     break
                 if steps < args.steps and now >= next_input and frame_path.exists():
-                    frame = Frame.read(frame_path)
-                    points = choose(frame, steps, rng)
+                    frame = Frame.read(frame_path, keep_pixels=bool(vision))
+                    points, decision = vision.consider(frame) if vision else (None, None)
+                    if decision:
+                        # The game can dismiss a dialog or rotate during the model call.
+                        latest = Frame.read(frame_path)
+                        if not current_view(frame, latest):
+                            points, decision = None, 'scene changed during vision call'
+                        frame = latest
+                    if proc.poll() is not None:
+                        break
+                    if points is None:
+                        points = choose(frame, steps, rng)
                     thumb = out / f'step-{steps:03d}.ppm'
                     thumb.write_bytes(b'P6\n96 64\n255\n' + frame.thumb)
                     journal.write(json.dumps({'step': steps, 'points': points, 'image': thumb.name,
+                                              'decision': decision or 'heuristic',
                                               'frameHash': hashlib.sha256(frame.thumb).hexdigest()}) + '\n')
                     journal.flush()
                     gesture(inputs, frame, points, android=android)
@@ -158,7 +175,7 @@ def run(args):
     complete = recording.is_file() and recording.stat().st_size > 0
     summary = {'seed': args.seed, 'steps': steps, 'exitCode': proc.returncode, 'timeout': timed_out,
                'recorded': complete, 'crashed': recorded.get('crashed'), 'signature': recorded.get('signature'),
-               'crashReproduced': None}
+               'crashReproduced': None, 'visionCalls': len(vision.seen) if vision else 0}
     rc = 0 if proc.returncode == 0 and complete and steps and recorded and not timed_out else 1
     if recorded.get('crashed') and complete:
         retry_report = out / 'replay.json'
@@ -188,7 +205,17 @@ def main():
     parser.add_argument('--seconds', type=int, default=90)
     parser.add_argument('--interval', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--vision-model', help='send stalled game screenshots and goal to the specified Claude model')
+    parser.add_argument('--vision-budget', type=int, default=3, help='maximum paid calls per run (1..20)')
+    parser.add_argument('--goal', default='Start the game and play through its first level.')
     args = parser.parse_args()
+    if args.vision_model:
+        if not os.getenv('ANTHROPIC_API_KEY') or not 1 <= args.vision_budget <= 20:
+            parser.error('vision needs ANTHROPIC_API_KEY and a budget of 1..20')
+        try:
+            import PIL.Image
+        except ImportError:
+            parser.error('vision requires Pillow')
     if not (0 < args.steps <= 1000 and 0 < args.seconds <= 3600 and math.isfinite(args.interval) and args.interval > 0):
         parser.error('steps must be 1..1000, seconds 1..3600, interval positive and finite')
     try:
