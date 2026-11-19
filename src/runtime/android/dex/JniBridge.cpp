@@ -1,5 +1,6 @@
 #include "runtime/android/dex/JniBridge.hpp"
 #include "runtime/android/dex/CoreCollections.hpp"
+#include "runtime/android/dex/CoreMath.hpp"
 #include "runtime/android/dex/CoreRandom.hpp"
 #include "runtime/android/dex/GuestScheduler.hpp"
 
@@ -206,7 +207,8 @@ public:
     }
 
     bool hasClass(std::u16string_view descriptor) {
-        if (CoreCollections::hasClass(descriptor) || CoreRandom::hasClass(descriptor)) return true;
+        if (CoreCollections::hasClass(descriptor) || CoreMath::hasClass(descriptor) ||
+            CoreRandom::hasClass(descriptor)) return true;
         const std::string cls = className(descriptor);
         auto& j = jni(process);
         {
@@ -256,6 +258,7 @@ public:
                                   std::span<const Value> args) {
         if (!native) {
             if (auto value = collections.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
+            if (auto value = CoreMath::invoke(owner, name, signature, stat, args)) return value;
             if (auto value = random.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
             auto& heap = machine->heap();
             if (stat && owner == u"Ljava/lang/System;" && name == u"getProperty" &&
