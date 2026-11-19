@@ -77,7 +77,8 @@ public:
     bool callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
                     const std::vector<uint32_t>& words, JValue* result = nullptr);
     bool callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
-                    const std::vector<uint32_t>& words, JValue* result, const std::string& signature);
+                    const std::vector<uint32_t>& words, JValue* result, const std::string& signature,
+                    bool clearException = true);
     bool dexNative(Ctx& x, const std::string& cls, const std::string& name, const std::string& sig,
                    jobject self, const std::vector<JValue>& args, JValue& result);
 
