@@ -4,6 +4,7 @@
 # CI supplies HVM_COLD_START_XCTESTRUN to accept the system Open confirmation.
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 HOST_APP=$1
 GUEST_APP=$2
 BUNDLE_ID=com.lfull.HydrogenVM
@@ -95,13 +96,26 @@ open_url() {
     if [ -n "${HVM_COLD_START_XCTESTRUN:-}" ]; then
         local out=${HVM_COLD_START_OUT:-build/cold-start-diagnostics}
         mkdir -p "$out"
-        xcodebuild -xctestrun "$HVM_COLD_START_XCTESTRUN" \
-            -destination "platform=iOS Simulator,id=$UDID" -parallel-testing-enabled NO \
-            -resultBundlePath "$out/confirmation-$COLD_URL_COUNT.xcresult" \
-            test-without-building >"$out/confirmation-$COLD_URL_COUNT.log" 2>&1 || {
-                tail -100 "$out/confirmation-$COLD_URL_COUNT.log"
-                fail "system URL confirmation did not complete"
-            }
+        # One retry: on hosted runners the system Open alert sometimes stays up
+        # after the helper's tap (run 42580285720). The URL is still pending, so
+        # a second helper run accepts the same alert. Marker checks are unchanged.
+        local attempt log
+        for attempt in 1 2; do
+            log="$out/confirmation-$COLD_URL_COUNT-$attempt.log"
+            if xcodebuild -xctestrun "$HVM_COLD_START_XCTESTRUN" \
+                -destination "platform=iOS Simulator,id=$UDID" -parallel-testing-enabled NO \
+                -resultBundlePath "$out/confirmation-$COLD_URL_COUNT-$attempt.xcresult" \
+                test-without-building >"$log" 2>&1; then
+                return 0
+            fi
+            tail -100 "$log"
+            # A missed first attempt is only a warning: the retry may still pass.
+            local level=error
+            if [ "$attempt" = 1 ]; then level=warning; fi
+            bash "$SCRIPT_DIR/annotate_xctest_failures.sh" "$log" "cold-start confirmation, attempt $attempt" "$level"
+            if [ "$attempt" = 1 ]; then echo "Retrying the system URL confirmation once"; fi
+        done
+        fail "system URL confirmation did not complete"
     fi
 }
 
