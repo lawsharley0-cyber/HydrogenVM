@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "army-of-darkness",
+  "bundle_id": "com.backflipstudios.armyofdarknessdefense",
+  "version": "1.0.1",
+  "ipa": "AoD_v1.0.1_os30.ipa",
+  "source": "Owner Codex handoff: PLAY 160,395 at about 20 seconds; docs/GEMINI_HANDOFF.md bundle id. Runner verifies Info.plist before launch.",
+  "home_setup": "Fresh home.",
+  "run_seconds": 90,
+  "rss_limit_mb": 1024,
+  "taps": [[160, 395, 20]],
+  "screenshots": [{"at": 90, "reference": "army-of-darkness/90.png", "max_mae": 0.04}],
+  "todos": ["Qualify PLAY timing and screenshot baseline on the target bench."]
+}

@@ -1,0 +1,39 @@
+name: Private game smoke tests
+
+# Owner-dispatched only: never execute untrusted PR code on a fixture runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: vars.HVM_SMOKE_ENABLED == 'true'
+    runs-on: [self-hosted, linux, hvm-smoke]
+    timeout-minutes: 30
+    env:
+      HVM_SMOKE_GAMES: ${{ secrets.HVM_SMOKE_GAMES }}
+      HVM_SMOKE_REFS: ${{ secrets.HVM_SMOKE_REFS }}
+    steps:
+      - name: Check private fixture configuration
+        id: fixtures
+        shell: bash
+        run: |
+          if [ -n "$HVM_SMOKE_GAMES" ] && [ -d "$HVM_SMOKE_GAMES" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'SKIPPED: private games directory is not configured'
+          fi
+      - uses: actions/checkout@v4
+        if: steps.fixtures.outputs.available == 'true'
+      - name: Build bench and check harness
+        if: steps.fixtures.outputs.available == 'true'
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+          ninja -C build hvm
+          python3 -m unittest discover -s tools/tests -p test_smoke.py
+      - name: Replay scenarios
+        if: steps.fixtures.outputs.available == 'true'
+        # No upload-artifact: logs, screenshots and saves remain on the private runner.
+        run: python3 -m tools.smoke.run --hvm build/hvm --out build/smoke
