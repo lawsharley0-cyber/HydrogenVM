@@ -272,6 +272,7 @@ int runThreadLifetimeChild();
 namespace Hydrogen { namespace Runtime { bool hvmDeliverGuestFault(Process& p, CPU::Cpu& c); } }
 int runArenaPoolTests();
 int runCompatProfileTests();
+int runIOSConformanceTests();
 
 namespace {
 
@@ -14470,6 +14471,7 @@ int runFullSubsystemTests() {
     check(runPositionalFormatTests() == 0, "positional formatting arguments and ABI");
     check(runLegacyAnimationTests() == 0, "UIKit animation, window and timer-pool lifetime");
     check(runCompatProfileTests()==0,"documented compatibility profiles preserve existing predicates and defaults");
+    check(runIOSConformanceTests() == 0, "source-cited iOS API conformance contracts");
     {
         ProcessConfig icCfg;
         icCfg.homePath = "/tmp/hvm_icache_test";

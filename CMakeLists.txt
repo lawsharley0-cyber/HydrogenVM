@@ -89,6 +89,11 @@ add_executable(hvm_compat_profile_tests tests/runner/CompatProfileTests.cpp)
 target_compile_definitions(hvm_compat_profile_tests PRIVATE HVM_COMPAT_PROFILE_MAIN)
 target_link_libraries(hvm_compat_profile_tests PRIVATE hvm_core)
 
+target_sources(hvm_tests PRIVATE tests/runner/IOSConformanceTests.cpp)
+add_executable(hvm_ios_conformance_tests tests/runner/IOSConformanceTests.cpp)
+target_compile_definitions(hvm_ios_conformance_tests PRIVATE HVM_IOS_CONFORMANCE_MAIN)
+target_link_libraries(hvm_ios_conformance_tests PRIVATE hvm_core)
+
 # GNU-style linker wrapping keeps host thread failure injection in the test binary.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(hvm_thread_launch_tests tests/runner/ThreadLaunchTests.cpp)
