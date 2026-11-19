@@ -18,6 +18,7 @@ struct ApkManifest {
     uint32_t labelRes = 0;      // @string/... id of the application label
     uint32_t iconRes = 0;       // @drawable/... id of the application icon
     std::string screenOrientation;   // of the first activity: "landscape", "portrait", "sensorLandscape", ... or ""
+    int minSdkVersion = 0;           // <uses-sdk android:minSdkVersion="...">, or 0 if absent
 };
 
 // Parses a compiled (binary XML) AndroidManifest.xml. Missing fields stay empty.

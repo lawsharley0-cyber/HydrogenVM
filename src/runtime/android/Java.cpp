@@ -292,6 +292,9 @@ void registerJavaPlatform(Jni& j) {
                             "com/adjust/sdk/Adjust", "com/appsflyer/AppsFlyerLib"})
         j.quietClasses.insert(cls);
     registerJavaServices(j);
+    registerJavaUi(j);
+    registerJavaStdlib(j);
+    registerJavaGles(j);
 }
 
 } // namespace Hydrogen::Runtime::Android

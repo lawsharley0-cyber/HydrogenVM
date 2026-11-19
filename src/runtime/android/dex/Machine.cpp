@@ -87,6 +87,7 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
     std::set<std::u16string, std::less<>> absent;
     std::mutex dataMutex;
     std::map<std::u16string, uint32_t> mirrors;
+    std::map<uint32_t, std::u16string> mirrorTypes;
     std::map<std::pair<uint32_t, const BoundField*>, Value> instanceFields;
 
     struct Worker {
@@ -263,7 +264,10 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
             throw JavaException{u"Ljava/lang/NoClassDefFoundError;"};
         std::lock_guard lock(dataMutex);
         auto& mirror = mirrors[type];
-        if (!mirror) mirror = arena.object(u"Ljava/lang/Class;");
+        if (!mirror) {
+            mirror = arena.object(u"Ljava/lang/Class;");
+            mirrorTypes[mirror] = type;
+        }
         return mirror;
     }
 
@@ -407,7 +411,9 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
                     const auto method = receiver.vtable.find(key);
                     if (method != receiver.vtable.end()) return run(method->second, args, budget);
                 }
-                if (owner == u"Ljava/lang/Thread;") return threadMethod(receiver, key, reference);
+                if (owner == u"Ljava/lang/Thread;" && key.second == u"()V" &&
+                    (key.first == u"<init>" || key.first == u"start" || key.first == u"join"))
+                    return threadMethod(receiver, key, reference);
             }
             return callBoundary(owner, key, false, false, args);
         }
@@ -492,6 +498,53 @@ Execution Machine::callStatic(std::u16string_view type, std::u16string_view name
     Budget budget{instructionLimit};
     try { return state_->callStatic(type, {std::u16string(name), std::u16string(signature)}, args, budget); }
     catch (const JavaException& exception) { return exception; }
+}
+
+uint32_t Machine::classMirror(std::u16string_view type) {
+    std::lock_guard lock(state_->dataMutex);
+    const std::u16string key(type);
+    auto& mirror = state_->mirrors[key];
+    if (!mirror) {
+        mirror = state_->arena.object(u"Ljava/lang/Class;");
+        state_->mirrorTypes[mirror] = key;
+    }
+    return mirror;
+}
+
+std::optional<std::u16string> Machine::classMirrorType(uint32_t reference) const {
+    std::lock_guard lock(state_->dataMutex);
+    if (const auto it = state_->mirrorTypes.find(reference); it != state_->mirrorTypes.end()) return it->second;
+    return std::nullopt;
+}
+
+Machine::ClassInfo Machine::classInfo(std::u16string_view type) {
+    if (auto* cls = state_->link(type)) {
+        return {cls->name, cls->superName, cls->flags, true};
+    }
+    return {std::u16string(type), type == u"Ljava/lang/Object;" ? std::u16string{} : std::u16string(u"Ljava/lang/Object;"), 0x1, false};
+}
+
+bool Machine::isAssignable(std::u16string_view from, std::u16string_view to) {
+    return state_->arena.assignable(from, to);
+}
+
+Execution Machine::instantiate(std::u16string_view type, std::u16string_view ctorSig,
+                               std::span<const Value> ctorArgs) {
+    Budget budget{1'000'000};
+    try {
+        const uint32_t obj = state_->newInstance(std::u16string(type), budget);
+        auto* cls = state_->link(type);
+        if (!cls) throw JavaException{u"Ljava/lang/NoClassDefFoundError;"};
+        const Symbol key{u"<init>", std::u16string(ctorSig)};
+        const auto it = cls->local.find(key);
+        if (it == cls->local.end()) throw JavaException{u"Ljava/lang/NoSuchMethodError;"};
+        std::vector<Value> args;
+        args.reserve(1 + ctorArgs.size());
+        args.push_back({ValueKind::Reference, obj});
+        args.insert(args.end(), ctorArgs.begin(), ctorArgs.end());
+        state_->run(it->second, args, budget);
+        return Value{ValueKind::Reference, obj};
+    } catch (const JavaException& exception) { return exception; }
 }
 
 } // namespace Hydrogen::Runtime::Android::Dex

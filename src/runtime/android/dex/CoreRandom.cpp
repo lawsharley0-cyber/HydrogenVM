@@ -35,7 +35,7 @@ Value wide(uint64_t bits) { return {ValueKind::Wide, bits}; }
 } // namespace
 
 bool CoreRandom::hasClass(std::u16string_view type) {
-    return type == u"Ljava/util/Random;";
+    return type == u"Ljava/util/Random;" || type == u"Ljava/security/SecureRandom;";
 }
 
 uint64_t CoreRandom::initialScramble(uint64_t seed) {
@@ -102,7 +102,9 @@ std::optional<Value> CoreRandom::invoke(Heap& heap, std::u16string_view type,
     if (isStatic || args.empty()) return {};
     const uint32_t id = reference(args.front());
     if (!id) return {};
-    if (type != u"Ljava/util/Random;" && heap.typeOf(id) != u"Ljava/util/Random;") return {};
+    const auto actual = heap.typeOf(id);
+    if (type != u"Ljava/util/Random;" && type != u"Ljava/security/SecureRandom;" &&
+        actual != u"Ljava/util/Random;" && actual != u"Ljava/security/SecureRandom;") return {};
 
     std::lock_guard lock(mutex_);
     if (name == u"<init>" && sig == u"()V") {

@@ -27,6 +27,18 @@ public:
     bool hasMethod(std::u16string_view type, std::u16string_view name, std::u16string_view signature, bool isStatic);
     Execution callInstance(std::u16string_view type, std::u16string_view name,
                            std::u16string_view signature, std::span<const Value> args, bool nonvirtual);
+    struct ClassInfo {
+        std::u16string name;
+        std::u16string superName;
+        uint32_t flags = 0;
+        bool defined = false;
+    };
+    uint32_t classMirror(std::u16string_view type);
+    std::optional<std::u16string> classMirrorType(uint32_t reference) const;
+    ClassInfo classInfo(std::u16string_view type);
+    bool isAssignable(std::u16string_view from, std::u16string_view to);
+    Execution instantiate(std::u16string_view type, std::u16string_view ctorSig,
+                          std::span<const Value> ctorArgs);
     Heap& heap();
 
 private:

@@ -10,6 +10,7 @@
 #include "runtime/android/BionicInternal.hpp"
 #include "runtime/android/Surface.hpp"
 #include "runtime/audio/Audio.hpp"
+#include "loader/Apk.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -269,9 +270,18 @@ void registerJavaServices(Jni& j) {
         {"TYPE", "user"}, {"HOST", "hydrogenvm"}, {"USER", "hvm"}, {"BOOTLOADER", "unknown"}, {"RADIO", "unknown"},
         {"FINGERPRINT", "hydrogen/hvm/hvm:4.4.4/KTU84P/1:user/release-keys"}};
     for (const auto& [k, v] : build) j.staticFields["android/os/Build." + k] = permanentString(j, v);
-    j.staticFields["android/os/Build$VERSION.SDK_INT"] = 19;
-    j.staticFields["android/os/Build$VERSION.SDK"] = permanentString(j, "19");
-    j.staticFields["android/os/Build$VERSION.RELEASE"] = permanentString(j, "4.4.4");
+    int sdkInt = 19;
+    {
+        std::ifstream minIn(p.config().bundlePath + "/AndroidManifest.xml", std::ios::binary);
+        if (minIn) {
+            const std::vector<uint8_t> xml((std::istreambuf_iterator<char>(minIn)), {});
+            const int minSdk = Loader::parseManifest(xml).minSdkVersion;
+            if (minSdk > sdkInt) sdkInt = minSdk;
+        }
+    }
+    j.staticFields["android/os/Build$VERSION.SDK_INT"] = uint64_t(sdkInt);
+    j.staticFields["android/os/Build$VERSION.SDK"] = permanentString(j, std::to_string(sdkInt));
+    j.staticFields["android/os/Build$VERSION.RELEASE"] = permanentString(j, sdkInt >= 21 ? "5.0" : "4.4.4");
     j.staticFields["android/os/Build$VERSION.INCREMENTAL"] = permanentString(j, "1");
     j.staticFields["android/os/Build$VERSION.CODENAME"] = permanentString(j, "REL");
 
@@ -283,25 +293,33 @@ void registerJavaServices(Jni& j) {
         {"WIFI_SERVICE", "wifi"}, {"INPUT_METHOD_SERVICE", "input_method"}, {"LOCATION_SERVICE", "location"},
         {"MEDIA_ROUTER_SERVICE", "media_router"}, {"KEYGUARD_SERVICE", "keyguard"}, {"INPUT_SERVICE", "input"},
         {"UI_MODE_SERVICE", "uimode"}, {"STORAGE_SERVICE", "storage"}, {"NOTIFICATION_SERVICE", "notification"},
-        {"ALARM_SERVICE", "alarm"}, {"CLIPBOARD_SERVICE", "clipboard"}, {"ACCOUNT_SERVICE", "account"}};
+        {"ALARM_SERVICE", "alarm"}, {"CLIPBOARD_SERVICE", "clipboard"}, {"ACCOUNT_SERVICE", "account"},
+        {"LAYOUT_INFLATER_SERVICE", "layout_inflater"}, {"VIBRATOR_MANAGER_SERVICE", "vibrator_manager"}};
     for (const auto& [k, v] : services) j.staticFields["android/content/Context." + k] = permanentString(j, v);
     const std::map<std::string, std::string> serviceClass = {
         {"window", "android/view/WindowManager"}, {"display", "android/hardware/display/DisplayManager"},
         {"phone", "android/telephony/TelephonyManager"}, {"connectivity", "android/net/ConnectivityManager"},
-        {"vibrator", "android/os/Vibrator"}, {"audio", "android/media/AudioManager"},
+        {"vibrator", "android/os/Vibrator"}, {"vibrator_manager", "android/os/VibratorManager"},
+        {"audio", "android/media/AudioManager"}, {"sensor", "android/hardware/SensorManager"},
         {"power", "android/os/PowerManager"}, {"activity", "android/app/ActivityManager"},
         {"media_router", "android/media/MediaRouter"}, {"input_method", "android/view/inputmethod/InputMethodManager"},
         {"uimode", "android/app/UiModeManager"}, {"keyguard", "android/app/KeyguardManager"},
-        {"input", "android/hardware/input/InputManager"}};
+        {"input", "android/hardware/input/InputManager"}, {"clipboard", "android/content/ClipboardManager"},
+        {"layout_inflater", "android/view/LayoutInflater"}};
     for (const char* ctx : {"android/content/Context", "android/app/Activity"}) {
-        j.method(ctx, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [&p, serviceClass](Jni& j, Ctx&, jobject, const auto& a) {
+        j.method(ctx, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [&p, serviceClass](Jni& j, Ctx&, jobject self, const auto& a) {
             const std::string name = str(j, a[0]);
             auto it = serviceClass.find(name);
             if (it == serviceClass.end()) {
                 p.reportDefaulted("Context.getSystemService(\"" + name + "\") -> null");
                 return JValue(0);
             }
-            return JValue(singleton(j, it->second));
+            const jobject svc = singleton(j, it->second);
+            if (name == "layout_inflater" && self) {
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                if (JObject* o = j.get(svc)) o->fields["hvm.context"] = self;
+            }
+            return JValue(svc);
         });
         j.method(ctx, "getIntent", "()Landroid/content/Intent;", [](Jni& j, Ctx&, jobject, const auto&) {
             return JValue(singleton(j, "android/content/Intent"));

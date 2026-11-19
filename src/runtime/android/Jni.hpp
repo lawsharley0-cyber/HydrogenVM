@@ -119,6 +119,12 @@ void registerJavaPlatform(Jni& j);
 // Framework services: Build, system services, SharedPreferences, Intent, PackageManager, Locale,
 // interface proxies (JavaServices.cpp).
 void registerJavaServices(Jni& j);
+// Android UI, OS, and java.nio buffers (JavaUi.cpp), stdlib (JavaStdlib.cpp), and GLSurfaceView/EGL10/GLES20 (JavaGles.cpp).
+void registerJavaUi(Jni& j);
+void registerJavaStdlib(Jni& j);
+void registerJavaGles(Jni& j);
+jobject glSurfaceViewRenderer(Process& p);
+void drainGlSurfaceViewEvents(Jni& j, Ctx& x);
 // Generated Java placeholders (Placeholders.cpp); registered last, never over a real method.
 void registerJniPlaceholders(Jni& j);
 // A method call on a JNIBridge interface proxy: forwarded to the library's JNIBridge.invoke.
