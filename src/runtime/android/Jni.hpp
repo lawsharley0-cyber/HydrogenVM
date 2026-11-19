@@ -7,6 +7,7 @@
 #include "runtime/android/Android.hpp"
 #include "runtime/Process.hpp"
 #include <any>
+#include <atomic>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -46,6 +47,8 @@ class Jni {
 public:
     explicit Jni(Process& p);
     Process& proc;
+    // Retained APK bytecode must never override a hand-written native engine driver.
+    std::atomic<bool> interpretsDex{false};
 
     // Objects.
     jobject add(JObject o);
@@ -61,6 +64,7 @@ public:
     void method(const std::string& cls, const std::string& name, const std::string& sig, JMethod fn);
     // Call a method by id (from Call*Method / NewObject); `self` is the object or class.
     JValue invoke(Ctx& x, uint32_t methodId, jobject self, const std::vector<JValue>& args);
+    JValue invoke(Ctx& x, uint32_t methodId, jobject self, const std::vector<JValue>& args, bool nonvirtual);
     uint32_t methodId(const std::string& cls, const std::string& name, const std::string& sig, bool isStatic);
     uint32_t fieldId(const std::string& cls, const std::string& name, const std::string& sig, bool isStatic);
 
@@ -72,6 +76,11 @@ public:
     // Returns false when the library has no such function.
     bool callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
                     const std::vector<uint32_t>& words, JValue* result = nullptr);
+    bool callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
+                    const std::vector<uint32_t>& words, JValue* result, const std::string& signature,
+                    bool clearException = true);
+    bool dexNative(Ctx& x, const std::string& cls, const std::string& name, const std::string& sig,
+                   jobject self, const std::vector<JValue>& args, JValue& result);
 
     void traceOnce(const std::string& what);
     // Class hierarchy: the superclass of a class (java/lang/Object for one HydrogenVM doesn't

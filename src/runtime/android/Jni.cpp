@@ -1,5 +1,6 @@
 // HydrogenVM — JavaVM and JNIEnv for Android games. See Jni.hpp.
 #include "runtime/android/Jni.hpp"
+#include "runtime/android/dex/JniBridge.hpp"
 #include "core/cpu/Engine.hpp"
 #include <cctype>
 #include <cstdio>
@@ -152,23 +153,48 @@ void Jni::traceOnce(const std::string& what) {
 
 bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
                      const std::vector<uint32_t>& words, JValue* result) {
+    return callNative(x, cls, name, self, words, result, {});
+}
+
+bool Jni::callNative(Ctx& x, const std::string& cls, const std::string& name, jobject self,
+                     const std::vector<uint32_t>& words, JValue* result, const std::string& signature,
+                     bool clearException) {
     traceOnce("JNI native " + cls + "." + name);
     uint32_t fn = 0;
     {
         std::lock_guard<std::recursive_mutex> lk(mu);
-        for (auto& [k, v] : registeredNatives)
-            if (k.rfind(cls + "." + name + "(", 0) == 0) { fn = v; break; }
+        if (!signature.empty()) {
+            const auto it = registeredNatives.find(cls + "." + name + signature);
+            if (it != registeredNatives.end()) fn = it->second;
+        } else {
+            for (auto& [k, v] : registeredNatives)
+                if (k.rfind(cls + "." + name + "(", 0) == 0) { fn = v; break; }
+        }
     }
     if (!fn) {
         auto& L = proc.service<Library>();
         std::lock_guard<std::recursive_mutex> lk(L.mu);
-        auto a = L.find("Java_" + mangle(cls) + "_" + mangle(name));
+        const auto symbol = "Java_" + mangle(cls) + "_" + mangle(name);
+        auto a = L.find(symbol);
+        if (!a && !signature.empty())
+            a = L.find(symbol + "__" + mangle(signature.substr(1, signature.find(')') - 1)));
         if (!a) return false;
         fn = *a;
     }
     std::vector<uint32_t> args{envFor(proc), self};
     args.insert(args.end(), words.begin(), words.end());
     const uint64_t r = proc.callGuest(x.cpu, fn, args);
+    if (clearException) {
+        if (const auto thrown = std::exchange(Dex::pendingException(proc), 0u)) {
+            std::string clsName;
+            {
+                std::lock_guard<std::recursive_mutex> lk(mu);
+                if (const auto* o = get(thrown)) clsName = o->cls;
+            }
+            proc.log(LogLevel::Warning, "JNI uncaught exception in " + cls + "." + name +
+                     (clsName.empty() ? "" : ": " + clsName));
+        }
+    }
     if (result) *result = r;
     return true;
 }
@@ -194,7 +220,16 @@ bool isPluginClass(const std::string& cls) {
     return !cls.empty();
 }
 
+bool Jni::dexNative(Ctx& x, const std::string& cls, const std::string& name, const std::string& sig,
+                    jobject self, const std::vector<JValue>& args, JValue& result) {
+    return callNative(x, cls, name, self, nativeWords(argTypes(sig), args), &result, sig, false);
+}
+
 JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>& args) {
+    return invoke(x, id, self, args, false);
+}
+
+JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>& args, bool nonvirtual) {
     MethodInfo m;
     {
         std::lock_guard<std::recursive_mutex> lk(mu);
@@ -215,6 +250,9 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
         }
     }
     if (proxy) return invokeProxy(*this, x, self, m.name, m.sig, args);
+    JValue interpreted = 0;
+    if (interpretsDex.load(std::memory_order_relaxed) &&
+        Dex::invokeFromJni(*this, x, m, self, args, objCls, nonvirtual, interpreted)) return interpreted;
     // Then the platform classes every activity and view inherits from: a game's own activity
     // class (com/foo/GameActivity) calls getFilesDir, getAssets, ... of Context.
     static const std::string kContext = "android/content/Context", kActivity = "android/app/Activity",
@@ -248,7 +286,7 @@ JValue Jni::invoke(Ctx& x, uint32_t id, jobject self, const std::vector<JValue>&
         }
     }
     JValue r = 0;
-    if (callNative(x, m.cls, m.name, self, nativeWords(argTypes(m.sig), args), &r)) return r;
+    if (callNative(x, m.cls, m.name, self, nativeWords(argTypes(m.sig), args), &r, m.sig, false)) return r;
     if (quietClasses.count(m.cls) || quietClasses.count(objCls)) return 0;
     if (m.name == "<init>") return 0;   // constructors of helper objects: nothing to set up
     {
@@ -331,7 +369,7 @@ void callMethod(Ctx& x, int mode, bool nonvirtual) {
     if (mode == 0) { ArgReader rd(x.cpu, x.mem, uint32_t(first)); args = readArgs(rd, types); }
     else if (mode == 1) { ArgReader rd(x.mem, arg(x, first)); args = readArgs(rd, types); }
     else args = readJvalues(x, arg(x, first), types);
-    ret(x, j.invoke(x, mid, self, args));
+    ret(x, j.invoke(x, mid, self, args, nonvirtual));
 }
 void newObject(Ctx& x, int mode) {
     Jni& j = J(x);
@@ -344,8 +382,8 @@ void newObject(Ctx& x, int mode) {
     else args = readJvalues(x, arg(x, 3), types);
     JObject* c = j.get(cls);
     const jobject obj = j.newObject(c ? c->cls : "java/lang/Object");
-    j.invoke(x, mid, obj, args);
-    ret(x, obj);
+    j.invoke(x, mid, obj, args, true);
+    ret(x, Dex::pendingException(x.proc) ? 0 : obj);
 }
 
 uint64_t fieldGet(Jni& j, jobject obj, uint32_t fid, bool isStatic) {
@@ -432,14 +470,26 @@ Jni& jni(Process& p) {
                 JObject* a = J(x).get(arg(x, 1)); JObject* b = J(x).get(arg(x, 2));
                 ret(x, a && b && J(x).isSubclass(a->cls, b->cls));
             });
-            set(13, "Throw", [](Ctx& x) { ret(x, 0); });
-            set(14, "ThrowNew", [](Ctx& x) {
-                x.proc.logf(LogLevel::Warning, "JNI ThrowNew: %s", x.proc.readCString(arg(x, 2), 512).c_str());
+            set(13, "Throw", [](Ctx& x) {
+                const auto exception = arg(x, 1);
+                if (!J(x).get(exception)) { ret(x, uint32_t(-1)); return; }
+                Dex::pendingException(x.proc) = exception;
                 ret(x, 0);
             });
-            set(15, "ExceptionOccurred", [](Ctx& x) { ret(x, 0); });
+            set(14, "ThrowNew", [](Ctx& x) {
+                auto& j = J(x);
+                std::lock_guard lock(j.mu);
+                const auto* type = j.get(arg(x, 1));
+                if (!type || !type->isClass) { ret(x, uint32_t(-1)); return; }
+                JObject exception;
+                exception.cls = type->cls;
+                if (const auto message = arg(x, 2)) exception.str = x.proc.readCString(message, 512);
+                Dex::pendingException(x.proc) = j.add(std::move(exception));
+                ret(x, 0);
+            });
+            set(15, "ExceptionOccurred", [](Ctx& x) { ret(x, Dex::pendingException(x.proc)); });
             set(16, "ExceptionDescribe", [](Ctx& x) { ret(x, 0); });
-            set(17, "ExceptionClear", [](Ctx& x) { ret(x, 0); });
+            set(17, "ExceptionClear", [](Ctx& x) { Dex::pendingException(x.proc) = 0; ret(x, 0); });
             set(18, "FatalError", [](Ctx& x) { throw std::runtime_error("JNI FatalError: " + x.proc.readCString(arg(x, 1), 1024)); });
             // Reflection: a java.lang.reflect.Method keeps its name, signature (host) and class.
             set(7, "FromReflectedMethod", [](Ctx& x) {
@@ -600,15 +650,23 @@ Jni& jni(Process& p) {
                 ret(x, !o ? 0 : o->elem == 'L' ? o->refs.size() : o->data.size() / elemSize(o->elem));
             });
             set(172, "NewObjectArray", [](Ctx& x) {
-                const jobject a = J(x).newArray('L', arg(x, 1));
-                if (JObject* o = J(x).get(a)) for (auto& r : o->refs) r = arg(x, 3);
+                auto& j = J(x);
+                std::lock_guard lock(j.mu);
+                const auto* component = j.get(arg(x, 2));
+                const std::string name = component ? component->cls : "java/lang/Object";
+                const jobject a = j.newArray('L', arg(x, 1));
+                auto* o = j.get(a);
+                o->cls = name.starts_with('[') ? "[" + name : "[L" + name + ";";
+                std::fill(o->refs.begin(), o->refs.end(), arg(x, 3));
                 ret(x, a);
             });
             set(173, "GetObjectArrayElement", [](Ctx& x) {
+                std::lock_guard lock(J(x).mu);
                 JObject* o = J(x).get(arg(x, 1));
                 ret(x, o && arg(x, 2) < o->refs.size() ? o->refs[arg(x, 2)] : 0);
             });
             set(174, "SetObjectArrayElement", [](Ctx& x) {
+                std::lock_guard lock(J(x).mu);
                 JObject* o = J(x).get(arg(x, 1));
                 if (o && arg(x, 2) < o->refs.size()) o->refs[arg(x, 2)] = arg(x, 3);
                 ret(x, 0);
@@ -668,7 +726,7 @@ Jni& jni(Process& p) {
             set(223, "ReleasePrimitiveArrayCritical", [](Ctx& x) { unpinArray(x, arg(x, 2), int32_t(arg(x, 3))); ret(x, 0); });
             set(226, "NewWeakGlobalRef", [](Ctx& x) { if (JObject* o = J(x).get(arg(x, 1))) o->permanent = true; ret(x, arg(x, 1)); });
             set(227, "DeleteWeakGlobalRef", [](Ctx& x) { ret(x, 0); });
-            set(228, "ExceptionCheck", [](Ctx& x) { ret(x, 0); });
+            set(228, "ExceptionCheck", [](Ctx& x) { ret(x, Dex::pendingException(x.proc) != 0); });
             set(232, "GetObjectRefType", [](Ctx& x) { ret(x, 1); });
             j.envTable = table;
 

@@ -27,6 +27,7 @@ struct LinkedClass {
     uint32_t flags = 0;
     LinkedClass* super = nullptr;
     std::vector<LinkedClass*> interfaces;
+    std::vector<std::u16string> externalInterfaces;
     std::map<Symbol, BoundMethod> local;
     std::map<Symbol, BoundMethod> vtable;
     std::map<Symbol, BoundField> fields;
@@ -70,14 +71,15 @@ BoundField* resolveField(LinkedClass* cls, const Symbol& key) {
 } // namespace
 
 struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::State> {
-    State(std::shared_ptr<ClassPath> path, Scheduler schedule)
-        : path(std::move(path)), schedule(std::move(schedule)),
+    State(std::shared_ptr<ClassPath> path, Scheduler schedule, Host host)
+        : path(std::move(path)), schedule(std::move(schedule)), host(std::move(host)),
           arena(128 * 1024 * 1024, [this](auto from, auto to) { return assignable(from, to); }) {
         if (!this->path) throw FormatError("missing DEX class path");
     }
 
     std::shared_ptr<ClassPath> path;
     Scheduler schedule;
+    Host host;
     Arena arena;
     std::recursive_mutex linkMutex;
     std::map<std::u16string, std::unique_ptr<LinkedClass>, std::less<>> classes;
@@ -122,8 +124,11 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
             made->superName = file.type(cls.super);
             made->super = link(made->superName, depth + 1);
         }
-        for (const auto id : cls.interfaces)
-            if (auto* iface = link(file.type(id), depth + 1)) made->interfaces.push_back(iface);
+        for (const auto id : cls.interfaces) {
+            auto name = file.type(id);
+            if (auto* iface = link(name, depth + 1)) made->interfaces.push_back(iface);
+            else made->externalInterfaces.push_back(std::move(name));
+        }
 
         if (made->super) made->vtable = made->super->vtable;
         auto addMethods = [&](const auto& methods, bool virt) {
@@ -178,15 +183,30 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
             if (!cls || !visited.insert(cls).second) continue;
             if (cls->name == to || cls->superName == to) return true;
             if (!cls->super && !cls->superName.empty() && arena.assignable(cls->superName, to)) return true;
+            for (const auto& iface : cls->externalInterfaces)
+                if (arena.assignable(iface, to)) return true;
             pending.push_back(cls->super);
             pending.insert(pending.end(), cls->interfaces.begin(), cls->interfaces.end());
         }
         return false;
     }
 
+    Value callBoundary(std::u16string_view owner, const Symbol& symbol, bool isStatic, bool native,
+                       std::span<const Value> args) {
+        if (host.call)
+            if (auto value = host.call(owner, symbol.first, symbol.second, isStatic, native, args))
+                return *value;
+        throw JavaException{native ? u"Ljava/lang/UnsatisfiedLinkError;" : u"Ljava/lang/NoSuchMethodError;"};
+    }
+
     Value run(const BoundMethod& method, std::span<const Value> args, Budget& budget) {
-        if (!method.method.codeOffset) throw JavaException{(method.method.flags & 0x100)
-            ? u"Ljava/lang/UnsatisfiedLinkError;" : u"Ljava/lang/AbstractMethodError;"};
+        if (method.method.flags & 0x100) {
+            const auto& file = *method.owner->file;
+            const auto id = file.method(method.method.index);
+            return callBoundary(method.owner->name, {file.string(id.name), file.signature(id.proto)},
+                                method.method.flags & 8, true, args);
+        }
+        if (!method.method.codeOffset) throw JavaException{u"Ljava/lang/AbstractMethodError;"};
         const auto result = executeLinked(arena, this, *method.owner->file, method.method, args, budget);
         if (const auto* exception = std::get_if<JavaException>(&result)) throw *exception;
         return std::get<Value>(result);
@@ -227,15 +247,20 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
     }
 
     uint32_t newInstance(std::u16string type, Budget& budget) override {
-        auto& cls = requireClass(type);
-        if (cls.flags & (0x200 | 0x400)) throw JavaException{u"Ljava/lang/InstantiationError;"};
-        initialize(cls, budget);
+        if (auto* cls = link(type)) {
+            if (cls->flags & (0x200 | 0x400)) throw JavaException{u"Ljava/lang/InstantiationError;"};
+            initialize(*cls, budget);
+        } else if (!host.hasClass || !host.hasClass(type)) {
+            throw JavaException{u"Ljava/lang/NoClassDefFoundError;"};
+        }
         return arena.object(std::move(type));
     }
 
     uint32_t classObject(std::u16string type) override {
         if (type.starts_with(u'L') && type != u"Ljava/lang/Object;" &&
-            type != u"Ljava/lang/String;" && type != u"Ljava/lang/Class;") requireClass(type);
+            type != u"Ljava/lang/String;" && type != u"Ljava/lang/Class;" &&
+            !link(type) && (!host.hasClass || !host.hasClass(type)))
+            throw JavaException{u"Ljava/lang/NoClassDefFoundError;"};
         std::lock_guard lock(dataMutex);
         auto& mirror = mirrors[type];
         if (!mirror) mirror = arena.object(u"Ljava/lang/Class;");
@@ -247,8 +272,14 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
         const auto id = file.field(index);
         const auto name = file.type(id.owner);
         const Symbol key{file.string(id.name), file.type(id.type)};
-        auto* member = resolveField(&requireClass(name), key);
-        if (!member) throw JavaException{u"Ljava/lang/NoSuchFieldError;"};
+        auto* cls = link(name);
+        auto* member = cls ? resolveField(cls, key) : nullptr;
+        if (!member) {
+            if (host.field) {
+                if (auto value = host.field(name, key.first, key.second, receiver, write)) return *value;
+            }
+            throw JavaException{u"Ljava/lang/NoSuchFieldError;"};
+        }
         if (member->isStatic == receiver.has_value()) throw JavaException{u"Ljava/lang/IncompatibleClassChangeError;"};
         if (!receiver) initialize(*member->owner, budget);
         else if (!arena.assignable(arena.typeOf(*receiver), member->owner->name))
@@ -322,6 +353,40 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
         throw JavaException{u"Ljava/lang/OutOfMemoryError;"};
     }
 
+    std::optional<Value> invokeExternalAncestor(const LinkedClass& start, const LinkedClass& receiver,
+                                                const Symbol& key, uint32_t reference,
+                                                std::span<const Value> args, bool includeInterfaces) {
+        std::set<const LinkedClass*> visited;
+        std::vector<std::u16string_view> candidates;
+        std::vector<const LinkedClass*> pending;
+        for (const LinkedClass* c = &start; c && visited.insert(c).second; c = c->super) {
+            if (!c->super && !c->superName.empty()) {
+                if (c->superName == u"Ljava/lang/Thread;" && key.second == u"()V" &&
+                    (key.first == u"<init>" || key.first == u"start" || key.first == u"join"))
+                    return threadMethod(receiver, key, reference);
+                candidates.push_back(c->superName);
+            }
+            if (includeInterfaces) {
+                for (const auto& iface : c->externalInterfaces) candidates.push_back(iface);
+                pending.insert(pending.end(), c->interfaces.begin(), c->interfaces.end());
+            }
+        }
+        while (!pending.empty()) {
+            const LinkedClass* iface = pending.back();
+            pending.pop_back();
+            if (!iface || !visited.insert(iface).second) continue;
+            for (const auto& ext : iface->externalInterfaces) candidates.push_back(ext);
+            pending.insert(pending.end(), iface->interfaces.begin(), iface->interfaces.end());
+        }
+        if (host.call) {
+            for (const auto candidate : candidates) {
+                if (auto value = host.call(candidate, key.first, key.second, false, false, args))
+                    return *value;
+            }
+        }
+        return std::nullopt;
+    }
+
     Value invoke(const File& file, const EncodedMethod& caller, uint32_t methodIndex,
                  InvokeKind kind, std::span<const Value> args, Budget& budget) override {
         const auto id = file.method(methodIndex);
@@ -332,15 +397,21 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
         if (kind == InvokeKind::Direct && owner == u"Ljava/lang/Object;" && key == Symbol{u"<init>", u"()V"})
             return {ValueKind::Void};
         const auto reference = uint32_t(args[0].bits);
-        auto& receiver = requireClass(arena.typeOf(reference));
-        if (owner == u"Ljava/lang/Thread;" && arena.assignable(receiver.name, owner)) {
-            if (kind == InvokeKind::Virtual) {
-                const auto override = receiver.vtable.find(key);
-                if (override != receiver.vtable.end()) return run(override->second, args, budget);
+        auto* actual = link(arena.typeOf(reference));
+        if (!actual) return callBoundary(owner, key, false, false, args);
+        auto& receiver = *actual;
+        auto* declaredClass = link(owner);
+        if (!declaredClass) {
+            if (arena.assignable(receiver.name, owner)) {
+                if (kind == InvokeKind::Virtual || kind == InvokeKind::Interface) {
+                    const auto method = receiver.vtable.find(key);
+                    if (method != receiver.vtable.end()) return run(method->second, args, budget);
+                }
+                if (owner == u"Ljava/lang/Thread;") return threadMethod(receiver, key, reference);
             }
-            return threadMethod(receiver, key, reference);
+            return callBoundary(owner, key, false, false, args);
         }
-        auto& declared = requireClass(owner);
+        auto& declared = *declaredClass;
         if (!arena.assignable(receiver.name, declared.name)) throw JavaException{u"Ljava/lang/IncompatibleClassChangeError;"};
         const BoundMethod* resolved = nullptr;
         switch (kind) {
@@ -350,16 +421,23 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
                 break;
             }
             case InvokeKind::Super: {
-                auto* parent = requireClass(file.type(file.method(caller.index).owner)).super;
+                auto& callerClass = requireClass(file.type(file.method(caller.index).owner));
+                auto* parent = callerClass.super;
                 if (parent) {
                     const auto it = parent->vtable.find(key);
                     if (it != parent->vtable.end()) resolved = &it->second;
+                }
+                if (!resolved) {
+                    if (auto value = invokeExternalAncestor(parent ? *parent : callerClass, receiver, key, reference, args, false))
+                        return *value;
                 }
                 break;
             }
             case InvokeKind::Virtual: case InvokeKind::Interface: {
                 const auto it = receiver.vtable.find(key);
                 if (it != receiver.vtable.end()) resolved = &it->second;
+                else if (auto value = invokeExternalAncestor(receiver, receiver, key, reference, args, true))
+                    return *value;
                 break;
             }
             case InvokeKind::Static: break;
@@ -370,7 +448,9 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
     }
 
     Value callStatic(std::u16string_view owner, const Symbol& key, std::span<const Value> args, Budget& budget) {
-        const auto* method = localMethod(&requireClass(owner), key);
+        auto* cls = link(owner);
+        if (!cls) return callBoundary(owner, key, true, false, args);
+        const auto* method = localMethod(cls, key);
         if (!method) throw JavaException{u"Ljava/lang/NoSuchMethodError;"};
         if (!(method->method.flags & 8)) throw JavaException{u"Ljava/lang/IncompatibleClassChangeError;"};
         initialize(*method->owner, budget);
@@ -378,10 +458,33 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
     }
 };
 
-Machine::Machine(std::shared_ptr<ClassPath> classPath, Scheduler scheduler)
-    : state_(std::make_shared<State>(std::move(classPath), std::move(scheduler))) {}
+Machine::Machine(std::shared_ptr<ClassPath> classPath, Scheduler scheduler, Host host)
+    : state_(std::make_shared<State>(std::move(classPath), std::move(scheduler), std::move(host))) {}
 Machine::~Machine() = default;
 Heap& Machine::heap() { return state_->arena; }
+
+bool Machine::hasMethod(std::u16string_view type, std::u16string_view name,
+                        std::u16string_view signature, bool isStatic) {
+    const auto* method = localMethod(state_->link(type), {std::u16string(name), std::u16string(signature)});
+    return method && bool(method->method.flags & 8) == isStatic;
+}
+
+Execution Machine::callInstance(std::u16string_view type, std::u16string_view name,
+                                std::u16string_view signature, std::span<const Value> args, bool nonvirtual) {
+    Budget budget{1'000'000};
+    try {
+        if (args.empty() || !args[0].bits) throw JavaException{u"Ljava/lang/NullPointerException;"};
+        auto& cls = state_->requireClass(nonvirtual ? type : state_->arena.typeOf(uint32_t(args[0].bits)));
+        const Symbol key{std::u16string(name), std::u16string(signature)};
+        const BoundMethod* method = nullptr;
+        if (nonvirtual) method = localMethod(&cls, key);
+        else if (const auto it = cls.vtable.find(key); it != cls.vtable.end()) method = &it->second;
+        else method = localMethod(&cls, key);
+        if (!method || (method->method.flags & 8)) throw JavaException{u"Ljava/lang/NoSuchMethodError;"};
+        if (name == u"<init>") state_->initialize(*method->owner, budget);
+        return state_->run(*method, args, budget);
+    } catch (const JavaException& exception) { return exception; }
+}
 
 Execution Machine::callStatic(std::u16string_view type, std::u16string_view name,
                               std::u16string_view signature, std::span<const Value> args,

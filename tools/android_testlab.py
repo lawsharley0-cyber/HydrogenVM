@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,50 @@ def run_once(hvm: str, app: Path, home: Path, phone: bool, timeout: int, extra_a
             "cases": cases, "log": out[-20000:]}
 
 
+def run_import_check(hvm: str, work: Path, timeout: int) -> dict:
+    fixtures = ROOT / "tests/android/java"
+    images = [(fixtures / name).read_bytes() for name in ("classes.dex", "classes2.dex", "jni.dex")]
+    base, feature = work / "base.apk", work / "feature.apk"
+    with zipfile.ZipFile(base, "w", zipfile.ZIP_DEFLATED) as apk:
+        apk.writestr("AndroidManifest.xml", bytes.fromhex("0300080008000000"))
+        apk.writestr("classes2.dex", images[1])
+        apk.writestr("classes.dex", images[0])
+        for invalid in ("nested/classes.dex", "classes01.dex", "classes1.dex", "classesExtra.dex"):
+            apk.writestr(invalid, b"ignored")
+    with zipfile.ZipFile(feature, "w", zipfile.ZIP_DEFLATED) as apk:
+        apk.writestr("classes.dex", images[2])
+    split = work / "split.apks"
+    with zipfile.ZipFile(split, "w") as archive:
+        archive.write(feature, feature.name)
+        archive.write(base, base.name)
+
+    cases = []
+    for source, expected in ((base, images[:2]), (split, images)):
+        destination = work / ("installed-" + source.stem)
+        try:
+            run = subprocess.run([hvm, "import", str(source), str(destination)], capture_output=True,
+                                 text=True, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            out_text = ""
+            if isinstance(err, subprocess.TimeoutExpired):
+                for part in (err.stdout, err.stderr):
+                    if isinstance(part, bytes):
+                        out_text += part.decode("utf-8", errors="replace")
+                    elif isinstance(part, str):
+                        out_text += part
+            cases.append({"name": f"import {source.suffix} preserves canonical DEX images in order",
+                          "passed": False, "detail": f"{err}\n{out_text}".strip()})
+            continue
+        bundles = list(destination.glob("*/*.app"))
+        actual = {str(p.relative_to(bundles[0])): p.read_bytes() for p in bundles[0].rglob("*.dex")} if len(bundles) == 1 else {}
+        wanted = dict(zip(("classes.dex", "classes2.dex", "classes3.dex"), expected))
+        passed = run.returncode == 0 and actual == wanted
+        cases.append({"name": f"import {source.suffix} preserves canonical DEX images in order",
+                      "passed": passed, "detail": "" if passed else run.stderr + repr(list(actual))})
+    return {"mode": "APK import", "group": "java", "exitCode": 0, "finished": True,
+            "cases": cases, "log": ""}
+
+
 def run_java_check(work: Path, timeout: int, source: str, label: str) -> dict:
     """Run a host-side DEX check with the same C++ sources as the runtime."""
     fixtures = ROOT / "tests/android/java"
@@ -131,7 +176,12 @@ def main() -> int:
         work = Path(tmp)
         app = build_bundle(work)
         na_app = build_bundle(work, NA_SRC, NA_LIB, "NativeActivityTest.app", "NativeActivity")
+        java = ROOT / "tests/android/java"
+        shutil.copyfile(java / "native-driver.dex", na_app / "classes.dex")
+        bridge_app = build_bundle(work, java / "JniRoundTrip.c", LIB, "JniRoundTrip.app")
+        shutil.copyfile(java / "jni.dex", bridge_app / "classes.dex")
         runs = [
+            run_import_check(args.hvm, work, args.timeout),
             run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
             run_java_check(work, args.timeout, "DexExecution", "Dalvik execution"),
             run_java_check(work, args.timeout, "DexLinkage", "Dalvik class linkage and threads"),
@@ -140,6 +190,11 @@ def main() -> int:
             home = work / ("home-phone" if phone else "home")
             home.mkdir()
             runs.append(run_once(args.hvm, app, home, phone, args.timeout))
+            bridge_home = work / ("jni-home-phone" if phone else "jni-home")
+            bridge_home.mkdir()
+            runs.append(run_once(args.hvm, bridge_app, bridge_home, phone, args.timeout,
+                                 mode_suffix=" (DEX JNI round-trip)"))
+            runs[-1]["group"] = "java"
             na_home = work / ("na-home-phone" if phone else "na-home")
             na_home.mkdir()
             runs.append(run_once(args.hvm, na_app, na_home, phone, args.timeout,
