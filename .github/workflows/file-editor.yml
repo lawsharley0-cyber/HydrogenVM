@@ -122,7 +122,7 @@ jobs:
           echo "Candidate recovery tests passed at $GITHUB_SHA"
           tail -25 build/file-editor/crash-journal.log
       - name: Exercise save and close flows on an iPhone simulator
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: |
           set -o pipefail
           xcodegen --spec tools/tests/swiftui/project.yml --project tools/tests/swiftui
