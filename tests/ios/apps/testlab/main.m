@@ -96,6 +96,7 @@ static const char *kAppBuild        = "1";
 #define CASE_AM @"TL-AM"
 #define CASE_AO @"TL-AO"
 #define CASE_AP @"TL-AP"
+#define CASE_AQ @"TL-AQ"
 #define CASE_AR @"TL-AR"
 #define CASE_T  @"TL-T"
 #define CASE_U  @"TL-U"
@@ -2872,6 +2873,8 @@ static UIColor *colorForStatus(NSString *s) {
 @interface AppDelegate : UIResponder <UIApplicationDelegate>
 @property (strong, nonatomic) UIWindow *window;
 @property BOOL lifecycleTest;
+@property BOOL terminationRunLoopTest;
+@property BOOL terminationNetDone;
 @property BOOL terminationDelivered;
 @property int callbacksBeforeTermination;
 @property int callbacksAfterTermination;
@@ -2906,6 +2909,11 @@ static UIColor *colorForStatus(NSString *s) {
         [NSTimer scheduledTimerWithTimeInterval:0.001 target:self selector:@selector(lifecycleTick:) userInfo:nil repeats:YES];
         CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(lifecycleTick:)];
         [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
+        return YES;
+    }
+    if ([runCase isEqualToString:CASE_AQ]) {
+        self.terminationRunLoopTest = YES;
+        writeCheckpoint(CASE_AQ);
         return YES;
     }
 
@@ -2948,12 +2956,41 @@ static UIColor *colorForStatus(NSString *s) {
     else self.callbacksBeforeTermination++;
 }
 
+- (void)connection:(id)connection didFailWithError:(NSError *)error {
+    (void)connection;
+    (void)error;
+    self.terminationNetDone = YES;
+}
+
 - (void)applicationWillTerminate:(UIApplication *)application {
     // Opt-in watchdog regression: model a save that never returns.
     if ([[[NSProcessInfo processInfo] arguments] containsObject:@"--stall-termination"]) {
         printf("TESTLAB stalling termination\n");
         fflush(stdout);
         for (;;) { __asm__ volatile(""); }
+    }
+    if (self.terminationRunLoopTest) {
+        self.terminationDelivered = YES;
+        Class reqCls = NSClassFromString(@"NSURLRequest");
+        Class connCls = NSClassFromString(@"NSURLConnection");
+        id req = [reqCls performSelector:@selector(requestWithURL:) withObject:[NSURL URLWithString:@"http://offline-termination.invalid/ping"]];
+        id conn = [connCls performSelector:@selector(connectionWithRequest:delegate:) withObject:req withObject:self];
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:1.0];
+        while (!self.terminationNetDone && [[NSDate date] compare:deadline] == NSOrderedAscending) {
+            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+        }
+        (void)conn;
+        TLResult *r = [[TLResult alloc] initWithId:CASE_AQ version:1];
+        r.expected = @{ @"terminationNetDone": @YES };
+        r.actual = @{ @"terminationNetDone": @(self.terminationNetDone) };
+        r.status = self.terminationNetDone ? @"passed" : @"failed";
+        if (!self.terminationNetDone) r.reason = @"RunLoop did not deliver posted NSURLConnection failure during applicationWillTerminate";
+        clearCheckpoint();
+        writeResult(@[r], makeRunId());
+        printf("TESTLAB TL-AQ %s\n", r.status.UTF8String);
+        if (r.reason) printf("  reason: %s\n", r.reason.UTF8String);
+        fflush(stdout);
+        return;
     }
     if (!self.lifecycleTest) return;
     self.terminationDelivered = YES;
