@@ -189,60 +189,9 @@ void c_div(Ctx& x, GuestPtr out, int32_t n, int32_t d) {
 
 // --------------------------------------------------------------- sorting ---
 
-void c_qsort(Ctx& x, GuestPtr base, uint32_t n, uint32_t size, GuestPtr cmp) {
-    if (n < 2 || !size) return;
-    std::vector<uint32_t> idx(n), tmp(n);
-    for (uint32_t i = 0; i < n; ++i) idx[i] = i;
-    auto less = [&](uint32_t a, uint32_t b) {
-        return int32_t(x.proc.callGuest(x.cpu, cmp, {base + a * size, base + b * size})) > 0;
-    };
-    // Bottom-up merge sort: never assumes a consistent comparator, never
-    // touches the array until the end.
-    for (uint32_t w = 1; w < n; w *= 2) {
-        for (uint32_t lo = 0; lo < n; lo += 2 * w) {
-            const uint32_t mid = std::min(lo + w, n), hi = std::min(lo + 2 * w, n);
-            uint32_t i = lo, j = mid, k = lo;
-            while (i < mid && j < hi) tmp[k++] = less(idx[i], idx[j]) ? idx[j++] : idx[i++];
-            while (i < mid) tmp[k++] = idx[i++];
-            while (j < hi) tmp[k++] = idx[j++];
-        }
-        idx.swap(tmp);
-    }
-    std::vector<uint8_t> copy(size_t(n) * size);
-    std::memcpy(copy.data(), x.mem.host(base), copy.size());
-    for (uint32_t i = 0; i < n; ++i) std::memcpy(x.mem.host(base + i * size), copy.data() + size_t(idx[i]) * size, size);
-}
-void c_qsort_r(Ctx& x, GuestPtr base, uint32_t n, uint32_t size, GuestPtr thunk, GuestPtr cmp) {
-    if (n < 2 || !size) return;
-    std::vector<uint32_t> idx(n), tmp(n);
-    for (uint32_t i = 0; i < n; ++i) idx[i] = i;
-    auto less = [&](uint32_t a, uint32_t b) {
-        return int32_t(x.proc.callGuest(x.cpu, cmp, {thunk, base + a * size, base + b * size})) > 0;
-    };
-    for (uint32_t w = 1; w < n; w *= 2) {
-        for (uint32_t lo = 0; lo < n; lo += 2 * w) {
-            const uint32_t mid = std::min(lo + w, n), hi = std::min(lo + 2 * w, n);
-            uint32_t i = lo, j = mid, k = lo;
-            while (i < mid && j < hi) tmp[k++] = less(idx[i], idx[j]) ? idx[j++] : idx[i++];
-            while (i < mid) tmp[k++] = idx[i++];
-            while (j < hi) tmp[k++] = idx[j++];
-        }
-        idx.swap(tmp);
-    }
-    std::vector<uint8_t> copy(size_t(n) * size);
-    std::memcpy(copy.data(), x.mem.host(base), copy.size());
-    for (uint32_t i = 0; i < n; ++i) std::memcpy(x.mem.host(base + i * size), copy.data() + size_t(idx[i]) * size, size);
-}
-uint32_t c_bsearch(Ctx& x, GuestPtr key, GuestPtr base, uint32_t n, uint32_t size, GuestPtr cmp) {
-    uint32_t lo = 0, hi = n;
-    while (lo < hi) {
-        const uint32_t mid = lo + (hi - lo) / 2;
-        const int32_t r = int32_t(x.proc.callGuest(x.cpu, cmp, {key, base + mid * size}));
-        if (r == 0) return base + mid * size;
-        if (r < 0) hi = mid; else lo = mid + 1;
-    }
-    return 0;
-}
+// Guest ARMv7 implementations of qsort, qsort_r, and bsearch so every comparator
+// call stays inside the interpreter loop without an Engine::callGuest round trip.
+#include "GuestSort.inc"
 
 // ---------------------------------------------------------------- random ---
 
@@ -514,9 +463,17 @@ void registerLibcStdlib(Process& p) {
     p.def<&c_llabs>("_llabs");
     p.def<&c_div>("_div");
     p.def<&c_div>("_ldiv");
-    p.def<&c_qsort>("_qsort");
-    p.def<&c_qsort_r>("_qsort_r");
-    p.def<&c_bsearch>("_bsearch");
+    {
+        constexpr uint32_t kGuestSortCodeBase = 0x0FFFC000u;
+        constexpr uint32_t kGuestSortCodePage = 16384u; // 16 KB aligned for Apple Silicon host pages
+        static_assert(sizeof(kGuestSortCode) <= kGuestSortCodePage);
+        p.mem().map(kGuestSortCodeBase, kGuestSortCodePage, Memory::kProtRW);
+        std::memcpy(p.mem().host(kGuestSortCodeBase), kGuestSortCode, sizeof(kGuestSortCode));
+        p.mem().protect(kGuestSortCodeBase, kGuestSortCodePage, Memory::kProtRX);
+        p.defineData("_qsort", kGuestSortCodeBase + kGuestQsortOffset);
+        p.defineData("_qsort_r", kGuestSortCodeBase + kGuestQsortROffset);
+        p.defineData("_bsearch", kGuestSortCodeBase + kGuestBsearchOffset);
+    }
     p.def<&r_rand>("_rand");
     p.def<&r_srand>("_srand");
     p.def<&r_random>("_random");
