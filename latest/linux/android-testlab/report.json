@@ -361,6 +361,103 @@
       "log": "ok new Random(42L) constructs an instance\nok Random(42L).nextInt() matches OpenJDK 17\nok Random(42L).nextInt(bound) matches OpenJDK 17 for power-of-two and general bounds\nok Random(42L).nextLong() matches OpenJDK 17\nok Random(42L) nextBoolean/nextFloat/nextDouble match OpenJDK 17 exact IEEE-754 bits\nok Random(42L).nextBytes(byte[7]) matches OpenJDK 17 signed bytes\nok setSeed(42L) reproduces the exact initial sequence\nok Random(0L) and Random(-1L) match OpenJDK 17 including negative next(32) in nextLong\nok nextInt(bound) rejection loop advances state identically to OpenJDK 17\nok nextInt(<=0) throws IllegalArgumentException and nextBytes(null) throws NullPointerException\nok nextGaussian() matches OpenJDK 17 and setSeed clears the cached second sample\nok new Random() default constructor initializes distinct streams\ndone: 0 failure(s)\n"
     },
     {
+      "mode": "java (java.lang.Math, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "Math.abs preserves MIN_VALUE wrap and clears -0.0 sign bit",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math.min and Math.max enforce signed-zero and NaN semantics",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math.ceil and Math.floor match IEEE-754 / Java SE spec",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math.round ties toward +infinity, avoids 0.49999999999999994 double-rounding, and saturates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math elementary functions (signum, sqrt, pow, hypot, atan2, sin/cos)",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok Math.abs preserves MIN_VALUE wrap and clears -0.0 sign bit\nok Math.min and Math.max enforce signed-zero and NaN semantics\nok Math.ceil and Math.floor match IEEE-754 / Java SE spec\nok Math.round ties toward +infinity, avoids 0.49999999999999994 double-rounding, and saturates\nok Math elementary functions (signum, sqrt, pow, hypot, atan2, sin/cos)\ndone: 0 failures\n"
+    },
+    {
+      "mode": "java (java.lang core, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "Long/Integer bit helpers match Java SE counts and byte order",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Long.parseLong and Long.toString enforce radix, MIN_VALUE, and overflow",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Float canonical NaN/compare and Number boxing dispatch match Java SE",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "StringBuilder and String hash/substring/replace match Java SE",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "System.arraycopy handles overlapping intra-array shifts",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok Long/Integer bit helpers match Java SE counts and byte order\nok Long.parseLong and Long.toString enforce radix, MIN_VALUE, and overflow\nok Float canonical NaN/compare and Number boxing dispatch match Java SE\nok StringBuilder and String hash/substring/replace match Java SE\nok System.arraycopy handles overlapping intra-array shifts\ndone: 0 failures\n"
+    },
+    {
+      "mode": "java (java.util.regex and Locale, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "Pattern.compile enforces CASE_INSENSITIVE, DOTALL, Unicode blocks, lookbehind, and PatternSyntaxException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Matcher.find and Matcher.group(index) extract capturing groups",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "String.split drops trailing empties for limit 0 and String.replaceAll replaces matches",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Locale normalizes language/country casing and formats toString",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok Pattern.compile enforces CASE_INSENSITIVE, DOTALL, Unicode blocks, lookbehind, and PatternSyntaxException\nok Matcher.find and Matcher.group(index) extract capturing groups\nok String.split drops trailing empties for limit 0 and String.replaceAll replaces matches\nok Locale normalizes language/country casing and formats toString\ndone: 0 failures\n"
+    },
+    {
       "mode": "desktop",
       "exitCode": 0,
       "finished": true,
@@ -1085,7 +1182,7 @@
           "detail": ""
         }
       ],
-      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\nok sincosf(0) writes sin=0, cos=1\nok sincos(0) writes sin=0, cos=1\nok __strlen_chk returns string length\nok __strchr_chk finds first match\nok __strrchr_chk finds last match\nok __FD_SET_chk / __FD_ISSET_chk tracks fd bit\nok __open_2 + __read_chk reads file bytes\nok strtoimax parses signed 64-bit decimal\nok strtoumax parses unsigned 64-bit hex\nok scandir + alphasort lists directory entries in order\nok getentropy(32) fills buffer and >256 sets EIO\nok SL_IID_RECORD OpenSL ES symbol resolves\nok feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)\nok socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC\nok IPv4 loopback TCP and accept4 descriptor flags\nok MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN\nok offline IPv4 connect and sendto return ENETUNREACH\nok IPv6 loopback uses the 28-byte Linux sockaddr_in6\nok bionic numeric getaddrinfo places ai_addr after ai_canonname\nok AI_NUMERICHOST failure returns bionic EAI_NONAME (8)\nok bionic AI_NUMERICSERV value 8 rejects a named service\nok eventfd semaphore returns one per read and EAGAIN at zero\nok eventfd write updates poll readability\nok pipe2 descriptors inherit both requested flags\nok epoll ARM EABI payload and EPOLLONESHOT disable/rearm\nok timerfd one-shot awakens poll and reports one expiration\nok open Android scratch file for positional I/O\nok pread/pwrite and aligned 64-bit offsets preserve the descriptor position\nok MAP_PRIVATE writes are isolated and mmap offset selects a file page\nok ARM mmap2 takes a 4096-byte page index\nok sendfile updates its offset pointer while leaving input position unchanged\nok test WAV file created\nok MediaPlayer loads 100ms WAV, plays, and seeks\nok SoundPool loads, plays, stops, and unloads WAV\nok AAudio builder/stream opens, starts, writes 256 frames, and closes\ndone: 0 failure(s)\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/F6C1BE21-33CD-94ACAA52\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 72 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
+      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\nok sincosf(0) writes sin=0, cos=1\nok sincos(0) writes sin=0, cos=1\nok __strlen_chk returns string length\nok __strchr_chk finds first match\nok __strrchr_chk finds last match\nok __FD_SET_chk / __FD_ISSET_chk tracks fd bit\nok __open_2 + __read_chk reads file bytes\nok strtoimax parses signed 64-bit decimal\nok strtoumax parses unsigned 64-bit hex\nok scandir + alphasort lists directory entries in order\nok getentropy(32) fills buffer and >256 sets EIO\nok SL_IID_RECORD OpenSL ES symbol resolves\nok feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)\nok socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC\nok IPv4 loopback TCP and accept4 descriptor flags\nok MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN\nok offline IPv4 connect and sendto return ENETUNREACH\nok IPv6 loopback uses the 28-byte Linux sockaddr_in6\nok bionic numeric getaddrinfo places ai_addr after ai_canonname\nok AI_NUMERICHOST failure returns bionic EAI_NONAME (8)\nok bionic AI_NUMERICSERV value 8 rejects a named service\nok eventfd semaphore returns one per read and EAGAIN at zero\nok eventfd write updates poll readability\nok pipe2 descriptors inherit both requested flags\nok epoll ARM EABI payload and EPOLLONESHOT disable/rearm\nok timerfd one-shot awakens poll and reports one expiration\nok open Android scratch file for positional I/O\nok pread/pwrite and aligned 64-bit offsets preserve the descriptor position\nok MAP_PRIVATE writes are isolated and mmap offset selects a file page\nok ARM mmap2 takes a 4096-byte page index\nok sendfile updates its offset pointer while leaving input position unchanged\nok test WAV file created\nok MediaPlayer loads 100ms WAV, plays, and seeks\nok SoundPool loads, plays, stops, and unloads WAV\nok AAudio builder/stream opens, starts, writes 256 frames, and closes\ndone: 0 failure(s)\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/6AD85B9D-32DF-6F4324B5\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 72 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
     },
     {
       "mode": "phone (DEX JNI round-trip)",
@@ -1163,7 +1260,7 @@
           "detail": ""
         }
       ],
-      "log": "ok FindClass and RegisterNatives accept a DEX-defined class\nok native to DEX to exported and registered natives plus host class fallback\nok interpreter exception is visible to JNI\nok ExceptionClear clears the pending JNI exception\nok DEX-created int array shares writes with JNI\nok JNI-created int array shares writes with DEX\nok separate NewStringUTF allocations keep distinct DEX identities\nok object-array element identity survives mutations from both runtimes\nok throwing DEX constructor returns NULL with a pending JNI exception\nok Java Thread.start runs through Process guest workers\nok DEX collections sort, copy, and dispatch ArrayList through List\nok Map supports a null key, returns the previous value, and removes it\nok Collections reverse and swap update the ArrayList order\nok Set accepts null, rejects duplicate insertion, and removes membership\ndone: JNI round-trip\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/062E3121-33D2-9AD4FB18\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android Test Lab: 0 failure(s)\n",
+      "log": "ok FindClass and RegisterNatives accept a DEX-defined class\nok native to DEX to exported and registered natives plus host class fallback\nok interpreter exception is visible to JNI\nok ExceptionClear clears the pending JNI exception\nok DEX-created int array shares writes with JNI\nok JNI-created int array shares writes with DEX\nok separate NewStringUTF allocations keep distinct DEX identities\nok object-array element identity survives mutations from both runtimes\nok throwing DEX constructor returns NULL with a pending JNI exception\nok Java Thread.start runs through Process guest workers\nok DEX collections sort, copy, and dispatch ArrayList through List\nok Map supports a null key, returns the previous value, and removes it\nok Collections reverse and swap update the ArrayList order\nok Set accepts null, rejects duplicate insertion, and removes membership\ndone: JNI round-trip\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/BD8A9BEE-32E4-7583E30E\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android Test Lab: 0 failure(s)\n",
       "group": "java"
     },
     {
@@ -1177,7 +1274,7 @@
           "detail": ""
         }
       ],
-      "log": "ok DEX activity constructs and runs the ordered lifecycle\ndone: DEX activity\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/F5F84299-33D8-A14CB8F4\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libgdx.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android: libgdx.so (libGDX (DEX activity)), surface 1136x640\n[hvm:warn] Snapshot: the player stopped the game; the main thread is running guest code\n  main: in HydrogenVM, no guest instructions in the last 5 s, near 0x00000000\n  main's time in the last 1.0 s: 100% 0x00000000\n[hvm] still running after 1 s (stopped by --run-for)\n",
+      "log": "ok DEX activity constructs and runs the ordered lifecycle\ndone: DEX activity\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/17A0732C-32EA-7BF27C3B\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libgdx.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android: libgdx.so (libGDX (DEX activity)), surface 1136x640\n[hvm:warn] Snapshot: the player stopped the game; the main thread is running guest code\n  main: in HydrogenVM, no guest instructions in the last 5 s, near 0x00000000\n  main's time in the last 1.0 s: 100% 0x00000000\n[hvm] still running after 1 s (stopped by --run-for)\n",
       "group": "java"
     },
     {
@@ -1206,7 +1303,7 @@
           "detail": ""
         }
       ],
-      "log": "ok NativeActivity retains native JNI dispatch with bundled DEX\nok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/52FE07F0-33DD-E1B8EB6F\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\n[hvm] Android: libhvmnativeactivity.so (NativeActivity), surface 1136x640\n[hvm] GPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\n[hvm:warn] GPU: direct present unavailable; reading frames back\n"
+      "log": "ok NativeActivity retains native JNI dispatch with bundled DEX\nok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/4AA46477-32EF-BC5A4D93\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\n[hvm] Android: libhvmnativeactivity.so (NativeActivity), surface 1136x640\n[hvm] GPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\n[hvm:warn] GPU: direct present unavailable; reading frames back\n"
     }
   ]
 }
