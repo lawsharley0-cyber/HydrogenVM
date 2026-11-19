@@ -106,6 +106,10 @@ ApkManifest parseManifest(const std::vector<uint8_t>& d) {
                 }
                 if (name == "manifest" && attr == "package") m.package = rawStr;
                 if (name == "manifest" && attr == "versionName") m.versionName = rawStr;
+                if (name == "uses-sdk" && attr == "minSdkVersion") {
+                    if (dataType >= 0x10 && dataType <= 0x1F) m.minSdkVersion = int(data);
+                    else if (!rawStr.empty()) m.minSdkVersion = std::atoi(rawStr.c_str());
+                }
                 if (name == "application" && attr == "label") { if (dataType == 1) m.labelRes = data; else m.label = rawStr; }
                 if (name == "application" && attr == "icon" && dataType == 1) m.iconRes = data;
                 if (name == "activity" && !sawActivity && attr == "screenOrientation") {

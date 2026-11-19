@@ -230,7 +230,12 @@ bool isThrowableClass(std::u16string_view d) {
            d == u"Ljava/lang/UnsupportedOperationException;" || d == u"Ljava/lang/ClassCastException;" ||
            d == u"Ljava/lang/InterruptedException;" || d == u"Ljava/lang/NumberFormatException;" ||
            d == u"Ljava/lang/ArrayIndexOutOfBoundsException;" || d == u"Ljava/lang/StringIndexOutOfBoundsException;" ||
-           d == u"Ljava/lang/ArithmeticException;" || d == u"Ljava/lang/AssertionError;";
+           d == u"Ljava/lang/ArithmeticException;" || d == u"Ljava/lang/AssertionError;" ||
+           d == u"Ljava/io/IOException;" || d == u"Ljava/io/FileNotFoundException;" ||
+           d == u"Ljava/util/NoSuchElementException;" || d == u"Ljava/util/ConcurrentModificationException;" ||
+           d == u"Ljava/util/MissingResourceException;" || d == u"Ljava/util/concurrent/CancellationException;" ||
+           d == u"Ljava/util/concurrent/ExecutionException;" || d == u"Ljava/util/concurrent/TimeoutException;" ||
+           d == u"Ljava/lang/reflect/InvocationTargetException;";
 }
 
 } // namespace
@@ -720,6 +725,108 @@ std::optional<Value> CoreLang::stringMethod(Heap& heap, std::u16string_view name
                 return ref(heap.newString(std::move(out)));
             }
         }
+        if (name == u"format" &&
+            ((sig == u"(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;" && args.size() == 2) ||
+             (sig == u"(Ljava/util/Locale;Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;" && args.size() == 3))) {
+            const uint32_t fmtRef = asRef(args[args.size() - 2]);
+            const uint32_t arrRef = asRef(args[args.size() - 1]);
+            if (!fmtRef) throw JavaException{u"Ljava/lang/NullPointerException;"};
+            const std::string fmt = u16ToUtf8(heap.string(fmtRef));
+            const uint32_t nArgs = arrRef ? heap.length(arrRef) : 0;
+            uint32_t nextIdx = 0;
+            std::string out;
+            for (size_t i = 0; i < fmt.size(); ++i) {
+                if (fmt[i] != '%' || i + 1 >= fmt.size()) {
+                    out.push_back(fmt[i]);
+                    continue;
+                }
+                if (fmt[i + 1] == '%') { out.push_back('%'); ++i; continue; }
+                if (fmt[i + 1] == 'n') { out.push_back('\n'); ++i; continue; }
+                size_t j = i + 1;
+                uint32_t argIdx = nextIdx;
+                // Optional argument_index$
+                size_t digitsEnd = j;
+                while (digitsEnd < fmt.size() && fmt[digitsEnd] >= '0' && fmt[digitsEnd] <= '9') ++digitsEnd;
+                if (digitsEnd > j && digitsEnd < fmt.size() && fmt[digitsEnd] == '$') {
+                    argIdx = uint32_t(std::strtoul(fmt.substr(j, digitsEnd - j).c_str(), nullptr, 10)) - 1;
+                    j = digitsEnd + 1;
+                } else {
+                    ++nextIdx;
+                }
+                // Parse flags, width, precision
+                const size_t specStart = j;
+                while (j < fmt.size() && (fmt[j] == '-' || fmt[j] == '+' || fmt[j] == ' ' || fmt[j] == '0' || fmt[j] == ',' || fmt[j] == '(' || fmt[j] == '#')) ++j;
+                while (j < fmt.size() && fmt[j] >= '0' && fmt[j] <= '9') ++j;
+                if (j < fmt.size() && fmt[j] == '.') {
+                    ++j;
+                    while (j < fmt.size() && fmt[j] >= '0' && fmt[j] <= '9') ++j;
+                }
+                if (j >= fmt.size()) { out.push_back('%'); break; }
+                const char conv = fmt[j];
+                std::string cSpec = "%" + fmt.substr(specStart, j - specStart);
+                // Strip Java-only flags like ','
+                cSpec.erase(std::remove(cSpec.begin(), cSpec.end(), ','), cSpec.end());
+                const uint32_t elemRef = (arrRef && argIdx < nArgs) ? asRef(heap.element(arrRef, int32_t(argIdx))) : 0;
+                if (conv == 's' || conv == 'S') {
+                    std::string s = elemRef ? u16ToUtf8(formatObject(heap, elemRef)) : "null";
+                    if (conv == 'S') for (char& c : s) if (c >= 'a' && c <= 'z') c = char(c - 32);
+                    out += s;
+                } else if (conv == 'b' || conv == 'B') {
+                    bool truth = false;
+                    if (elemRef) {
+                        if (heap.typeOf(elemRef) == u"Ljava/lang/Boolean;") {
+                            std::lock_guard lock(mutex_);
+                            auto it = boxed_.find(elemRef);
+                            truth = (it != boxed_.end() && (it->second & 1u) != 0);
+                        } else {
+                            truth = true;
+                        }
+                    }
+                    out += conv == 'B' ? (truth ? "TRUE" : "FALSE") : (truth ? "true" : "false");
+                } else if (conv == 'd' || conv == 'x' || conv == 'X' || conv == 'o') {
+                    int64_t val = 0;
+                    if (elemRef) {
+                        std::lock_guard lock(mutex_);
+                        if (auto it = boxed_.find(elemRef); it != boxed_.end()) {
+                            const auto t = heap.typeOf(elemRef);
+                            val = (t == u"Ljava/lang/Long;") ? int64_t(it->second) : int64_t(int32_t(uint32_t(it->second)));
+                        }
+                    }
+                    char buf[64];
+                    const std::string pf = cSpec + "ll" + conv;
+                    std::snprintf(buf, sizeof(buf), pf.c_str(), (long long)val);
+                    out += buf;
+                } else if (conv == 'f' || conv == 'e' || conv == 'E' || conv == 'g' || conv == 'G') {
+                    double val = 0.0;
+                    if (elemRef) {
+                        std::lock_guard lock(mutex_);
+                        if (auto it = boxed_.find(elemRef); it != boxed_.end()) {
+                            const auto t = heap.typeOf(elemRef);
+                            if (t == u"Ljava/lang/Double;") val = std::bit_cast<double>(it->second);
+                            else if (t == u"Ljava/lang/Float;") val = double(std::bit_cast<float>(uint32_t(it->second)));
+                            else if (t == u"Ljava/lang/Long;") val = double(int64_t(it->second));
+                            else val = double(int32_t(uint32_t(it->second)));
+                        }
+                    }
+                    char buf[64];
+                    const std::string pf = cSpec + conv;
+                    std::snprintf(buf, sizeof(buf), pf.c_str(), val);
+                    out += buf;
+                } else if (conv == 'c' || conv == 'C') {
+                    char ch = ' ';
+                    if (elemRef) {
+                        std::lock_guard lock(mutex_);
+                        if (auto it = boxed_.find(elemRef); it != boxed_.end()) ch = char(it->second & 0xffu);
+                    }
+                    if (conv == 'C' && ch >= 'a' && ch <= 'z') ch = char(ch - 32);
+                    out.push_back(ch);
+                } else {
+                    out += elemRef ? u16ToUtf8(formatObject(heap, elemRef)) : "null";
+                }
+                i = j;
+            }
+            return ref(heap.newString(utf8ToU16(out)));
+        }
         return std::nullopt;
     }
 
@@ -1202,7 +1309,7 @@ std::optional<Value> CoreLang::enumMethod(Heap& heap, std::u16string_view name,
     return std::nullopt;
 }
 
-std::optional<Value> CoreLang::throwableMethod(Heap&, std::u16string_view name,
+std::optional<Value> CoreLang::throwableMethod(Heap& heap, std::u16string_view name,
                                                std::u16string_view sig, std::span<const Value> args) {
     if (args.empty()) return std::nullopt;
     const uint32_t self = asRef(args[0]);
@@ -1239,6 +1346,24 @@ std::optional<Value> CoreLang::throwableMethod(Heap&, std::u16string_view name,
         return ref(self);
     }
     if (name == u"addSuppressed" && sig == u"(Ljava/lang/Throwable;)V") return Value{ValueKind::Void};
+    if (name == u"getLocalizedMessage" && sig == u"()Ljava/lang/String;") return ref(data.messageRef);
+    if (name == u"printStackTrace" &&
+        (sig == u"()V" || sig == u"(Ljava/io/PrintWriter;)V" || sig == u"(Ljava/io/PrintStream;)V")) {
+        return Value{ValueKind::Void};
+    }
+    if (name == u"getStackTrace" && sig == u"()[Ljava/lang/StackTraceElement;") {
+        return ref(heap.array(u"[Ljava/lang/StackTraceElement;", 0));
+    }
+    if (name == u"toString" && sig == u"()Ljava/lang/String;") {
+        std::u16string out = heap.typeOf(self);
+        if (out.size() > 2 && out.front() == u'L' && out.back() == u';') out = out.substr(1, out.size() - 2);
+        for (auto& c : out) if (c == u'/') c = u'.';
+        if (data.messageRef) {
+            out += u": ";
+            out += heap.string(data.messageRef);
+        }
+        return ref(heap.newString(std::move(out)));
+    }
     return std::nullopt;
 }
 

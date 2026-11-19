@@ -149,20 +149,24 @@ public:
         std::lock_guard lock(references);
         if (auto it = fromJni.find(handle); it != fromJni.end()) return it->second;
         std::string cls, text;
+        bool isClassObj = false;
         size_t length = 0;
         char elem;
         {
             std::lock_guard jniLock(j.mu);
             const auto* object = j.get(handle);
             if (!object) throw FormatError("invalid JNI object reference");
-            cls = object->isClass ? "java/lang/Class" : object->cls;
+            isClassObj = object->isClass;
+            cls = object->cls;
             text = object->str;
             elem = object->elem;
             if (elem) length = elem == 'L' ? object->refs.size() : object->data.size() / elementBytes(elem);
         }
         auto& heap = machine->heap();
         uint32_t ref;
-        if (elem) {
+        if (isClassObj) {
+            ref = machine->classMirror(descriptor(cls));
+        } else if (elem) {
             if (length > INT32_MAX) throw JavaException{u"Ljava/lang/OutOfMemoryError;"};
             ref = heap.array(descriptor(cls), int32_t(length));
         } else {
@@ -191,8 +195,15 @@ public:
             out = j.newArray(elem, heap.length(reference));
             std::lock_guard jniLock(j.mu);
             if (auto* object = j.get(out)) object->cls = cls;
+        } else if (cls == "java/lang/Class") {
+            if (auto target = machine->classMirrorType(reference)) {
+                out = j.classFor(className(*target));
+            } else {
+                out = j.newObject(cls);
+            }
+        } else {
+            out = cls == "java/lang/String" ? j.newString(toMutf8(heap.string(reference))) : j.newObject(cls);
         }
-        else out = cls == "java/lang/String" ? j.newString(toMutf8(heap.string(reference))) : j.newObject(cls);
         toJni[reference] = out;
         fromJni[out] = reference;
         if (array) heap.bindArray(reference, arrayBacking(j, out, elem), true);
@@ -279,13 +290,20 @@ public:
             JMethod target;
             {
                 std::lock_guard lock(j.mu);
-                std::string type = cls;
-                for (unsigned depth = 0; depth < 64 && !type.empty(); ++depth, type = j.superOf(type)) {
-                    if (auto it = j.impls.find(type + "." + method + sig); it != j.impls.end()) {
-                        target = it->second;
-                        break;
-                    }
+                std::string startType = cls;
+                if (!stat) {
+                    if (const auto* obj = j.get(self); obj && !obj->isClass && !obj->cls.empty())
+                        startType = obj->cls;
                 }
+                auto lookup = [&](std::string type) -> JMethod {
+                    for (unsigned depth = 0; depth < 64 && !type.empty(); ++depth, type = j.superOf(type)) {
+                        if (auto it = j.impls.find(type + "." + method + sig); it != j.impls.end())
+                            return it->second;
+                    }
+                    return {};
+                };
+                target = lookup(startType);
+                if (!target && startType != cls) target = lookup(cls);
             }
             if (!target) {
                 process.reportMissing("DEX " + cls + "." + method + sig);
@@ -354,14 +372,74 @@ bool invokeActivity(Jni& j, Ctx& context, const std::string& type, jobject recei
                        name == "<init>", result)) return false;
     const auto exception = std::exchange(pending, 0u);
     if (exception) {
-        std::string description = "unknown Java exception";
-        {
-            std::lock_guard lock(j.mu);
-            if (const auto* value = j.get(exception)) description = value->cls;
+        auto& bridge = context.proc.service<Bridge>();
+        std::string description;
+        jobject cur = exception;
+        for (int depth = 0; cur && depth < 4; ++depth) {
+            std::string cls = "unknown Java exception";
+            {
+                std::lock_guard lock(j.mu);
+                if (const auto* value = j.get(cur)) cls = value->cls;
+            }
+            if (depth > 0) description += " caused by ";
+            description += cls;
+            const uint32_t dexRef = bridge.importReference(j, cur);
+            if (auto msg = bridge.lang.invoke(bridge.machine->heap(), u"Ljava/lang/Throwable;", u"getMessage",
+                                              u"()Ljava/lang/String;", false, std::array<Value, 1>{{{ValueKind::Reference, dexRef}}})) {
+                if (msg->bits) {
+                    const std::string text = toMutf8(bridge.machine->heap().string(uint32_t(msg->bits)));
+                    if (!text.empty()) description += ": " + text;
+                }
+            }
+            cur = 0;
+            if (auto cause = bridge.lang.invoke(bridge.machine->heap(), u"Ljava/lang/Throwable;", u"getCause",
+                                                u"()Ljava/lang/Throwable;", false, std::array<Value, 1>{{{ValueKind::Reference, dexRef}}})) {
+                if (cause->bits && uint32_t(cause->bits) != dexRef) cur = bridge.exportReference(j, uint32_t(cause->bits));
+            }
         }
         throw std::runtime_error("DEX activity " + type + "." + name + signature + " raised " + description);
     }
     return true;
+}
+
+bool instantiateFromJni(Jni& j, Ctx& context, const std::string& cls, const std::string& ctorSig,
+                        const std::vector<JValue>& args, jobject& out) {
+    auto& bridge = context.proc.service<Bridge>();
+    if (!bridge.machine) return false;
+    auto& machine = *bridge.machine;
+    const auto type = descriptor(cls);
+    const auto info = machine.classInfo(type);
+    if (!info.defined) return false;
+    const auto paramTypes = argTypes(ctorSig);
+    if (paramTypes.size() != args.size()) return false;
+    std::vector<Value> converted;
+    converted.reserve(args.size());
+    for (size_t i = 0; i < args.size(); ++i) converted.push_back(bridge.toDex(j, paramTypes[i], args[i]));
+    const auto execution = machine.instantiate(type, fromUtf8(ctorSig), converted);
+    if (const auto* exception = std::get_if<JavaException>(&execution)) {
+        const uint32_t ref = exception->reference ? exception->reference : machine.heap().object(exception->type);
+        pendingException(context.proc) = bridge.exportReference(j, ref);
+        out = 0;
+    } else {
+        out = jobject(bridge.toNative(j, std::get<Value>(execution)));
+    }
+    return true;
+}
+
+bool classInfoFromJni(Process& process, const std::string& cls, std::string& superCls, uint32_t& flags) {
+    auto& bridge = process.service<Bridge>();
+    if (!bridge.machine) return false;
+    const auto info = bridge.machine->classInfo(descriptor(cls));
+    if (!info.defined) return false;
+    superCls = info.superName.empty() ? std::string{} : className(info.superName);
+    flags = info.flags;
+    return true;
+}
+
+bool isAssignableFromJni(Process& process, const std::string& fromCls, const std::string& toCls) {
+    auto& bridge = process.service<Bridge>();
+    if (!bridge.machine) return fromCls == toCls;
+    return bridge.machine->isAssignable(descriptor(fromCls), descriptor(toCls));
 }
 
 } // namespace Hydrogen::Runtime::Android::Dex

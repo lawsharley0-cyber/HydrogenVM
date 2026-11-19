@@ -1387,6 +1387,10 @@ struct DexActivityDriver final : Driver {
     Jni& j;
     std::string launcher;
     jobject activity = 0;
+    jobject gl10 = 0;
+    GlSurface glSurf;
+    Surface surf;
+    bool glReady = false;
 
     DexActivityDriver(Jni& jni, std::string type) : j(jni), launcher(std::move(type)) {}
     const char* name() const override { return "libGDX (DEX activity)"; }
@@ -1400,6 +1404,17 @@ struct DexActivityDriver final : Driver {
         Dex::invokeActivity(j, x, launcher, activity, method, "()V", {});
     }
 
+    void checkPendingException(Ctx& x, const char* where) {
+        const auto thrown = std::exchange(Dex::pendingException(x.proc), 0u);
+        if (!thrown) return;
+        std::string cls = "unknown Java exception";
+        {
+            std::lock_guard lock(j.mu);
+            if (const auto* o = j.get(thrown)) cls = o->cls;
+        }
+        throw std::runtime_error(std::string("DEX ") + where + " raised " + cls);
+    }
+
     void create(Ctx& x) override {
         activity = j.newObject(launcher);
         {
@@ -1410,6 +1425,32 @@ struct DexActivityDriver final : Driver {
         require(x, "onCreate", "(Landroid/os/Bundle;)V", {0});
         lifecycle(x, "onStart");
         lifecycle(x, "onResume");
+    }
+
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        surf = s;
+        const jobject renderer = glSurfaceViewRenderer(x.proc);
+        if (!renderer || !HostGL::enabled(x.proc)) return;
+        createContext(x.proc, glSurf, 2);
+        HostGL::contextMakeCurrent(x.proc, glSurf.context);
+        attachDrawable(x.proc, x.cpu, glSurf, s.width, s.height);
+        setCurrentSurface(&glSurf);
+        gl10 = j.newObject("javax/microedition/khronos/opengles/GL10");
+        const jobject cfg = j.newObject("javax/microedition/khronos/egl/EGLConfig");
+        {
+            std::lock_guard lock(j.mu);
+            if (JObject* o = j.get(gl10)) o->permanent = true;
+            if (JObject* o = j.get(cfg)) o->permanent = true;
+        }
+        glReady = true;
+        const uint32_t onCreated = j.methodId("android/opengl/GLSurfaceView$Renderer", "onSurfaceCreated",
+            "(Ljavax/microedition/khronos/opengles/GL10;Ljavax/microedition/khronos/egl/EGLConfig;)V", false);
+        const uint32_t onChanged = j.methodId("android/opengl/GLSurfaceView$Renderer", "onSurfaceChanged",
+            "(Ljavax/microedition/khronos/opengles/GL10;II)V", false);
+        j.invoke(x, onCreated, renderer, {gl10, cfg});
+        checkPendingException(x, "Renderer.onSurfaceCreated");
+        j.invoke(x, onChanged, renderer, {gl10, uint32_t(s.width), uint32_t(s.height)});
+        checkPendingException(x, "Renderer.onSurfaceChanged");
     }
 
     void pause(Ctx& x) override {
@@ -1426,9 +1467,41 @@ struct DexActivityDriver final : Driver {
         if (!x.proc.stopping()) lifecycle(x, "onDestroy");
     }
 
-    // Java's view and rendering backends own their callbacks and EGL context.
-    void frame(Ctx&) override {}
-    void touch(Ctx&, TouchPhase, float, float, uint32_t, uint32_t) override {}
+    void frame(Ctx& x) override {
+        if (!glReady) return;
+        const jobject renderer = glSurfaceViewRenderer(x.proc);
+        if (!renderer) return;
+        drainGlSurfaceViewEvents(j, x);
+        checkPendingException(x, "GLSurfaceView.queueEvent");
+        const uint32_t onDraw = j.methodId("android/opengl/GLSurfaceView$Renderer", "onDrawFrame",
+            "(Ljavax/microedition/khronos/opengles/GL10;)V", false);
+        j.invoke(x, onDraw, renderer, {gl10});
+        checkPendingException(x, "Renderer.onDrawFrame");
+        x.proc.perf().gameSwaps++;
+        present(x.proc, x.cpu, glSurf, surf);
+    }
+
+    void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t down) override {
+        jobject listener = 0, view = 0;
+        {
+            std::lock_guard lock(j.mu);
+            listener = jobject(j.staticFields["hvm.touchListener"]);
+            view = jobject(j.staticFields["hvm.touchView"]);
+        }
+        if (!listener) return;
+        const jobject ev = makeMotionEvent(j, ph, px, py, id, down);
+        const uint32_t onTouch = j.methodId("android/view/View$OnTouchListener", "onTouch",
+            "(Landroid/view/View;Landroid/view/MotionEvent;)Z", false);
+        j.invoke(x, onTouch, listener, {view, ev});
+        checkPendingException(x, "OnTouchListener.onTouch");
+        j.remove(ev);
+    }
+
+    bool wantsExit(Ctx&) override {
+        std::lock_guard lock(j.mu);
+        return j.staticFields["hvm.activityFinished"] != 0;
+    }
+
     bool ownsGl() const override { return true; }
 };
 
