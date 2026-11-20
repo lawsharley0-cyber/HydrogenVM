@@ -15,6 +15,7 @@ public:
         std::function<bool(std::u16string_view)> hasClass;
         std::function<std::optional<Value>(std::u16string_view, std::u16string_view, std::u16string_view,
                                           std::optional<uint32_t>, std::optional<Value>)> field;
+        std::function<void()> checkMonitorStop;
     };
     explicit Machine(std::shared_ptr<ClassPath> classPath, Scheduler scheduler = {}, Host host = {});
     ~Machine();

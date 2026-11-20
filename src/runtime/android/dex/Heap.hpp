@@ -41,14 +41,17 @@ public:
     virtual void setElement(uint32_t reference, int32_t index, Value value) = 0;
     virtual void bindArray(uint32_t reference, std::shared_ptr<ArrayBacking> backing, bool copyElements) = 0;
     virtual void enter(uint32_t reference) = 0;
-    virtual void leave(uint32_t reference) = 0;
+    virtual void leave(uint32_t reference, bool requireOwner = true) = 0;
+    virtual void wait(uint32_t reference, int64_t millis, int32_t nanos) = 0;
+    virtual void notify(uint32_t reference, bool all) = 0;
     virtual bool assignable(std::u16string_view from, std::u16string_view to) const = 0;
 };
 
 class Arena final : public Heap {
 public:
     using ClassAssignable = std::function<bool(std::u16string_view, std::u16string_view)>;
-    explicit Arena(size_t byteLimit = 128 * 1024 * 1024, ClassAssignable classAssignable = {});
+    explicit Arena(size_t byteLimit = 128 * 1024 * 1024, ClassAssignable classAssignable = {},
+                   std::function<void()> checkMonitorStop = {});
     ~Arena() override;
     uint32_t object(std::u16string type) override;
     uint32_t newString(std::u16string text) override;
@@ -62,13 +65,16 @@ public:
     void setElement(uint32_t reference, int32_t index, Value value) override;
     void bindArray(uint32_t reference, std::shared_ptr<ArrayBacking> backing, bool copyElements) override;
     void enter(uint32_t reference) override;
-    void leave(uint32_t reference) override;
+    void leave(uint32_t reference, bool requireOwner = true) override;
+    void wait(uint32_t reference, int64_t millis, int32_t nanos) override;
+    void notify(uint32_t reference, bool all) override;
     bool assignable(std::u16string_view from, std::u16string_view to) const override;
 
 private:
     struct Storage;
     std::unique_ptr<Storage> storage_;
     ClassAssignable classAssignable_;
+    std::function<void()> checkMonitorStop_;
 };
 
 } // namespace Hydrogen::Runtime::Android::Dex

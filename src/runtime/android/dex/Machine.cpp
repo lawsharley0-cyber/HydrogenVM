@@ -73,7 +73,8 @@ BoundField* resolveField(LinkedClass* cls, const Symbol& key) {
 struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::State> {
     State(std::shared_ptr<ClassPath> path, Scheduler schedule, Host host)
         : path(std::move(path)), schedule(std::move(schedule)), host(std::move(host)),
-          arena(128 * 1024 * 1024, [this](auto from, auto to) { return assignable(from, to); }) {
+          arena(128 * 1024 * 1024, [this](auto from, auto to) { return assignable(from, to); },
+                this->host.checkMonitorStop) {
         if (!this->path) throw FormatError("missing DEX class path");
     }
 

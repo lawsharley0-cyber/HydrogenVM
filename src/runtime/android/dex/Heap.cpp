@@ -1,14 +1,24 @@
 #include "runtime/android/dex/Heap.hpp"
 #include "runtime/android/dex/DexFile.hpp"
 
+#include <algorithm>
 #include <bit>
+#include <chrono>
 #include <condition_variable>
+#include <list>
 #include <map>
 #include <mutex>
 #include <thread>
 
 namespace Hydrogen::Runtime::Android::Dex {
 namespace {
+
+using Clock = std::chrono::steady_clock;
+
+struct MonitorWaiter {
+    std::condition_variable condition;
+    bool notified = false;
+};
 
 struct Object {
     explicit Object(std::u16string descriptor) : type(std::move(descriptor)) {}
@@ -18,9 +28,27 @@ struct Object {
     std::shared_ptr<ArrayBacking> backing;
     std::mutex mutex;
     std::condition_variable available;
+    std::list<MonitorWaiter> waiters;
     std::thread::id owner;
     unsigned depth = 0;
 };
+
+template<class Predicate>
+void waitForMonitor(std::condition_variable& condition, std::unique_lock<std::mutex>& lock,
+                    Clock::time_point deadline, const std::function<void()>& checkStop,
+                    Predicate ready) {
+    if (!checkStop) {
+        if (deadline == Clock::time_point::max()) condition.wait(lock, ready);
+        else condition.wait_until(lock, deadline, ready);
+        return;
+    }
+    while (!ready()) {
+        checkStop();
+        const auto now = Clock::now();
+        if (now >= deadline) return;
+        condition.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(50)), ready);
+    }
+}
 
 void expectArray(const Object& object) {
     if (!object.type.starts_with(u'[')) throw FormatError("array instruction on non-array");
@@ -75,8 +103,9 @@ struct Arena::Storage {
     }
 };
 
-Arena::Arena(size_t byteLimit, ClassAssignable classAssignable)
-    : storage_(std::make_unique<Storage>(byteLimit)), classAssignable_(std::move(classAssignable)) {}
+Arena::Arena(size_t byteLimit, ClassAssignable classAssignable, std::function<void()> checkMonitorStop)
+    : storage_(std::make_unique<Storage>(byteLimit)), classAssignable_(std::move(classAssignable)),
+      checkMonitorStop_(std::move(checkMonitorStop)) {}
 Arena::~Arena() = default;
 
 uint32_t Arena::object(std::u16string type) {
@@ -188,19 +217,69 @@ void Arena::enter(uint32_t reference) {
     auto& object = storage_->get(reference);
     std::unique_lock lock(object.mutex);
     const auto self = std::this_thread::get_id();
-    object.available.wait(lock, [&] { return object.depth == 0 || object.owner == self; });
+    waitForMonitor(object.available, lock, Clock::time_point::max(), checkMonitorStop_,
+                   [&] { return object.depth == 0 || object.owner == self; });
     object.owner = self;
     ++object.depth;
 }
 
-void Arena::leave(uint32_t reference) {
+void Arena::leave(uint32_t reference, bool requireOwner) {
+    auto& object = storage_->get(reference);
+    std::lock_guard lock(object.mutex);
+    if (!object.depth || object.owner != std::this_thread::get_id()) {
+        if (requireOwner) throw JavaException{u"Ljava/lang/IllegalMonitorStateException;"};
+        return;
+    }
+    if (--object.depth == 0) {
+        object.owner = {};
+        object.available.notify_one();
+    }
+}
+
+void Arena::wait(uint32_t reference, int64_t millis, int32_t nanos) {
+    using namespace std::chrono;
+    if (millis < 0 || nanos < 0 || nanos > 999999)
+        throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
+    auto& object = storage_->get(reference);
+    std::unique_lock lock(object.mutex);
+    const auto self = std::this_thread::get_id();
+    if (!object.depth || object.owner != self)
+        throw JavaException{u"Ljava/lang/IllegalMonitorStateException;"};
+
+    const auto now = Clock::now();
+    auto deadline = Clock::time_point::max();
+    if ((millis || nanos) && millis < duration_cast<milliseconds>(deadline - now).count())
+        deadline = now + ceil<Clock::duration>(milliseconds(millis) + nanoseconds(nanos));
+
+    auto waiter = object.waiters.emplace(object.waiters.end());
+    const unsigned depth = object.depth;
+    object.depth = 0;
+    object.owner = {};
+    object.available.notify_one();
+    try {
+        waitForMonitor(waiter->condition, lock, deadline, checkMonitorStop_, [&] { return waiter->notified; });
+    } catch (...) {
+        object.waiters.erase(waiter);
+        throw;
+    }
+    object.waiters.erase(waiter);
+
+    waitForMonitor(object.available, lock, Clock::time_point::max(), checkMonitorStop_,
+                   [&] { return object.depth == 0; });
+    object.owner = self;
+    object.depth = depth;
+}
+
+void Arena::notify(uint32_t reference, bool all) {
     auto& object = storage_->get(reference);
     std::lock_guard lock(object.mutex);
     if (!object.depth || object.owner != std::this_thread::get_id())
         throw JavaException{u"Ljava/lang/IllegalMonitorStateException;"};
-    if (--object.depth == 0) {
-        object.owner = {};
-        object.available.notify_one();
+    for (auto& waiter : object.waiters) {
+        if (waiter.notified) continue;
+        waiter.notified = true;
+        waiter.condition.notify_one();
+        if (!all) break;
     }
 }
 

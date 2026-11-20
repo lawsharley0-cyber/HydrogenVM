@@ -3,12 +3,16 @@
 #include "runtime/android/dex/Machine.hpp"
 
 #include <array>
+#include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <thread>
 #include <vector>
 
 using namespace Hydrogen::Runtime::Android::Dex;
@@ -70,6 +74,94 @@ int main(int argc, char** argv) {
     vmPtr = &vm;
     auto& heap = vm.heap();
     const auto cls = u"Ltest/LangChecks;";
+
+    // JLS 17.2 specifies monitor ownership and per-object wait sets.
+    using namespace std::chrono_literals;
+    const auto observed = heap.object(u"Ljava/lang/Object;");
+    const auto other = heap.object(u"Ljava/lang/Object;");
+    auto objectCall = [&](std::u16string_view name, std::u16string_view signature,
+                          std::span<const Value> args) {
+        return lang.invoke(heap, u"Ljava/lang/Object;", name, signature, false, args);
+    };
+    auto rejectsNonOwner = [&](std::u16string_view name) {
+        try {
+            objectCall(name, u"()V", std::array{ref(observed)});
+        } catch (const JavaException& ex) {
+            return ex.type == u"Ljava/lang/IllegalMonitorStateException;";
+        }
+        return false;
+    };
+    check("Object wait, notify and notifyAll require monitor ownership",
+          rejectsNonOwner(u"wait") && rejectsNonOwner(u"notify") && rejectsNonOwner(u"notifyAll"));
+
+    std::promise<void> entered;
+    std::promise<bool> finished;
+    auto enteredFuture = entered.get_future();
+    auto finishedFuture = finished.get_future();
+    std::thread waiter([&] {
+        try {
+            heap.enter(observed);
+            heap.enter(observed);
+            entered.set_value();
+            objectCall(u"wait", u"(J)V", std::array{ref(observed), wide(2000)});
+            heap.leave(observed);
+            heap.leave(observed);
+            finished.set_value(true);
+        } catch (...) {
+            finished.set_exception(std::current_exception());
+        }
+    });
+    enteredFuture.wait();
+    heap.enter(observed);
+    heap.leave(observed);
+    heap.enter(other);
+    objectCall(u"notifyAll", u"()V", std::array{ref(other)});
+    heap.leave(other);
+    check("Object wait releases its monitor and ignores notification on another object",
+          finishedFuture.wait_for(40ms) == std::future_status::timeout);
+    heap.enter(observed);
+    objectCall(u"notify", u"()V", std::array{ref(observed)});
+    check("Object wait reacquires its monitor before returning",
+          finishedFuture.wait_for(40ms) == std::future_status::timeout);
+    heap.leave(observed);
+    const bool woke = finishedFuture.wait_for(500ms) == std::future_status::ready;
+    waiter.join();
+    check("Object notify wakes a waiter with its recursive ownership restored",
+          woke && finishedFuture.get());
+
+    heap.enter(observed);
+    const auto start = std::chrono::steady_clock::now();
+    objectCall(u"wait", u"(J)V", std::array{ref(observed), wide(25)});
+    heap.leave(observed);
+    check("Object timed wait returns after its deadline",
+          std::chrono::steady_clock::now() - start >= 25ms);
+
+    struct MonitorStopped {};
+    std::atomic<bool> stopping = false;
+    Arena cancellable(1024 * 1024, {}, [&] {
+        if (stopping.load()) throw MonitorStopped{};
+    });
+    const auto blocked = cancellable.object(u"Ljava/lang/Object;");
+    std::promise<void> acquired;
+    auto acquiredFuture = acquired.get_future();
+    auto cancelled = std::async(std::launch::async, [&] {
+        cancellable.enter(blocked);
+        acquired.set_value();
+        try {
+            cancellable.wait(blocked, 2000, 0);
+        } catch (const MonitorStopped&) {
+            return true;
+        }
+        cancellable.leave(blocked);
+        return false;
+    });
+    acquiredFuture.get();
+    cancellable.enter(blocked);
+    stopping.store(true);
+    const bool stopped = cancelled.wait_for(500ms) == std::future_status::ready;
+    cancellable.leave(blocked);
+    check("VM shutdown cancels an Object wait even while another thread holds the monitor",
+          cancelled.get() && stopped);
 
     // Bit operations on Long and Integer per Java SE spec.
     bool bitsOk = true;
