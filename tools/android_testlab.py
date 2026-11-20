@@ -248,6 +248,7 @@ def main() -> int:
         props["HydrogenVMAndroidLauncherActivity"] = "test.Launcher"
         activity_plist.write_bytes(plistlib.dumps(props))
         shutil.copyfile(java / "activity.dex", activity_app / "classes.dex")
+        unity4_app = build_bundle(work, java / "Unity4Driver.c", "libunity.so", "Unity4Driver.app", "Unity")
         runs = [
             run_import_check(args.hvm, work, args.timeout),
             run_java_check(work, args.timeout, "DexLayout", "DEX layout"),
@@ -273,6 +274,10 @@ def main() -> int:
             runs.append(run_once(args.hvm, activity_app, activity_home, phone, args.timeout,
                                  extra_args=["--run-for", "1", "--graceful"], mode_suffix=" (DEX activity)"))
             runs[-1]["group"] = "java"
+            unity4_home = work / ("unity4-home-phone" if phone else "unity4-home")
+            unity4_home.mkdir()
+            runs.append(run_once(args.hvm, unity4_app, unity4_home, phone, args.timeout,
+                                 extra_args=["--run-for", "3", "--graceful"], mode_suffix=" (Unity 4 driver)"))
             na_home = work / ("na-home-phone" if phone else "na-home")
             na_home.mkdir()
             runs.append(run_once(args.hvm, na_app, na_home, phone, args.timeout,

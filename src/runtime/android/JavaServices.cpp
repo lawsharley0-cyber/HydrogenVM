@@ -651,6 +651,14 @@ void registerJavaServices(Jni& j) {
     for (const char* n : {"startActivityIndicator", "stopActivityIndicator"})
         j.method("com/unity3d/player/UnityPlayer", n, "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
     j.method("com/unity3d/player/UnityPlayer", "getSplashMode", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    // Unity 4 asks its Java side for the window size; the player answers with
+    // nativeResize(width, height, realWidth, realHeight). The window is the whole screen.
+    j.method("com/unity3d/player/UnityPlayer", "triggerResizeCall", "()V", [](Jni& j, Ctx& x, jobject self, const auto&) {
+        const Surface s = surfaceFor(x.proc);
+        j.callNative(x, "com/unity3d/player/UnityPlayer", "nativeResize", self,
+                     {uint32_t(s.width), uint32_t(s.height), uint32_t(s.width), uint32_t(s.height)}, nullptr, "(IIII)V");
+        return JValue(0);
+    });
     for (const char* ctx : {"android/content/Context", "android/app/Activity"})
         j.method(ctx, "setRequestedOrientation", "(I)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
     // ReflectionHelper.getMethodID(class, name, signature, isStatic): a Method for FromReflectedMethod.

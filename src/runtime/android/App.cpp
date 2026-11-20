@@ -851,10 +851,19 @@ struct UnityDriver final : Driver {
         call(x, "initJni", {activity});
         call(x, "nativeInitWWW", {j.classFor("com/unity3d/player/WWW")});
     }
+    // True when libunity registered `nameSig` ("name(sig)ret") on UnityPlayer.
+    bool registered(const std::string& nameSig) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        return j.registeredNatives.count("com/unity3d/player/UnityPlayer." + nameSig) != 0;
+    }
     void surfaceReady(Ctx& x, const Surface&) override {
         const jobject surface = j.newObject("android/view/Surface");
         if (JObject* o = j.get(surface)) o->permanent = true;
-        call(x, "nativeRecreateGfxState", {0, surface});
+        // Unity 4 takes nativeRecreateGfxState(Surface); Unity 5 added a leading display index.
+        // Passing (0, surface) to Unity 4 gives it a null Surface, and its render loop then
+        // waits forever for a window (Crossy Road 0.1.9).
+        if (registered("nativeRecreateGfxState(Landroid/view/Surface;)V")) call(x, "nativeRecreateGfxState", {surface});
+        else call(x, "nativeRecreateGfxState", {0, surface});
         call(x, "nativeResume");
         call(x, "nativeFocusChanged", {1});
     }
