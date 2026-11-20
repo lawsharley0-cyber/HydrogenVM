@@ -1,5 +1,13 @@
 # Custom text input continuation — November 7, 2026
 
+November 20 follow-up. The unskipped simulator test found the toolbar item by
+identifier but reported that it was unhittable. The dismissal callback and
+keyboard disappearance both timed out. This candidate uses a native UIButton
+inside a retained UIInputView. The same test still requires keyboard appearance,
+typing, delete, Return, a hittable Done button, the dismissal callback, and
+keyboard disappearance. Verify those steps on an iPhone before closing device
+qualification.
+
 November 8 integration follow-up: main `588eebb` includes #366/#381 through
 #382 and subsequently skipped the custom keyboard case in #384. PR #390 is
 now a small accessory-only continuation on that newer main. Its first run

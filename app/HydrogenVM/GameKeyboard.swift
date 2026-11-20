@@ -35,16 +35,24 @@ struct GameKeyInputKeyboard: UIViewRepresentable {
         private var needsFocus = false
         override var canBecomeFirstResponder: Bool { active }
 
-        // UIKit queries this property while laying out and inspecting input
-        // views. Return the same installed toolbar instead of a new, unattached
-        // hierarchy whose items have no usable accessibility hit target.
-        private lazy var accessoryBar: UIToolbar = {
-            let bar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
+        // Retain the accessory, and expose a real button for touch and accessibility.
+        private lazy var accessoryBar: UIInputView = {
+            let bar = UIInputView(frame: CGRect(x: 0, y: 0, width: 320, height: 44),
+                                  inputViewStyle: .keyboard)
             bar.autoresizingMask = [.flexibleWidth]
-            let doneItem = UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))
-            doneItem.accessibilityIdentifier = "guest-keyinput-done"
-            bar.items = [UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
-                         doneItem]
+            var configuration = UIButton.Configuration.plain()
+            configuration.title = "Done"
+            let button = UIButton(configuration: configuration)
+            button.accessibilityIdentifier = "guest-keyinput-done"
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.addTarget(self, action: #selector(done), for: .touchUpInside)
+            bar.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.trailingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+                button.topAnchor.constraint(equalTo: bar.topAnchor),
+                button.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+                button.widthAnchor.constraint(greaterThanOrEqualToConstant: 60)
+            ])
             return bar
         }()
         override var inputAccessoryView: UIView? { accessoryBar }
