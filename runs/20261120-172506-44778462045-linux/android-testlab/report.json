@@ -1,0 +1,1373 @@
+{
+  "runs": [
+    {
+      "mode": "APK import",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "import .apk retains the enabled MAIN/LAUNCHER alias target",
+          "passed": true,
+          "detail": "com.example.launcher.Play"
+        },
+        {
+          "name": "import .apk preserves canonical DEX images in order",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "import .apks retains the enabled MAIN/LAUNCHER alias target",
+          "passed": true,
+          "detail": "com.example.launcher.Play"
+        },
+        {
+          "name": "import .apks preserves canonical DEX images in order",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": ""
+    },
+    {
+      "mode": "java (DEX layout, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "class definitions and superclass",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "interface, abstract and virtual method metadata",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "static encoded values and MUTF-8 NUL and surrogate pair",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "field table references",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "wide argument register count and hand-encoded code words",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "const-string instruction points at the UTF-16 value",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "typed catch followed by catch-all in code-unit coordinates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "primary lookup opens only classes.dex",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "multidex lookup loads a shared image once",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "truncated DEX fails header extent check",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "malformed method fails only when its code is read",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "overflowing ULEB128 rejected",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok class definitions and superclass\nok interface, abstract and virtual method metadata\nok static encoded values and MUTF-8 NUL and surrogate pair\nok field table references\nok wide argument register count and hand-encoded code words\nok const-string instruction points at the UTF-16 value\nok typed catch followed by catch-all in code-unit coordinates\nok primary lookup opens only classes.dex\nok multidex lookup loads a shared image once\nok truncated DEX fails header extent check\nok malformed method fails only when its code is read\nok overflowing ULEB128 rejected\ndone: 0 failure(s)\n"
+    },
+    {
+      "mode": "java (Dalvik execution, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "int add wraps at 2^31",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "int MIN_VALUE divided by -1 wraps",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "long MIN_VALUE divided by -1 wraps across a register pair",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "integer divide by zero raises ArithmeticException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "float one divided by negative zero is negative infinity",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "double negative zero survives multiplication by three",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "cmpg treats NaN as greater",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "double to long saturates positive infinity and truncates negative fractions",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "nested catch-all cleanup runs once then rethrows to the typed handler",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "throwing null raises NullPointerException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "packed switch matches and falls through",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sparse switch matches a negative key and falls through",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "instruction limit bounds a nonterminating method",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "UTF-16 string constants preserve NUL and surrogate pairs and share identity",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "fill-array-data loads signed byte elements",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "new-array defaults all elements to zero",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "out-of-range index raises ArrayIndexOutOfBoundsException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "null array raises NullPointerException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "check-cast rejects String as int array",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "every array is an Object and null is not an instance",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "arena rejects a huge Java array with OutOfMemoryError",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "two interpreter frames serialize through a recursively entered monitor",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok int add wraps at 2^31\nok int MIN_VALUE divided by -1 wraps\nok long MIN_VALUE divided by -1 wraps across a register pair\nok integer divide by zero raises ArithmeticException\nok float one divided by negative zero is negative infinity\nok double negative zero survives multiplication by three\nok cmpg treats NaN as greater\nok double to long saturates positive infinity and truncates negative fractions\nok nested catch-all cleanup runs once then rethrows to the typed handler\nok throwing null raises NullPointerException\nok packed switch matches and falls through\nok sparse switch matches a negative key and falls through\nok instruction limit bounds a nonterminating method\nok UTF-16 string constants preserve NUL and surrogate pairs and share identity\nok fill-array-data loads signed byte elements\nok new-array defaults all elements to zero\nok out-of-range index raises ArrayIndexOutOfBoundsException\nok null array raises NullPointerException\nok check-cast rejects String as int array\nok every array is an Object and null is not an instance\nok arena rejects a huge Java array with OutOfMemoryError\nok two interpreter frames serialize through a recursively entered monitor\ndone: 0 failure(s)\n"
+    },
+    {
+      "mode": "java (Dalvik class linkage and threads, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "superclass initializer runs before subclass once across DEX images",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "interface dispatch finds subclass method and invoke-super uses the parent",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "virtual dispatch uses the vtable of the actual receiver",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "platform Callable and Object calls dispatch to DEX overrides",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "a DEX class is assignable to its platform interface",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Java exception base classes participate in transitive matching",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "equal freshly allocated strings retain distinct Java identities",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "filled-new-array returns a reference through move-result-object",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "failed class initialization is reported and never rerun",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "two Java Thread.start calls contend on a class monitor and join",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "subclass-owned Thread.start and join route through unlinked Thread ancestor",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "inherited virtual and super calls on unlinked platform superclass reach host boundary",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "virtual JNI callInstance falls back to localMethod for private instance methods",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok superclass initializer runs before subclass once across DEX images\nok interface dispatch finds subclass method and invoke-super uses the parent\nok virtual dispatch uses the vtable of the actual receiver\nok platform Callable and Object calls dispatch to DEX overrides\nok a DEX class is assignable to its platform interface\nok Java exception base classes participate in transitive matching\nok equal freshly allocated strings retain distinct Java identities\nok filled-new-array returns a reference through move-result-object\nok failed class initialization is reported and never rerun\nok two Java Thread.start calls contend on a class monitor and join\nok subclass-owned Thread.start and join route through unlinked Thread ancestor\nok inherited virtual and super calls on unlinked platform superclass reach host boundary\nok virtual JNI callInstance falls back to localMethod for private instance methods\ndone: 0 failure(s)\n"
+    },
+    {
+      "mode": "java (java.util.Random, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "new Random(42L) constructs an instance",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Random(42L).nextInt() matches OpenJDK 17",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Random(42L).nextInt(bound) matches OpenJDK 17 for power-of-two and general bounds",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Random(42L).nextLong() matches OpenJDK 17",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Random(42L) nextBoolean/nextFloat/nextDouble match OpenJDK 17 exact IEEE-754 bits",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Random(42L).nextBytes(byte[7]) matches OpenJDK 17 signed bytes",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "setSeed(42L) reproduces the exact initial sequence",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Random(0L) and Random(-1L) match OpenJDK 17 including negative next(32) in nextLong",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "nextInt(bound) rejection loop advances state identically to OpenJDK 17",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "nextInt(<=0) throws IllegalArgumentException and nextBytes(null) throws NullPointerException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "nextGaussian() matches OpenJDK 17 and setSeed clears the cached second sample",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "new Random() default constructor initializes distinct streams",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok new Random(42L) constructs an instance\nok Random(42L).nextInt() matches OpenJDK 17\nok Random(42L).nextInt(bound) matches OpenJDK 17 for power-of-two and general bounds\nok Random(42L).nextLong() matches OpenJDK 17\nok Random(42L) nextBoolean/nextFloat/nextDouble match OpenJDK 17 exact IEEE-754 bits\nok Random(42L).nextBytes(byte[7]) matches OpenJDK 17 signed bytes\nok setSeed(42L) reproduces the exact initial sequence\nok Random(0L) and Random(-1L) match OpenJDK 17 including negative next(32) in nextLong\nok nextInt(bound) rejection loop advances state identically to OpenJDK 17\nok nextInt(<=0) throws IllegalArgumentException and nextBytes(null) throws NullPointerException\nok nextGaussian() matches OpenJDK 17 and setSeed clears the cached second sample\nok new Random() default constructor initializes distinct streams\ndone: 0 failure(s)\n"
+    },
+    {
+      "mode": "java (java.lang.Math, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "Math.abs preserves MIN_VALUE wrap and clears -0.0 sign bit",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math.min and Math.max enforce signed-zero and NaN semantics",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math.ceil and Math.floor match IEEE-754 / Java SE spec",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math.round ties toward +infinity, avoids 0.49999999999999994 double-rounding, and saturates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Math elementary functions (signum, sqrt, pow, hypot, atan2, sin/cos)",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok Math.abs preserves MIN_VALUE wrap and clears -0.0 sign bit\nok Math.min and Math.max enforce signed-zero and NaN semantics\nok Math.ceil and Math.floor match IEEE-754 / Java SE spec\nok Math.round ties toward +infinity, avoids 0.49999999999999994 double-rounding, and saturates\nok Math elementary functions (signum, sqrt, pow, hypot, atan2, sin/cos)\ndone: 0 failures\n"
+    },
+    {
+      "mode": "java (java.lang core, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "Object wait, notify and notifyAll require monitor ownership",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Object wait releases its monitor and ignores notification on another object",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Object wait reacquires its monitor before returning",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Object notify wakes a waiter with its recursive ownership restored",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Object timed wait returns after its deadline",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "VM shutdown cancels an Object wait even while another thread holds the monitor",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Long/Integer bit helpers match Java SE counts and byte order",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Long.parseLong and Long.toString enforce radix, MIN_VALUE, and overflow",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Float canonical NaN/compare and Number boxing dispatch match Java SE",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "StringBuilder and String hash/substring/replace match Java SE",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "System.arraycopy handles overlapping intra-array shifts",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok Object wait, notify and notifyAll require monitor ownership\nok Object wait releases its monitor and ignores notification on another object\nok Object wait reacquires its monitor before returning\nok Object notify wakes a waiter with its recursive ownership restored\nok Object timed wait returns after its deadline\nok VM shutdown cancels an Object wait even while another thread holds the monitor\nok Long/Integer bit helpers match Java SE counts and byte order\nok Long.parseLong and Long.toString enforce radix, MIN_VALUE, and overflow\nok Float canonical NaN/compare and Number boxing dispatch match Java SE\nok StringBuilder and String hash/substring/replace match Java SE\nok System.arraycopy handles overlapping intra-array shifts\ndone: 0 failures\n"
+    },
+    {
+      "mode": "java (java.util.regex and Locale, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "Pattern.compile enforces CASE_INSENSITIVE, DOTALL, Unicode blocks, lookbehind, and PatternSyntaxException",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Matcher.find and Matcher.group(index) extract capturing groups",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "String.split drops trailing empties for limit 0 and String.replaceAll replaces matches",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Locale normalizes language/country casing and formats toString",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok Pattern.compile enforces CASE_INSENSITIVE, DOTALL, Unicode blocks, lookbehind, and PatternSyntaxException\nok Matcher.find and Matcher.group(index) extract capturing groups\nok String.split drops trailing empties for limit 0 and String.replaceAll replaces matches\nok Locale normalizes language/country casing and formats toString\ndone: 0 failures\n"
+    },
+    {
+      "mode": "java (collections, reflection, and format, host)",
+      "group": "java",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "Map keySet/entrySet/Iterator/Map$Entry match Java SE semantics",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ArrayDeque, Arrays.equals([B[B), and Collections.singleton match Java SE",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "String.format and Throwable.toString/printStackTrace match Java SE",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "SecureRandom delegates to java.util.Random LCG",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Machine classMirror, classInfo, isAssignable, and instantiate work on DEX classes",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok Map keySet/entrySet/Iterator/Map$Entry match Java SE semantics\nok ArrayDeque, Arrays.equals([B[B), and Collections.singleton match Java SE\nok String.format and Throwable.toString/printStackTrace match Java SE\nok SecureRandom delegates to java.util.Random LCG\nok Machine classMirror, classInfo, isAssignable, and instantiate work on DEX classes\ndone: DexStdlib (0 failures)\n"
+    },
+    {
+      "mode": "desktop",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "sigaction(SIGUSR1=10) installs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "raise(10) runs the SIGUSR1 handler",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "blocked signal is held",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sigpending reports it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "unblocking delivers it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pthread_kill reaches another thread",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "recursive mutex (type 1) relocks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "errorcheck mutex (type 2) reports EDEADLK",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wait times out with ETIMEDOUT",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wake with no waiters returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sched_setaffinity succeeds",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps exists",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps lists mappings",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/cpuinfo reports neon",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "auxv AT_HWCAP has NEON (bit 12)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "generated code runs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "cacheflush returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "rewritten code runs the new version",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "FindClass of an unknown plugin class",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "GetStaticMethodID on the plugin",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "plugin call returns an object, no exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ToReflectedMethod/FromReflectedMethod round-trip",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its address",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its capacity",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sincosf(0) writes sin=0, cos=1",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sincos(0) writes sin=0, cos=1",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__strlen_chk returns string length",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__strchr_chk finds first match",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__strrchr_chk finds last match",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__FD_SET_chk / __FD_ISSET_chk tracks fd bit",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__open_2 + __read_chk reads file bytes",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "strtoimax parses signed 64-bit decimal",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "strtoumax parses unsigned 64-bit hex",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "scandir + alphasort lists directory entries in order",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "getentropy(32) fills buffer and >256 sets EIO",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "SL_IID_RECORD OpenSL ES symbol resolves",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "IPv4 loopback TCP and accept4 descriptor flags",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "offline IPv4 connect and sendto return ENETUNREACH",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "IPv6 loopback uses the 28-byte Linux sockaddr_in6",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "bionic numeric getaddrinfo places ai_addr after ai_canonname",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "AI_NUMERICHOST failure returns bionic EAI_NONAME (8)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "bionic AI_NUMERICSERV value 8 rejects a named service",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "eventfd semaphore returns one per read and EAGAIN at zero",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "eventfd write updates poll readability",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pipe2 descriptors inherit both requested flags",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "epoll ARM EABI payload and EPOLLONESHOT disable/rearm",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "timerfd one-shot awakens poll and reports one expiration",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "open Android scratch file for positional I/O",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pread/pwrite and aligned 64-bit offsets preserve the descriptor position",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "MAP_PRIVATE writes are isolated and mmap offset selects a file page",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ARM mmap2 takes a 4096-byte page index",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sendfile updates its offset pointer while leaving input position unchanged",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "test WAV file created",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "MediaPlayer loads 100ms WAV, plays, and seeks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "SoundPool loads, plays, stops, and unloads WAV",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "AAudio builder/stream opens, starts, writes 256 frames, and closes",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\nok sincosf(0) writes sin=0, cos=1\nok sincos(0) writes sin=0, cos=1\nok __strlen_chk returns string length\nok __strchr_chk finds first match\nok __strrchr_chk finds last match\nok __FD_SET_chk / __FD_ISSET_chk tracks fd bit\nok __open_2 + __read_chk reads file bytes\nok strtoimax parses signed 64-bit decimal\nok strtoumax parses unsigned 64-bit hex\nok scandir + alphasort lists directory entries in order\nok getentropy(32) fills buffer and >256 sets EIO\nok SL_IID_RECORD OpenSL ES symbol resolves\nok feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)\nok socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC\nok IPv4 loopback TCP and accept4 descriptor flags\nok MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN\nok offline IPv4 connect and sendto return ENETUNREACH\nok IPv6 loopback uses the 28-byte Linux sockaddr_in6\nok bionic numeric getaddrinfo places ai_addr after ai_canonname\nok AI_NUMERICHOST failure returns bionic EAI_NONAME (8)\nok bionic AI_NUMERICSERV value 8 rejects a named service\nok eventfd semaphore returns one per read and EAGAIN at zero\nok eventfd write updates poll readability\nok pipe2 descriptors inherit both requested flags\nok epoll ARM EABI payload and EPOLLONESHOT disable/rearm\nok timerfd one-shot awakens poll and reports one expiration\nok open Android scratch file for positional I/O\nok pread/pwrite and aligned 64-bit offsets preserve the descriptor position\nok MAP_PRIVATE writes are isolated and mmap offset selects a file page\nok ARM mmap2 takes a 4096-byte page index\nok sendfile updates its offset pointer while leaving input position unchanged\nok test WAV file created\nok MediaPlayer loads 100ms WAV, plays, and seeks\nok SoundPool loads, plays, stops, and unloads WAV\nok AAudio builder/stream opens, starts, writes 256 frames, and closes\ndone: 0 failure(s)\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 72 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
+    },
+    {
+      "mode": "desktop (DEX JNI round-trip)",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "FindClass and RegisterNatives accept a DEX-defined class",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "native to DEX to exported and registered natives plus host class fallback",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "interpreter exception is visible to JNI",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ExceptionClear clears the pending JNI exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "DEX-created int array shares writes with JNI",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "JNI-created int array shares writes with DEX",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "separate NewStringUTF allocations keep distinct DEX identities",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "object-array element identity survives mutations from both runtimes",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "throwing DEX constructor returns NULL with a pending JNI exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Java Thread.start runs through Process guest workers",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "DEX collections sort, copy, and dispatch ArrayList through List",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Map supports a null key, returns the previous value, and removes it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Collections reverse and swap update the ArrayList order",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Set accepts null, rejects duplicate insertion, and removes membership",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok FindClass and RegisterNatives accept a DEX-defined class\nok native to DEX to exported and registered natives plus host class fallback\nok interpreter exception is visible to JNI\nok ExceptionClear clears the pending JNI exception\nok DEX-created int array shares writes with JNI\nok JNI-created int array shares writes with DEX\nok separate NewStringUTF allocations keep distinct DEX identities\nok object-array element identity survives mutations from both runtimes\nok throwing DEX constructor returns NULL with a pending JNI exception\nok Java Thread.start runs through Process guest workers\nok DEX collections sort, copy, and dispatch ArrayList through List\nok Map supports a null key, returns the previous value, and removes it\nok Collections reverse and swap update the ArrayList order\nok Set accepts null, rejects duplicate insertion, and removes membership\ndone: JNI round-trip\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android Test Lab: 0 failure(s)\n",
+      "group": "java"
+    },
+    {
+      "mode": "desktop (DEX activity)",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "DEX activity constructs and runs the ordered lifecycle",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok DEX activity constructs and runs the ordered lifecycle\ndone: DEX activity\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libgdx.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android: libgdx.so (libGDX (DEX activity)), surface 1136x640\n[hvm:warn] Snapshot: the player stopped the game; the main thread is running guest code\n  main: in HydrogenVM, no guest instructions in the last 5 s, near 0x00000000\n  main's time in the last 1.0 s: 100% 0x00000000\n[hvm] still running after 1 s (stopped by --run-for)\n",
+      "group": "java"
+    },
+    {
+      "mode": "desktop (NativeActivity)",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "NativeActivity retains native JNI dispatch with bundled DEX",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "NativeActivity callbacks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "NativeActivity EGL draw",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "NativeActivity touch input",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok NativeActivity retains native JNI dispatch with bundled DEX\nok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\n[hvm] Android: libhvmnativeactivity.so (NativeActivity), surface 1136x640\n[hvm] GPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\n[hvm:warn] GPU: direct present unavailable; reading frames back\n"
+    },
+    {
+      "mode": "phone",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "sigaction(SIGUSR1=10) installs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "raise(10) runs the SIGUSR1 handler",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "blocked signal is held",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sigpending reports it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "unblocking delivers it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pthread_kill reaches another thread",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "recursive mutex (type 1) relocks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "errorcheck mutex (type 2) reports EDEADLK",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wait times out with ETIMEDOUT",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "futex wake with no waiters returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sched_setaffinity succeeds",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps exists",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/self/maps lists mappings",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "/proc/cpuinfo reports neon",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "auxv AT_HWCAP has NEON (bit 12)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "generated code runs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "cacheflush returns 0",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "rewritten code runs the new version",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "FindClass of an unknown plugin class",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "GetStaticMethodID on the plugin",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "plugin call returns an object, no exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ToReflectedMethod/FromReflectedMethod round-trip",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its address",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "direct buffer keeps its capacity",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sincosf(0) writes sin=0, cos=1",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sincos(0) writes sin=0, cos=1",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__strlen_chk returns string length",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__strchr_chk finds first match",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__strrchr_chk finds last match",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__FD_SET_chk / __FD_ISSET_chk tracks fd bit",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "__open_2 + __read_chk reads file bytes",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "strtoimax parses signed 64-bit decimal",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "strtoumax parses unsigned 64-bit hex",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "scandir + alphasort lists directory entries in order",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "getentropy(32) fills buffer and >256 sets EIO",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "SL_IID_RECORD OpenSL ES symbol resolves",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "IPv4 loopback TCP and accept4 descriptor flags",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "offline IPv4 connect and sendto return ENETUNREACH",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "IPv6 loopback uses the 28-byte Linux sockaddr_in6",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "bionic numeric getaddrinfo places ai_addr after ai_canonname",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "AI_NUMERICHOST failure returns bionic EAI_NONAME (8)",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "bionic AI_NUMERICSERV value 8 rejects a named service",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "eventfd semaphore returns one per read and EAGAIN at zero",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "eventfd write updates poll readability",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pipe2 descriptors inherit both requested flags",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "epoll ARM EABI payload and EPOLLONESHOT disable/rearm",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "timerfd one-shot awakens poll and reports one expiration",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "open Android scratch file for positional I/O",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "pread/pwrite and aligned 64-bit offsets preserve the descriptor position",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "MAP_PRIVATE writes are isolated and mmap offset selects a file page",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ARM mmap2 takes a 4096-byte page index",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "sendfile updates its offset pointer while leaving input position unchanged",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "test WAV file created",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "MediaPlayer loads 100ms WAV, plays, and seeks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "SoundPool loads, plays, stops, and unloads WAV",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "AAudio builder/stream opens, starts, writes 256 frames, and closes",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "HydrogenVM Android Test Lab\nok sigaction(SIGUSR1=10) installs\nok raise(10) runs the SIGUSR1 handler\nok blocked signal is held\nok sigpending reports it\nok unblocking delivers it\nok pthread_kill reaches another thread\nok recursive mutex (type 1) relocks\nok errorcheck mutex (type 2) reports EDEADLK\nok futex wait times out with ETIMEDOUT\nok futex wake with no waiters returns 0\nok sched_setaffinity succeeds\nok /proc/self/maps exists\nok /proc/self/maps lists mappings\nok /proc/cpuinfo reports neon\nok auxv AT_HWCAP has NEON (bit 12)\nok generated code runs\nok cacheflush returns 0\nok rewritten code runs the new version\nok FindClass of an unknown plugin class\nok GetStaticMethodID on the plugin\nok plugin call returns an object, no exception\nok ToReflectedMethod/FromReflectedMethod round-trip\nok direct buffer keeps its address\nok direct buffer keeps its capacity\nok sincosf(0) writes sin=0, cos=1\nok sincos(0) writes sin=0, cos=1\nok __strlen_chk returns string length\nok __strchr_chk finds first match\nok __strrchr_chk finds last match\nok __FD_SET_chk / __FD_ISSET_chk tracks fd bit\nok __open_2 + __read_chk reads file bytes\nok strtoimax parses signed 64-bit decimal\nok strtoumax parses unsigned 64-bit hex\nok scandir + alphasort lists directory entries in order\nok getentropy(32) fills buffer and >256 sets EIO\nok SL_IID_RECORD OpenSL ES symbol resolves\nok feholdexcept/fesetenv use 4-byte Bionic fenv_t and accept FE_DFL_ENV (-1)\nok socket Linux SOL_SOCKET, SO_REUSEADDR, SOCK_CLOEXEC\nok IPv4 loopback TCP and accept4 descriptor flags\nok MSG_PEEK preserves a byte and MSG_DONTWAIT returns Linux EAGAIN\nok offline IPv4 connect and sendto return ENETUNREACH\nok IPv6 loopback uses the 28-byte Linux sockaddr_in6\nok bionic numeric getaddrinfo places ai_addr after ai_canonname\nok AI_NUMERICHOST failure returns bionic EAI_NONAME (8)\nok bionic AI_NUMERICSERV value 8 rejects a named service\nok eventfd semaphore returns one per read and EAGAIN at zero\nok eventfd write updates poll readability\nok pipe2 descriptors inherit both requested flags\nok epoll ARM EABI payload and EPOLLONESHOT disable/rearm\nok timerfd one-shot awakens poll and reports one expiration\nok open Android scratch file for positional I/O\nok pread/pwrite and aligned 64-bit offsets preserve the descriptor position\nok MAP_PRIVATE writes are isolated and mmap offset selects a file page\nok ARM mmap2 takes a 4096-byte page index\nok sendfile updates its offset pointer while leaving input position unchanged\nok test WAV file created\nok MediaPlayer loads 100ms WAV, plays, and seeks\nok SoundPool loads, plays, stops, and unloads WAV\nok AAudio builder/stream opens, starts, writes 256 frames, and closes\ndone: 0 failure(s)\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/C87E86D9-333E-ADD4D7EF\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 72 imports, 0 initializers\n[hvm:warn] Missing: JNI com/hvmtest/SomePlugin.instance()Lcom/hvmtest/SomePlugin;\n[hvm] Android Test Lab: 0 failure(s)\n[hvm] exited 0 with 1 stub hits (1 distinct missing APIs); see \"missingApis\" in the report\n"
+    },
+    {
+      "mode": "phone (DEX JNI round-trip)",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "FindClass and RegisterNatives accept a DEX-defined class",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "native to DEX to exported and registered natives plus host class fallback",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "interpreter exception is visible to JNI",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "ExceptionClear clears the pending JNI exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "DEX-created int array shares writes with JNI",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "JNI-created int array shares writes with DEX",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "separate NewStringUTF allocations keep distinct DEX identities",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "object-array element identity survives mutations from both runtimes",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "throwing DEX constructor returns NULL with a pending JNI exception",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Java Thread.start runs through Process guest workers",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "DEX collections sort, copy, and dispatch ArrayList through List",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Map supports a null key, returns the previous value, and removes it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Collections reverse and swap update the ArrayList order",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "Set accepts null, rejects duplicate insertion, and removes membership",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok FindClass and RegisterNatives accept a DEX-defined class\nok native to DEX to exported and registered natives plus host class fallback\nok interpreter exception is visible to JNI\nok ExceptionClear clears the pending JNI exception\nok DEX-created int array shares writes with JNI\nok JNI-created int array shares writes with DEX\nok separate NewStringUTF allocations keep distinct DEX identities\nok object-array element identity survives mutations from both runtimes\nok throwing DEX constructor returns NULL with a pending JNI exception\nok Java Thread.start runs through Process guest workers\nok DEX collections sort, copy, and dispatch ArrayList through List\nok Map supports a null key, returns the previous value, and removes it\nok Collections reverse and swap update the ArrayList order\nok Set accepts null, rejects duplicate insertion, and removes membership\ndone: JNI round-trip\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/6E24BFF4-3343-B51A799D\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmtestlab.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android Test Lab: 0 failure(s)\n",
+      "group": "java"
+    },
+    {
+      "mode": "phone (DEX activity)",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "DEX activity constructs and runs the ordered lifecycle",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok DEX activity constructs and runs the ordered lifecycle\ndone: DEX activity\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/0612523D-3349-BBBED4E5\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libgdx.so at 0x04000000: 1 imports, 0 initializers\n[hvm] Android: libgdx.so (libGDX (DEX activity)), surface 1136x640\n[hvm:warn] Snapshot: the player stopped the game; the main thread is running guest code\n  main: in HydrogenVM, no guest instructions in the last 5 s, near 0x00000000\n  main's time in the last 1.0 s: 100% 0x00000000\n[hvm] still running after 1 s (stopped by --run-for)\n",
+      "group": "java"
+    },
+    {
+      "mode": "phone (NativeActivity)",
+      "exitCode": 0,
+      "finished": true,
+      "cases": [
+        {
+          "name": "NativeActivity retains native JNI dispatch with bundled DEX",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "NativeActivity callbacks",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "NativeActivity EGL draw",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "NativeActivity touch input",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "log": "ok NativeActivity retains native JNI dispatch with bundled DEX\nok NativeActivity callbacks\nok NativeActivity EGL draw\nok NativeActivity touch input\ndone: native_activity\nphone mode: 16 KB pages, GLES1 emulation, no /proc, case-insensitive files, 1536 MB memory, container /tmp/hvm-phone-containers/E530E040-334E-FC7221A2\n[hvm] GPU: OpenGL ES calls go to the host driver (EGL (Mesa))\n[hvm] Loaded libhvmnativeactivity.so at 0x04000000: 24 imports, 0 initializers\n[hvm] Android: libhvmnativeactivity.so (NativeActivity), surface 1136x640\n[hvm] GPU: drawable 1136x640 for renderbuffer 1 (RGBA8 storage)\n[hvm:warn] GPU: direct present unavailable; reading frames back\n"
+    }
+  ]
+}
