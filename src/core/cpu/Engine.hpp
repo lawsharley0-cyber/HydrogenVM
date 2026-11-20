@@ -6,6 +6,7 @@
 // a per-Cpu cache, and block links are published with atomics. flushCache()
 // and invalidateRange() must only be called while no guest code is running.
 #pragma once
+#include "BlockCache.hpp"
 #include "Cpu.hpp"
 #include "../memory/GuestArena.hpp"
 #include <atomic>
@@ -188,6 +189,12 @@ public:
     struct Stats { uint64_t blocks_decoded = 0, guest_insns_decoded = 0, ops_emitted = 0; };
     Stats stats() const { std::lock_guard<std::mutex> lk(mu_); return stats_; }
 
+    // Persistent decoded-block cache (Phase E1). Pure Op data + source-byte hashes,
+    // no host pointers. Loaded lazily and verified against live guest bytes on first use.
+    size_t loadBlockCache(const std::string& path);
+    size_t saveBlockCache(const std::string& path);
+    BlockCacheStats blockCacheStats() const { std::lock_guard<std::mutex> lk(mu_); return diskCacheStats_; }
+
 private:
     void recordHleState(Cpu& c, uint32_t index, bool sampleRegisters = true);
     size_t faultArenaSlot_ = size_t(-1);
@@ -208,6 +215,8 @@ private:
 
     Memory::GuestArena& mem_;
     std::unordered_map<uint32_t, std::unique_ptr<Block>> blocks_;
+    std::unordered_map<uint32_t, CachedBlock> diskCache_;
+    BlockCacheStats diskCacheStats_{};
     std::vector<std::unique_ptr<Block>> retired_;   // retireRange: kept, links may reach them
     std::unordered_map<uint32_t, std::vector<uint32_t>> pageBlocks_;   // 4 KB page -> keys of blocks over it
     std::unordered_map<uint32_t, EntryObserver> entryObservers_;

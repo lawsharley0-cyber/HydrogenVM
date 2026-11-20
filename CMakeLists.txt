@@ -16,6 +16,7 @@ file(GLOB_RECURSE HVM_RUNTIME_SOURCES CONFIGURE_DEPENDS src/runtime/*.cpp)
 add_library(hvm_core STATIC
   src/core/memory/GuestArena.cpp
   src/core/cpu/Engine.cpp
+  src/core/cpu/BlockCache.cpp
   src/core/cpu/QuickSave.cpp
   src/core/cpu/DecodeArm.cpp
   src/core/cpu/DecodeThumb.cpp
@@ -73,7 +74,7 @@ target_compile_options(hvm_core PRIVATE -Wall -Wextra -Wno-unused-parameter -fop
 
 add_executable(hvm_cpudiff tests/runner/CpuDiff.cpp)
 target_link_libraries(hvm_cpudiff PRIVATE hvm_core)
-add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/HostFaultTests.cpp tests/runner/ThreadProgressTests.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/MsgSendTests.cpp tests/runner/GuestSortTests.cpp tests/runner/QuickSaveTests.cpp tests/runner/PageProtectionTests.cpp tests/runner/SuspendTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/runner/ArenaPoolTests.cpp tests/host/minimp3_hwcap_test.cpp)
+add_executable(hvm_tests tests/runner/TestRunner.cpp tests/runner/HostFaultTests.cpp tests/runner/ThreadProgressTests.cpp tests/runner/GuestCallBoundaryTests.cpp tests/runner/MsgSendTests.cpp tests/runner/GuestSortTests.cpp tests/runner/BlockCacheTests.cpp tests/runner/QuickSaveTests.cpp tests/runner/PageProtectionTests.cpp tests/runner/SuspendTests.cpp tests/runner/ThreadLifetimeTests.cpp tests/runner/ArenaPoolTests.cpp tests/host/minimp3_hwcap_test.cpp)
 add_executable(hvm_host_fault_tests tests/runner/HostFaultTests.cpp)
 target_link_libraries(hvm_host_fault_tests PRIVATE hvm_core)
 add_executable(hvm_thread_progress_tests tests/runner/ThreadProgressTests.cpp)

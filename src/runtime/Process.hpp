@@ -58,6 +58,7 @@ struct ProcessConfig {
     // NSTimers of 1/50 s to 1/20 s (a timer-driven 30 fps game loop) every 1/60 s. A game that
     // ties its game speed to the frame count, rather than to elapsed time, runs faster with it.
     bool unlockFrameRate = false;
+    std::string blockCachePath; // optional Phase E1 persistent decoded-block cache file
     // Phone mode (bench only: hvm run --phone): behave like the iPhone where it differs from a
     // Linux host. No /proc or /sys, case-insensitive file lookups (APFS), and a guest memory
     // budget past which the game is closed (as iOS would). The CLI adds 16 KB host pages,
