@@ -110,8 +110,6 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic) BOOL useBlockCache;
 /// Phase E2: per-game HD resolution multiplier (1 = native, 2 = 2x, 3 = 3x; default 1).
 @property (nonatomic) NSInteger resolutionScale;
-/// Phase E4: capture a checksummed guest-arena + CPU quick-save snapshot to `path`.
-- (BOOL)saveQuickSnapshotToPath:(NSString *)path;
 /// Test runs: check every GL call for errors and count draws (slower). Read the
 /// results from diagnostics (glErrors, glDraws, glEmptyPresents, glLastFrameDraws)
 /// and glErrorLog. Set before start.

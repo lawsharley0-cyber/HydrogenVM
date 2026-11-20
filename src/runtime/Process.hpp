@@ -186,9 +186,6 @@ public:
     int run();
     // From any thread: stop all guest threads soon.
     void requestStop();
-    // Phase E4: suspend guest threads at a safepoint, write a checksummed quick-save
-    // snapshot of mapped guest pages + CPU states, and resume guest threads.
-    bool saveQuickSnapshot(const std::string& path);
 
     // App lifecycle, from any host thread (the iOS app calls these when the user leaves a
     // game or HydrogenVM goes to the background). UIKit delivers the matching delegate

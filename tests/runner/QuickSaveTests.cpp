@@ -71,6 +71,16 @@ int runQuickSaveTests(const std::function<void(bool, const char*)>& check) {
            "quick-save writes sparse guest pages and CPU state atomically");
     }
 
+    // An oversized snapshot must fail before reading pages or replacing the prior save.
+    {
+        GuestArena arena;
+        constexpr uint32_t first = GuestArena::kGuestPageSize;
+        constexpr uint32_t oversized = (1u << 30) + GuestArena::kGuestPageSize;
+        arena.map(first, oversized, kProtRead);
+        ck(!saveQuickSnapshot(snapPath, arena, {}),
+           "quick-save rejects more than 1 GiB and retains the prior snapshot");
+    }
+
     // 2. Restore into a completely fresh GuestArena + Engine + Cpu and finish execution!
     {
         GuestArena arena;

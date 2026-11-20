@@ -80,8 +80,8 @@ bool saveQuickSnapshot(const std::string& path,
         const uint8_t prot = mem.protAt(addr);
         // Only snapshot readable/accessible pages (skip PROT_NONE guard pages).
         if ((prot & Memory::kProtRead) == 0) continue;
+        if (pages.size() == kMaxSavedPages) return false;
         pages.push_back(PageRecordHeader{addr, uint32_t(prot)});
-        if (pages.size() >= kMaxSavedPages) break;
     }
 
     std::vector<QuickSaveThreadState> tstates;
