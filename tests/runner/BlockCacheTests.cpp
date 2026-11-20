@@ -106,6 +106,29 @@ int runBlockCacheTests(const std::function<void(bool, const char*)>& check) {
            "block cache detects modified guest code via hash and re-decodes safely");
     }
 
+    // Damage an Op record while keeping the original guest code and header.
+    {
+        std::fstream f(cachePath, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekg(-1, std::ios::end);
+        char byte = 0;
+        f.read(&byte, 1);
+        f.seekp(-1, std::ios::end);
+        f.put(char(byte ^ 1));
+        f.close();
+
+        GuestArena arena;
+        loadCode(arena);
+        Engine eng(arena);
+        const auto loaded = eng.loadBlockCache(cachePath);
+        ck(loaded == 0, "block cache rejects a damaged Op payload with unchanged guest code");
+        if (loaded == 0) {
+            Cpu cpu;
+            cpu.r[kSP] = kStack - 16;
+            ck(uint32_t(eng.callGuest(cpu, kThumb | 1u, {5})) == 24,
+               "block cache falls back to normal decoding after payload corruption");
+        }
+    }
+
     // 4. Corrupt cache file must be rejected cleanly.
     {
         {

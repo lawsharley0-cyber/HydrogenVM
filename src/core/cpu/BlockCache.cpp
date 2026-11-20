@@ -14,7 +14,7 @@ namespace Hydrogen::CPU {
 namespace {
 
 constexpr uint32_t kCacheMagic = 0x43425648u; // "HVBC"
-constexpr uint32_t kCacheVersion = 1u;
+constexpr uint32_t kCacheVersion = 2u;
 constexpr uint32_t kMaxCachedBlocks = 250000u;
 constexpr uint32_t kMaxOpsPerBlock = 4096u;
 constexpr uint32_t kMaxCodeBytesPerBlock = 16384u;
@@ -229,8 +229,14 @@ struct BlockHeader {
     uint32_t guest_insns;
     uint32_t opCount;
     uint64_t codeHash;
+    uint64_t recordHash;
 };
-static_assert(sizeof(BlockHeader) == 24, "BlockCache BlockHeader size");
+static_assert(sizeof(BlockHeader) == 32, "BlockCache BlockHeader size");
+
+uint64_t blockRecordHash(const BlockHeader& header, const std::vector<SerializedOp>& ops) {
+    const auto headerHash = fnv1a64(&header, offsetof(BlockHeader, recordHash));
+    return fnv1a64(ops.data(), ops.size() * sizeof(SerializedOp), headerHash);
+}
 
 } // namespace
 
@@ -238,10 +244,10 @@ uint64_t hashGuestCode(const Memory::GuestArena& mem, uint32_t start, uint32_t e
     if (end <= start) return 0;
     const uint32_t len = end - start;
     if (len > kMaxCodeBytesPerBlock) return 0;
-    // Check every guest page touched by [start, end) is mapped before reading.
+    // A mapped page can still be inaccessible. Decline to cache code we cannot read.
     constexpr uint32_t kPage = Memory::GuestArena::kGuestPageSize;
     for (uint32_t p = start & ~(kPage - 1u); p < end; p += kPage) {
-        if (!mem.isMapped(p)) return 0;
+        if (!mem.isMapped(p) || !(mem.protAt(p) & Memory::kProtRead)) return 0;
         if (p > 0xFFFFFFFFu - kPage) break;
     }
     return fnv1a64(mem.base() + start, len);
@@ -301,6 +307,7 @@ bool saveBlockCacheFile(const std::string& path,
         bh.guest_insns = rec.guest_insns;
         bh.opCount = uint32_t(rec.ops.size());
         bh.codeHash = rec.codeHash;
+        bh.recordHash = blockRecordHash(bh, rec.ops);
         out.write(reinterpret_cast<const char*>(&bh), sizeof(bh));
         out.write(reinterpret_cast<const char*>(rec.ops.data()),
                   std::streamsize(rec.ops.size() * sizeof(SerializedOp)));
@@ -355,6 +362,7 @@ bool loadBlockCacheFile(const std::string& path,
             out.clear();
             return false;
         }
+        if (blockRecordHash(bh, rec.ops) != bh.recordHash) { out.clear(); return false; }
         for (const auto& sop : rec.ops) {
             if (sop.handlerId >= reg.byId.size()) { out.clear(); return false; }
         }
