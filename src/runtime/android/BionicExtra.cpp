@@ -596,6 +596,21 @@ int32_t m_fesetexceptflag(Ctx& x, GuestPtr in, int32_t mask) {
     return 0;
 }
 
+// bionic's math.h (from FreeBSD) numbers the classes as bits: FP_INFINITE 0x01, FP_NAN 0x02,
+// FP_NORMAL 0x04, FP_SUBNORMAL 0x08, FP_ZERO 0x10. The iOS libm answers Darwin's 1..5, where
+// FP_ZERO is 3; PhysX in Unity 4 tests `__fpclassifyf(x) & 3` and took every zero as not finite.
+template <typename T> int32_t bionicFpClass(T v) {
+    switch (std::fpclassify(v)) {
+    case FP_INFINITE: return 0x01;
+    case FP_NAN: return 0x02;
+    case FP_SUBNORMAL: return 0x08;
+    case FP_ZERO: return 0x10;
+    default: return 0x04;
+    }
+}
+int32_t m_fpclassifyf(Ctx&, float v) { return bionicFpClass(v); }   // classified as a float: a subnormal float is a normal double
+int32_t m_fpclassifyd(Ctx&, double v) { return bionicFpClass(v); }
+
 // ARM run-time ABI division helpers (RTABI section 4.3). Bionic's libc.so exports them for code
 // not linked against libgcc. Quotient in r0 (r0:r1 for 64 bits), remainder in r1 (r2:r3).
 // Division by zero gives a zero quotient, as the ARMv7 UDIV/SDIV instructions do; the most
@@ -649,6 +664,10 @@ void registerBionicExtra(Process& p) {
     R(s_usableSize, "malloc_usable_size", "the heap block's size");
     R(s_assert, "__assert", "stops the game with the assertion");
     R(s_assert2, "__assert2", "stops the game with the assertion");
+    R(m_fpclassifyf, "__fpclassifyf", "bionic class bits (FP_ZERO 0x10), not Darwin's numbers");
+    R(m_fpclassifyd, "__fpclassifyd", "bionic class bits (FP_ZERO 0x10), not Darwin's numbers");
+    R(m_fpclassifyd, "__fpclassify", "bionic class bits (FP_ZERO 0x10), not Darwin's numbers");
+    R(m_fpclassifyd, "__fpclassifyl", "bionic class bits (long double is double on ARM)");
     R(m_isfinite, "__isfinite", "host isfinite");
     R(m_isfinitef, "__isfinitef", "host isfinite");
     R(m_isnan, "isnan", "host isnan");

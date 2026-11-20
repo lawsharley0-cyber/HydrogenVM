@@ -167,9 +167,16 @@ void fmodThread(Ctx& x, uint32_t self) {
     Jni& j = jni(x.proc);
     const std::string kF = "org/fmod/FMODAudioDevice";
     const std::string runKey = "hvm.fmod.running." + std::to_string(self);
+    // The value is the start() this thread belongs to: a stop() then start() (Unity's
+    // restartFMODAudioDevice) ends this thread instead of leaving two of them mixing.
+    uint64_t generation;
+    {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        generation = j.staticFields[runKey];
+    }
     auto running = [&] {
         std::lock_guard<std::recursive_mutex> lk(j.mu);
-        return j.staticFields[runKey] != 0 && !x.proc.stopping();
+        return generation != 0 && j.staticFields[runKey] == generation && !x.proc.stopping();
     };
     auto info = [&](uint32_t what) {
         JValue r = 0;
@@ -651,6 +658,19 @@ void registerJavaServices(Jni& j) {
     for (const char* n : {"startActivityIndicator", "stopActivityIndicator"})
         j.method("com/unity3d/player/UnityPlayer", n, "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
     j.method("com/unity3d/player/UnityPlayer", "getSplashMode", "()I", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    // UnityPlayer.restartFMODAudioDevice(): its FMODAudioDevice stopped and started again (the
+    // driver keeps the device it started in "hvm.unity.fmod").
+    j.method("com/unity3d/player/UnityPlayer", "restartFMODAudioDevice", "()V", [](Jni& j, Ctx& x, jobject, const auto&) {
+        jobject device;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            device = jobject(j.staticFields["hvm.unity.fmod"]);
+        }
+        if (!device) return JValue(0);
+        j.invoke(x, j.methodId("org/fmod/FMODAudioDevice", "stop", "()V", false), device, {});
+        j.invoke(x, j.methodId("org/fmod/FMODAudioDevice", "start", "()V", false), device, {});
+        return JValue(0);
+    });
     // Unity 4 asks its Java side for the window size; the player answers with
     // nativeResize(width, height, realWidth, realHeight). The window is the whole screen.
     j.method("com/unity3d/player/UnityPlayer", "triggerResizeCall", "()V", [](Jni& j, Ctx& x, jobject self, const auto&) {
@@ -732,7 +752,7 @@ void registerJavaServices(Jni& j) {
         {
             std::lock_guard<std::recursive_mutex> lk(j.mu);
             if (j.staticFields[runKey]) return JValue(0);
-            j.staticFields[runKey] = 1;
+            j.staticFields[runKey] = ++j.staticFields["hvm.fmod.starts." + std::to_string(self)];
             if (JObject* o = j.get(self)) o->permanent = true;
         }
         // FMOD Ex of Unity 4.0/4.1 keeps this device and its methods in fmodInitJni(), which the

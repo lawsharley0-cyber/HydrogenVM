@@ -871,11 +871,21 @@ struct UnityDriver final : Driver {
         if (registered("initJni()V")) call(x, "initJni");
         else call(x, "initJni", {activity});
         call(x, "nativeInitWWW", {j.classFor("com/unity3d/player/WWW")});
-        if (glSurfaceView) {
-            // Activity.onResume -> UnityPlayer.resume() -> h(): new FMODAudioDevice().start().
-            // Later players create the device from native code themselves.
+        bool javaFmod;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            javaFmod = j.registeredNatives.count("org/fmod/FMODAudioDevice.fmodInitJni()I") != 0;
+        }
+        if (javaFmod) {
+            // Unity 4 with FMOD's Java output (Crossy Road, Subway Surfers): Activity.onResume ->
+            // UnityPlayer.resume() makes a FMODAudioDevice and starts it. Players without
+            // fmodInitJni create their audio output from native code themselves.
             const jobject fmod = j.newObject("org/fmod/FMODAudioDevice");
-            if (JObject* o = j.get(fmod)) o->permanent = true;
+            {
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                if (JObject* o = j.get(fmod)) o->permanent = true;
+                j.staticFields["hvm.unity.fmod"] = fmod;
+            }
             j.invoke(x, j.methodId("org/fmod/FMODAudioDevice", "start", "()V", false), fmod, {});
         }
     }

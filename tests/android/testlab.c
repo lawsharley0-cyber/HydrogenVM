@@ -466,6 +466,22 @@ static void test_aeabi_div(void) {
           sl / sld == -1428571428ll && sl % sld == -4, "low quotient", (long)(sl / sld));
 }
 
+/* bionic's math.h (from FreeBSD) numbers the classes as bits: FP_INFINITE 0x01, FP_NAN 0x02,
+   FP_NORMAL 0x04, FP_SUBNORMAL 0x08, FP_ZERO 0x10, unlike Darwin's 1..5. PhysX in Unity 4 tests
+   `__fpclassifyf(x) & 3` for "not finite"; with Darwin's FP_ZERO (3) every zero failed. */
+int __fpclassifyf(float);
+int __fpclassifyd(double);
+static void test_fpclassify(void) {
+    volatile float zero = 0.0f, one = 1.0f, tiny = 1e-40f, huge = 3e38f;
+    volatile float inf = huge * 10.0f, nan = inf - inf;
+    volatile double dzero = 0.0, done = 1.0;
+    check("bionic __fpclassifyf: zero 0x10, normal 0x04, subnormal 0x08, infinite 0x01, NaN 0x02",
+          __fpclassifyf(zero) == 0x10 && __fpclassifyf(one) == 0x04 && __fpclassifyf(tiny) == 0x08 &&
+          __fpclassifyf(inf) == 0x01 && __fpclassifyf(nan) == 0x02, "zero", __fpclassifyf(zero));
+    check("bionic __fpclassifyd: zero 0x10, normal 0x04", __fpclassifyd(dzero) == 0x10 && __fpclassifyd(done) == 0x04,
+          "zero", __fpclassifyd(dzero));
+}
+
 static void test_soinfo(void) {
     const unsigned char* si = dlopen("libc.so", 0);
     const unsigned u = (unsigned)si;
@@ -506,6 +522,7 @@ int hvm_test_main(JNIEnv* env, void* vm) {
     test_phase_b3();
     test_audio_apis(env);
     test_aeabi_div();
+    test_fpclassify();
     test_soinfo();
     say("done: "); num(failures); say(" failure(s)\n");
     return failures;
