@@ -1,12 +1,21 @@
 """tools/nightly/compare.py: classifying a night's run and spotting what got worse."""
+import io
+import json
 import sys
+import tempfile
+from contextlib import redirect_stdout
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "nightly"))
 
+import android_gaps  # noqa: E402
 import compare  # noqa: E402
+import fix_agent  # noqa: E402
+import nightly  # noqa: E402
 
 RUNNING = {"perf": {"framesPresented": 500, "timeToFirstFrameMs": 1200}, "mixer": {"audibleFrames": 9000},
            "missingApis": [], "defaultedApis": [{"name": "placeholder JNI a/B.c()V"}]}
@@ -66,6 +75,39 @@ class CompareTests(unittest.TestCase):
 
 
 class MultiFolderAndSchemaTests(unittest.TestCase):
+    def test_real_ledger_and_nightly_output_feed_the_repair_planner(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "example.apk").touch()
+            binary = root / "hvm"
+            binary.touch()
+            state = root / "state"
+            state.mkdir()
+            latest = state / "latest.json"
+            latest.write_text(json.dumps(night(game("example.apk"))), encoding="utf-8")
+            ledger = root / "ledger.json"
+            ledger.write_text(json.dumps(android_gaps.build_ledger([{
+                "package": "com.test.example",
+                "engine": "fixture",
+                "support": "driver",
+                "nativeMissing": [{"symbol": "missing_fixture_api"}],
+                "runtimeMissing": {
+                    "native": [],
+                    "jni": [{"class": "test/Class", "name": "start", "sig": "()V"}],
+                },
+            }])), encoding="utf-8")
+            crashed = {**game("example.apk", "crash"), "detail": "fixture crashed"}
+            argv = ["nightly", "--fixtures", str(root), "--hvm", str(binary), "--state", str(state)]
+            with patch.object(nightly, "run_game", return_value=crashed), \
+                 patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()):
+                code = nightly.main()
+            self.assertEqual(code, 1)
+            candidates = fix_agent.load_candidates(ledger_path=ledger, nightly_path=latest)
+            self.assertCountEqual([c.key for c in candidates],
+                                  ["regression:example.apk:runs → crash",
+                                   "gap:missing_fixture_api", "gap:test/Class.start()V"])
+            self.assertEqual(candidates[0].evidence["detail"], "fixture crashed")
+
     def test_compat_status_and_engine(self):
         r = compare.classify({**RUNNING, "engine": "Unity (Mono)"}, 0, "")
         self.assertEqual(r["compatStatus"], "Boots")

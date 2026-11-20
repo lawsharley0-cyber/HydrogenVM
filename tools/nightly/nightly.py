@@ -187,6 +187,7 @@ def main() -> int:
     status = {"schemaVersion": 1, "date": now.isoformat(timespec="seconds"), "commit": git_commit(ROOT),
               "seconds": args.seconds, "games": results}
     summary = compare.compare(previous, status, compare.screenshot_difference)
+    status["regressions"] = summary["regressions"]
     markdown = compare.summary_markdown(summary)
 
     (night / "status.json").write_text(json.dumps(status, indent=2))
