@@ -175,7 +175,6 @@ final class RunModel {
         s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
         s.unlockFrameRate = Self.unlocksFrameRate(for: app.info.bundleIdentifier)
         s.useBlockCache = Self.usesFastLaunchCache(for: app.info.bundleIdentifier)
-        s.resolutionScale = Self.usesHDResolution(for: app.info.bundleIdentifier) ? 2 : 1
         if let fallback {
             s.safeModeFallback = fallback
             switch fallback {
@@ -435,18 +434,6 @@ final class RunModel {
         let d = UserDefaults.standard
         if d.object(forKey: fastLaunchCacheKey(bundleID)) != nil { return d.bool(forKey: fastLaunchCacheKey(bundleID)) }
         return true
-    }
-    nonisolated static func hdResolutionKey(_ bundleID: String) -> String { "hdResolution.\(bundleID)" }
-    nonisolated static func usesHDResolution(for bundleID: String) -> Bool {
-        UserDefaults.standard.bool(forKey: hdResolutionKey(bundleID))
-    }
-
-    func quickSave(homeURL: URL) -> Bool {
-        guard let s = session, running, !closing else { return false }
-        let dir = homeURL.appendingPathComponent("Library/HydrogenVM", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let snap = dir.appendingPathComponent("quicksave.hvqs").path(percentEncoded: false)
-        return s.saveQuickSnapshot(toPath: snap)
     }
 
     private func syncOrientation() {
@@ -755,7 +742,6 @@ struct RunView: View {
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
-    @State private var quickSaved = false
     @State private var editingControllerTargets = false
     @State private var overrideOrientation: GuestOrientation?
     /// Display mode for this game; the global default lives in the library's Options menu.
@@ -901,13 +887,13 @@ struct RunView: View {
                 }
             }
 
-            // Collapsible Floating Glassmorphic In-Game HUD Pill in Top Corner
-            // Not drawn at all unless the setting is on or the player held three fingers down.
+        }
+        .overlay(alignment: .topTrailing) {
             if showDebugOverlay || overlay.visible {
                 floatingHUDPill
+                    .padding(.horizontal, 16)
                     .padding(.top, 16)
                     .padding(.bottom, hudExpanded ? 16 : 0)
-                    .padding(.trailing, 16)
             }
         }
         .statusBarHidden(true)
@@ -1138,22 +1124,6 @@ struct RunView: View {
                         .disabled(!model.running || model.closing)
                         .accessibilityIdentifier("player-pause")
 
-                        Button {
-                            if model.quickSave(homeURL: app.homeURL) {
-                                quickSaved = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { quickSaved = false }
-                            }
-                        } label: {
-                            Label(quickSaved ? "Saved" : "Quick Save",
-                                  systemImage: quickSaved ? "checkmark.circle.fill" : "square.and.arrow.down")
-                                .font(.caption.weight(.medium))
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(quickSaved ? .green : .blue)
-                        .controlSize(.small)
-                        .disabled(!model.running || model.closing)
-                        .accessibilityIdentifier("player-quicksave")
-
                         if app.info.isAndroid {
                             Button {
                                 model.pressBackButton()
@@ -1192,12 +1162,14 @@ struct RunView: View {
                             confirmInspect = true
                         } label: {
                             Label("Save, Stop & Inspect Files", systemImage: "folder.fill")
+                                .labelStyle(.iconOnly)
                                 .font(.caption.weight(.semibold))
                         }
                         .buttonStyle(.bordered)
                         .tint(.blue)
                         .controlSize(.small)
                         .disabled(model.closing)
+                        .accessibilityLabel("Save, Stop & Inspect Files")
                         .accessibilityIdentifier("player-inspect")
                     }
                     .fixedSize(horizontal: false, vertical: true)
@@ -1333,8 +1305,11 @@ struct RunView: View {
                     )
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
                 }
+                .buttonStyle(.plain)
+                .fixedSize()
                 .accessibilityIdentifier("player-controls")
                 .accessibilityLabel("Player Controls")
+                .accessibilityValue(activityLabel)
                 .transition(.scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
             }
         }
@@ -1342,6 +1317,7 @@ struct RunView: View {
 
     private var activityLabel: String {
         if model.closing { return "Saving…" }
+        guard model.running else { return "Stopped" }
         switch model.activity.phase {
         case .active: return "Running"
         case .pausing: return "Pausing…"
