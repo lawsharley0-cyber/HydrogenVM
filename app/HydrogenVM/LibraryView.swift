@@ -562,6 +562,10 @@ struct LibraryView: View {
     @State private var testingAllGames = false
     /// A `hydrogenvm://run/<id>` link (Home Screen icon) waiting to be opened.
     @State private var router = LaunchRouter.shared
+    /// "icons": the Home-screen grid (default); "list": one row per game.
+    @AppStorage("library.layout") private var layout = "icons"
+    /// Bundle ids of the games played last, newest first (RecentlyPlayed).
+    @AppStorage(RecentlyPlayed.key) private var recentRaw = ""
 
     var body: some View {
         NavigationStack {
@@ -583,6 +587,8 @@ struct LibraryView: View {
                     }
                     .foregroundStyle(Gloss.ink)
                     }
+                } else if layout == "icons" {
+                    iconGrid
                 } else {
                     VStack(spacing: 0) {
                         if !store.importItems.isEmpty {
@@ -680,6 +686,10 @@ struct LibraryView: View {
                         }
                         Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
                         Toggle("Always retry crashed games in Safe Mode", isOn: $safeModeAlwaysRetry)
+                        Picker("Library layout", selection: $layout) {
+                            Label("Icons", systemImage: "square.grid.3x3").tag("icons")
+                            Label("List", systemImage: "list.bullet").tag("list")
+                        }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -750,12 +760,103 @@ struct LibraryView: View {
                     } message: { Text(router.message ?? "") }
             }
             .onChange(of: router.pending) { _, _ in openPendingLink() }
+            .onChange(of: running) { _, app in
+                if let app { recentRaw = RecentlyPlayed.noted(app.info.bundleIdentifier, in: recentRaw) }
+            }
             .task { openPendingLink() }
             .sheet(item: $browsing) { app in
                 FileBrowserView(app: app)
             }
             .sheet(isPresented: $testingAllGames) {
                 BatchTestView(installedApps: store.apps)
+            }
+        }
+    }
+
+    /// The games of the chosen platform.
+    private var shownApps: [InstalledApp] { store.apps.filter { $0.info.isAndroid == (platform == 1) } }
+
+    private var platformPicker: some View {
+        Picker("Platform", selection: $platform) {
+            Text("iPhone").tag(0)
+            Text("Android").tag(1)
+        }
+        .pickerStyle(.segmented)
+    }
+
+    /// One game, as a Home-screen icon or a list row, with the same actions either way.
+    private func libraryRow(_ app: InstalledApp, tile: Bool) -> some View {
+        LibraryAppRow(app: app, tile: tile) {
+            if app.info.runnable { running = app }
+        } record: {
+            detailedRecording = true
+            running = app
+        } details: {
+            showing = app
+        } browse: {
+            browsing = app
+        } reset: {
+            store.resetData(app)
+        } delete: {
+            store.delete(app)
+        } reinstall: { url in
+            store.importIPA(at: url)
+        }
+    }
+
+    private var gameCountText: String {
+        let n = shownApps.count
+        return "\(n) \(platform == 1 ? "Android" : "iPhone") game\(n == 1 ? "" : "s")"
+    }
+
+    /// The library as an iPhone OS 6 Home screen: icons in rows, then the recently played shelf.
+    private var iconGrid: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                if !store.importItems.isEmpty {
+                    ImportProgressBanner(items: store.importItems)
+                        .padding(.top, 10)
+                }
+                platformPicker
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                if platform == 1 && shownApps.isEmpty {
+                    Text("Import an Android .apk with 32-bit ARM native code (lib/armeabi or armeabi-v7a) and optional .obb expansion archives. Android support is new: games built on EA's Blast engine (Dead Space) and Unity run so far.")
+                        .font(.subheadline).foregroundStyle(Gloss.inkSoft)
+                        .padding(.horizontal, 20).padding(.top, 16)
+                }
+                if !shownApps.isEmpty {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Your games")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Gloss.sectionInk)
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        Text(gameCountText).font(.system(size: 12)).foregroundStyle(Gloss.inkSoft)
+                    }
+                    .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 10)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 4)], spacing: 18) {
+                        ForEach(shownApps) { app in libraryRow(app, tile: true) }
+                    }
+                    .padding(.horizontal, 10)
+                    LibraryLegend().padding(.top, 18)
+                }
+            }
+            .padding(.bottom, 16)
+        }
+        .background(LinenBackground())
+        .refreshable { store.refresh() }
+        .safeAreaInset(edge: .bottom) {
+            let recent = RecentlyPlayed.apps(recentRaw, from: shownApps)
+            if !recent.isEmpty {
+                RecentShelf(apps: recent) { app in
+                    if app.info.runnable { running = app } else { showing = app }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
             }
         }
     }
@@ -800,6 +901,8 @@ struct LibraryView: View {
 /// One library row. Split out of `LibraryView.body` so Swift 6 can type-check the button, swipe action, and context menu separately.
 private struct LibraryAppRow: View {
     let app: InstalledApp
+    /// Drawn as a Home-screen icon (the icon layout) instead of a list row.
+    var tile: Bool = false
     let open: () -> Void
     let record: () -> Void
     let details: () -> Void
@@ -846,7 +949,11 @@ private struct LibraryAppRow: View {
 
     var body: some View {
         Button(action: details) {
-            AppRow(app: app, play: app.info.runnable ? open : nil)
+            if tile {
+                LibraryTile(app: app)
+            } else {
+                AppRow(app: app, play: app.info.runnable ? open : nil)
+            }
         }
         .buttonStyle(.plain)
         .swipeActions(edge: .leading) {

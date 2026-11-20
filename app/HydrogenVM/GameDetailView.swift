@@ -56,8 +56,12 @@ struct GameDetailView: View {
                         Text(details).font(.system(size: 13)).foregroundStyle(Gloss.inkSoft)
                         Text(app.info.bundleIdentifier).font(.system(size: 12)).foregroundStyle(Gloss.inkSoft).lineLimit(1)
                         let s = AppRow.status(app.info)
-                        Text(app.info.runnable ? s.text : (app.info.problem.isEmpty ? s.text : app.info.problem))
-                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(s.color)
+                        if app.info.runnable {
+                            GlossStatusPill(text: s.text, color: s.color).padding(.top, 2)
+                        } else {
+                            Text(app.info.problem.isEmpty ? s.text : app.info.problem)
+                                .font(.system(size: 13, weight: .semibold)).foregroundStyle(s.color)
+                        }
                     }
                     Spacer(minLength: 0)
                 }
@@ -65,7 +69,7 @@ struct GameDetailView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 12)
 
-                Button(action: play) { Text("Play") }
+                Button(action: play) { Label("Play", systemImage: "play.fill") }
                     .buttonStyle(GlossButtonStyle(kind: .green))
                     .disabled(!app.info.runnable)
                     .opacity(app.info.runnable ? 1 : 0.5)
@@ -158,7 +162,7 @@ struct GlossToggleRow: View {
                 Text(hint).font(.system(size: 12)).foregroundStyle(Gloss.inkSoft).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .tint(Color(red: 0.247, green: 0.498, blue: 0.816))
+        .toggleStyle(GlossSwitchStyle())
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(minHeight: 60)
