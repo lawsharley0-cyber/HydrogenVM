@@ -15,7 +15,8 @@ when the controls button and debug overlay are hidden.
 
 The collapsed player pill has a 44-point touch target and announces the game
 state. It includes the frame rate when the debug overlay is enabled. HUD
-expansion respects Reduce Motion and keeps the live display segments available.
+expansion respects Reduce Motion. Scale Mode uses a menu and keeps the current
+choice visible when closed.
 
 ## Validation before release
 

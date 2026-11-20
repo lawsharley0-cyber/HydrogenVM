@@ -783,11 +783,46 @@ struct RunView: View {
         overrideOrientation ?? model.orientation
     }
 
+    private var scaleOverride: PlayerScaleMode? {
+        scaleSetting.flatMap { PlayerScaleMode(rawValue: $0) }
+    }
+
     private var effectiveScaleMode: PlayerScaleMode {
-        // Observe both keys so a change to either one updates the viewport.
-        _ = scaleSetting
-        _ = defaultScaleSetting
-        return PlayerSettings.scaleMode(bundleID: app.info.bundleIdentifier)
+        scaleOverride ?? PlayerScaleMode(rawValue: defaultScaleSetting) ?? .fit
+    }
+
+    private var scaleModeMenu: some View {
+        let shown = scaleOverride?.rawValue ?? "Use Default"
+        return Menu {
+            Button {
+                scaleSetting = nil
+            } label: {
+                if scaleOverride == nil { Label("Use Default", systemImage: "checkmark") }
+                else { Text("Use Default") }
+            }
+            ForEach(PlayerScaleMode.allCases) { mode in
+                Button {
+                    scaleSetting = mode.rawValue
+                } label: {
+                    if scaleOverride == mode { Label(mode.rawValue, systemImage: "checkmark") }
+                    else { Text(mode.rawValue) }
+                }
+            }
+        } label: {
+            HStack {
+                Text("Scale Mode")
+                Spacer()
+                Text(shown)
+                Image(systemName: "chevron.up.chevron.down")
+                    .accessibilityHidden(true)
+            }
+            .font(.subheadline)
+            .frame(minHeight: 44)
+            .contentShape(.rect)
+        }
+        .accessibilityIdentifier("player-scale-mode")
+        .accessibilityLabel("Scale Mode")
+        .accessibilityValue(shown)
     }
 
     /// The orientations the phone may take while this game plays. A landscape game
@@ -1188,23 +1223,7 @@ struct RunView: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
 
-                        // Keep the segmented control's selection concrete; nil is
-                        // only the persisted representation of the global default.
-                        Picker("Scale Mode", selection: Binding<String>(get: { scaleSetting ?? "" }, set: { value in
-                            if value.isEmpty {
-                                scaleSetting = nil
-                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
-                            } else {
-                                scaleSetting = value
-                            }
-                        })) {
-                            Text("Use Default").tag("")
-                            ForEach(PlayerScaleMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode.rawValue)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("player-scale-mode")
+                        scaleModeMenu
 
                         if effectiveScaleMode.crops {
                             Picker("Crop Focus", selection: $cropFocusSetting) {
