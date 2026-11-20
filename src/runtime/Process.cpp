@@ -240,6 +240,10 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     ArgReader::align64Args() = isAndroid();
     if (isAndroid()) Android::registerBionic(*this);
     Compat::initialize(*this);
+    if (!cfg_.blockCachePath.empty() && engine_) {
+        const size_t n = engine_->loadBlockCache(cfg_.blockCachePath);
+        if (n) logf(LogLevel::Info, "BlockCache: loaded %zu cached blocks from %s", n, cfg_.blockCachePath.c_str());
+    }
 }
 
 Process::~Process() {
@@ -266,6 +270,9 @@ Process::~Process() {
         if (!stuck.empty()) std::fprintf(stderr, "[hvm:warn] Process teardown: guest threads still running 2 s after stop:\n%s", stuck.c_str());
     }
     joinHostThreads(true);
+    if (!cfg_.blockCachePath.empty() && !alive && engine_) {
+        engine_->saveBlockCache(cfg_.blockCachePath);
+    }
     unmapGuestDylibs();
     if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
 }
