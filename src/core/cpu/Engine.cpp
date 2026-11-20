@@ -524,20 +524,63 @@ const Op* Engine::enterBlock(Cpu* c, uint32_t key) {
     return first;
 }
 
+size_t Engine::loadBlockCache(const std::string& path) {
+    std::unordered_map<uint32_t, CachedBlock> loaded;
+    if (!loadBlockCacheFile(path, loaded)) return 0;
+    std::lock_guard<std::mutex> lk(mu_);
+    diskCache_ = std::move(loaded);
+    diskCacheStats_.diskEntries = diskCache_.size();
+    return diskCache_.size();
+}
+
+size_t Engine::saveBlockCache(const std::string& path) {
+    std::vector<const Block*> snapshot;
+    std::lock_guard<std::mutex> lk(mu_);
+    snapshot.reserve(blocks_.size());
+    for (const auto& [k, b] : blocks_) {
+        const uint32_t pc = k & ~1u;
+        if (isHleAddress(pc) || entryObservers_.count(pc)) continue;
+        snapshot.push_back(b.get());
+    }
+    size_t saved = 0;
+    if (saveBlockCacheFile(path, snapshot, mem_, saved)) {
+        diskCacheStats_.diskSaved = saved;
+    }
+    return saved;
+}
+
 Block* Engine::lookupOrDecode(uint32_t key) {
     // HLE addresses are the same entry regardless of the interworking bit.
     if (isHleAddress(key & ~1u)) key &= ~1u;
     std::lock_guard<std::mutex> lk(mu_);
     auto it = blocks_.find(key);
     if (it != blocks_.end()) return it->second.get();
-    auto b = decodeBlock(key);
+    std::unique_ptr<Block> b;
+    bool fromDisk = false;
+    const uint32_t pc = key & ~1u;
+    if (!isHleAddress(pc) && !entryObservers_.count(pc)) {
+        auto dit = diskCache_.find(key);
+        if (dit != diskCache_.end()) {
+            b = materializeCachedBlock(dit->second, mem_);
+            diskCache_.erase(dit);
+            if (b) {
+                ++diskCacheStats_.diskHits;
+                fromDisk = true;
+            } else {
+                ++diskCacheStats_.diskHashMismatches;
+            }
+        }
+    }
+    if (!b) b = decodeBlock(key);
     Block* raw = b.get();
-    ++stats_.blocks_decoded;
-    stats_.guest_insns_decoded += raw->guest_insns;
-    stats_.ops_emitted += raw->ops.size();
+    if (!fromDisk) {
+        ++stats_.blocks_decoded;
+        stats_.guest_insns_decoded += raw->guest_insns;
+        stats_.ops_emitted += raw->ops.size();
+    }
     blocks_.emplace(key, std::move(b));
-    if (!isHleAddress(key & ~1u) && raw->end > (key & ~1u))
-        for (uint32_t pg = (key & ~1u) >> 12; pg <= (raw->end - 1) >> 12; ++pg) pageBlocks_[pg].push_back(key);
+    if (!isHleAddress(pc) && raw->end > pc)
+        for (uint32_t pg = pc >> 12; pg <= (raw->end - 1) >> 12; ++pg) pageBlocks_[pg].push_back(key);
     return raw;
 }
 
@@ -596,6 +639,7 @@ void Engine::flushCache() {
         else it = blocks_.erase(it);
     }
     pageBlocks_.clear();
+    diskCache_.clear();
     gen_.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -624,6 +668,11 @@ void Engine::retireRange(uint32_t addr, uint32_t size) {
     if (!size) return;
     std::lock_guard<std::mutex> lk(mu_);
     const uint64_t lo = addr, hi = uint64_t(addr) + size;
+    for (auto dit = diskCache_.begin(); dit != diskCache_.end();) {
+        const uint64_t bl = dit->first & ~1u, bh = dit->second.end;
+        if (bl < hi && bh > lo) dit = diskCache_.erase(dit);
+        else ++dit;
+    }
     for (uint64_t pg = lo >> 12; pg <= (hi - 1) >> 12; ++pg) {
         auto pit = pageBlocks_.find(uint32_t(pg));
         if (pit == pageBlocks_.end()) continue;
