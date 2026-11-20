@@ -144,6 +144,11 @@ void initialize(Process& p, CPU::Cpu& c, LoadedLib& lib) {
 std::vector<std::string> loadLibraries(Process& p, const std::string& mainPath) {
     auto& L = p.service<Library>();
     std::lock_guard<std::recursive_mutex> lk(L.mu);
+    if (fs::path(mainPath).extension() == ".dex") {
+        L.libDir = (fs::path(mainPath).parent_path() / "lib").string();
+        L.name = fs::path(mainPath).filename().string();
+        return {};
+    }
     L.libDir = fs::path(mainPath).parent_path().string();
     std::set<std::string> visiting;
     L.main = mapWithDependencies(p, L, mainPath, visiting);

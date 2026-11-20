@@ -268,6 +268,12 @@ std::u16string CoreLang::charSequenceText(Heap& heap, uint32_t reference) {
     return formatObject(heap, reference);
 }
 
+void CoreLang::setBuilderText(uint32_t reference, std::u16string text) {
+    if (!reference) return;
+    std::lock_guard lock(mutex_);
+    builders_[reference] = std::move(text);
+}
+
 std::u16string CoreLang::formatObject(Heap& heap, uint32_t reference) {
     if (!reference) return u"null";
     const auto type = heap.typeOf(reference);
@@ -305,6 +311,57 @@ bool CoreLang::sameBoxed(Heap& heap, uint32_t lhs, uint32_t rhs) {
     const auto v1 = boxedValueLocked(lhs);
     const auto v2 = boxedValueLocked(rhs);
     return v1 && v2 && *v1 == *v2;
+}
+
+std::optional<Value> CoreLang::staticField(Heap& heap, std::u16string_view owner,
+                                           std::u16string_view name, std::u16string_view sig) {
+    if (owner == u"Ljava/lang/Boolean;" && sig == u"Ljava/lang/Boolean;") {
+        if (name == u"TRUE") {
+            std::lock_guard lock(mutex_);
+            if (!boolTrue_) { boolTrue_ = heap.object(u"Ljava/lang/Boolean;"); boxed_[boolTrue_] = 1u; }
+            return ref(boolTrue_);
+        }
+        if (name == u"FALSE") {
+            std::lock_guard lock(mutex_);
+            if (!boolFalse_) { boolFalse_ = heap.object(u"Ljava/lang/Boolean;"); boxed_[boolFalse_] = 0u; }
+            return ref(boolFalse_);
+        }
+    }
+    if (owner == u"Ljava/lang/Integer;" && sig == u"I") {
+        if (name == u"MAX_VALUE") return word(uint32_t(INT32_MAX));
+        if (name == u"MIN_VALUE") return word(uint32_t(INT32_MIN));
+    }
+    if (owner == u"Ljava/lang/Long;" && sig == u"J") {
+        if (name == u"MAX_VALUE") return wide(uint64_t(INT64_MAX));
+        if (name == u"MIN_VALUE") return wide(uint64_t(INT64_MIN));
+    }
+    if (owner == u"Ljava/lang/Short;" && sig == u"S") {
+        if (name == u"MAX_VALUE") return word(uint32_t(INT16_MAX));
+        if (name == u"MIN_VALUE") return word(uint32_t(int32_t(INT16_MIN)));
+    }
+    if (owner == u"Ljava/lang/Byte;" && sig == u"B") {
+        if (name == u"MAX_VALUE") return word(uint32_t(INT8_MAX));
+        if (name == u"MIN_VALUE") return word(uint32_t(int32_t(INT8_MIN)));
+    }
+    if (owner == u"Ljava/lang/Character;" && sig == u"C") {
+        if (name == u"MAX_VALUE") return word(0xFFFFu);
+        if (name == u"MIN_VALUE") return word(0u);
+    }
+    if (owner == u"Ljava/lang/Float;" && sig == u"F") {
+        if (name == u"MAX_VALUE") return word(std::bit_cast<uint32_t>(std::numeric_limits<float>::max()));
+        if (name == u"MIN_VALUE") return word(1u);
+        if (name == u"NaN") return word(0x7FC00000u);
+        if (name == u"POSITIVE_INFINITY") return word(0x7F800000u);
+        if (name == u"NEGATIVE_INFINITY") return word(0xFF800000u);
+    }
+    if (owner == u"Ljava/lang/Double;" && sig == u"D") {
+        if (name == u"MAX_VALUE") return wide(std::bit_cast<uint64_t>(std::numeric_limits<double>::max()));
+        if (name == u"MIN_VALUE") return wide(1ULL);
+        if (name == u"NaN") return wide(0x7FF8000000000000ULL);
+        if (name == u"POSITIVE_INFINITY") return wide(0x7FF0000000000000ULL);
+        if (name == u"NEGATIVE_INFINITY") return wide(0xFFF0000000000000ULL);
+    }
+    return std::nullopt;
 }
 
 std::optional<Value> CoreLang::boxedMethod(Heap& heap, std::u16string_view owner,
@@ -1433,11 +1490,37 @@ std::optional<Value> CoreLang::invoke(Heap& heap, std::u16string_view owner, std
     if (!isStatic && owner == u"Ljava/lang/Object;" && !args.empty()) {
         const uint32_t self = asRef(args[0]);
         if (!self) throw JavaException{u"Ljava/lang/NullPointerException;"};
+        const auto actual = heap.typeOf(self);
+        if (actual == u"Ljava/lang/String;") {
+            if (auto r = stringMethod(heap, name, signature, false, args)) return r;
+        } else if (isBoxedClass(actual)) {
+            if (auto r = boxedMethod(heap, actual, name, signature, false, args)) return r;
+        }
         if (name == u"equals" && signature == u"(Ljava/lang/Object;)Z" && args.size() == 2)
             return word(self == asRef(args[1]) ? 1u : 0u);
         if (name == u"hashCode" && signature == u"()I") return word(self);
         if (name == u"toString" && signature == u"()Ljava/lang/String;")
             return ref(heap.newString(formatObject(heap, self)));
+        if (name == u"notify" && signature == u"()V") {
+            monitorCv_.notify_one();
+            return Value{ValueKind::Void};
+        }
+        if (name == u"notifyAll" && signature == u"()V") {
+            monitorCv_.notify_all();
+            return Value{ValueKind::Void};
+        }
+        if (name == u"wait" && (signature == u"()V" || signature == u"(J)V" || signature == u"(JI)V")) {
+            std::unique_lock lock(mutex_);
+            const int64_t ms = args.size() >= 2 ? int64_t(args[1].bits) : 0;
+            const int32_t ns = args.size() >= 3 ? asInt(args[2]) : 0;
+            if (ms < 0 || ns < 0 || ns > 999999) throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
+            if (ms == 0 && ns == 0) {
+                monitorCv_.wait_for(lock, std::chrono::milliseconds(16));
+            } else {
+                monitorCv_.wait_for(lock, std::chrono::milliseconds(ms) + std::chrono::nanoseconds(ns));
+            }
+            return Value{ValueKind::Void};
+        }
     }
     return std::nullopt;
 }

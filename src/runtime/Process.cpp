@@ -212,9 +212,13 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
         try {
             const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
             if (fs::exists(plist))
-                if (auto info = Plist::parseFile(plist.string()))
+                if (auto info = Plist::parseFile(plist.string())) {
                     if (const std::string lib = info->getString("HydrogenVMAndroidLibrary"); !lib.empty())
                         cfg_.androidLib = (fs::path(cfg_.bundlePath) / lib).string();
+                    else if (info->getString("MinimumOSVersion") == "Android" &&
+                             fs::is_regular_file(fs::path(cfg_.bundlePath) / "classes.dex"))
+                        cfg_.androidLib = (fs::path(cfg_.bundlePath) / "classes.dex").string();
+                }
         } catch (...) {}
     }
     registerLibcString(*this);
