@@ -529,8 +529,18 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         _screenSize = CGSizeMake(320, 480);
         _interfaceOrientation = 1;
         _useGPU = YES;
+        _useBlockCache = YES;
+        _resolutionScale = 1;
     }
     return self;
+}
+
+- (BOOL)saveQuickSnapshotToPath:(NSString *)path {
+    if (!path.length) return NO;
+    std::shared_ptr<RT::Process> p;
+    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
+    if (!p) return NO;
+    return p->saveQuickSnapshot(path.UTF8String) ? YES : NO;
 }
 
 - (void)dealloc {
@@ -549,6 +559,8 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool playSession = _playSession;
     const bool allowInternet = _allowInternet;
     const bool unlockFrameRate = _unlockFrameRate;
+    const bool useBlockCache = _useBlockCache;
+    const int resolutionScale = int(std::max<NSInteger>(1, std::min<NSInteger>(3, _resolutionScale)));
     const bool glTrace = _glTrace;
     const bool gles1Emulate = _gles1Emulate;
     const uint32_t maxTextureSize = _maxTextureSize;
@@ -585,6 +597,9 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool detailedRecording = _detailedRecording;
     const std::string recordPath = detailedRecording ? privateRec.UTF8String : lastRec.UTF8String;
     const std::string inputPath = detailedRecording ? lastRec.UTF8String : "";
+    const std::string blockCachePath = useBlockCache
+        ? [recDir stringByAppendingPathComponent:@"blocks.hvbc"].UTF8String
+        : "";
 
     spawnBigStack(^{
         RT::ProcessConfig cfg;
@@ -593,6 +608,8 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.recordPath = recordPath;
         cfg.detailedRecording = detailedRecording;
         cfg.inputRecordingPath = inputPath;
+        cfg.blockCachePath = blockCachePath;
+        cfg.resolutionScale = resolutionScale;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;

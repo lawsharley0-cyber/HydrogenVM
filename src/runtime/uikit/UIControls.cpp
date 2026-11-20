@@ -500,7 +500,8 @@ id b_initWithCoder(Ctx& x, id self, SEL s, id coder) {
     if (const id dict = decode(x, coder, "UIButtonStatefulContent")) {
         for (auto& [k, v] : Foundation::dictEntries(x, dict)) {
             const uint32_t state = uint32_t(Foundation::numberInt(x, k));
-            auto get = [&](const char* key) { return id(rt(x).send(x.cpu, v, "_hvmValueForKey:", {makeString(x, key)})); };
+            const id entryVal = v;
+            auto get = [&](const char* key) { return id(rt(x).send(x.cpu, entryVal, "_hvmValueForKey:", {makeString(x, key)})); };
             StateContent& c = d.content[state];
             setRetained(x, c.title, get("UITitle"));
             setRetained(x, c.titleColor, get("UITitleColor"));

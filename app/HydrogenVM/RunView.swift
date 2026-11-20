@@ -174,6 +174,8 @@ final class RunModel {
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
         s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
         s.unlockFrameRate = Self.unlocksFrameRate(for: app.info.bundleIdentifier)
+        s.useBlockCache = Self.usesFastLaunchCache(for: app.info.bundleIdentifier)
+        s.resolutionScale = Self.usesHDResolution(for: app.info.bundleIdentifier) ? 2 : 1
         if let fallback {
             s.safeModeFallback = fallback
             switch fallback {
@@ -427,6 +429,24 @@ final class RunModel {
     }
     nonisolated static func allowsInternet(for bundleID: String) -> Bool {
         UserDefaults.standard.bool(forKey: internetKey(bundleID))
+    }
+    nonisolated static func fastLaunchCacheKey(_ bundleID: String) -> String { "fastLaunchCache.\(bundleID)" }
+    nonisolated static func usesFastLaunchCache(for bundleID: String) -> Bool {
+        let d = UserDefaults.standard
+        if d.object(forKey: fastLaunchCacheKey(bundleID)) != nil { return d.bool(forKey: fastLaunchCacheKey(bundleID)) }
+        return true
+    }
+    nonisolated static func hdResolutionKey(_ bundleID: String) -> String { "hdResolution.\(bundleID)" }
+    nonisolated static func usesHDResolution(for bundleID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: hdResolutionKey(bundleID))
+    }
+
+    func quickSave(homeURL: URL) -> Bool {
+        guard let s = session, running, !closing else { return false }
+        let dir = homeURL.appendingPathComponent("Library/HydrogenVM", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let snap = dir.appendingPathComponent("quicksave.hvqs").path(percentEncoded: false)
+        return s.saveQuickSnapshot(toPath: snap)
     }
 
     private func syncOrientation() {
@@ -735,6 +755,7 @@ struct RunView: View {
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
+    @State private var quickSaved = false
     @State private var editingControllerTargets = false
     @State private var overrideOrientation: GuestOrientation?
     /// Display mode for this game; the global default lives in the library's Options menu.
@@ -1116,6 +1137,22 @@ struct RunView: View {
                         .controlSize(.small)
                         .disabled(!model.running || model.closing)
                         .accessibilityIdentifier("player-pause")
+
+                        Button {
+                            if model.quickSave(homeURL: app.homeURL) {
+                                quickSaved = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { quickSaved = false }
+                            }
+                        } label: {
+                            Label(quickSaved ? "Saved" : "Quick Save",
+                                  systemImage: quickSaved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                                .font(.caption.weight(.medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(quickSaved ? .green : .blue)
+                        .controlSize(.small)
+                        .disabled(!model.running || model.closing)
+                        .accessibilityIdentifier("player-quicksave")
 
                         if app.info.isAndroid {
                             Button {

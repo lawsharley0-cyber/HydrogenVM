@@ -170,6 +170,7 @@ int hvmRunMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--unlock-fps")) cfg.unlockFrameRate = true;
         else if (!std::strcmp(argv[i], "--record") && i + 1 < argc) cfg.recordPath = argv[++i];
         else if (!std::strcmp(argv[i], "--replay") && i + 1 < argc) cfg.replayPath = argv[++i];
+        else if (!std::strcmp(argv[i], "--block-cache") && i + 1 < argc) cfg.blockCachePath = argv[++i];
         else if (!std::strcmp(argv[i], "--loopback-alias") && i + 1 < argc) cfg.loopbackAliases.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--guest-libs")) cfg.guestLibs = true;
         else if (!std::strcmp(argv[i], "--guest-lib-dir") && i + 1 < argc) { cfg.guestLibDir = argv[++i]; cfg.guestLibs = true; }

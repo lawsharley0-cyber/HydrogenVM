@@ -93,6 +93,7 @@ public:
             if (name.starts_with("classes") && name.ends_with(".dex") && i->is_regular_file(ec))
                 names.push_back(name);
         }
+        collections.setLang(&lang);
         if (names.empty()) return;
         auto path = std::make_shared<ClassPath>(std::move(names), [root](const std::string& name) {
             std::ifstream in(root / name, std::ios::binary | std::ios::ate);
@@ -114,6 +115,18 @@ public:
                     return externalField(type, name, sig, receiver, write);
                 },
             });
+        collections.setComparator([this](uint32_t cmp, uint32_t a, uint32_t b) -> int32_t {
+            const Value callArgs[3] = {
+                {ValueKind::Reference, cmp},
+                {ValueKind::Reference, a},
+                {ValueKind::Reference, b},
+            };
+            const auto exec = machine->callInstance(
+                u"Ljava/util/Comparator;", u"compare",
+                u"(Ljava/lang/Object;Ljava/lang/Object;)I", callArgs, false);
+            if (const auto* ex = std::get_if<JavaException>(&exec)) throw *ex;
+            return int32_t(uint32_t(std::get<Value>(exec).bits));
+        });
     }
 
     std::shared_ptr<ArrayBacking> arrayBacking(Jni& j, jobject handle, char elem) {
@@ -175,6 +188,8 @@ public:
         fromJni.emplace(handle, ref);
         toJni.try_emplace(ref, handle);
         if (elem) heap.bindArray(ref, arrayBacking(j, handle, elem), false);
+        else if (cls == "java/lang/StringBuffer" || cls == "java/lang/StringBuilder")
+            lang.setBuilderText(ref, fromUtf8(text));
         return ref;
     }
 
@@ -242,6 +257,22 @@ public:
                                        std::u16string_view signature, std::optional<uint32_t> receiver,
                                        std::optional<Value> write) {
         if (signature.empty()) return std::nullopt;
+        if (!receiver && !write) {
+            if (name == u"TYPE" && signature == u"Ljava/lang/Class;") {
+                std::u16string_view prim;
+                if (owner == u"Ljava/lang/Boolean;") prim = u"Z";
+                else if (owner == u"Ljava/lang/Byte;") prim = u"B";
+                else if (owner == u"Ljava/lang/Character;") prim = u"C";
+                else if (owner == u"Ljava/lang/Short;") prim = u"S";
+                else if (owner == u"Ljava/lang/Integer;") prim = u"I";
+                else if (owner == u"Ljava/lang/Long;") prim = u"J";
+                else if (owner == u"Ljava/lang/Float;") prim = u"F";
+                else if (owner == u"Ljava/lang/Double;") prim = u"D";
+                else if (owner == u"Ljava/lang/Void;") prim = u"V";
+                if (!prim.empty()) return Value{ValueKind::Reference, machine->classMirror(prim)};
+            }
+            if (auto v = lang.staticField(machine->heap(), owner, name, signature)) return v;
+        }
         auto& j = jni(process);
         const std::string cls = className(owner), member = toMutf8(name);
         JValue result = 0;
@@ -254,12 +285,18 @@ public:
                 auto* slot = j.get(object);
                 if (!slot) return std::nullopt;
                 const auto it = slot->fields.find(member);
-                if (it == slot->fields.end()) return std::nullopt;
+                if (it == slot->fields.end()) {
+                    process.logf(LogLevel::Warning, "Missing: DEX field %s.%s:%s", cls.c_str(), member.c_str(), toMutf8(signature).c_str());
+                    return std::nullopt;
+                }
                 if (write) it->second = written;
                 result = it->second;
             } else {
                 const auto it = j.staticFields.find(cls + "." + member);
-                if (it == j.staticFields.end()) return std::nullopt;
+                if (it == j.staticFields.end()) {
+                    process.logf(LogLevel::Warning, "Missing: DEX static field %s.%s:%s", cls.c_str(), member.c_str(), toMutf8(signature).c_str());
+                    return std::nullopt;
+                }
                 if (write) it->second = written;
                 result = it->second;
             }
@@ -271,6 +308,28 @@ public:
                                   std::u16string_view signature, bool stat, bool native,
                                   std::span<const Value> args) {
         if (!native) {
+            if (stat && owner == u"Ljava/lang/Enum;" && name == u"valueOf" &&
+                signature == u"(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;" && args.size() == 2) {
+                const uint32_t clsRef = uint32_t(args[0].bits);
+                const uint32_t nameRef = uint32_t(args[1].bits);
+                if (!clsRef || !nameRef) throw JavaException{u"Ljava/lang/NullPointerException;"};
+                auto target = machine->classMirrorType(clsRef);
+                if (!target) throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
+                auto& heap = machine->heap();
+                const auto want = heap.string(nameRef);
+                auto ex = machine->callStatic(*target, u"values", u"()[" + *target, {});
+                if (auto* exc = std::get_if<JavaException>(&ex)) throw *exc;
+                const uint32_t arrRef = uint32_t(std::get<Value>(ex).bits);
+                if (arrRef) {
+                    const int32_t len = heap.length(arrRef);
+                    for (int32_t i = 0; i < len; ++i) {
+                        const uint32_t elemRef = uint32_t(heap.element(arrRef, i).bits);
+                        if (elemRef && lang.formatObject(heap, elemRef) == want)
+                            return Value{ValueKind::Reference, elemRef};
+                    }
+                }
+                throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
+            }
             if (auto value = collections.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
             if (auto value = lang.invoke(machine->heap(), owner, name, signature, stat, args)) return value;
             if (auto value = CoreMath::invoke(owner, name, signature, stat, args)) return value;
@@ -288,13 +347,27 @@ public:
             if (!j.dexNative(x, cls, method, sig, self, values, result)) return std::nullopt;
         } else {
             JMethod target;
+            std::string startType = cls;
+            if (!stat) {
+                std::lock_guard lock(j.mu);
+                if (const auto* obj = j.get(self); obj && !obj->isClass && !obj->cls.empty())
+                    startType = obj->cls;
+            }
+            // Walk DEX-defined superclasses first (without holding j.mu) so a DEX subclass
+            // of a host class (e.g. OptimizedByteArrayOutputStream -> ByteArrayOutputStream)
+            // dispatches to its concrete host superclass rather than an abstract ancestor.
+            std::vector<std::string> dexChain;
+            if (!stat) {
+                std::string cur = startType;
+                for (unsigned depth = 0; depth < 64 && !cur.empty(); ++depth) {
+                    dexChain.push_back(cur);
+                    const auto ci = machine->classInfo(descriptor(cur));
+                    if (!ci.defined || ci.superName.empty()) break;
+                    cur = className(ci.superName);
+                }
+            }
             {
                 std::lock_guard lock(j.mu);
-                std::string startType = cls;
-                if (!stat) {
-                    if (const auto* obj = j.get(self); obj && !obj->isClass && !obj->cls.empty())
-                        startType = obj->cls;
-                }
                 auto lookup = [&](std::string type) -> JMethod {
                     for (unsigned depth = 0; depth < 64 && !type.empty(); ++depth, type = j.superOf(type)) {
                         if (auto it = j.impls.find(type + "." + method + sig); it != j.impls.end())
@@ -302,8 +375,11 @@ public:
                     }
                     return {};
                 };
-                target = lookup(startType);
-                if (!target && startType != cls) target = lookup(cls);
+                for (const auto& t : dexChain) {
+                    target = lookup(t);
+                    if (target) break;
+                }
+                if (!target) target = lookup(cls);
             }
             if (!target) {
                 process.reportMissing("DEX " + cls + "." + method + sig);

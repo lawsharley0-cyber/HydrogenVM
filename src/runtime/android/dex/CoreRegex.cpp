@@ -454,8 +454,8 @@ std::optional<Value> CoreRegex::invoke(Heap& heap, CoreLang& lang, std::u16strin
             if (!other || heap.typeOf(other) != u"Ljava/util/Locale;") return word(0);
             std::lock_guard lock(mutex_);
             const auto it = locales_.find(other);
-            if (it == locales_.end()) return word(0);
-            const auto& o = it->second;
+            const LocaleData empty{};
+            const auto& o = (it != locales_.end()) ? it->second : empty;
             return word((data.language == o.language && data.country == o.country && data.variant == o.variant) ? 1u : 0u);
         }
         if (name == u"hashCode" && sig == u"()I") {

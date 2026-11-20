@@ -632,6 +632,13 @@ void registerJavaStdlib(Jni& j) {
         auto st = writerOf(j, self);
         return JValue(j.newString(st ? st->buf : ""));
     });
+    j.method("java/io/StringWriter", "getBuffer", "()Ljava/lang/StringBuffer;", [writerOf](Jni& j, Ctx&, jobject self, const auto&) {
+        auto st = writerOf(j, self);
+        jobject sb = j.newObject("java/lang/StringBuffer");
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(sb)) o->str = st ? st->buf : "";
+        return JValue(sb);
+    });
     j.method("java/io/OutputStreamWriter", "<init>", "(Ljava/io/OutputStream;)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
         auto st = std::make_shared<WriterState>();
         st->wrapped = jobject(a[0]);
@@ -1264,6 +1271,142 @@ void registerJavaStdlib(Jni& j) {
     j.method("java/lang/reflect/Modifier", "isPublic", "(I)Z", [](Jni&, Ctx&, jobject, const auto& a) { return JValue((a[0] & 0x0001) ? 1 : 0); });
     j.method("java/lang/reflect/Modifier", "isStatic", "(I)Z", [](Jni&, Ctx&, jobject, const auto& a) { return JValue((a[0] & 0x0008) ? 1 : 0); });
     j.method("java/lang/reflect/Modifier", "isTransient", "(I)Z", [](Jni&, Ctx&, jobject, const auto& a) { return JValue((a[0] & 0x0080) ? 1 : 0); });
+
+    // java.math.BigDecimal & java.math.RoundingMode
+    auto bdVal = [](Jni& j, jobject self) -> double {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) {
+            if (auto* d = std::any_cast<double>(&o->host)) return *d;
+        }
+        return 0.0;
+    };
+    auto makeBd = [](Jni& j, double v) -> jobject {
+        jobject obj = j.newObject("java/math/BigDecimal");
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(obj)) o->host = v;
+        return obj;
+    };
+    j.superclasses["java/math/BigDecimal"] = "java/lang/Number";
+    j.superclasses["java/math/RoundingMode"] = "java/lang/Enum";
+    j.staticFields["java/math/BigDecimal.ZERO"] = JValue(makeBd(j, 0.0));
+    j.staticFields["java/math/BigDecimal.ONE"] = JValue(makeBd(j, 1.0));
+    j.staticFields["java/math/BigDecimal.TEN"] = JValue(makeBd(j, 10.0));
+    j.staticFields["java/math/BigDecimal.ROUND_UP"] = JValue(0);
+    j.staticFields["java/math/BigDecimal.ROUND_DOWN"] = JValue(1);
+    j.staticFields["java/math/BigDecimal.ROUND_CEILING"] = JValue(2);
+    j.staticFields["java/math/BigDecimal.ROUND_FLOOR"] = JValue(3);
+    j.staticFields["java/math/BigDecimal.ROUND_HALF_UP"] = JValue(4);
+    j.staticFields["java/math/BigDecimal.ROUND_HALF_DOWN"] = JValue(5);
+    j.staticFields["java/math/BigDecimal.ROUND_HALF_EVEN"] = JValue(6);
+    j.staticFields["java/math/BigDecimal.ROUND_UNNECESSARY"] = JValue(7);
+    const char* rmNames[] = {"UP", "DOWN", "CEILING", "FLOOR", "HALF_UP", "HALF_DOWN", "HALF_EVEN", "UNNECESSARY"};
+    for (int i = 0; i < 8; ++i) {
+        jobject rm = j.newObject("java/math/RoundingMode");
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(rm)) { o->host = i; o->str = rmNames[i]; }
+        j.staticFields[std::string("java/math/RoundingMode.") + rmNames[i]] = JValue(rm);
+    }
+    j.method("java/math/BigDecimal", "<init>", "(D)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
+        double v = 0.0; std::memcpy(&v, &a[0], sizeof(v));
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) o->host = v;
+        return JValue(0);
+    });
+    j.method("java/math/BigDecimal", "<init>", "(I)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) o->host = double(int32_t(a[0]));
+        return JValue(0);
+    });
+    j.method("java/math/BigDecimal", "<init>", "(J)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) o->host = double(int64_t(a[0]));
+        return JValue(0);
+    });
+    j.method("java/math/BigDecimal", "<init>", "(Ljava/lang/String;)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
+        double v = 0.0;
+        try { v = std::stod(str(j, a[0])); } catch (...) {}
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) o->host = v;
+        return JValue(0);
+    });
+    j.method("java/math/BigDecimal", "valueOf", "(D)Ljava/math/BigDecimal;", [makeBd](Jni& j, Ctx&, jobject, const auto& a) {
+        double v = 0.0; std::memcpy(&v, &a[0], sizeof(v));
+        return JValue(makeBd(j, v));
+    });
+    j.method("java/math/BigDecimal", "valueOf", "(J)Ljava/math/BigDecimal;", [makeBd](Jni& j, Ctx&, jobject, const auto& a) {
+        return JValue(makeBd(j, double(int64_t(a[0]))));
+    });
+    j.method("java/math/BigDecimal", "doubleValue", "()D", [bdVal](Jni& j, Ctx&, jobject self, const auto&) {
+        double v = bdVal(j, self);
+        uint64_t bits = 0; std::memcpy(&bits, &v, sizeof(v));
+        return JValue(bits);
+    });
+    j.method("java/math/BigDecimal", "floatValue", "()F", [bdVal](Jni& j, Ctx&, jobject self, const auto&) {
+        float v = float(bdVal(j, self));
+        uint32_t bits = 0; std::memcpy(&bits, &v, sizeof(v));
+        return JValue(bits);
+    });
+    j.method("java/math/BigDecimal", "intValue", "()I", [bdVal](Jni& j, Ctx&, jobject self, const auto&) {
+        return JValue(uint32_t(int32_t(bdVal(j, self))));
+    });
+    j.method("java/math/BigDecimal", "longValue", "()J", [bdVal](Jni& j, Ctx&, jobject self, const auto&) {
+        return JValue(uint64_t(int64_t(bdVal(j, self))));
+    });
+    j.method("java/math/BigDecimal", "toString", "()Ljava/lang/String;", [bdVal](Jni& j, Ctx&, jobject self, const auto&) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.15g", bdVal(j, self));
+        return JValue(j.newString(buf));
+    });
+    j.method("java/math/BigDecimal", "toPlainString", "()Ljava/lang/String;", [bdVal](Jni& j, Ctx&, jobject self, const auto&) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.15g", bdVal(j, self));
+        return JValue(j.newString(buf));
+    });
+    auto roundScaled = [](double v, int32_t scale, int mode) -> double {
+        const double factor = std::pow(10.0, double(scale));
+        const double x = v * factor;
+        double r = x;
+        switch (mode) {
+            case 0: r = (x >= 0.0) ? std::ceil(x) : std::floor(x); break;
+            case 1: r = std::trunc(x); break;
+            case 2: r = std::ceil(x); break;
+            case 3: r = std::floor(x); break;
+            case 5: r = (x >= 0.0) ? std::ceil(x - 0.5) : std::floor(x + 0.5); break;
+            case 6: r = std::nearbyint(x); break;
+            default: r = std::round(x); break;
+        }
+        return r / factor;
+    };
+    j.method("java/math/BigDecimal", "setScale", "(II)Ljava/math/BigDecimal;", [bdVal, makeBd, roundScaled](Jni& j, Ctx&, jobject self, const auto& a) {
+        return JValue(makeBd(j, roundScaled(bdVal(j, self), int32_t(a[0]), int32_t(a[1]))));
+    });
+    j.method("java/math/BigDecimal", "setScale", "(ILjava/math/RoundingMode;)Ljava/math/BigDecimal;", [bdVal, makeBd, roundScaled](Jni& j, Ctx&, jobject self, const auto& a) {
+        int mode = 4;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* o = j.get(jobject(a[1]))) {
+                if (auto* m = std::any_cast<int>(&o->host)) mode = *m;
+            }
+        }
+        return JValue(makeBd(j, roundScaled(bdVal(j, self), int32_t(a[0]), mode)));
+    });
+    j.method("java/math/BigDecimal", "add", "(Ljava/math/BigDecimal;)Ljava/math/BigDecimal;", [bdVal, makeBd](Jni& j, Ctx&, jobject self, const auto& a) {
+        return JValue(makeBd(j, bdVal(j, self) + bdVal(j, jobject(a[0]))));
+    });
+    j.method("java/math/BigDecimal", "subtract", "(Ljava/math/BigDecimal;)Ljava/math/BigDecimal;", [bdVal, makeBd](Jni& j, Ctx&, jobject self, const auto& a) {
+        return JValue(makeBd(j, bdVal(j, self) - bdVal(j, jobject(a[0]))));
+    });
+    j.method("java/math/BigDecimal", "multiply", "(Ljava/math/BigDecimal;)Ljava/math/BigDecimal;", [bdVal, makeBd](Jni& j, Ctx&, jobject self, const auto& a) {
+        return JValue(makeBd(j, bdVal(j, self) * bdVal(j, jobject(a[0]))));
+    });
+    j.method("java/math/BigDecimal", "divide", "(Ljava/math/BigDecimal;)Ljava/math/BigDecimal;", [bdVal, makeBd](Jni& j, Ctx&, jobject self, const auto& a) {
+        const double d = bdVal(j, jobject(a[0]));
+        return JValue(makeBd(j, d != 0.0 ? bdVal(j, self) / d : 0.0));
+    });
+    j.method("java/math/BigDecimal", "compareTo", "(Ljava/math/BigDecimal;)I", [bdVal](Jni& j, Ctx&, jobject self, const auto& a) {
+        const double x = bdVal(j, self), y = bdVal(j, jobject(a[0]));
+        return JValue(uint32_t(x < y ? -1 : (x > y ? 1 : 0)));
+    });
 }
 
 } // namespace Hydrogen::Runtime::Android

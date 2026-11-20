@@ -1,4 +1,5 @@
 #include "Process.hpp"
+#include "core/cpu/QuickSave.hpp"
 #include <unordered_set>
 #include "MemoryDiagnostics.hpp"
 #include "Support.hpp"
@@ -212,9 +213,13 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
         try {
             const fs::path plist = fs::path(cfg_.bundlePath) / "Info.plist";
             if (fs::exists(plist))
-                if (auto info = Plist::parseFile(plist.string()))
+                if (auto info = Plist::parseFile(plist.string())) {
                     if (const std::string lib = info->getString("HydrogenVMAndroidLibrary"); !lib.empty())
                         cfg_.androidLib = (fs::path(cfg_.bundlePath) / lib).string();
+                    else if (info->getString("MinimumOSVersion") == "Android" &&
+                             fs::is_regular_file(fs::path(cfg_.bundlePath) / "classes.dex"))
+                        cfg_.androidLib = (fs::path(cfg_.bundlePath) / "classes.dex").string();
+                }
         } catch (...) {}
     }
     registerLibcString(*this);
@@ -240,6 +245,10 @@ Process::Process(ProcessConfig cfg) : cfg_(std::move(cfg)), identity_(nextProces
     ArgReader::align64Args() = isAndroid();
     if (isAndroid()) Android::registerBionic(*this);
     Compat::initialize(*this);
+    if (!cfg_.blockCachePath.empty() && engine_) {
+        const size_t n = engine_->loadBlockCache(cfg_.blockCachePath);
+        if (n) logf(LogLevel::Info, "BlockCache: loaded %zu cached blocks from %s", n, cfg_.blockCachePath.c_str());
+    }
 }
 
 Process::~Process() {
@@ -266,8 +275,34 @@ Process::~Process() {
         if (!stuck.empty()) std::fprintf(stderr, "[hvm:warn] Process teardown: guest threads still running 2 s after stop:\n%s", stuck.c_str());
     }
     joinHostThreads(true);
+    if (!cfg_.blockCachePath.empty() && !alive && engine_) {
+        engine_->saveBlockCache(cfg_.blockCachePath);
+    }
     unmapGuestDylibs();
     if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
+}
+
+bool Process::saveQuickSnapshot(const std::string& path) {
+    if (path.empty() || !engine_ || !mem_) return false;
+    std::vector<GuestThread*> active;
+    {
+        std::lock_guard<std::mutex> lk(threadsMu_);
+        for (auto& [id, t] : threads_) {
+            if (t && !t->finished.load()) active.push_back(t.get());
+        }
+    }
+    for (GuestThread* t : active) engine_->suspend(t->cpu);
+    std::vector<const CPU::Cpu*> cpus;
+    cpus.reserve(active.size());
+    for (GuestThread* t : active) cpus.push_back(&t->cpu);
+    CPU::QuickSaveStats st{};
+    const bool ok = CPU::saveQuickSnapshot(path, *mem_, cpus, &st);
+    for (GuestThread* t : active) engine_->resume(t->cpu);
+    if (ok) {
+        logf(LogLevel::Info, "QuickSave: saved %zu pages, %zu threads (%zu bytes) to %s",
+             st.pagesSaved, st.threadsSaved, st.bytesWritten, path.c_str());
+    }
+    return ok;
 }
 
 void Process::joinHostThreads(bool includeRunning) {

@@ -333,7 +333,7 @@ struct Machine::State final : Linkage, std::enable_shared_from_this<Machine::Sta
         }
         auto work = [self = shared_from_this(), task, method = entry->second, reference] {
             try {
-                Budget budget{1'000'000};
+                Budget budget{50'000'000};
                 const Value argument{ValueKind::Reference, reference};
                 self->run(method, {&argument, 1}, budget);
             } catch (const JavaException&) {
@@ -477,7 +477,7 @@ bool Machine::hasMethod(std::u16string_view type, std::u16string_view name,
 
 Execution Machine::callInstance(std::u16string_view type, std::u16string_view name,
                                 std::u16string_view signature, std::span<const Value> args, bool nonvirtual) {
-    Budget budget{1'000'000};
+    Budget budget{50'000'000};
     try {
         if (args.empty() || !args[0].bits) throw JavaException{u"Ljava/lang/NullPointerException;"};
         auto& cls = state_->requireClass(nonvirtual ? type : state_->arena.typeOf(uint32_t(args[0].bits)));
@@ -530,7 +530,7 @@ bool Machine::isAssignable(std::u16string_view from, std::u16string_view to) {
 
 Execution Machine::instantiate(std::u16string_view type, std::u16string_view ctorSig,
                                std::span<const Value> ctorArgs) {
-    Budget budget{1'000'000};
+    Budget budget{50'000'000};
     try {
         const uint32_t obj = state_->newInstance(std::u16string(type), budget);
         auto* cls = state_->link(type);

@@ -2,6 +2,7 @@
 #pragma once
 #include "runtime/android/dex/Heap.hpp"
 
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -22,6 +23,10 @@ public:
 
     // Optional formatting helper for Object.toString / StringBuilder.append(Object).
     std::u16string formatObject(Heap& heap, uint32_t reference);
+    bool sameBoxed(Heap& heap, uint32_t lhs, uint32_t rhs);
+    std::optional<Value> staticField(Heap& heap, std::u16string_view owner,
+                                     std::u16string_view name, std::u16string_view sig);
+    void setBuilderText(uint32_t reference, std::u16string text);
 
 private:
     struct EnumData {
@@ -54,11 +59,14 @@ private:
     std::optional<uint64_t> boxedValueLocked(uint32_t reference) const;
 
     std::mutex mutex_;
+    std::condition_variable monitorCv_;
     std::unordered_map<uint32_t, uint64_t> boxed_;
     std::unordered_map<uint32_t, std::u16string> builders_;
     std::unordered_map<uint32_t, EnumData> enums_;
     std::unordered_map<uint32_t, ThrowableData> throwables_;
     uint32_t runtimeSingleton_ = 0;
+    uint32_t boolTrue_ = 0;
+    uint32_t boolFalse_ = 0;
 };
 
 } // namespace Hydrogen::Runtime::Android::Dex

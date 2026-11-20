@@ -102,6 +102,15 @@ AppInfo readBundle(const std::string& appPath) {
         info.runnable = true;
         return info;
     }
+    if (p.getString("MinimumOSVersion") == "Android" &&
+        fs::is_regular_file(fs::path(appPath) / "classes.dex") &&
+        !p.getString("HydrogenVMAndroidLauncherActivity").empty()) {
+        info.androidLibrary = (fs::path(appPath) / "classes.dex").string();
+        info.engine = p.getString("HydrogenVMAndroidEngine");
+        info.engineSupport = p.getString("HydrogenVMAndroidEngineSupport");
+        info.runnable = true;
+        return info;
+    }
 
     if (!fs::is_regular_file(info.executablePath)) { info.problem = "The app's executable (" + exe + ") is missing."; return info; }
     const auto bin = readFile(info.executablePath);

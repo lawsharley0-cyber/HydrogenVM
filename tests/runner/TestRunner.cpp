@@ -260,6 +260,9 @@ int runHostFaultChild(int fd, bool stress, bool afterUnwind);
 int runThreadProgressTests();
 int runGuestCallBoundaryTests();
 int runMsgSendTests(const std::function<void(bool, const char*)>& check);
+int runGuestSortTests(const std::function<void(bool, const char*)>& check);
+int runBlockCacheTests(const std::function<void(bool, const char*)>& check);
+int runQuickSaveTests(const std::function<void(bool, const char*)>& check);
 int runPageProtectionTests(const std::function<void(bool, const char*)>& check);
 int runSuspendTests();
 int runNSStringSearchTests();
@@ -14416,6 +14419,9 @@ int runFullSubsystemTests() {
     check(runThreadProgressTests() == 0, "race-safe per-thread instruction and HLE wait snapshots");
     check(runGuestCallBoundaryTests() == 0, "guest-call stack prewrites stay inside writable guest pages");
     runMsgSendTests([&](bool ok, const char* what) { check(ok, what); });
+    runGuestSortTests([&](bool ok, const char* what) { check(ok, what); });
+    runBlockCacheTests([&](bool ok, const char* what) { check(ok, what); });
+    runQuickSaveTests([&](bool ok, const char* what) { check(ok, what); });
     runPageProtectionTests([&](bool ok, const char* what) { check(ok, what); });
     check(runSuspendTests() == 0, "a suspended Cpu stays out of guest code, including across back-to-back suspensions");
     {

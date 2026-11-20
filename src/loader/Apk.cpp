@@ -506,9 +506,8 @@ AppInfo importApk(const std::string& apkPath, const std::string& appsRoot) {
     fs::rename(staging, container);
     staging.clear();
     AppInfo info = readBundle((container / (folderName + ".app")).string());
-    if (lib.empty() && info.problem.empty()) {
-        info.runnable = false;
-        info.problem = "This Android app has no 32-bit ARM native code (lib/armeabi or lib/armeabi-v7a); Java-only apps can't run.";
+    if (lib.empty() && !info.runnable && info.problem.empty()) {
+        info.problem = "This Android app has no 32-bit ARM native code (lib/armeabi or lib/armeabi-v7a) and no runnable DEX launcher activity.";
     }
     return info;
 }
