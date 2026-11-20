@@ -15,6 +15,8 @@
 
 namespace Hydrogen::CPU {
 
+inline constexpr size_t kQuickSnapshotMaxPages = 262144; // 1 GiB of guest pages
+
 struct QuickSaveStats {
     size_t pagesSaved = 0;
     size_t threadsSaved = 0;
@@ -35,11 +37,12 @@ struct QuickSaveThreadState {
 };
 
 // Save all mapped non-HLE guest pages from `mem` and the given paused `threads`
-// atomically to `path` (`.tmp` + `rename`).
+// atomically to `path` (`.tmp` + `rename`). Callers can lower the page limit.
 bool saveQuickSnapshot(const std::string& path,
                        const Memory::GuestArena& mem,
                        const std::vector<const Cpu*>& threads,
-                       QuickSaveStats* statsOut = nullptr);
+                       QuickSaveStats* statsOut = nullptr,
+                       size_t pageLimit = kQuickSnapshotMaxPages);
 
 // Verify checksum and restore all saved pages into `mem` and architectural
 // register state into `threadsOut`. Strictly refuses truncated/corrupt files.
