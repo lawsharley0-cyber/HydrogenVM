@@ -156,6 +156,7 @@ final class LibraryStore {
     init() { refresh() }
 
     func refresh() {
+        AppIcon.clearCache()
         let fm = FileManager.default
         try? fm.createDirectory(at: Self.appsDir, withIntermediateDirectories: true)
         // Pick up .ipa, .apk, and .obb files dropped into Documents (or the old Documents/Library).
@@ -533,13 +534,27 @@ struct AppIcon: View {
         .clipShape(.rect(cornerRadius: 12))
     }
 
+    /// Decoded icons by file path. Reading and decoding an icon on every redraw made the
+    /// library stutter while scrolling; each icon is now decoded once.
+    nonisolated(unsafe) private static let cache = NSCache<NSString, UIImage>()
+
+    /// The icon if it is already decoded; never touches the disk (safe in a view's body).
+    nonisolated static func cached(_ path: String) -> UIImage? { cache.object(forKey: path as NSString) }
+
     /// Old app icons are often Xcode-crushed (CgBI) PNGs that UIImage can't read;
-    /// the engine's decoder handles both, via the bridge.
-    static func load(_ path: String) -> UIImage? {
-        if let img = UIImage(contentsOfFile: path) { return img }
-        if let cg = HVMEngine.decodeImage(atPath: path) { return UIImage(cgImage: cg) }
-        return nil
+    /// the engine's decoder handles both, via the bridge. Decoded once, ready to draw.
+    nonisolated static func load(_ path: String) -> UIImage? {
+        if let hit = cached(path) { return hit }
+        var image = UIImage(contentsOfFile: path)
+        if image == nil, let cg = HVMEngine.decodeImage(atPath: path) { image = UIImage(cgImage: cg) }
+        guard let image else { return nil }
+        let ready = image.preparingForDisplay() ?? image
+        cache.setObject(ready, forKey: path as NSString)
+        return ready
     }
+
+    /// Forget decoded icons (after an import or reinstall replaced one).
+    nonisolated static func clearCache() { cache.removeAllObjects() }
 }
 
 struct LibraryView: View {

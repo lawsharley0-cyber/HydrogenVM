@@ -85,6 +85,24 @@ enum Gloss {
         UISegmentedControl.appearance().setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
     }
 
+    /// The linen weave as a 3x3-point tile: the ground color, a light hairline along the top and
+    /// a dark one down the left, drawn in that order (the vertical line on top).
+    @MainActor static func linenTile(dark: Bool) -> UIImage {
+        if let tile = linenTiles[dark] { return tile }
+        let size = CGSize(width: 3, height: 3)
+        let tile = UIGraphicsImageRenderer(size: size).image { ctx in
+            (dark ? rgb(0x16181c) : rgb(0xe6e8ec)).setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.withAlphaComponent(dark ? 0.025 : 0.35).setFill()
+            ctx.cgContext.fill(CGRect(x: 0, y: 0, width: 3, height: 1))
+            UIColor.black.withAlphaComponent(dark ? 0.18 : 0.025).setFill()
+            ctx.cgContext.fill(CGRect(x: 0, y: 0, width: 1, height: 3))
+        }
+        linenTiles[dark] = tile
+        return tile
+    }
+    @MainActor private static var linenTiles: [Bool: UIImage] = [:]
+
     /// One image with a light and a dark version; UIKit picks the one for the current appearance
     /// and switches when it changes.
     static func adaptiveImage(light: UIImage, dark: UIImage) -> UIImage {
@@ -109,22 +127,12 @@ enum Gloss {
 struct LinenBackground: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
-        let dark = scheme == .dark
-        Canvas { ctx, size in
-            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Gloss.linen))
-            var y: CGFloat = 0
-            while y < size.height {
-                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: 1)), with: .color(.white.opacity(dark ? 0.025 : 0.35)))
-                y += 3
-            }
-            var x: CGFloat = 0
-            while x < size.width {
-                ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(.black.opacity(dark ? 0.18 : 0.025)))
-                x += 3
-            }
-        }
-        .ignoresSafeArea()
-        .accessibilityHidden(true)
+        // One 3-point tile, repeated: the same weave as drawing every hairline, without
+        // hundreds of fills on each redraw.
+        Rectangle()
+            .fill(ImagePaint(image: Image(uiImage: Gloss.linenTile(dark: scheme == .dark)), scale: 1))
+            .ignoresSafeArea()
+            .accessibilityHidden(true)
     }
 }
 
@@ -218,6 +226,8 @@ struct GlossIcon: View {
     let path: String?
     let title: String
     var size: CGFloat = 48
+    /// The icon once decoded off the main thread; until then the initials tile shows.
+    @State private var loaded: UIImage?
 
     private var initials: String {
         let words = title.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
@@ -241,7 +251,7 @@ struct GlossIcon: View {
     var body: some View {
         let radius = size * 0.23
         Group {
-            if let path, let image = AppIcon.load(path) {
+            if let image = loaded ?? path.flatMap(AppIcon.cached) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
                 ZStack {
@@ -265,5 +275,9 @@ struct GlossIcon: View {
         }
         .shadow(color: .black.opacity(0.35), radius: 1.5, x: 0, y: 1)
         .accessibilityHidden(true)
+        .task(id: path) {
+            guard let path, AppIcon.cached(path) == nil else { return }
+            loaded = await Task.detached(priority: .userInitiated) { AppIcon.load(path) }.value
+        }
     }
 }
