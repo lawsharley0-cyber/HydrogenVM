@@ -73,6 +73,29 @@ final class PlayerUITests: XCTestCase {
     }
 
     @MainActor
+    func testDebugPillStaysCompactAndExpandedControlsStayOnScreen() {
+        for orientation in [1, 4] {
+            let app = open(orientation)
+            let viewport = app.otherElements["player-viewport"]
+            let pill = app.buttons["player-controls"]
+            XCTAssertTrue(pill.waitForExistence(timeout: 5))
+            XCTAssertLessThan(pill.frame.width, viewport.frame.width / 2)
+            XCTAssertLessThan(pill.frame.height, 64)
+            pill.tap()
+
+            let window = app.windows.firstMatch.frame.insetBy(dx: -1, dy: -1)
+            for name in ["player-pause", "player-inspect", "hud-minimize", "player-quit"] {
+                let control = app.buttons[name]
+                XCTAssertTrue(control.isHittable, "\(name) is outside the usable player area")
+                XCTAssertTrue(window.contains(control.frame))
+            }
+            app.buttons["hud-minimize"].tap()
+            XCTAssertTrue(pill.isHittable)
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testPortraitCenterTouchAndPauseResume() {
         let app = open()
         let screen = app.otherElements["player-viewport"]
