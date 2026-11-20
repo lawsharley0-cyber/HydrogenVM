@@ -851,6 +851,11 @@ std::optional<uint32_t> Process::lookupSymbol(const std::string& name) const {
     return std::nullopt;
 }
 
+std::vector<std::pair<std::string, uint32_t>> Process::symbolTable() const {
+    std::lock_guard<std::mutex> lk(symMu_);
+    return {symbols_.begin(), symbols_.end()};
+}
+
 void Process::addMissingSymbolResolver(MissingSymbolResolver fn) {
     missingResolvers_.push_back(std::move(fn));
 }

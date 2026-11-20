@@ -596,6 +596,37 @@ int32_t m_fesetexceptflag(Ctx& x, GuestPtr in, int32_t mask) {
     return 0;
 }
 
+// ARM run-time ABI division helpers (RTABI section 4.3). Bionic's libc.so exports them for code
+// not linked against libgcc. Quotient in r0 (r0:r1 for 64 bits), remainder in r1 (r2:r3).
+// Division by zero gives a zero quotient, as the ARMv7 UDIV/SDIV instructions do; the most
+// negative value divided by -1 wraps, as SDIV does.
+void a_uidivmod(Ctx& x) {
+    const uint32_t n = x.cpu.r[0], d = x.cpu.r[1];
+    const uint32_t q = d ? n / d : 0;
+    x.cpu.r[0] = q;
+    x.cpu.r[1] = n - q * d;
+}
+void a_idivmod(Ctx& x) {
+    const int32_t n = int32_t(x.cpu.r[0]), d = int32_t(x.cpu.r[1]);
+    const int32_t q = d == -1 ? int32_t(0u - uint32_t(n)) : d ? n / d : 0;
+    x.cpu.r[0] = uint32_t(q);
+    x.cpu.r[1] = uint32_t(n) - uint32_t(q) * uint32_t(d);
+}
+void a_uldivmod(Ctx& x) {
+    const uint64_t n = (uint64_t(x.cpu.r[1]) << 32) | x.cpu.r[0], d = (uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2];
+    const uint64_t q = d ? n / d : 0, r = n - q * d;
+    x.cpu.r[0] = uint32_t(q); x.cpu.r[1] = uint32_t(q >> 32);
+    x.cpu.r[2] = uint32_t(r); x.cpu.r[3] = uint32_t(r >> 32);
+}
+void a_ldivmod(Ctx& x) {
+    const int64_t n = int64_t((uint64_t(x.cpu.r[1]) << 32) | x.cpu.r[0]);
+    const int64_t d = int64_t((uint64_t(x.cpu.r[3]) << 32) | x.cpu.r[2]);
+    const int64_t q = d == -1 ? int64_t(0ull - uint64_t(n)) : d ? n / d : 0;
+    const uint64_t r = uint64_t(n) - uint64_t(q) * uint64_t(d);
+    x.cpu.r[0] = uint32_t(uint64_t(q)); x.cpu.r[1] = uint32_t(uint64_t(q) >> 32);
+    x.cpu.r[2] = uint32_t(r); x.cpu.r[3] = uint32_t(r >> 32);
+}
+
 } // namespace
 
 void registerBionicExtra(Process& p) {
@@ -605,6 +636,12 @@ void registerBionicExtra(Process& p) {
         R(a_memcpy, n, "ARM EABI copy (overlap-safe)");
     for (const char* n : {"__aeabi_memset", "__aeabi_memset4", "__aeabi_memset8"}) R(a_memset, n, "ARM EABI memset (dest, n, c)");
     for (const char* n : {"__aeabi_memclr", "__aeabi_memclr4", "__aeabi_memclr8"}) R(a_memclr, n, "ARM EABI clear");
+    R(a_uidivmod, "__aeabi_uidiv", "ARM EABI unsigned divide (x/0 = 0, as UDIV)");
+    R(a_uidivmod, "__aeabi_uidivmod", "ARM EABI unsigned divide and remainder (x/0 = 0, as UDIV)");
+    R(a_idivmod, "__aeabi_idiv", "ARM EABI signed divide (x/0 = 0, as SDIV)");
+    R(a_idivmod, "__aeabi_idivmod", "ARM EABI signed divide and remainder (x/0 = 0, as SDIV)");
+    R(a_uldivmod, "__aeabi_uldivmod", "ARM EABI 64-bit unsigned divide and remainder");
+    R(a_ldivmod, "__aeabi_ldivmod", "ARM EABI 64-bit signed divide and remainder");
     R(s_memmem, "memmem", "byte search");
     R(s_memrchr, "memrchr", "reverse byte search");
     R(s_memalign, "memalign", "aligned guest heap block");

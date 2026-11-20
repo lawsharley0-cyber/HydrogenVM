@@ -584,7 +584,12 @@ Jni& jni(Process& p) {
                 return [isStatic](Ctx& x) {
                     JObject* c = J(x).get(arg(x, 1));
                     const std::string name = x.proc.readCString(arg(x, 2), 256), sig = x.proc.readCString(arg(x, 3), 1024);
-                    ret(x, J(x).methodId(c ? c->cls : "?", name, sig, isStatic));
+                    const std::string cls = c ? c->cls : "?";
+                    const uint32_t id = J(x).methodId(cls, name, sig, isStatic);
+                    // HVM_JNI_TRACE: which id a cached method is, when a later call goes wrong.
+                    J(x).traceOnce("JNI Get" + std::string(isStatic ? "Static" : "") + "MethodID " + cls + "." + name + sig +
+                                   " = " + std::to_string(id));
+                    ret(x, id);
                 };
             };
             set(33, "GetMethodID", getMethod(false));
@@ -701,8 +706,10 @@ Jni& jni(Process& p) {
                 for (uint32_t i = 0; i < arg(x, 3); ++i) {
                     const uint32_t m = arg(x, 2) + i * 12;
                     std::lock_guard<std::recursive_mutex> lk(j.mu);
-                    j.registeredNatives[cls + "." + x.proc.readCString(x.mem.read<uint32_t>(m), 256) +
-                                        x.proc.readCString(x.mem.read<uint32_t>(m + 4), 1024)] = x.mem.read<uint32_t>(m + 8);
+                    const std::string key = cls + "." + x.proc.readCString(x.mem.read<uint32_t>(m), 256) +
+                                            x.proc.readCString(x.mem.read<uint32_t>(m + 4), 1024);
+                    j.registeredNatives[key] = x.mem.read<uint32_t>(m + 8);
+                    j.traceOnce("JNI RegisterNatives " + key);   // HVM_JNI_TRACE: which signature form a library uses
                 }
                 ret(x, 0);
             });

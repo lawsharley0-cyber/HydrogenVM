@@ -10,6 +10,7 @@
 #include "loader/Apk.hpp"
 #include "loader/Zip.hpp"
 #include "core/cpu/Engine.hpp"
+#include <bit>
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -546,9 +547,10 @@ void attachDrawable(Process& p, CPU::Cpu& c, GlSurface& g, int w, int h, bool de
 }
 
 // The GLSurfaceView: a host GL context of the version the game links and its window framebuffer.
-GlSurface makeSurface(Process& p, CPU::Cpu& c, const Surface& s) {
+// api: the GLES version a driver asks for, or 0 for the one the game's libraries link.
+GlSurface makeSurface(Process& p, CPU::Cpu& c, const Surface& s, int api = 0) {
     GlSurface g;
-    createContext(p, g, linkedGlesApi(p));
+    createContext(p, g, api ? api : linkedGlesApi(p));
     HostGL::contextMakeCurrent(p, g.context);
     attachDrawable(p, c, g, s.width, s.height);
     return g;
@@ -682,6 +684,9 @@ struct Driver {
     // The engine sets up EGL on the window itself and presents with eglSwapBuffers (Egl.cpp);
     // otherwise HydrogenVM makes the GL context and presents after each frame, as GLSurfaceView.
     virtual bool ownsGl() const { return false; }
+    // The GLES version of the context HydrogenVM makes when the engine does not own GL; 0 is the
+    // version the game's libraries link (an engine loaded by the game's own linker links none).
+    virtual int glApi() const { return 0; }
 };
 
 // EA's Blast framework (Dead Space and other EA games of 2011-2013).
@@ -821,9 +826,18 @@ struct UbisoftUafDriver final : Driver {
 struct UnityDriver final : Driver {
     Jni& j;
     jobject player = 0;
+    // Unity 4.0/4.1 (Subway Surfers 1.13): Java's GLSurfaceView owns the ES2 context. Its
+    // renderer (UnityPlayer.onSurfaceCreated/onSurfaceChanged/onDrawFrame in the game's DEX) calls
+    // nativeRecreateGfxState(), nativeResize, then nativeRender each frame; after the first frame
+    // that renders it starts the player: unityAndroidInit("assets/bin/", dataDir + "/lib"),
+    // nativeResize, unityAndroidPrepareGameLoop(), nativeResume, focus. Input is nativeTouch.
+    // Later players make their own EGL context in nativeRecreateGfxState(Surface).
+    bool glSurfaceView = false, started = false;
+    int width = 0, height = 0;
     explicit UnityDriver(Jni& jni) : j(jni) {}
     const char* name() const override { return "Unity"; }
-    bool ownsGl() const override { return true; }
+    bool ownsGl() const override { return !glSurfaceView; }
+    int glApi() const override { return glSurfaceView ? 2 : 0; }
     static bool matches(const Library& l) {
         for (const auto& lib : l.libs) if (lib->name == "libunity.so") return true;
         return false;
@@ -832,6 +846,11 @@ struct UnityDriver final : Driver {
         if (j.callNative(x, "com/unity3d/player/UnityPlayer", n, player, w, r)) return true;
         x.proc.logf(LogLevel::Warning, "Android: Unity has no UnityPlayer.%s", n);
         return false;
+    }
+    // True when libunity registered `nameSig` ("name(sig)ret") on UnityPlayer.
+    bool registered(const std::string& nameSig) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        return j.registeredNatives.count("com/unity3d/player/UnityPlayer." + nameSig) != 0;
     }
     void create(Ctx& x) override {
         player = j.newObject("com/unity3d/player/UnityPlayer");
@@ -846,17 +865,29 @@ struct UnityDriver final : Driver {
             x.proc.log(LogLevel::Warning, "Android: libmain has no NativeLoader.load");
         else if (!(loaded & 0xFF))
             x.proc.log(LogLevel::Warning, "Android: NativeLoader.load returned false");
+        glSurfaceView = registered("nativeInit(II)V") && registered("nativeRecreateGfxState()V");
         // The APK: Unity reads its data (assets/bin/Data) from inside it.
         call(x, "nativeFile", {j.newString(x.proc.guestPath(x.proc.config().bundlePath + "/base.apk"))});
-        call(x, "initJni", {activity});
+        if (registered("initJni()V")) call(x, "initJni");
+        else call(x, "initJni", {activity});
         call(x, "nativeInitWWW", {j.classFor("com/unity3d/player/WWW")});
+        if (glSurfaceView) {
+            // Activity.onResume -> UnityPlayer.resume() -> h(): new FMODAudioDevice().start().
+            // Later players create the device from native code themselves.
+            const jobject fmod = j.newObject("org/fmod/FMODAudioDevice");
+            if (JObject* o = j.get(fmod)) o->permanent = true;
+            j.invoke(x, j.methodId("org/fmod/FMODAudioDevice", "start", "()V", false), fmod, {});
+        }
     }
-    // True when libunity registered `nameSig` ("name(sig)ret") on UnityPlayer.
-    bool registered(const std::string& nameSig) {
-        std::lock_guard<std::recursive_mutex> lk(j.mu);
-        return j.registeredNatives.count("com/unity3d/player/UnityPlayer." + nameSig) != 0;
-    }
-    void surfaceReady(Ctx& x, const Surface&) override {
+    void surfaceReady(Ctx& x, const Surface& s) override {
+        width = s.width;
+        height = s.height;
+        if (glSurfaceView) {
+            call(x, "nativeInit", {uint32_t(width), uint32_t(height)});   // the view's size, at construction
+            call(x, "nativeRecreateGfxState");                             // Renderer.onSurfaceCreated
+            resize(x);                                                     // Renderer.onSurfaceChanged
+            return;
+        }
         const jobject surface = j.newObject("android/view/Surface");
         if (JObject* o = j.get(surface)) o->permanent = true;
         // Unity 4 takes nativeRecreateGfxState(Surface); Unity 5 added a leading display index.
@@ -867,8 +898,32 @@ struct UnityDriver final : Driver {
         call(x, "nativeResume");
         call(x, "nativeFocusChanged", {1});
     }
-    void frame(Ctx& x) override { call(x, "nativeRender"); }
+    void resize(Ctx& x) {
+        call(x, "nativeResize", {uint32_t(width), uint32_t(height), uint32_t(width), uint32_t(height)});
+    }
+    void frame(Ctx& x) override {
+        JValue rendered = 0;
+        call(x, "nativeRender", {}, &rendered);
+        if (!glSurfaceView || started || !(rendered & 0xFF)) return;
+        // Renderer.onDrawFrame, the first frame: UnityPlayer.j(), then resume and focus.
+        started = true;
+        const std::string libs = x.proc.guestPath(x.proc.homePath()) + "/lib";
+        call(x, "unityAndroidInit", {j.newString("assets/bin/"), j.newString(libs)});
+        resize(x);
+        call(x, "unityAndroidPrepareGameLoop");
+        call(x, "nativeResume");
+        call(x, "nativeFocusChanged", {1});
+    }
     void touch(Ctx& x, TouchPhase ph, float px, float py, uint32_t id, uint32_t count) override {
+        if (glSurfaceView && registered("nativeTouch(IFFIJI)V")) {
+            // nativeTouch(action, x, y, pointer id, event time in ms, pointer count), with
+            // MotionEvent's action codes: DOWN 0, UP 1, MOVE 2, CANCEL 3.
+            const uint32_t action = ph == TouchPhase::Began ? 0 : ph == TouchPhase::Ended ? 1 : ph == TouchPhase::Moved ? 2 : 3;
+            const uint64_t ms = uint64_t(x.proc.wallNowNs() / 1000000);
+            call(x, "nativeTouch", {action, std::bit_cast<uint32_t>(px), std::bit_cast<uint32_t>(py), id,
+                                    uint32_t(ms), uint32_t(ms >> 32), count});
+            return;
+        }
         // A MotionEvent for nativeInjectEvent (its accessors are in Java.cpp).
         const jobject ev = makeMotionEvent(j, ph, px, py, id, count);
         call(x, "nativeInjectEvent", {ev});
@@ -1594,7 +1649,7 @@ int runActivity(Process& p, CPU::Cpu& c) {
     driver->create(x);
     GlSurface g;
     if (!driver->ownsGl()) {
-        g = makeSurface(p, c, s);
+        g = makeSurface(p, c, s, driver->glApi());
         setCurrentSurface(&g);
     }
     driver->surfaceReady(x, s);

@@ -735,6 +735,9 @@ void registerJavaServices(Jni& j) {
             j.staticFields[runKey] = 1;
             if (JObject* o = j.get(self)) o->permanent = true;
         }
+        // FMOD Ex of Unity 4.0/4.1 keeps this device and its methods in fmodInitJni(), which the
+        // Java start() calls before starting the thread; later FMODs have no such native.
+        j.callNative(x, "org/fmod/FMODAudioDevice", "fmodInitJni", self, {}, nullptr, "()I");
         if (auto fn = p.lookupSymbol("__hvm_fmod_audio")) x.proc.startThread(*fn, self, 512u << 10, true);
         return JValue(0);
     });

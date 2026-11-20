@@ -436,6 +436,60 @@ static void test_audio_apis(JNIEnv* env) {
 
 static void test_phase_b3(void);
 
+/* ------------------------------------------------------------------ soinfo --- */
+
+/* Android before 7 returns the linker's soinfo from dlopen. Some games ship their own copy of
+   the linker (Subway Surfers 1.13) and resolve imports by walking a system library's ELF hash
+   table through it: name[128] at 0, base at 0x8c, strtab 0xac, symtab 0xb0, nbucket 0xb4,
+   nchain 0xb8, bucket 0xbc, chain 0xc0. Expected values: the ELF hash and layout from the
+   System V ABI and bionic's linker.h; strlen("hello") is 5. */
+void* dlopen(const char*, int);
+typedef struct { unsigned st_name, st_value, st_size; unsigned char st_info, st_other; unsigned short st_shndx; } sym32;
+static unsigned elf_hash(const char* s) {
+    unsigned h = 0, g;
+    while (*s) { h = (h << 4) + (unsigned char)*s++; g = h & 0xf0000000u; h ^= g; h ^= g >> 24; }
+    return h;
+}
+static int same(const char* a, const char* b) { while (*a && *a == *b) { ++a; ++b; } return *a == *b; }
+/* Freestanding ARMv7-A code without hardware divide calls the RTABI helpers for / and %;
+   bionic's libc.so exports them. Expected values are worked out by hand. */
+static void test_aeabi_div(void) {
+    volatile unsigned u = 100, ud = 7;
+    volatile int s = -100, sd = 7;
+    volatile unsigned long long ul = 10000000000ull, uld = 3;
+    volatile long long sl = -10000000000ll, sld = 7;
+    check("__aeabi_uidivmod: 100 / 7 = 14 remainder 2", u / ud == 14 && u % ud == 2, "quotient", (long)(u / ud));
+    check("__aeabi_idivmod: -100 / 7 = -14 remainder -2", s / sd == -14 && s % sd == -2, "quotient", (long)(s / sd));
+    check("__aeabi_uldivmod: 10000000000 / 3 = 3333333333 remainder 1",
+          ul / uld == 3333333333ull && ul % uld == 1, "low quotient", (long)(unsigned)(ul / uld));
+    check("__aeabi_ldivmod: -10000000000 / 7 = -1428571428 remainder -4",
+          sl / sld == -1428571428ll && sl % sld == -4, "low quotient", (long)(sl / sld));
+}
+
+static void test_soinfo(void) {
+    const unsigned char* si = dlopen("libc.so", 0);
+    const unsigned u = (unsigned)si;
+    const int pointer = u >= 0x100000u && (u & 3) == 0;
+    check("dlopen of a system library returns a bionic soinfo", pointer, "handle", (long)u);
+    if (!pointer) return;
+    const unsigned* w = (const unsigned*)si;
+    const unsigned base = w[0x8c / 4];
+    const char* strtab = (const char*)w[0xac / 4];
+    const sym32* symtab = (const sym32*)w[0xb0 / 4];
+    const unsigned nbucket = w[0xb4 / 4], nchain = w[0xb8 / 4];
+    const unsigned* bucket = (const unsigned*)w[0xbc / 4];
+    const unsigned* chain = (const unsigned*)w[0xc0 / 4];
+    const sym32* found = 0;
+    if (nbucket && nchain && bucket && chain && symtab && strtab)
+        for (unsigned n = bucket[elf_hash("strlen") % nbucket]; n && n < nchain; n = chain[n])
+            if (same(strtab + symtab[n].st_name, "strlen") && symtab[n].st_shndx != 0) { found = &symtab[n]; break; }
+    size_t (*fn)(const char*) = found ? (size_t (*)(const char*))(base + found->st_value) : 0;
+    check("soinfo names its library and its hash table finds strlen", same((const char*)si, "libc.so") && fn,
+          "symbol", (long)(found ? found->st_value : 0));
+    check("a symbol found through soinfo is callable and matches dlsym on the same handle",
+          fn && fn("hello") == 5 && (void*)fn == dlsym((void*)si, "strlen"), "address", (long)(unsigned)fn);
+}
+
 int hvm_test_main(JNIEnv* env, void* vm) {
     (void)vm;
     say("HydrogenVM Android Test Lab\n");
@@ -451,6 +505,8 @@ int hvm_test_main(JNIEnv* env, void* vm) {
     test_bionic_gaps();
     test_phase_b3();
     test_audio_apis(env);
+    test_aeabi_div();
+    test_soinfo();
     say("done: "); num(failures); say(" failure(s)\n");
     return failures;
 }

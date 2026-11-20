@@ -391,6 +391,8 @@ public:
     // Allocate `size` bytes of zeroed guest data and export it as `name`.
     uint32_t defineDataBlock(const std::string& name, uint32_t size);
     std::optional<uint32_t> lookupSymbol(const std::string& name) const;
+    // A copy of every host-registered symbol and its guest address (taken under the lock).
+    std::vector<std::pair<std::string, uint32_t>> symbolTable() const;
     // Import resolution may create placeholders; dynamic lookup only resolves
     // explicitly recognized constants. Return 0 to decline either request.
     enum class MissingSymbolMode { Import, DynamicLookup };
