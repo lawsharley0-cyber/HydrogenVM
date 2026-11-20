@@ -22,6 +22,7 @@ public:
 
     // Optional formatting helper for Object.toString / StringBuilder.append(Object).
     std::u16string formatObject(Heap& heap, uint32_t reference);
+    bool sameBoxed(Heap& heap, uint32_t lhs, uint32_t rhs);
 
 private:
     struct EnumData {

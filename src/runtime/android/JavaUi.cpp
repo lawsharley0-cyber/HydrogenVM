@@ -11,6 +11,7 @@
 #include <ctime>
 #include <filesystem>
 #include <mutex>
+#include <unistd.h>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
@@ -1033,7 +1034,16 @@ void registerJavaUi(Jni& j) {
         const std::string tagLvl = lvl;
         const auto logFn = [tagLvl](Jni& j, Ctx& x, jobject, const auto& a) {
             const LogLevel ll = (tagLvl == "e") ? LogLevel::Error : (tagLvl == "w") ? LogLevel::Warning : LogLevel::Info;
-            x.proc.logf(ll, "AndroidLog/%s [%s]: %s", tagLvl.c_str(), str(j, a[0]).c_str(), str(j, a[1]).c_str());
+            std::string msg = str(j, a[1]);
+            if (a.size() >= 3 && a[2]) {
+                std::string trCls;
+                { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* o = j.get(jobject(a[2]))) trCls = o->cls; }
+                const jobject m = jobject(j.invoke(x, j.methodId("java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false), jobject(a[2]), {}));
+                const std::string trMsg = m ? str(j, m) : "";
+                if (!msg.empty()) msg += " — ";
+                msg += trCls + (trMsg.empty() ? "" : ": " + trMsg);
+            }
+            x.proc.logf(ll, "AndroidLog/%s [%s]: %s", tagLvl.c_str(), str(j, a[0]).c_str(), msg.c_str());
             return JValue(0);
         };
         j.method("android/util/Log", lvl, "(Ljava/lang/String;Ljava/lang/String;)I", logFn);
@@ -1228,54 +1238,158 @@ void registerJavaUi(Jni& j) {
         return JValue(0);
     });
 
-    // ByteArrayOutputStream
-    struct MemOut { std::vector<uint8_t> bytes; };
-    auto memOutOf = [](Jni& j, jobject self) -> std::shared_ptr<MemOut> {
+    // java.io.OutputStream base methods & BufferedOutputStream
+    j.method("java/io/OutputStream", "<init>", "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method("java/io/OutputStream", "write", "(I)V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method("java/io/OutputStream", "write", "([B)V", [](Jni& j, Ctx& x, jobject self, const auto& a) {
+        uint32_t len = 0;
+        { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* arr = j.get(jobject(a[0]))) len = uint32_t(arr->data.size()); }
+        j.invoke(x, j.methodId("java/io/OutputStream", "write", "([BII)V", false), self, {uint32_t(a[0]), 0u, len});
+        return JValue(0);
+    });
+    j.method("java/io/OutputStream", "write", "([BII)V", [](Jni& j, Ctx& x, jobject self, const auto& a) {
+        std::vector<uint8_t> slice;
+        const int32_t off = int32_t(a[1]), len = int32_t(a[2]);
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* arr = j.get(jobject(a[0])); arr && off >= 0 && len > 0 && size_t(off) + size_t(len) <= arr->data.size())
+                slice.assign(arr->data.begin() + off, arr->data.begin() + off + len);
+        }
+        const uint32_t mid = j.methodId("java/io/OutputStream", "write", "(I)V", false);
+        for (uint8_t b : slice) j.invoke(x, mid, self, {uint32_t(b)});
+        return JValue(0);
+    });
+    j.method("java/io/OutputStream", "flush", "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+    j.method("java/io/OutputStream", "close", "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
+
+    j.method("java/io/BufferedOutputStream", "<init>", "(Ljava/io/OutputStream;)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
         std::lock_guard<std::recursive_mutex> lk(j.mu);
-        if (JObject* o = j.get(self))
-            if (auto* p = std::any_cast<std::shared_ptr<MemOut>>(&o->host)) return *p;
-        return nullptr;
+        if (JObject* o = j.get(self)) o->fields["hvm.out"] = a[0];
+        return JValue(0);
+    });
+    j.method("java/io/BufferedOutputStream", "<init>", "(Ljava/io/OutputStream;I)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) o->fields["hvm.out"] = a[0];
+        return JValue(0);
+    });
+    j.method("java/io/BufferedOutputStream", "write", "(I)V", [](Jni& j, Ctx& x, jobject self, const auto& a) {
+        jobject out = 0;
+        { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* o = j.get(self)) out = jobject(o->fields["hvm.out"]); }
+        if (out) j.invoke(x, j.methodId("java/io/OutputStream", "write", "(I)V", false), out, {uint32_t(a[0])});
+        return JValue(0);
+    });
+    j.method("java/io/BufferedOutputStream", "write", "([B)V", [](Jni& j, Ctx& x, jobject self, const auto& a) {
+        jobject out = 0;
+        { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* o = j.get(self)) out = jobject(o->fields["hvm.out"]); }
+        if (out) j.invoke(x, j.methodId("java/io/OutputStream", "write", "([B)V", false), out, {uint32_t(a[0])});
+        return JValue(0);
+    });
+    j.method("java/io/BufferedOutputStream", "write", "([BII)V", [](Jni& j, Ctx& x, jobject self, const auto& a) {
+        jobject out = 0;
+        { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* o = j.get(self)) out = jobject(o->fields["hvm.out"]); }
+        if (out) j.invoke(x, j.methodId("java/io/OutputStream", "write", "([BII)V", false), out, {uint32_t(a[0]), uint32_t(a[1]), uint32_t(a[2])});
+        return JValue(0);
+    });
+    j.method("java/io/BufferedOutputStream", "flush", "()V", [](Jni& j, Ctx& x, jobject self, const auto&) {
+        jobject out = 0;
+        { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* o = j.get(self)) out = jobject(o->fields["hvm.out"]); }
+        if (out) j.invoke(x, j.methodId("java/io/OutputStream", "flush", "()V", false), out, {});
+        return JValue(0);
+    });
+    j.method("java/io/BufferedOutputStream", "close", "()V", [](Jni& j, Ctx& x, jobject self, const auto&) {
+        jobject out = 0;
+        { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* o = j.get(self)) out = jobject(o->fields["hvm.out"]); }
+        if (out) j.invoke(x, j.methodId("java/io/OutputStream", "close", "()V", false), out, {});
+        return JValue(0);
+    });
+
+    // ByteArrayOutputStream (maintains protected fields `buf` and `count` per Java SE spec
+    // so subclasses such as libGDX's OptimizedByteArrayOutputStream can read them directly)
+    auto baosInit = [](Jni& j, jobject self, int32_t cap) {
+        const uint32_t size = cap > 0 ? uint32_t(cap) : 32u;
+        const jobject buf = j.newArray('B', size);
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) {
+            o->fields["buf"] = buf;
+            o->fields["count"] = 0;
+        }
     };
-    j.method("java/io/ByteArrayOutputStream", "<init>", "()V", [](Jni& j, Ctx&, jobject self, const auto&) {
+    auto baosAppend = [](Jni& j, jobject self, const uint8_t* src, size_t len) {
+        if (!len) return;
         std::lock_guard<std::recursive_mutex> lk(j.mu);
-        if (JObject* o = j.get(self)) o->host = std::make_shared<MemOut>();
+        JObject* o = j.get(self);
+        if (!o) return;
+        jobject buf = jobject(o->fields["buf"]);
+        size_t count = size_t(uint32_t(o->fields["count"]));
+        JObject* arr = j.get(buf);
+        if (!arr || count + len > arr->data.size()) {
+            const size_t curCap = arr ? arr->data.size() : 0;
+            size_t newCap = std::max<size_t>(curCap ? curCap * 2 : 32, count + len);
+            const jobject next = j.newArray('B', uint32_t(newCap));
+            JObject* nextArr = j.get(next);
+            if (arr && nextArr && count > 0)
+                std::memcpy(nextArr->data.data(), arr->data.data(), std::min(count, arr->data.size()));
+            o->fields["buf"] = next;
+            arr = nextArr;
+        }
+        if (arr && count + len <= arr->data.size()) {
+            std::memcpy(arr->data.data() + count, src, len);
+            o->fields["count"] = uint64_t(count + len);
+        }
+    };
+    j.method("java/io/ByteArrayOutputStream", "<init>", "()V", [baosInit](Jni& j, Ctx&, jobject self, const auto&) {
+        baosInit(j, self, 32);
         return JValue(0);
     });
-    j.method("java/io/ByteArrayOutputStream", "<init>", "(I)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
-        auto m = std::make_shared<MemOut>();
-        if (int32_t(a[0]) > 0) m->bytes.reserve(size_t(int32_t(a[0])));
-        std::lock_guard<std::recursive_mutex> lk(j.mu);
-        if (JObject* o = j.get(self)) o->host = m;
+    j.method("java/io/ByteArrayOutputStream", "<init>", "(I)V", [baosInit](Jni& j, Ctx&, jobject self, const auto& a) {
+        baosInit(j, self, int32_t(a[0]));
         return JValue(0);
     });
-    j.method("java/io/ByteArrayOutputStream", "write", "(I)V", [memOutOf](Jni& j, Ctx&, jobject self, const auto& a) {
-        if (auto m = memOutOf(j, self)) m->bytes.push_back(uint8_t(a[0]));
+    j.method("java/io/ByteArrayOutputStream", "write", "(I)V", [baosAppend](Jni& j, Ctx&, jobject self, const auto& a) {
+        const uint8_t b = uint8_t(a[0]);
+        baosAppend(j, self, &b, 1);
         return JValue(0);
     });
-    j.method("java/io/ByteArrayOutputStream", "write", "([B)V", [memOutOf](Jni& j, Ctx&, jobject self, const auto& a) {
-        auto m = memOutOf(j, self);
-        std::lock_guard<std::recursive_mutex> lk(j.mu);
-        if (m) if (JObject* arr = j.get(jobject(a[0]))) m->bytes.insert(m->bytes.end(), arr->data.begin(), arr->data.end());
+    j.method("java/io/ByteArrayOutputStream", "write", "([B)V", [baosAppend](Jni& j, Ctx&, jobject self, const auto& a) {
+        std::vector<uint8_t> tmp;
+        { std::lock_guard<std::recursive_mutex> lk(j.mu); if (JObject* arr = j.get(jobject(a[0]))) tmp = arr->data; }
+        baosAppend(j, self, tmp.data(), tmp.size());
         return JValue(0);
     });
-    j.method("java/io/ByteArrayOutputStream", "write", "([BII)V", [memOutOf](Jni& j, Ctx&, jobject self, const auto& a) {
-        auto m = memOutOf(j, self);
-        const uint32_t off = uint32_t(int32_t(a[1])), len = uint32_t(int32_t(a[2]));
-        std::lock_guard<std::recursive_mutex> lk(j.mu);
-        if (m) if (JObject* arr = j.get(jobject(a[0])); arr && size_t(off) + len <= arr->data.size())
-            m->bytes.insert(m->bytes.end(), arr->data.begin() + off, arr->data.begin() + off + len);
+    j.method("java/io/ByteArrayOutputStream", "write", "([BII)V", [baosAppend](Jni& j, Ctx&, jobject self, const auto& a) {
+        const int32_t off = int32_t(a[1]), len = int32_t(a[2]);
+        std::vector<uint8_t> tmp;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* arr = j.get(jobject(a[0])); arr && off >= 0 && len > 0 && size_t(off) + size_t(len) <= arr->data.size())
+                tmp.assign(arr->data.begin() + off, arr->data.begin() + off + len);
+        }
+        baosAppend(j, self, tmp.data(), tmp.size());
         return JValue(0);
     });
-    j.method("java/io/ByteArrayOutputStream", "size", "()I", [memOutOf](Jni& j, Ctx&, jobject self, const auto&) {
-        auto m = memOutOf(j, self);
-        return JValue(m ? uint32_t(m->bytes.size()) : 0);
-    });
-    j.method("java/io/ByteArrayOutputStream", "toByteArray", "()[B", [memOutOf](Jni& j, Ctx&, jobject self, const auto&) {
-        auto m = memOutOf(j, self);
-        const uint32_t n = m ? uint32_t(m->bytes.size()) : 0;
-        const jobject arr = j.newArray('B', n);
+    j.method("java/io/ByteArrayOutputStream", "reset", "()V", [](Jni& j, Ctx&, jobject self, const auto&) {
         std::lock_guard<std::recursive_mutex> lk(j.mu);
-        if (m && n) if (JObject* o = j.get(arr)) std::memcpy(o->data.data(), m->bytes.data(), n);
+        if (JObject* o = j.get(self)) o->fields["count"] = 0;
+        return JValue(0);
+    });
+    j.method("java/io/ByteArrayOutputStream", "size", "()I", [](Jni& j, Ctx&, jobject self, const auto&) {
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        JObject* o = j.get(self);
+        return JValue(o ? uint32_t(o->fields["count"]) : 0u);
+    });
+    j.method("java/io/ByteArrayOutputStream", "toByteArray", "()[B", [](Jni& j, Ctx&, jobject self, const auto&) {
+        std::vector<uint8_t> out;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* o = j.get(self)) {
+                const size_t n = size_t(uint32_t(o->fields["count"]));
+                if (JObject* buf = j.get(jobject(o->fields["buf"])); buf && n > 0)
+                    out.assign(buf->data.begin(), buf->data.begin() + std::min(n, buf->data.size()));
+            }
+        }
+        const jobject arr = j.newArray('B', uint32_t(out.size()));
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (!out.empty()) if (JObject* o = j.get(arr)) std::memcpy(o->data.data(), out.data(), out.size());
         return JValue(arr);
     });
     j.method("java/io/ByteArrayOutputStream", "close", "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
@@ -1363,6 +1477,62 @@ void registerJavaUi(Jni& j) {
         if (JObject* o = j.get(self)) o->host = fsObj;
         return JValue(0);
     });
+    j.method("java/io/FileInputStream", "<init>", "(Ljava/io/FileDescriptor;)V", [](Jni& j, Ctx&, jobject self, const auto& a) {
+        int fd = -1;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* fdo = j.get(jobject(a[0]))) fd = int(fdo->fields["descriptor"]);
+        }
+        auto fsObj = std::make_shared<FileStream>();
+        if (fd >= 0) {
+            const int duped = ::dup(fd);
+            if (duped >= 0) fsObj->f = ::fdopen(duped, "rb");
+        }
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(self)) o->host = fsObj;
+        return JValue(0);
+    });
+    j.method("java/io/FileInputStream", "getChannel", "()Ljava/nio/channels/FileChannel;", [fileStreamOf](Jni& j, Ctx&, jobject self, const auto&) {
+        auto fsObj = fileStreamOf(j, self);
+        const jobject ch = j.newObject("java/nio/channels/FileChannel");
+        std::lock_guard<std::recursive_mutex> lk(j.mu);
+        if (JObject* o = j.get(ch)) o->host = fsObj;
+        return JValue(ch);
+    });
+    j.method("java/nio/channels/FileChannel", "size", "()J", [fileStreamOf](Jni& j, Ctx&, jobject self, const auto&) {
+        auto fsObj = fileStreamOf(j, self);
+        if (!fsObj || !fsObj->f) return JValue(0);
+        const long cur = std::ftell(fsObj->f);
+        std::fseek(fsObj->f, 0, SEEK_END);
+        const long end = std::ftell(fsObj->f);
+        std::fseek(fsObj->f, cur, SEEK_SET);
+        return JValue(end > 0 ? uint64_t(end) : 0ULL);
+    });
+    j.method("java/nio/channels/FileChannel", "map",
+             "(Ljava/nio/channels/FileChannel$MapMode;JJ)Ljava/nio/MappedByteBuffer;",
+             [fileStreamOf](Jni& j, Ctx& x, jobject self, const auto& a) {
+        auto fsObj = fileStreamOf(j, self);
+        const int64_t pos = int64_t(a[1]);
+        const int64_t sz = int64_t(a[2]);
+        const uint32_t cap = (sz > 0 && sz <= (64 << 20)) ? uint32_t(sz) : 0u;
+        const jobject bb = jobject(j.invoke(x, j.methodId("java/nio/ByteBuffer", "allocateDirect", "(I)Ljava/nio/ByteBuffer;", true), 0, {cap}));
+        uint32_t addr = 0;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* o = j.get(bb)) {
+                o->cls = "java/nio/MappedByteBuffer";
+                addr = uint32_t(o->fields["hvm.address"]);
+            }
+        }
+        if (fsObj && fsObj->f && cap > 0 && addr) {
+            const long cur = std::ftell(fsObj->f);
+            std::fseek(fsObj->f, long(pos >= 0 ? pos : 0), SEEK_SET);
+            (void)std::fread(x.mem.host(addr), 1, cap, fsObj->f);
+            std::fseek(fsObj->f, cur, SEEK_SET);
+        }
+        return JValue(bb);
+    });
+    j.method("java/nio/channels/FileChannel", "close", "()V", [](Jni&, Ctx&, jobject, const auto&) { return JValue(0); });
     j.method("java/io/FileInputStream", "read", "()I", [fileStreamOf](Jni& j, Ctx&, jobject self, const auto&) {
         auto s = fileStreamOf(j, self);
         const int c = s && s->f ? std::fgetc(s->f) : EOF;
@@ -1624,6 +1794,21 @@ void registerJavaUi(Jni& j) {
     j.method("android/os/VibratorManager", "getDefaultVibrator", "()Landroid/os/Vibrator;", [](Jni& j, Ctx&, jobject, const auto&) {
         return JValue(singleton(j, "android/os/Vibrator"));
     });
+
+    // java.nio.channels.FileChannel$MapMode constants
+    {
+        const std::string kMapMode = "java/nio/channels/FileChannel$MapMode";
+        auto makeMode = [&](const char* field) {
+            const jobject obj = j.newObject(kMapMode);
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* o = j.get(obj)) { o->permanent = true; o->str = field; }
+            j.staticFields[kMapMode + "." + field] = obj;
+        };
+        makeMode("READ_ONLY");
+        makeMode("READ_WRITE");
+        makeMode("PRIVATE");
+        j.superclasses["java/nio/MappedByteBuffer"] = "java/nio/ByteBuffer";
+    }
 
     // java.nio.* buffers
     registerNioBuffers(j);

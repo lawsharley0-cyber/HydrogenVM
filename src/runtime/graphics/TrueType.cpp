@@ -48,7 +48,8 @@ std::shared_ptr<TrueTypeFont> TrueTypeFont::load(std::vector<uint8_t> bytes) {
     if (hheaSize < 36 || !hmtx || !loca || !glyf || cmapSize < 4 || format > 1) return {};
     const uint32_t metrics = u16(hhea + 34);
     if (!metrics || metrics > glyphs || hmtxSize < metrics*4 + (glyphs-metrics)*2 || locaSize < (glyphs+1)*(format ? 4u : 2u)) return {};
-    auto glyphOffset = [&](uint32_t g) { return format ? u32(loca+g*4) : u16(loca+g*2)*2; };
+    const uint32_t locaOffset = loca;
+    auto glyphOffset = [&](uint32_t g) { return format ? u32(locaOffset+g*4) : u16(locaOffset+g*2)*2; };
     std::vector<std::vector<uint32_t>> children(glyphs);
     for (uint32_t g=0; g<glyphs; ++g) {
         const uint32_t begin = glyphOffset(g), end = glyphOffset(g+1);
