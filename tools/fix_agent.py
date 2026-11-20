@@ -58,7 +58,7 @@ def load_candidates(
         data = json.loads(nightly_path.read_text(encoding="utf-8"))
         for reg in data.get("regressions", []):
             game = str(reg.get("game", "unknown"))
-            symptom = str(reg.get("symptom", "regression"))
+            symptom = str(reg.get("what") or reg.get("symptom") or "regression")
             out.append(
                 Candidate(
                     kind="regression",
@@ -74,8 +74,9 @@ def load_candidates(
 
     if ledger_path and ledger_path.exists():
         data = json.loads(ledger_path.read_text(encoding="utf-8"))
-        for entry in data.get("gaps", []):
-            sym = str(entry.get("symbol") or entry.get("name") or "")
+        entries = data.get("gaps") if "gaps" in data else [*data.get("native", []), *data.get("jni", [])]
+        for entry in entries:
+            sym = str(entry.get("key") or entry.get("symbol") or entry.get("name") or "")
             if not sym:
                 continue
             games = entry.get("games", [])

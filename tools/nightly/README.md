@@ -53,6 +53,7 @@ Next to any `<game>.ipa` or `<game>.apk`:
 | `commit` | string | 40-character Git commit SHA of the tested `HydrogenVM` build. |
 | `seconds` | integer | Per-game run duration budget in seconds. |
 | `games` | array | List of per-game result objects (see below). |
+| `regressions` | array | Changes from the preceding run as `{game, what, detail}` objects. Empty on the first run. |
 
 ### Each entry in `games`
 
