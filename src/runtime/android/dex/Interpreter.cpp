@@ -222,7 +222,8 @@ class MonitorScope {
 public:
     explicit MonitorScope(Heap& heap) : heap_(heap) {}
     ~MonitorScope() {
-        for (auto it = held_.rbegin(); it != held_.rend(); ++it) heap_.leave(*it);
+        // Process shutdown can cancel Object.wait before it reacquires the monitor.
+        for (auto it = held_.rbegin(); it != held_.rend(); ++it) heap_.leave(*it, false);
     }
     void enter(uint32_t ref) {
         held_.push_back(ref);

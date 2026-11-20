@@ -114,6 +114,9 @@ public:
                 [this](auto type, auto name, auto sig, auto receiver, auto write) {
                     return externalField(type, name, sig, receiver, write);
                 },
+                [&p] {
+                    if (p.stopping()) throw ProcessExit(0, "stopping");
+                },
             });
         collections.setComparator([this](uint32_t cmp, uint32_t a, uint32_t b) -> int32_t {
             const Value callArgs[3] = {

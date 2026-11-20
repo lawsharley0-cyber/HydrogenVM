@@ -2,7 +2,6 @@
 #pragma once
 #include "runtime/android/dex/Heap.hpp"
 
-#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -59,7 +58,6 @@ private:
     std::optional<uint64_t> boxedValueLocked(uint32_t reference) const;
 
     std::mutex mutex_;
-    std::condition_variable monitorCv_;
     std::unordered_map<uint32_t, uint64_t> boxed_;
     std::unordered_map<uint32_t, std::u16string> builders_;
     std::unordered_map<uint32_t, EnumData> enums_;

@@ -1501,24 +1501,14 @@ std::optional<Value> CoreLang::invoke(Heap& heap, std::u16string_view owner, std
         if (name == u"hashCode" && signature == u"()I") return word(self);
         if (name == u"toString" && signature == u"()Ljava/lang/String;")
             return ref(heap.newString(formatObject(heap, self)));
-        if (name == u"notify" && signature == u"()V") {
-            monitorCv_.notify_one();
-            return Value{ValueKind::Void};
-        }
-        if (name == u"notifyAll" && signature == u"()V") {
-            monitorCv_.notify_all();
+        if ((name == u"notify" || name == u"notifyAll") && signature == u"()V") {
+            heap.notify(self, name == u"notifyAll");
             return Value{ValueKind::Void};
         }
         if (name == u"wait" && (signature == u"()V" || signature == u"(J)V" || signature == u"(JI)V")) {
-            std::unique_lock lock(mutex_);
-            const int64_t ms = args.size() >= 2 ? int64_t(args[1].bits) : 0;
+            const int64_t ms = args.size() >= 2 ? std::bit_cast<int64_t>(args[1].bits) : 0;
             const int32_t ns = args.size() >= 3 ? asInt(args[2]) : 0;
-            if (ms < 0 || ns < 0 || ns > 999999) throw JavaException{u"Ljava/lang/IllegalArgumentException;"};
-            if (ms == 0 && ns == 0) {
-                monitorCv_.wait_for(lock, std::chrono::milliseconds(16));
-            } else {
-                monitorCv_.wait_for(lock, std::chrono::milliseconds(ms) + std::chrono::nanoseconds(ns));
-            }
+            heap.wait(self, ms, ns);
             return Value{ValueKind::Void};
         }
     }
