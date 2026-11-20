@@ -123,6 +123,13 @@ struct AudioFileInstance {
     // Set for an MP3 source: the file is presented as its compressed packets, as on iOS,
     // and the app decodes them through an AudioQueue. Other sources are presented decoded.
     std::shared_ptr<Audio::Mp3Packets> mp3;
+    // Set for a long Ogg, WAV, CAF, AIFF or M4A: samples are read on demand through a decoder
+    // cursor instead of being decoded whole at open. `path` is set when the cursor reads the file
+    // itself (so the file's bytes are not kept either); otherwise `rawBytes` stays so that
+    // ExtAudioFileWrapAudioFileID can open a second cursor. `sourceMu` serializes the cursor.
+    std::shared_ptr<Audio::AudioSource> source;
+    std::string path;
+    std::shared_ptr<std::mutex> sourceMu = std::make_shared<std::mutex>();
 };
 
 struct AudioUnitInstance {
@@ -818,6 +825,14 @@ int32_t aq_offlineRender(Ctx& x, uint32_t qid, GuestPtr, GuestPtr buffer, uint32
 
 // AudioFile & AudioUnit stubs
 bool afIndexMp3(AudioFileInstance& af);
+// True when the first bytes name a container the streaming decoders read (Ogg, RIFF/WAVE, CAF,
+// AIFF/AIFC, MP4/M4A). An MP3 is not one: it is presented as packets, not decoded.
+bool afStreamableMagic(const uint8_t* head, size_t n) {
+    if (n < 4) return false;
+    if (!std::memcmp(head, "OggS", 4) || !std::memcmp(head, "RIFF", 4) || !std::memcmp(head, "caff", 4) ||
+        !std::memcmp(head, "FORM", 4)) return true;
+    return n >= 8 && !std::memcmp(head + 4, "ftyp", 4);
+}
 int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile) {
     if (!urlRef || !outFile) return -50;
     const std::string path = Foundation::urlFilePath(x, urlRef);
@@ -827,9 +842,21 @@ int32_t af_openURL(Ctx& x, uint32_t urlRef, int32_t, uint32_t, GuestPtr outFile)
     const uint32_t fid = st.nextFileId++;
     AudioFileInstance af;
     af.id = fid;
-    af.rawBytes.assign((std::istreambuf_iterator<char>(in)), {});
-    if (!afIndexMp3(af)) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
-    if (!af.mp3 && af.decoded.stereoPcm.empty()) { x.mem.write<uint32_t>(outFile, 0); return 1954115647; }
+    uint8_t head[8] = {};
+    in.read(reinterpret_cast<char*>(head), sizeof head);
+    if (afStreamableMagic(head, size_t(in.gcount()))) {
+        // A long track is read from the file as the app asks for it; neither its bytes nor its
+        // decoded PCM are held. A short file, or a codec with no streaming decoder, gets null here.
+        af.source = Audio::openStream(path);
+        if (af.source) af.path = path;
+    }
+    if (!af.source) {
+        in.clear();
+        in.seekg(0);
+        af.rawBytes.assign((std::istreambuf_iterator<char>(in)), {});
+        if (!afIndexMp3(af)) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
+    }
+    if (!af.mp3 && !af.source && af.decoded.stereoPcm.empty()) { x.mem.write<uint32_t>(outFile, 0); return 1954115647; }
     st.files[fid] = std::move(af);
     x.mem.write<uint32_t>(outFile, fid);
     return 0;
@@ -874,14 +901,41 @@ int32_t af_getPropertyInfo(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr outSize
 // AudioFile presents 16-bit LPCM in the source's own channel count (mono files
 // stay mono): apps such as Talking John size their read buffers from the file's
 // real layout, and a stereo view overran them by 2x.
-uint32_t afChannels(const AudioFileInstance& af) { return af.decoded.channels == 1 ? 1 : 2; }
-// Copies frames [first, first+n) of the decoded stereo PCM to guest memory in the file's layout.
-void afCopyFrames(Ctx& x, const AudioFileInstance& af, uint64_t first, uint64_t n, GuestPtr out) {
-    const auto& pcm = af.decoded.stereoPcm;
-    if (afChannels(af) == 2) { x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(pcm.data() + first * 2), size_t(n * 4)); return; }
-    std::vector<int16_t> mono(n);
-    for (uint64_t i = 0; i < n; ++i) mono[i] = pcm[(first + i) * 2];
-    x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(mono.data()), size_t(n * 2));
+uint32_t afChannels(const AudioFileInstance& af) { return (af.source ? af.source->channels() : af.decoded.channels) == 1 ? 1 : 2; }
+uint64_t afFrames(const AudioFileInstance& af) { return af.source ? af.source->frames() : af.decoded.stereoPcm.size() / 2; }
+double afSampleRate(const AudioFileInstance& af) { return af.source ? double(af.source->sampleRate()) : double(af.decoded.sampleRate); }
+double afDuration(const AudioFileInstance& af) {
+    if (!af.source) return af.decoded.duration;
+    return af.source->sampleRate() > 0 ? double(af.source->frames()) / double(af.source->sampleRate()) : 0.0;
+}
+// Copies frames [first, first+n) to guest memory in the file's layout and returns how many were
+// copied: n, unless a decoder cursor stops short.
+uint64_t afCopyFrames(Ctx& x, const AudioFileInstance& af, uint64_t first, uint64_t n, GuestPtr out) {
+    if (!af.source) {
+        const auto& pcm = af.decoded.stereoPcm;
+        if (afChannels(af) == 2) { x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(pcm.data() + first * 2), size_t(n * 4)); return n; }
+        std::vector<int16_t> mono(n);
+        for (uint64_t i = 0; i < n; ++i) mono[i] = pcm[(first + i) * 2];
+        x.mem.copyIn(out, reinterpret_cast<const uint8_t*>(mono.data()), size_t(n * 2));
+        return n;
+    }
+    constexpr size_t kChunk = 4096;   // frames decoded per cursor read
+    const bool stereo = afChannels(af) == 2;
+    std::lock_guard<std::mutex> lock(*af.sourceMu);
+    std::vector<int16_t> window(kChunk * 2), mono(kChunk);
+    uint64_t done = 0;
+    while (done < n) {
+        const size_t got = af.source->read(first + done, window.data(), size_t(std::min<uint64_t>(kChunk, n - done)));
+        if (!got) break;
+        if (stereo) {
+            x.mem.copyIn(out + uint32_t(done * 4), reinterpret_cast<const uint8_t*>(window.data()), got * 4);
+        } else {
+            for (size_t i = 0; i < got; ++i) mono[i] = window[i * 2];
+            x.mem.copyIn(out + uint32_t(done * 2), reinterpret_cast<const uint8_t*>(mono.data()), got * 2);
+        }
+        done += got;
+    }
+    return done;
 }
 int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, GuestPtr outData) {
     auto& st = ATS(x);
@@ -971,11 +1025,11 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
     }
     if (prop == 0x706E666F /* 'pnfo' packet table: decoded PCM has no priming or remainder */) {
         noteOnce(x, "AudioFile packet table priming/remainder (reported as 0; the source's are not read)");
-        x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
+        x.mem.write<uint64_t>(outData, afFrames(af));
         x.mem.write<uint32_t>(outData + 8, 0);
         x.mem.write<uint32_t>(outData + 12, 0);
     } else if (prop == 0x64666D74 /* 'dfmt' AudioStreamBasicDescription */ && cap >= 40) {
-        x.mem.write<double>(outData + 0, double(af.decoded.sampleRate));
+        x.mem.write<double>(outData + 0, afSampleRate(af));
         x.mem.write<uint32_t>(outData + 8, 0x6C70636D /* 'lpcm' */);
         x.mem.write<uint32_t>(outData + 12, 0x0C /* signed int | packed */);
         x.mem.write<uint32_t>(outData + 16, 2 * afChannels(af));
@@ -985,11 +1039,11 @@ int32_t af_getProperty(Ctx& x, uint32_t fid, uint32_t prop, GuestPtr ioSize, Gue
         x.mem.write<uint32_t>(outData + 32, 16);
         x.mem.write<uint32_t>(outData + 36, 0);
     } else if (prop == 0x62636E74 /* 'bcnt' byte count */ && cap >= 8) {
-        x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2) * 2 * afChannels(af));
+        x.mem.write<uint64_t>(outData, afFrames(af) * 2 * afChannels(af));
     } else if (prop == 0x65647572 /* 'edur' estimated duration */ && cap >= 8) {
-        x.mem.write<double>(outData, af.decoded.duration);
+        x.mem.write<double>(outData, afDuration(af));
     } else if (prop == 0x70636E74 /* 'pcnt' audio data packet count */ && cap >= 8) {
-        x.mem.write<uint64_t>(outData, uint64_t(af.decoded.stereoPcm.size() / 2));
+        x.mem.write<uint64_t>(outData, afFrames(af));
     } else if ((prop == 0x70737A65 /* 'psze' */ || prop == 0x706B7562 /* 'pkub' */) && cap >= 4) {
         x.mem.write<uint32_t>(outData, 2 * afChannels(af));
     } else if (prop == 0x66666D74 /* 'ffmt' file format */ && cap >= 4) {
@@ -1017,11 +1071,11 @@ int32_t af_readBytes(Ctx& x, uint32_t fid, bool, int64_t inStartingByte, GuestPt
         return n ? 0 : -39;   // kAudioFileEndOfFileError
     }
     const uint32_t bpf = 2 * afChannels(af);
-    const uint64_t frames = af.decoded.stereoPcm.size() / 2;
+    const uint64_t frames = afFrames(af);
     const uint32_t req = x.mem.read<uint32_t>(ioNumBytes);
     const uint64_t first = std::min<uint64_t>(uint64_t(std::max<int64_t>(0, inStartingByte)) / bpf, frames);
-    const uint64_t n = std::min<uint64_t>(req / bpf, frames - first);
-    if (n) afCopyFrames(x, af, first, n, outBuffer);
+    const uint64_t want = std::min<uint64_t>(req / bpf, frames - first);
+    const uint64_t n = want ? afCopyFrames(x, af, first, want, outBuffer) : 0;
     x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * bpf));
     return 0;
 }
@@ -1066,9 +1120,15 @@ void af_openWithCallbacks(Ctx& x) {
     AudioFileInstance af;
     af.id = st.nextFileId++;
     af.rawBytes = std::move(bytes);
-    if (!afIndexMp3(af)) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
-    audioTrace("AudioFileOpenWithCallbacks", uint32_t(af.rawBytes.size()), af.mp3 ? af.mp3->packets.size() : af.decoded.stereoPcm.size() / 2);
-    if (!af.mp3 && af.decoded.stereoPcm.empty()) { x.cpu.r[0] = uint32_t(1954115647); return; }
+    if (afStreamableMagic(af.rawBytes.data(), af.rawBytes.size())) {
+        // openStream takes the bytes it is given, so it gets a copy; the file keeps its own for
+        // ExtAudioFileWrapAudioFileID, which needs a second cursor.
+        std::vector<uint8_t> copy = af.rawBytes;
+        af.source = Audio::openStream(copy);
+    }
+    if (!af.source && !afIndexMp3(af)) af.decoded = decodeAudioBytes(x, af.rawBytes.data(), af.rawBytes.size());
+    audioTrace("AudioFileOpenWithCallbacks", uint32_t(af.rawBytes.size()), af.mp3 ? af.mp3->packets.size() : afFrames(af));
+    if (!af.mp3 && !af.source && af.decoded.stereoPcm.empty()) { x.cpu.r[0] = uint32_t(1954115647); return; }
     x.mem.write<uint32_t>(outFile, af.id);
     st.files[af.id] = std::move(af);
     x.cpu.r[0] = 0;
@@ -1113,12 +1173,12 @@ void af_readPackets(Ctx& x, bool numBytesIsInOut) {
         return;
     }
     const uint32_t bpf = 2 * afChannels(af);
-    const uint64_t frames = af.decoded.stereoPcm.size() / 2;
+    const uint64_t frames = afFrames(af);
     uint64_t want = x.mem.read<uint32_t>(ioNumPackets);
     if (numBytesIsInOut && ioNumBytes) want = std::min<uint64_t>(want, x.mem.read<uint32_t>(ioNumBytes) / bpf);
     const uint64_t first = uint64_t(std::max<int64_t>(0, start));
-    const uint64_t n = first >= frames ? 0 : std::min<uint64_t>(want, frames - first);
-    if (n) afCopyFrames(x, af, first, n, out);
+    const uint64_t asked = first >= frames ? 0 : std::min<uint64_t>(want, frames - first);
+    const uint64_t n = asked ? afCopyFrames(x, af, first, asked, out) : 0;
     audioTrace("AudioFileReadPackets", uint32_t(first), n);
     x.mem.write<uint32_t>(ioNumPackets, uint32_t(n));
     if (ioNumBytes) x.mem.write<uint32_t>(ioNumBytes, uint32_t(n * bpf));
@@ -1336,10 +1396,17 @@ int32_t eaf_wrap(Ctx& x, uint32_t afid, bool, GuestPtr out) {
     auto& st = ATS(x);
     if (!st.files.count(afid) || !out) return -50;
     AudioFileInstance& af = st.files[afid];
-    // ExtAudioFile hands out decoded audio. An MP3 AudioFile holds only its packets until now.
-    if (af.mp3 && af.decoded.stereoPcm.empty()) {
-        auto bytes = af.rawBytes;
-        if (auto source = Audio::openStream(bytes)) {
+    // ExtAudioFile hands out decoded audio. An MP3 AudioFile holds only its packets until now, and a
+    // streamed one only its cursor; ExtAudioFile gets a cursor of its own.
+    if ((af.mp3 || af.source) && af.decoded.stereoPcm.empty()) {
+        std::shared_ptr<Audio::AudioSource> source;
+        if (!af.path.empty()) {
+            source = Audio::openStream(af.path);
+        } else {
+            auto bytes = af.rawBytes;
+            source = Audio::openStream(bytes);
+        }
+        if (source) {
             x.mem.write<uint32_t>(out, newExtFile(x, {}, std::move(source)));
             return 0;
         }

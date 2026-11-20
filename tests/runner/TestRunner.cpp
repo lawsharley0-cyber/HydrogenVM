@@ -8256,6 +8256,95 @@ int runFullSubsystemTests() {
               proc.mem().read<uint64_t>(fileOut + 16) == 4410 && proc.mem().read<uint32_t>(fileOut + 24) == 12 &&
               proc.mem().read<uint32_t>(fileOut + 28) == 3 && std::memcmp(proc.mem().host(pcmOut), wav.data() + 44, 12) == 0,
               "AudioFileOpenURL decoded LPCM packets retain sample bytes and packet/byte counts");
+#ifdef __linux__
+        // A long track opened through AudioFile is read through a decoder cursor. Decoding it
+        // whole at open kept the track's PCM and its file bytes alive until the app closed it.
+        {
+            auto residentKb = [] {
+                std::ifstream status("/proc/self/status");
+                std::string line;
+                while (std::getline(status, line))
+                    if (line.rfind("VmRSS:", 0) == 0) return uint64_t(std::strtoull(line.c_str() + 6, nullptr, 10));
+                return uint64_t(0);
+            };
+            constexpr uint32_t kLongFrames = 44100u * 180u;   // three minutes of 44.1 kHz stereo
+            // Expected samples come from this formula, not from the emulator: left is a sawtooth
+            // of period 20001, right is its negation.
+            auto leftAt = [](uint64_t i) { return int16_t(int64_t(i * 37 % 20001) - 10000); };
+            const std::string longPath = proc.homePath() + "/audiofile-long.wav";
+            // Writes a 44.1 kHz 16-bit WAV of `frames` frames: left = leftAt(i), right = -leftAt(i).
+            auto writeLongWav = [&](const std::string& path, uint16_t channels, uint32_t frames) {
+                std::vector<uint8_t> head(44, 0);
+                const uint16_t align = uint16_t(2 * channels), pcm = 1, bits = 16;
+                const uint32_t data = frames * align, riff = 36 + data, rate = 44100, byteRate = rate * align, fmtSize = 16;
+                std::memcpy(&head[0], "RIFF", 4); std::memcpy(&head[4], &riff, 4); std::memcpy(&head[8], "WAVEfmt ", 8);
+                std::memcpy(&head[16], &fmtSize, 4); std::memcpy(&head[20], &pcm, 2); std::memcpy(&head[22], &channels, 2);
+                std::memcpy(&head[24], &rate, 4); std::memcpy(&head[28], &byteRate, 4); std::memcpy(&head[32], &align, 2);
+                std::memcpy(&head[34], &bits, 2); std::memcpy(&head[36], "data", 4); std::memcpy(&head[40], &data, 4);
+                std::ofstream big(path, std::ios::binary);
+                big.write(reinterpret_cast<const char*>(head.data()), std::streamsize(head.size()));
+                std::vector<int16_t> block(4096 * 2);
+                for (uint64_t first = 0; first < frames; first += 4096) {
+                    const uint64_t n = std::min<uint64_t>(4096, frames - first);
+                    for (uint64_t k = 0; k < n; ++k) {
+                        block[k * channels] = leftAt(first + k);
+                        if (channels == 2) block[k * 2 + 1] = int16_t(-leftAt(first + k));
+                    }
+                    big.write(reinterpret_cast<const char*>(block.data()), std::streamsize(n * align));
+                }
+            };
+            writeLongWav(longPath, 2, kLongFrames);
+            const auto longURL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, longPath)}));
+            const uint64_t residentBefore = residentKb();
+            proc.mem().write<uint32_t>(fileOut, 0);
+            const auto longStatus = audioCall("_AudioFileOpenURL", {longURL, 1, 0, fileOut});
+            const auto longID = proc.mem().read<uint32_t>(fileOut);
+            // Reads up to 16 packets (the size of pcmOut) and checks each against the formula.
+            auto longReadMatches = [&](uint64_t first, uint32_t want, uint32_t expectGot) {
+                proc.mem().write<uint32_t>(fileOut + 24, want * 4);
+                proc.mem().write<uint32_t>(fileOut + 28, want);
+                const auto status = audioCall("_AudioFileReadPacketData",
+                                              {longID, 0, fileOut + 24, 0, uint32_t(first), uint32_t(first >> 32), fileOut + 28, pcmOut});
+                const uint32_t got = proc.mem().read<uint32_t>(fileOut + 28);
+                bool match = status == 0 && got == expectGot && proc.mem().read<uint32_t>(fileOut + 24) == expectGot * 4;
+                for (uint32_t k = 0; match && k < got; ++k) {
+                    match = proc.mem().read<int16_t>(pcmOut + k * 4) == leftAt(first + k) &&
+                            proc.mem().read<int16_t>(pcmOut + k * 4 + 2) == int16_t(-leftAt(first + k));
+                }
+                return match;
+            };
+            const bool readsOk = longStatus == 0 && longReadMatches(0, 16, 16) &&
+                                 longReadMatches(5'000'000, 16, 16) &&
+                                 longReadMatches(kLongFrames - 5, 16, 5);   // clipped at the end of the track
+            proc.mem().write<uint32_t>(fileOut + 4, 8);
+            audioCall("_AudioFileGetProperty", {longID, 0x70636E74, fileOut + 4, fileOut + 16});
+            const bool counted = proc.mem().read<uint64_t>(fileOut + 16) == kLongFrames;
+            const uint64_t residentAfter = residentKb();
+            const uint64_t grewKb = residentAfter > residentBefore ? residentAfter - residentBefore : 0;
+            check(readsOk && counted, "AudioFileOpenURL reads samples of a three-minute WAV at the start, middle and clipped end");
+            check(grewKb < 24 * 1024, "AudioFileOpenURL does not keep a three-minute track decoded in memory");
+            if (longStatus == 0) audioCall("_AudioFileClose", {longID});
+            std::remove(longPath.c_str());
+
+            // A mono file stays mono (apps size their buffers from the file's real layout): two
+            // bytes per packet, left channel only.
+            const std::string monoPath = proc.homePath() + "/audiofile-mono.wav";
+            writeLongWav(monoPath, 1, 160000);   // 320 KB, above the streaming threshold
+            const auto monoURL = ObjC::id(r.send(cpu, r.getClass("NSURL"), "fileURLWithPath:", {Foundation::makeString(cx, monoPath)}));
+            proc.mem().write<uint32_t>(fileOut, 0);
+            const auto monoStatus = audioCall("_AudioFileOpenURL", {monoURL, 1, 0, fileOut});
+            const auto monoID = proc.mem().read<uint32_t>(fileOut);
+            proc.mem().write<uint32_t>(fileOut + 24, 16 * 2);
+            proc.mem().write<uint32_t>(fileOut + 28, 16);
+            const auto monoRead = audioCall("_AudioFileReadPacketData", {monoID, 0, fileOut + 24, 0, 100000, 0, fileOut + 28, pcmOut});
+            bool monoMatch = monoStatus == 0 && monoRead == 0 && proc.mem().read<uint32_t>(fileOut + 28) == 16 &&
+                             proc.mem().read<uint32_t>(fileOut + 24) == 16 * 2;
+            for (uint32_t k = 0; monoMatch && k < 16; ++k) monoMatch = proc.mem().read<int16_t>(pcmOut + k * 2) == leftAt(100000 + k);
+            check(monoMatch, "AudioFileOpenURL streams a long mono WAV as two-byte packets");
+            if (monoStatus == 0) audioCall("_AudioFileClose", {monoID});
+            std::remove(monoPath.c_str());
+        }
+#endif
         // The packet table is answered, and a property AudioFile does not have is an error
         // that leaves the caller's buffer alone (Fruit Ninja sized a 1.7 GB buffer from the
         // garbage a silent "success" left behind). AudioQueue refuses such a buffer.
