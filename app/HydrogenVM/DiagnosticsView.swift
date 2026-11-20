@@ -26,6 +26,7 @@ struct DiagnosticsView: View {
                     }
                 }
                 ProblemReportSettings()
+                ImprovementPackSettingsSection()
                 Section("CPU core") {
                     Button(running ? "Running…" : "Run self-test") { runSelfTest() }
                         .disabled(running || arenaOK != true)

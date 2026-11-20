@@ -59,6 +59,7 @@ struct ProcessConfig {
     // ties its game speed to the frame count, rather than to elapsed time, runs faster with it.
     bool unlockFrameRate = false;
     std::string blockCachePath; // optional Phase E1 persistent decoded-block cache file
+    int resolutionScale = 1;    // Phase E2 per-game HD scale multiplier (1 = native, 2 = 2x, 3 = 3x)
     // Phone mode (bench only: hvm run --phone): behave like the iPhone where it differs from a
     // Linux host. No /proc or /sys, case-insensitive file lookups (APFS), and a guest memory
     // budget past which the game is closed (as iOS would). The CLI adds 16 KB host pages,
@@ -185,6 +186,9 @@ public:
     int run();
     // From any thread: stop all guest threads soon.
     void requestStop();
+    // Phase E4: suspend guest threads at a safepoint, write a checksummed quick-save
+    // snapshot of mapped guest pages + CPU states, and resume guest threads.
+    bool saveQuickSnapshot(const std::string& path);
 
     // App lifecycle, from any host thread (the iOS app calls these when the user leaves a
     // game or HydrogenVM goes to the background). UIKit delivers the matching delegate
