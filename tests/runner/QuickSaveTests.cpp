@@ -66,9 +66,17 @@ int runQuickSaveTests(const std::function<void(bool, const char*)>& check) {
         ck(mid == Exit::Budget && cpu.r[0] > 0 && cpu.r[0] < 20,
            "quick-save pauses guest cleanly mid-loop at budget boundary");
 
-        const bool okSave = saveQuickSnapshot(snapPath, arena, {&cpu}, &stats);
-        ck(okSave && stats.pagesSaved >= 2 && stats.threadsSaved == 1,
+        const bool okSave = saveQuickSnapshot(snapPath, arena, {&cpu}, &stats, 2);
+        ck(okSave && stats.pagesSaved == 2 && stats.threadsSaved == 1,
            "quick-save writes sparse guest pages and CPU state atomically");
+    }
+
+    // An oversized snapshot must fail before reading pages or replacing the prior save.
+    {
+        GuestArena arena;
+        arena.map(kData, 2 * GuestArena::kGuestPageSize, kProtRead);
+        ck(!saveQuickSnapshot(snapPath, arena, {}, nullptr, 1),
+           "quick-save rejects captures above the page limit and retains the prior snapshot");
     }
 
     // 2. Restore into a completely fresh GuestArena + Engine + Cpu and finish execution!
@@ -76,7 +84,12 @@ int runQuickSaveTests(const std::function<void(bool, const char*)>& check) {
         GuestArena arena;
         std::vector<QuickSaveThreadState> restored;
         const bool okLoad = restoreQuickSnapshot(snapPath, arena, restored);
-        ck(okLoad && restored.size() == 1, "quick-save restores verified snapshot into fresh arena");
+        const bool hasThread = okLoad && restored.size() == 1;
+        ck(hasThread, "quick-save restores verified snapshot into fresh arena");
+        if (!hasThread) {
+            std::remove(snapPath.c_str());
+            return failures;
+        }
 
         Engine eng(arena);
         Cpu cpu;

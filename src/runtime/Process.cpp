@@ -1,5 +1,4 @@
 #include "Process.hpp"
-#include "core/cpu/QuickSave.hpp"
 #include <unordered_set>
 #include "MemoryDiagnostics.hpp"
 #include "Support.hpp"
@@ -280,29 +279,6 @@ Process::~Process() {
     }
     unmapGuestDylibs();
     if (t_processIdentity == identity_) { t_thread = nullptr; t_processIdentity = 0; }
-}
-
-bool Process::saveQuickSnapshot(const std::string& path) {
-    if (path.empty() || !engine_ || !mem_) return false;
-    std::vector<GuestThread*> active;
-    {
-        std::lock_guard<std::mutex> lk(threadsMu_);
-        for (auto& [id, t] : threads_) {
-            if (t && !t->finished.load()) active.push_back(t.get());
-        }
-    }
-    for (GuestThread* t : active) engine_->suspend(t->cpu);
-    std::vector<const CPU::Cpu*> cpus;
-    cpus.reserve(active.size());
-    for (GuestThread* t : active) cpus.push_back(&t->cpu);
-    CPU::QuickSaveStats st{};
-    const bool ok = CPU::saveQuickSnapshot(path, *mem_, cpus, &st);
-    for (GuestThread* t : active) engine_->resume(t->cpu);
-    if (ok) {
-        logf(LogLevel::Info, "QuickSave: saved %zu pages, %zu threads (%zu bytes) to %s",
-             st.pagesSaved, st.threadsSaved, st.bytesWritten, path.c_str());
-    }
-    return ok;
 }
 
 void Process::joinHostThreads(bool includeRunning) {

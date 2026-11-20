@@ -1,4 +1,5 @@
 #include "QuickSave.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -9,7 +10,6 @@ namespace {
 
 constexpr uint32_t kSnapMagic = 0x53515648u; // "HVQS"
 constexpr uint32_t kSnapVersion = 1u;
-constexpr uint32_t kMaxSavedPages = 262144u; // 1 GB cap
 constexpr uint32_t kMaxSavedThreads = 128u;
 
 uint64_t fnv1a64Update(uint64_t h, const void* data, size_t len) {
@@ -67,12 +67,13 @@ void applyQuickSaveThread(Cpu& dst, const QuickSaveThreadState& src) {
 bool saveQuickSnapshot(const std::string& path,
                        const Memory::GuestArena& mem,
                        const std::vector<const Cpu*>& threads,
-                       QuickSaveStats* statsOut) {
+                       QuickSaveStats* statsOut, size_t pageLimit) {
     if (path.empty() || threads.size() > kMaxSavedThreads) return false;
 
     constexpr uint32_t kPage = Memory::GuestArena::kGuestPageSize;
     constexpr uint32_t kNumPages = Memory::GuestArena::kHleBase >> Memory::GuestArena::kGuestPageShift;
 
+    pageLimit = std::min(pageLimit, kQuickSnapshotMaxPages);
     std::vector<PageRecordHeader> pages;
     for (uint32_t idx = 1; idx < kNumPages; ++idx) {
         const uint32_t addr = idx << Memory::GuestArena::kGuestPageShift;
@@ -80,8 +81,8 @@ bool saveQuickSnapshot(const std::string& path,
         const uint8_t prot = mem.protAt(addr);
         // Only snapshot readable/accessible pages (skip PROT_NONE guard pages).
         if ((prot & Memory::kProtRead) == 0) continue;
+        if (pages.size() == pageLimit) return false;
         pages.push_back(PageRecordHeader{addr, uint32_t(prot)});
-        if (pages.size() >= kMaxSavedPages) break;
     }
 
     std::vector<QuickSaveThreadState> tstates;
@@ -146,7 +147,7 @@ bool restoreQuickSnapshot(const std::string& path,
     SnapHeader hdr{};
     if (!in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr))) return false;
     if (hdr.magic != kSnapMagic || hdr.version != kSnapVersion ||
-        hdr.pageCount > kMaxSavedPages || hdr.threadCount > kMaxSavedThreads) {
+        hdr.pageCount > kQuickSnapshotMaxPages || hdr.threadCount > kMaxSavedThreads) {
         return false;
     }
 

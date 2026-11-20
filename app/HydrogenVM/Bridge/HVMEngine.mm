@@ -535,14 +535,6 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     return self;
 }
 
-- (BOOL)saveQuickSnapshotToPath:(NSString *)path {
-    if (!path.length) return NO;
-    std::shared_ptr<RT::Process> p;
-    { std::lock_guard<std::mutex> lk(_core->mu); p = _core->proc; }
-    if (!p) return NO;
-    return p->saveQuickSnapshot(path.UTF8String) ? YES : NO;
-}
-
 - (void)dealloc {
     // Let a game that's still open save before it goes (the engine stops it after a few seconds at most).
     [self stopGracefully];
