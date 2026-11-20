@@ -41,7 +41,7 @@ struct BlockCacheStats {
 };
 
 // 64-bit FNV-1a hash of guest instruction bytes in [start, end).
-// Returns 0 if the range is empty, oversized, or contains an unmapped byte.
+// Returns 0 if the range is empty, oversized, or contains an unreadable byte.
 uint64_t hashGuestCode(const Memory::GuestArena& mem, uint32_t start, uint32_t end);
 
 // Persist decoded blocks to `path` atomically (temp file + rename).
