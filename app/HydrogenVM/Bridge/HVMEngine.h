@@ -106,6 +106,12 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic) BOOL allowInternet;
 /// Experimental, per game: display links every frame and 30 fps timers at 60 (game may run fast).
 @property (nonatomic) BOOL unlockFrameRate;
+/// Phase E1: persist decoded ARM/Thumb Op blocks across launches (default YES).
+@property (nonatomic) BOOL useBlockCache;
+/// Phase E2: per-game HD resolution multiplier (1 = native, 2 = 2x, 3 = 3x; default 1).
+@property (nonatomic) NSInteger resolutionScale;
+/// Phase E4: capture a checksummed guest-arena + CPU quick-save snapshot to `path`.
+- (BOOL)saveQuickSnapshotToPath:(NSString *)path;
 /// Test runs: check every GL call for errors and count draws (slower). Read the
 /// results from diagnostics (glErrors, glDraws, glEmptyPresents, glLastFrameDraws)
 /// and glErrorLog. Set before start.
