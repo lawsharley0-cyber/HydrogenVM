@@ -174,6 +174,7 @@ final class RunModel {
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
         s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
         s.unlockFrameRate = Self.unlocksFrameRate(for: app.info.bundleIdentifier)
+        s.useBlockCache = Self.usesFastLaunchCache(for: app.info.bundleIdentifier)
         if let fallback {
             s.safeModeFallback = fallback
             switch fallback {
@@ -427,6 +428,12 @@ final class RunModel {
     }
     nonisolated static func allowsInternet(for bundleID: String) -> Bool {
         UserDefaults.standard.bool(forKey: internetKey(bundleID))
+    }
+    nonisolated static func fastLaunchCacheKey(_ bundleID: String) -> String { "fastLaunchCache.\(bundleID)" }
+    nonisolated static func usesFastLaunchCache(for bundleID: String) -> Bool {
+        let d = UserDefaults.standard
+        if d.object(forKey: fastLaunchCacheKey(bundleID)) != nil { return d.bool(forKey: fastLaunchCacheKey(bundleID)) }
+        return true
     }
 
     private func syncOrientation() {
@@ -732,9 +739,9 @@ struct RunView: View {
     @State private var hudExpanded = false
     @State private var overlay = PlayerOverlay()
     @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
-    @AppStorage("player.showControlsButton") private var showControlsButton = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(PlayerOverlay.controlsSettingKey) private var showControlsButton = false
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
@@ -765,6 +772,11 @@ struct RunView: View {
         _scaleSetting = AppStorage(PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
         _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
                                        PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
+    }
+
+    private var persistentControls: Bool { showControlsButton || showDebugOverlay || voiceOverEnabled }
+    private var controlsAnimation: Animation? {
+        reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8)
     }
 
     private var effectiveOrientation: GuestOrientation {
@@ -808,9 +820,9 @@ struct RunView: View {
                                    mode: effectiveScaleMode,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
                                    inputEnabled: model.inputEnabled && !editingControllerTargets,
-                                   onOverlayGesture: showDebugOverlay ? nil : {
+                                   onOverlayGesture: persistentControls ? nil : {
                                        overlay.summon()
-                                       withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8)) { hudExpanded = true }
+                                       withAnimation(controlsAnimation) { hudExpanded = true }
                                    },
                                    focus: focusPoint) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
@@ -883,12 +895,13 @@ struct RunView: View {
                 }
             }
 
-            // VoiceOver always has a gesture-free route to pause and quit.
-            if showDebugOverlay || overlay.visible || showControlsButton || voiceOverEnabled {
+        }
+        .overlay(alignment: .topTrailing) {
+            if persistentControls || overlay.visible {
                 floatingHUDPill
+                    .padding(.horizontal, 16)
                     .padding(.top, 16)
                     .padding(.bottom, hudExpanded ? 16 : 0)
-                    .padding(.trailing, 16)
             }
         }
         .statusBarHidden(true)
@@ -1058,211 +1071,211 @@ struct RunView: View {
     private var floatingHUDPill: some View {
         Group {
             if hudExpanded {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        // Header Bar with Title, FPS & Frame Time, Collapse Button
-                        HStack(spacing: 8) {
-                            Image(systemName: "gamecontroller.fill")
-                                .foregroundStyle(.tint)
-                            Text(app.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 14) {
+                    // Header Bar with Title, FPS & Frame Time, Collapse Button
+                    HStack(spacing: 8) {
+                        Image(systemName: "gamecontroller.fill")
+                            .foregroundStyle(.tint)
+                        Text(app.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
 
-                            Spacer(minLength: 8)
+                        Spacer(minLength: 8)
 
-                            // FPS & Frame-time Badge
-                            HStack(spacing: 4) {
-                                Text("\(model.fps) FPS")
-                                    .font(.caption2.monospacedDigit().weight(.bold))
-                                    .foregroundStyle(model.fps >= 30 ? .green : .yellow)
-                                if model.frameTimeP95 > 0 {
-                                    Text("(\(String(format: "%.1f", model.frameTimeP95))ms)")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
+                        // FPS & Frame-time Badge
+                        HStack(spacing: 4) {
+                            Text("\(model.fps) FPS")
+                                .font(.caption2.monospacedDigit().weight(.bold))
+                                .foregroundStyle(model.fps >= 30 ? .green : .yellow)
+                            if model.frameTimeP95 > 0 {
+                                Text("(\(String(format: "%.1f", model.frameTimeP95))ms)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.black.opacity(0.4), in: Capsule())
-
-                            Button {
-                                withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8)) {
-                                    hudExpanded = false
-                                    overlay.minimize()
-                                    if !showDebugOverlay { showLog = false }   // the log toggle lives in the hidden controls
-                                }
-                            } label: {
-                                Image(systemName: "chevron.up.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(.white.opacity(0.8))
-                                    .frame(minWidth: 44, minHeight: 44)
-                            }
-                            .accessibilityIdentifier("hud-minimize")
-                            .accessibilityLabel("Minimize Controls")
                         }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.4), in: Capsule())
 
-                        Divider().background(.white.opacity(0.2))
-
-                        // Primary Action Controls
-                        VStack(alignment: .leading, spacing: 12) {
-                            // Pause / Resume Toggle
-                            Button {
-                                model.togglePause()
-                            } label: {
-                                Label(model.activity.userPaused ? "Resume" : "Pause",
-                                      systemImage: model.activity.userPaused ? "play.fill" : "pause.fill")
-                                    .font(.body.weight(.medium))
-                                    .frame(minHeight: 44)
+                        Button {
+                            withAnimation(controlsAnimation) {
+                                hudExpanded = false
+                                overlay.minimize()
+                                if !persistentControls { showLog = false }   // the log toggle lives in the hidden controls
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(model.activity.userPaused ? .green : .orange)
-                            .controlSize(.regular)
+                        } label: {
+                            Image(systemName: "chevron.up.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                        .accessibilityIdentifier("hud-minimize")
+                        .accessibilityLabel("Minimize Controls")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    Divider().background(.white.opacity(0.2))
+
+                    // Primary Action Controls
+                    HStack(spacing: 12) {
+                        // Pause / Resume Toggle
+                        Button {
+                            model.togglePause()
+                        } label: {
+                            Label(model.activity.userPaused ? "Resume" : "Pause",
+                                  systemImage: model.activity.userPaused ? "play.fill" : "pause.fill")
+                                .font(.caption.weight(.medium))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(model.activity.userPaused ? .green : .orange)
+                        .controlSize(.small)
+                        .disabled(!model.running || model.closing)
+                        .accessibilityIdentifier("player-pause")
+
+                        if app.info.isAndroid {
+                            Button {
+                                model.pressBackButton()
+                            } label: {
+                                Label("Back", systemImage: "arrow.uturn.backward")
+                                    .font(.caption.weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                             .disabled(!model.running || model.closing)
-                            .accessibilityIdentifier("player-pause")
-
-                            if app.info.isAndroid {
-                                Button {
-                                    model.pressBackButton()
-                                } label: {
-                                    Label("Back", systemImage: "arrow.uturn.backward")
-                                        .font(.body.weight(.medium))
-                                        .frame(minHeight: 44)
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.regular)
-                                .disabled(!model.running || model.closing)
-                                .accessibilityIdentifier("player-android-back")
-                            }
-
-                            // Manual Orientation Toggle
-                            Button {
-                                withAnimation(reduceMotion ? nil : .default) {
-                                    switch effectiveOrientation {
-                                    case .portrait: overrideOrientation = .landscapeLeft
-                                    case .landscapeLeft: overrideOrientation = .landscapeRight
-                                    case .landscapeRight: overrideOrientation = .portrait
-                                    case .upsideDown: overrideOrientation = .portrait
-                                    }
-                                }
-                            } label: {
-                                Label(effectiveOrientation.landscape ? "Landscape" : "Portrait",
-                                      systemImage: effectiveOrientation.landscape ? "rectangle.landscape.rotate" : "rectangle.portrait.rotate")
-                                    .font(.body.weight(.medium))
-                                    .frame(minHeight: 44)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.regular)
-
-                            // Direct Save & Files Inspector Button
-                            Button {
-                                confirmInspect = true
-                            } label: {
-                                Label("Save, Stop & Inspect Files", systemImage: "folder.fill")
-                                    .font(.body.weight(.semibold))
-                                    .frame(minHeight: 44)
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.blue)
-                            .controlSize(.regular)
-                            .disabled(model.closing)
-                            .accessibilityIdentifier("player-inspect")
+                            .accessibilityIdentifier("player-android-back")
                         }
 
-                        // Display Scaling & Interpolation Settings
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Viewport Scaling & Interpolation")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-
-                            // Keep the menu's selection concrete; nil is
-                            // only the persisted representation of the global default.
-                            Picker("Scale Mode", selection: Binding<String>(get: { scaleSetting ?? "" }, set: { value in
-                                if value.isEmpty {
-                                    scaleSetting = nil
-                                    PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
-                                } else {
-                                    scaleSetting = value
-                                }
-                            })) {
-                                Text("Use Default").tag("")
-                                ForEach(PlayerScaleMode.allCases) { mode in
-                                    Text(mode.rawValue).tag(mode.rawValue)
+                        // Manual Orientation Toggle
+                        Button {
+                            withAnimation {
+                                switch effectiveOrientation {
+                                case .portrait: overrideOrientation = .landscapeLeft
+                                case .landscapeLeft: overrideOrientation = .landscapeRight
+                                case .landscapeRight: overrideOrientation = .portrait
+                                case .upsideDown: overrideOrientation = .portrait
                                 }
                             }
-                            .pickerStyle(.menu)
-                            .accessibilityIdentifier("player-scale-mode")
-                            .accessibilityValue(scaleSetting ?? "Use Default")
+                        } label: {
+                            Label(effectiveOrientation.landscape ? "Landscape" : "Portrait",
+                                  systemImage: effectiveOrientation.landscape ? "rectangle.landscape.rotate" : "rectangle.portrait.rotate")
+                                .font(.caption.weight(.medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
 
-                            if effectiveScaleMode.crops {
-                                Picker("Crop Focus", selection: $cropFocusSetting) {
-                                    ForEach(PlayerCropFocus.allCases) { focus in
-                                        Text(focus.rawValue).tag(focus.rawValue)
-                                    }
+                        Spacer()
+
+                        // Direct Save & Files Inspector Button
+                        Button {
+                            confirmInspect = true
+                        } label: {
+                            Label("Save, Stop & Inspect Files", systemImage: "folder.fill")
+                                .labelStyle(.iconOnly)
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.blue)
+                        .controlSize(.small)
+                        .disabled(model.closing)
+                        .accessibilityLabel("Save, Stop & Inspect Files")
+                        .accessibilityIdentifier("player-inspect")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    // Display Scaling & Interpolation Settings (kept outside ScrollView so segmented touches are never delayed)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Viewport Scaling & Interpolation")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        // Keep the segmented control's selection concrete; nil is
+                        // only the persisted representation of the global default.
+                        Picker("Scale Mode", selection: Binding<String>(get: { scaleSetting ?? "" }, set: { value in
+                            if value.isEmpty {
+                                scaleSetting = nil
+                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
+                            } else {
+                                scaleSetting = value
+                            }
+                        })) {
+                            Text("Use Default").tag("")
+                            ForEach(PlayerScaleMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode.rawValue)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("player-scale-mode")
+
+                        if effectiveScaleMode.crops {
+                            Picker("Crop Focus", selection: $cropFocusSetting) {
+                                ForEach(PlayerCropFocus.allCases) { focus in
+                                    Text(focus.rawValue).tag(focus.rawValue)
                                 }
-                                .pickerStyle(.menu)
-                                .accessibilityIdentifier("player-crop-focus")
                             }
-                            if effectiveScaleMode.extendsBars {
-                                Text("The bars show a blurred, dimmed copy of the frame.")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("player-crop-focus")
+                        }
+                        if effectiveScaleMode.extendsBars {
+                            Text("The bars show a blurred, dimmed copy of the frame.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
 
-                            Picker("Interpolation", selection: $filterSetting) {
-                                ForEach(PlayerFilter.allCases) { filter in
-                                    Text(filter.rawValue).tag(filter.rawValue)
-                                }
+                        Picker("Interpolation", selection: $filterSetting) {
+                            ForEach(PlayerFilter.allCases) { filter in
+                                Text(filter.rawValue).tag(filter.rawValue)
                             }
-                            .pickerStyle(.menu)
-                            .accessibilityIdentifier("player-filter")
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
 
-                            // Lower controller & next-launch toggles
+                    // Lower controller & next-launch toggles scroll when viewport height is tight (e.g. landscape)
+                    ViewThatFits(in: .vertical) {
+                        nextLaunchAndControllerControls
+                        ScrollView(.vertical, showsIndicators: true) {
                             nextLaunchAndControllerControls
                         }
-
-                        // Audio & System Footer
-                        HStack(spacing: 12) {
-                            Button {
-                                model.volume = model.volume == 0 ? 1 : 0
-                            } label: {
-                                Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                    .frame(width: 44, height: 44)
-                            }
-                            .foregroundStyle(.white)
-                            .accessibilityLabel(model.volume == 0 ? "Unmute" : "Mute")
-                            .accessibilityIdentifier("player-mute")
-
-                            Slider(value: $model.volume, in: 0...1)
-                                .tint(.accentColor)
-                                .accessibilityLabel("Game Volume")
-                                .accessibilityValue("\(Int(model.volume * 100)) percent")
-
-                            Button {
-                                withAnimation(reduceMotion ? nil : .default) { showLog.toggle() }
-                            } label: {
-                                Image(systemName: showLog ? "terminal.fill" : "terminal")
-                                    .foregroundStyle(showLog ? .green : .white)
-                                    .frame(minWidth: 44, minHeight: 44)
-                            }
-                            .accessibilityLabel(showLog ? "Hide log" : "Show log")
-
-                            Button(role: .destructive) {
-                                if model.running { model.stop() } else { dismiss() }
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(.red)
-                                    .frame(minWidth: 44, minHeight: 44)
-                            }
-                            .accessibilityLabel("Save and quit game")
-                            .accessibilityIdentifier("player-quit")
-                        }
                     }
-                    .padding(14)
+
+                    // Audio & System Footer
+                    HStack(spacing: 12) {
+                        Button {
+                            model.volume = model.volume == 0 ? 1 : 0
+                        } label: {
+                            Image(systemName: model.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                .frame(width: 44, height: 44)
+                        }
+                        .foregroundStyle(.white)
+                        .accessibilityLabel(model.volume == 0 ? "Unmute" : "Mute")
+                        .accessibilityIdentifier("player-mute")
+
+                        Slider(value: $model.volume, in: 0...1)
+                            .tint(.accentColor)
+                            .accessibilityLabel("Game Volume")
+
+                        Button {
+                            withAnimation { showLog.toggle() }
+                        } label: {
+                            Image(systemName: showLog ? "terminal.fill" : "terminal")
+                                .foregroundStyle(showLog ? .green : .white)
+                        }
+                        .accessibilityLabel(showLog ? "Hide Log" : "Show Log")
+
+                        Button(role: .destructive) {
+                            if model.running { model.stop() } else { dismiss() }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.red)
+                        }
+                        .accessibilityLabel("Quit Game")
+                        .accessibilityIdentifier("player-quit")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .accessibilityIdentifier("player-controls-panel")
+                .padding(14)
                 .frame(maxWidth: 360)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(.white.opacity(0.2), lineWidth: 1)
@@ -1272,7 +1285,7 @@ struct RunView: View {
             } else {
                 // Minimized HUD Pill Handle
                 Button {
-                    withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8)) {
+                    withAnimation(controlsAnimation) {
                         hudExpanded = true
                     }
                 } label: {
@@ -1281,9 +1294,11 @@ struct RunView: View {
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.white)
 
-                        Text(showDebugOverlay ? "\(model.fps) FPS" : "Controls")
-                            .font(.caption2.monospacedDigit().weight(.bold))
-                            .foregroundStyle(.white)
+                        if showDebugOverlay {
+                            Text("\(model.fps) FPS")
+                                .font(.caption2.monospacedDigit().weight(.bold))
+                                .foregroundStyle(model.fps >= 30 ? .green : .yellow)
+                        }
 
                         if model.activity.userPaused {
                             Text("PAUSED")
@@ -1295,20 +1310,19 @@ struct RunView: View {
                         }
                     }
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
                     .frame(minWidth: 44, minHeight: 44)
-                    .background(Color(.secondarySystemBackground), in: Capsule())
+                    .background(.ultraThinMaterial, in: Capsule())
                     .overlay(
                         Capsule().stroke(.white.opacity(0.25), lineWidth: 1)
                     )
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
                 }
+                .buttonStyle(.plain)
+                .fixedSize()
                 .accessibilityIdentifier("player-controls")
                 .accessibilityLabel("Player Controls")
-                .accessibilityValue([!model.running ? "Stopped" : (model.activity.userPaused ? "Paused" : "Playing"),
-                                     showDebugOverlay ? "\(model.fps) frames per second" : nil]
-                    .compactMap { $0 }.joined(separator: ", "))
-                .accessibilityHint("Opens pause, volume, display settings and quit")
+                .accessibilityValue(showDebugOverlay ? "\(activityLabel), \(model.fps) FPS" : activityLabel)
+                .accessibilityHint("Opens pause, volume, display settings, and quit")
                 .transition(reduceMotion ? .identity : .scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
             }
         }
@@ -1316,6 +1330,7 @@ struct RunView: View {
 
     private var activityLabel: String {
         if model.closing { return "Saving…" }
+        guard model.running else { return "Stopped" }
         switch model.activity.phase {
         case .active: return "Running"
         case .pausing: return "Pausing…"

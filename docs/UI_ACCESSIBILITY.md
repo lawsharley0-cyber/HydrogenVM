@@ -1,31 +1,28 @@
 # Library and player refresh
 
-The library leads with an import card, followed by searchable app rows. Each row
-has a visible actions menu; Files and maintenance actions no longer require a
-swipe or long press. Reset and delete explain what they remove before acting.
-Unsupported rows explain why they cannot launch. A runnable ARMv7 binary is not
-labelled as verified compatible.
+The Library keeps its iPhone and Android tabs, import progress, and Add button.
+Search matches game names and bundle identifiers within the current tab. A
+visible per-game actions menu exposes Files and maintenance alongside the
+existing swipe and long-press gestures. Reset and delete ask for confirmation.
+Unsupported games display the importer's explanation.
 
-Settings separates Playing, Accessibility & controls, Storage and Advanced
-troubleshooting. Existing storage and performance preferences retain their keys.
-The independent `player.showControlsButton` preference defaults to true. VoiceOver
-keeps the controls entry available even if that preference is false. Users who
-hide both the controls button and performance overlay can still summon controls
-with the existing three-finger hold.
+Settings separates Playing, Accessibility & controls, Storage, and Advanced
+troubleshooting. Existing storage, Safe Mode, and performance preferences
+retain their keys. The independent `player.showControlsButton` preference
+defaults to off, preserving the full-screen view for existing games. VoiceOver
+keeps the controls entry available. The three-finger hold remains available
+when the controls button and debug overlay are hidden.
 
-The adaptive indigo accent has separate light and dark variants. Library labels
-use semantic system text colors and wrapping system fonts. Status includes text
-and a symbol. Player controls use opaque system surfaces, labelled icon actions,
-44-point minimum action targets and a scrollable panel. Display menus replace
-crowded segmented pickers; expansion respects Reduce Motion.
+The collapsed player pill has a 44-point touch target and announces the game
+state. It includes the frame rate when the debug overlay is enabled. HUD
+expansion respects Reduce Motion and keeps the live display segments available.
 
 ## Validation before release
 
-Windows source checks are not a native build or accessibility certification.
 Run the macOS app build and existing player SwiftUI UI harness, including the new
 gesture-free controls test. Keep the three-finger test with both overlay settings
-explicitly off. Updated display tests must still assert crop control appearance,
-live global default changes and touch coordinates after each display mode.
+explicitly off. The display tests cover crop controls, live global default changes, and touch
+coordinates after each display mode.
 
 On an iPhone, check:
 

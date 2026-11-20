@@ -333,7 +333,7 @@ void sharegroupDestroy(Process& p, uint32_t guestSharegroup) {
         // Match by retirement id, not address: a context released by its owner may be followed by a new
         // allocation at the same address.
         auto it = std::find_if(st.retiredWorkers.begin(), st.retiredWorkers.end(),
-                               [id](const std::unique_ptr<HostContext>& c) { return c->retireId == id; });
+                               [retireId = id](const std::unique_ptr<HostContext>& c) { return c->retireId == retireId; });
         if (it == st.retiredWorkers.end()) continue;   // the owner already released it
         if ((*it)->handle) { st.platform->destroyContext((*it)->handle); (*it)->handle = nullptr; }
         st.retiredWorkers.erase(it);

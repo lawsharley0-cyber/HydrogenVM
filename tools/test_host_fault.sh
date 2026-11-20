@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 out="${1:-build/host-fault-sanitized}"
 mkdir -p "$out"
 cxx="${CXX:-clang++}"
-sources=(tests/runner/HostFaultTests.cpp src/core/cpu/Engine.cpp
+sources=(tests/runner/HostFaultTests.cpp src/core/cpu/Engine.cpp src/core/cpu/BlockCache.cpp
   src/core/cpu/DecodeArm.cpp src/core/cpu/DecodeThumb.cpp
   src/core/cpu/DecodeVfpNeon.cpp src/core/cpu/DecodeNeon.cpp
   src/core/memory/GuestArena.cpp)

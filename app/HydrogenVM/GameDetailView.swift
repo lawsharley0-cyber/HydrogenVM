@@ -11,6 +11,7 @@ struct GameDetailView: View {
 
     @AppStorage private var allowInternet: Bool
     @AppStorage private var unlockFrameRate: Bool
+    @AppStorage private var fastLaunchCache: Bool
     @AppStorage private var softwareRenderer: Bool
     @AppStorage private var virtualControllerEnabled: Bool
     @AppStorage(PlayerOverlay.settingKey) private var showOverlay = PlayerOverlay.settingDefault
@@ -29,6 +30,7 @@ struct GameDetailView: View {
         let id = app.info.bundleIdentifier
         _allowInternet = AppStorage(wrappedValue: false, RunModel.internetKey(id))
         _unlockFrameRate = AppStorage(wrappedValue: false, RunModel.unlockFPSKey(id))
+        _fastLaunchCache = AppStorage(wrappedValue: true, RunModel.fastLaunchCacheKey(id))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: id), RunModel.softwareRenderingKey(id))
         _virtualControllerEnabled = AppStorage(wrappedValue: false, VirtualControllerLayout.enabledKey(id))
     }
@@ -92,6 +94,10 @@ struct GameDetailView: View {
                     GlossToggleRow(title: "Unlock frame rate",
                                    hint: "Experimental. Games capped at 30 fps run at 60; a game that counts frames may run fast.",
                                    isOn: $unlockFrameRate)
+                    GlossRule()
+                    GlossToggleRow(title: "Fast launch cache",
+                                   hint: "Persists decoded ARM blocks on disk (hash-checked on load) to speed up repeat launches.",
+                                   isOn: $fastLaunchCache)
                     GlossRule()
                     GlossToggleRow(title: "Software renderer",
                                    hint: "Draws on the CPU instead of the GPU. Slower; for games that draw wrongly.",

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <type_traits>
 
@@ -551,7 +553,17 @@ Execution executeLinked(Heap& heap, Linkage* linkage, const File& file, const En
             }
         } catch (JavaException& exception) {
             const auto handler = exceptionTarget(heap, file, code, op == 0x1e ? pc + 1 : pc, exception);
-            if (!handler) return exception;
+            if (!handler) {
+                static const bool traceExc = std::getenv("HVM_DEX_TRACE_EXC") != nullptr;
+                if (traceExc) {
+                    const auto mid = file.method(method.index);
+                    auto ascii = [](std::u16string_view s) { std::string o; for (char16_t c : s) o.push_back(char(c < 128 ? c : '?')); return o; };
+                    std::fprintf(stderr, "[dex-exc] %s at %s.%s pc=%u op=0x%02x\n",
+                                 ascii(exception.type).c_str(), ascii(file.type(mid.owner)).c_str(),
+                                 ascii(file.string(mid.name)).c_str(), pc, op);
+                }
+                return exception;
+            }
             if (!exception.reference) exception.reference = heap.object(exception.type);
             pending = exception;
             next = *handler;

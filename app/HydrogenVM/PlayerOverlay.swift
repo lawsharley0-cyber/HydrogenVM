@@ -1,7 +1,7 @@
 import Foundation
 
 /// Tracks the performance overlay and temporary three-finger summons.
-/// RunView also provides an independent controls button (on by default), and
+/// RunView also provides an independent controls button, and
 /// always exposes that entry while VoiceOver is enabled.
 struct PlayerOverlay {
     /// Three fingers held on the screen for this long. A game seldom holds three
@@ -9,6 +9,7 @@ struct PlayerOverlay {
     static let gestureTouches = 3
     static let gestureHoldSeconds = 0.8
     static let settingKey = "player.showDebugOverlay"
+    static let controlsSettingKey = "player.showControlsButton"
     /// Performance metrics stay off by default; the controls button is separate.
     static let settingDefault = false
 

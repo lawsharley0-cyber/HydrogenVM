@@ -1522,11 +1522,12 @@ std::unique_ptr<Driver> driverFor(Process& p, Jni& j) {
     const bool libgdx = std::any_of(lib.libs.begin(), lib.libs.end(), [](const auto& library) {
         return library->name == "libgdx.so";
     });
-    if (!libgdx) return nullptr;
+    const bool pureDex = lib.libs.empty();
+    if (!libgdx && !pureDex) return nullptr;
     const auto* info = p.infoPlist();
     const auto* key = info ? info->get("HydrogenVMAndroidLauncherActivity") : nullptr;
     if (!key || key->type != Plist::Value::Type::String || key->s.empty())
-        throw std::runtime_error("libGDX APK has no imported launcher activity; re-import the matching APK");
+        throw std::runtime_error("DEX APK has no imported launcher activity; re-import the matching APK");
     std::string launcher = key->s;
     std::replace(launcher.begin(), launcher.end(), '.', '/');
     j.interpretsDex.store(true, std::memory_order_relaxed);

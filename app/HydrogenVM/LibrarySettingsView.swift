@@ -9,7 +9,8 @@ struct LibrarySettingsView: View {
     @AppStorage("keepIpaForReinstall") private var keepIPA = true
     @AppStorage(PlayerSettings.scaleModeKey) private var scaleMode = PlayerScaleMode.fit.rawValue
     @AppStorage(PlayerOverlay.settingKey) private var debugOverlay = PlayerOverlay.settingDefault
-    @AppStorage("player.showControlsButton") private var controlsButton = true
+    @AppStorage(PlayerOverlay.controlsSettingKey) private var controlsButton = false
+    @AppStorage("player.safeModeAlwaysRetry") private var safeModeAlwaysRetry = false
     @AppStorage("hvm.zombies") private var zombies = false
 
     var body: some View {
@@ -33,7 +34,7 @@ struct LibrarySettingsView: View {
                     Text("Accessibility & controls")
                 }
                 Section {
-                    Toggle("Keep IPA for reinstall", isOn: $keepIPA)
+                    Toggle("Keep .ipa / .apk for reinstall", isOn: $keepIPA)
                 } header: {
                     Text("Storage")
                 } footer: {
@@ -41,6 +42,7 @@ struct LibrarySettingsView: View {
                 }
                 Section {
                     Toggle("Show performance overlay", isOn: $debugOverlay)
+                    Toggle("Always retry crashed games in Safe Mode", isOn: $safeModeAlwaysRetry)
                     Toggle("Continue past missing functions", isOn: $keepGoing)
                     Toggle("Track freed objects (zombies)", isOn: $zombies)
                     Button("Test all games", systemImage: "play.grid.2x2") { showingBatchTest = true }

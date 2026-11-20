@@ -42,11 +42,11 @@ final class PlayerUITests: XCTestCase {
     }
 
     @MainActor
-    private func open(_ orientation: Int = 1, overlay: Bool = true, controls: Bool = true) -> XCUIApplication {
+    private func open(_ orientation: Int = 1, overlay: Bool = true, controls: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         // The debug overlay is off by default (#280); tests that drive the controls turn it on.
-        if overlay { app.launchArguments += ["-player.showDebugOverlay", "YES"] }
-        app.launchArguments += ["-player.showControlsButton", controls ? "YES" : "NO"]
+        app.launchArguments += ["-player.showDebugOverlay", overlay ? "YES" : "NO",
+                                "-player.showControlsButton", controls ? "YES" : "NO"]
         app.launchEnvironment["PLAYER_ORIENTATION"] = String(orientation)
         app.launch()
         app.buttons["Open Player"].tap()
@@ -62,8 +62,8 @@ final class PlayerUITests: XCTestCase {
     }
 
     @MainActor
-    func testControlsCanBeHiddenWithoutBlockingTouches() {
-        let app = open(overlay: false, controls: false)
+    func testControlsAreNotDrawnByDefault() {
+        let app = open(overlay: false)
         XCTAssertFalse(app.buttons["player-controls"].exists)
         XCTAssertFalse(app.buttons["player-pause"].exists)
         // The game still receives its touches with nothing drawn over it.
@@ -73,33 +73,38 @@ final class PlayerUITests: XCTestCase {
 
     @MainActor
     func testControlsButtonWorksWithoutPerformanceOverlay() {
-        let app = open(overlay: false)
-        XCTAssertTrue(app.buttons["player-controls"].isHittable)
-        XCTAssertEqual(app.buttons["player-controls"].value as? String, "Playing")
-        app.buttons["player-controls"].tap()
+        let app = open(overlay: false, controls: true)
+        let pill = app.buttons["player-controls"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 5))
+        XCTAssertEqual(pill.value as? String, "Running")
+        pill.tap()
         app.buttons["player-pause"].tap()
         wait(app.staticTexts["probe-lifecycle"], label: "paused")
         app.buttons["hud-minimize"].tap()
-        XCTAssertTrue(app.buttons["player-controls"].isHittable)
-        XCTAssertFalse(app.buttons["player-pause"].exists)
-        XCTAssertEqual(app.buttons["player-controls"].value as? String, "Paused")
+        XCTAssertEqual(pill.value as? String, "Paused")
     }
 
     @MainActor
-    private func selectMenu(_ app: XCUIApplication, _ identifier: String, _ option: String) {
-        let menu = app.buttons[identifier]
-        if !menu.isHittable { app.scrollViews["player-controls-panel"].swipeUp() }
-        XCTAssertTrue(menu.isHittable)
-        menu.tap()
-        app.buttons[option].tap()
-    }
+    func testDebugPillStaysCompactAndExpandedControlsStayOnScreen() {
+        for orientation in [1, 4] {
+            let app = open(orientation)
+            let viewport = app.otherElements["player-viewport"]
+            let pill = app.buttons["player-controls"]
+            XCTAssertTrue(pill.waitForExistence(timeout: 5))
+            XCTAssertLessThan(pill.frame.width, viewport.frame.width / 2)
+            XCTAssertLessThan(pill.frame.height, 64)
+            pill.tap()
 
-    @MainActor
-    private func minimize(_ app: XCUIApplication) {
-        let button = app.buttons["hud-minimize"]
-        if !button.isHittable { app.scrollViews["player-controls-panel"].swipeDown(velocity: .fast) }
-        XCTAssertTrue(button.isHittable)
-        button.tap()
+            let window = app.windows.firstMatch.frame.insetBy(dx: -1, dy: -1)
+            for name in ["player-pause", "player-inspect", "hud-minimize", "player-quit"] {
+                let control = app.buttons[name]
+                XCTAssertTrue(control.isHittable, "\(name) is outside the usable player area")
+                XCTAssertTrue(window.contains(control.frame))
+            }
+            app.buttons["hud-minimize"].tap()
+            XCTAssertTrue(pill.isHittable)
+            app.terminate()
+        }
     }
 
     @MainActor
@@ -113,7 +118,6 @@ final class PlayerUITests: XCTestCase {
         wait(app.staticTexts["probe-lifecycle"], label: "paused")
         app.buttons["player-pause"].tap()
         wait(app.staticTexts["probe-lifecycle"], label: "active")
-        app.scrollViews["player-controls-panel"].swipeUp(velocity: .fast)
         app.buttons["Mute"].tap()
         wait(app.staticTexts["probe-volume"], label: "0.0")
         app.buttons["Unmute"].tap()
@@ -131,8 +135,8 @@ final class PlayerUITests: XCTestCase {
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
         app.buttons["player-controls"].tap()
-        selectMenu(app, "player-scale-mode", "Stretch")
-        minimize(app)
+        app.buttons["Stretch"].tap()
+        app.buttons["hud-minimize"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.25)).tap()
         // With Stretch the entire container is the display, independent of safe areas.
         wait(app.staticTexts["probe-touch"], label: "3:80,360:0")
@@ -140,9 +144,9 @@ final class PlayerUITests: XCTestCase {
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.25)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:240,120:0")
         app.buttons["player-controls"].tap()
-        selectMenu(app, "player-scale-mode", "Integer Pixels")
-        selectMenu(app, "player-filter", "Nearest Neighbor")
-        minimize(app)
+        app.buttons["Integer Pixels"].tap()
+        app.buttons["Nearest Neighbor"].tap()
+        app.buttons["hud-minimize"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -155,27 +159,32 @@ final class PlayerUITests: XCTestCase {
     func testScaleModeReturnsToLiveGlobalDefault() {
         let app = open()
         app.buttons["player-controls"].tap()
-        let scale = app.buttons["player-scale-mode"]
+        let scale = app.segmentedControls["player-scale-mode"]
+        let useDefault = scale.buttons["Use Default"]
         func select(_ label: String) {
-            selectMenu(app, "player-scale-mode", label)
-            expectation(for: NSPredicate(format: "value == %@", label), evaluatedWith: scale)
+            let segment = scale.buttons[label]
+            expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: segment)
+            waitForExpectations(timeout: 5)
+            // Keep one deliberate finger gesture; do not retry a missed selection.
+            segment.press(forDuration: 0.1)
+            expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: segment)
             waitForExpectations(timeout: 5)
         }
         for _ in 0..<3 {
             select("Fill (Crop)")
-            XCTAssertTrue(app.buttons["player-crop-focus"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
             select("Use Default")
-            XCTAssertTrue(app.buttons["player-crop-focus"].waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForNonExistence(timeout: 5))
             app.buttons["probe-default-extended"].tap()
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
             app.buttons["probe-default-fill"].tap()
-            XCTAssertTrue(app.buttons["player-crop-focus"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
             select("Stretch")
             app.buttons["probe-default-extended"].tap()
             wait(app.staticTexts["probe-scale-default"], label: "Extended Bars")
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForNonExistence(timeout: 5))
             select("Use Default")
-            expectation(for: NSPredicate(format: "value == 'Use Default'"), evaluatedWith: scale)
+            expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: useDefault)
             waitForExpectations(timeout: 5)
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
         }
