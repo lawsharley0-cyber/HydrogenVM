@@ -543,12 +543,6 @@ struct AppIcon: View {
 }
 
 struct LibraryView: View {
-    @AppStorage("keepIpaForReinstall") private var keepIpaForReinstall = true
-    /// Default display mode for games that have no setting of their own (PlayerSettings).
-    @AppStorage(PlayerSettings.scaleModeKey) private var defaultScaleMode = PlayerScaleMode.fit.rawValue
-    @AppStorage("hvm.zombies") private var zombies = false
-    @AppStorage("player.safeModeAlwaysRetry") private var safeModeAlwaysRetry = false
-    @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
     @State private var store = LibraryStore()
     @State private var pickingFile = false
     @State private var detailedRecording = false
@@ -559,9 +553,22 @@ struct LibraryView: View {
     /// iPhone games (0) or Android games (1).
     @State private var platform = 0
     @State private var keepGoing = false
-    @State private var testingAllGames = false
+    @State private var showingSettings = false
+    @State private var query = ""
     /// A `hydrogenvm://run/<id>` link (Home Screen icon) waiting to be opened.
     @State private var router = LaunchRouter.shared
+
+    private var platformApps: [InstalledApp] {
+        store.apps.filter { $0.info.isAndroid == (platform == 1) }
+    }
+
+    private var matchingApps: [InstalledApp] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return platformApps.filter {
+            term.isEmpty || $0.title.localizedCaseInsensitiveContains(term) ||
+                $0.info.bundleIdentifier.localizedCaseInsensitiveContains(term)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -606,40 +613,41 @@ struct LibraryView: View {
                                         .font(.subheadline).foregroundStyle(Gloss.inkSoft)
                                 }
                             }
-                            if !store.apps.filter({ $0.info.isAndroid == (platform == 1) }).isEmpty {
-                            Section {
-                                ForEach(store.apps.filter { $0.info.isAndroid == (platform == 1) }) { app in
-                                    LibraryAppRow(app: app) {
-                                        if app.info.runnable { running = app }
-                                    } record: {
-                                        detailedRecording = true
-                                        running = app
-                                    } details: {
-                                        showing = app
-                                    } browse: {
-                                        browsing = app
-                                    } reset: {
-                                        store.resetData(app)
-                                    } delete: {
-                                        store.delete(app)
-                                    } reinstall: { url in
-                                        store.importIPA(at: url)
-                                    }
-                                    .listRowBackground(Gloss.card)
-                                }
-                                .onDelete { idx in
-                                    let shown = store.apps.filter { $0.info.isAndroid == (platform == 1) }
-                                    idx.map { shown[$0] }.forEach(store.delete)
-                                }
-                            } header: {
-                                Text("Your games")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(Gloss.sectionInk)
-                                    .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
-                                    .textCase(nil)
+                            if !platformApps.isEmpty && matchingApps.isEmpty {
+                                ContentUnavailableView.search(text: query)
+                                    .listRowBackground(Color.clear)
                             }
+                            if !matchingApps.isEmpty {
+                                Section {
+                                    ForEach(matchingApps) { app in
+                                        LibraryAppRow(app: app) {
+                                            if app.info.runnable { running = app }
+                                        } record: {
+                                            detailedRecording = true
+                                            running = app
+                                        } details: {
+                                            showing = app
+                                        } browse: {
+                                            browsing = app
+                                        } reset: {
+                                            store.resetData(app)
+                                        } delete: {
+                                            store.delete(app)
+                                        } reinstall: { url in
+                                            store.importIPA(at: url)
+                                        }
+                                        .listRowBackground(Gloss.card)
+                                    }
+                                } header: {
+                                    Text("Your games")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Gloss.sectionInk)
+                                        .shadow(color: Gloss.emboss, radius: 0, x: 0, y: 1)
+                                        .textCase(nil)
+                                }
                             }
                         }
+                        .searchable(text: $query, prompt: "Game name or bundle ID")
                         .listStyle(.insetGrouped)
                         .scrollContentBackground(.hidden)
                     }
@@ -663,24 +671,7 @@ struct LibraryView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu("Options", systemImage: "gearshape") {
-                        Button("Test All Games", systemImage: "play.grid.2x2") {
-                            testingAllGames = true
-                        }
-                        Divider()
-                        Toggle("Continue past missing functions", isOn: $keepGoing)
-                        Toggle("Keep .ipa / .apk for reinstall", isOn: $keepIpaForReinstall)
-                        Toggle("Show debug overlay while playing", isOn: $showDebugOverlay)
-                        Text("Off: nothing of HydrogenVM is drawn over a game. Hold three fingers on the screen for a moment to open pause, volume, log and quit.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        Picker("Default display mode", selection: $defaultScaleMode) {
-                            ForEach(PlayerScaleMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode.rawValue)
-                            }
-                        }
-                        Toggle("Debug: name freed objects (zombies)", isOn: $zombies)
-                        Toggle("Always retry crashed games in Safe Mode", isOn: $safeModeAlwaysRetry)
-                    }
+                    Button("Settings", systemImage: "gearshape") { showingSettings = true }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Import", systemImage: "plus") { pickingFile = true }
@@ -754,8 +745,8 @@ struct LibraryView: View {
             .sheet(item: $browsing) { app in
                 FileBrowserView(app: app)
             }
-            .sheet(isPresented: $testingAllGames) {
-                BatchTestView(installedApps: store.apps)
+            .sheet(isPresented: $showingSettings) {
+                LibrarySettingsView(keepGoing: $keepGoing, installedApps: store.apps)
             }
         }
     }
@@ -809,6 +800,8 @@ private struct LibraryAppRow: View {
     let reinstall: (URL) -> Void
 
     @State private var confirmRecording = false
+    @State private var confirmReset = false
+    @State private var confirmDelete = false
     @State private var showingReinstallConfirm = false
     @State private var showingReinstallMissing = false
     @State private var pickingReinstallIPA = false
@@ -844,35 +837,63 @@ private struct LibraryAppRow: View {
         }
     }
 
-    var body: some View {
-        Button(action: details) {
-            AppRow(app: app, play: app.info.runnable ? open : nil)
+    @ViewBuilder
+    private var actions: some View {
+        if app.info.runnable {
+            Button("Record detailed replay", systemImage: "record.circle") { confirmRecording = true }
         }
-        .buttonStyle(.plain)
+        Button("Files", systemImage: "folder", action: browse)
+        Button("Add to Home Screen", systemImage: "plus.app") { makingClip = true }
+        Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
+        Toggle(isOn: Binding(get: { RunModel.allowsInternet(for: app.info.bundleIdentifier) },
+                             set: { UserDefaults.standard.set($0, forKey: RunModel.internetKey(app.info.bundleIdentifier)) })) {
+            Label("Allow Internet", systemImage: "globe")
+        }
+        Button("Reinstall", systemImage: "arrow.down.app") {
+            if storedIPAURL != nil {
+                showingReinstallConfirm = true
+            } else {
+                showingReinstallMissing = true
+            }
+        }
+        Button("Reset App Data", systemImage: "arrow.counterclockwise", role: .destructive) { confirmReset = true }
+        Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(action: details) {
+                AppRow(app: app, play: app.info.runnable ? open : nil)
+            }
+            .buttonStyle(.plain)
+            Menu {
+                actions
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Actions for \(app.title)")
+        }
         .swipeActions(edge: .leading) {
             Button("Files", systemImage: "folder", action: browse)
                 .tint(.blue)
         }
-        .contextMenu {
-            if app.info.runnable {
-                Button("Record detailed replay", systemImage: "record.circle") { confirmRecording = true }
-            }
-            Button("Files", systemImage: "folder", action: browse)
-            Button("Add to Home Screen", systemImage: "plus.app") { makingClip = true }
-            Button("Verify files", systemImage: "checkmark.seal", action: doVerify)
-            Toggle(isOn: Binding(get: { RunModel.allowsInternet(for: app.info.bundleIdentifier) },
-                                 set: { UserDefaults.standard.set($0, forKey: RunModel.internetKey(app.info.bundleIdentifier)) })) {
-                Label("Allow Internet", systemImage: "globe")
-            }
-            Button("Reinstall", systemImage: "arrow.down.app") {
-                if storedIPAURL != nil {
-                    showingReinstallConfirm = true
-                } else {
-                    showingReinstallMissing = true
-                }
-            }
-            Button("Reset App Data", systemImage: "arrow.counterclockwise", action: reset)
-            Button("Delete", systemImage: "trash", role: .destructive, action: delete)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button("Delete", systemImage: "trash") { confirmDelete = true }
+                .tint(.red)
+        }
+        .contextMenu { actions }
+        .confirmationDialog("Reset \(app.title)'s data?", isPresented: $confirmReset, titleVisibility: .visible) {
+            Button("Reset App Data", role: .destructive, action: reset)
+        } message: {
+            Text("This removes saved progress and settings. The game stays installed.")
+        }
+        .confirmationDialog("Delete \(app.title)?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive, action: delete)
+        } message: {
+            Text("This removes the installed game and its data.")
         }
         .confirmationDialog("Record this launch?", isPresented: $confirmRecording, titleVisibility: .visible) {
             Button("Record and play", action: record)
@@ -936,13 +957,16 @@ struct AppRow: View {
         HStack(spacing: 12) {
             GlossIcon(path: app.info.iconPath, title: app.title, size: 48)
             VStack(alignment: .leading, spacing: 2) {
-                Text(app.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Gloss.ink).lineLimit(1)
+                Text(app.title).font(.body.weight(.semibold)).foregroundStyle(Gloss.ink)
                 Text([app.info.version.isEmpty ? nil : app.info.version,
                       app.info.isAndroid ? (app.info.engine.isEmpty ? "Android" : "Android · \(app.info.engine)")
                                          : (app.info.minimumOSVersion.isEmpty ? nil : "iOS \(app.info.minimumOSVersion)+")]
                         .compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 13)).foregroundStyle(Gloss.inkSoft).lineLimit(1)
-                if app.info.isAndroid && !app.info.engine.isEmpty && !app.info.engineSupported {
+                if !app.info.runnable && !app.info.problem.isEmpty {
+                    Text(app.info.problem)
+                        .font(.caption).foregroundStyle(Gloss.warn)
+                } else if app.info.isAndroid && !app.info.engine.isEmpty && !app.info.engineSupported {
                     Label("\(app.info.engine) isn't supported yet", systemImage: "exclamationmark.triangle")
                         .font(.system(size: 12)).foregroundStyle(Gloss.warn).lineLimit(1)
                 }

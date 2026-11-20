@@ -739,6 +739,9 @@ struct RunView: View {
     @State private var hudExpanded = false
     @State private var overlay = PlayerOverlay()
     @AppStorage(PlayerOverlay.settingKey) private var showDebugOverlay = PlayerOverlay.settingDefault
+    @AppStorage(PlayerOverlay.controlsSettingKey) private var showControlsButton = false
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var inspectAfterStop = false
     @State private var showFiles = false
     @State private var confirmInspect = false
@@ -771,15 +774,55 @@ struct RunView: View {
                                        PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
     }
 
+    private var persistentControls: Bool { showControlsButton || showDebugOverlay || voiceOverEnabled }
+    private var controlsAnimation: Animation? {
+        reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8)
+    }
+
     private var effectiveOrientation: GuestOrientation {
         overrideOrientation ?? model.orientation
     }
 
+    private var scaleOverride: PlayerScaleMode? {
+        scaleSetting.flatMap { PlayerScaleMode(rawValue: $0) }
+    }
+
     private var effectiveScaleMode: PlayerScaleMode {
-        // Observe both keys so a change to either one updates the viewport.
-        _ = scaleSetting
-        _ = defaultScaleSetting
-        return PlayerSettings.scaleMode(bundleID: app.info.bundleIdentifier)
+        scaleOverride ?? PlayerScaleMode(rawValue: defaultScaleSetting) ?? .fit
+    }
+
+    private var scaleModeMenu: some View {
+        let shown = scaleOverride?.rawValue ?? "Use Default"
+        return Menu {
+            Button {
+                scaleSetting = nil
+            } label: {
+                if scaleOverride == nil { Label("Use Default", systemImage: "checkmark") }
+                else { Text("Use Default") }
+            }
+            ForEach(PlayerScaleMode.allCases) { mode in
+                Button {
+                    scaleSetting = mode.rawValue
+                } label: {
+                    if scaleOverride == mode { Label(mode.rawValue, systemImage: "checkmark") }
+                    else { Text(mode.rawValue) }
+                }
+            }
+        } label: {
+            HStack {
+                Text("Scale Mode")
+                Spacer()
+                Text(shown)
+                Image(systemName: "chevron.up.chevron.down")
+                    .accessibilityHidden(true)
+            }
+            .font(.subheadline)
+            .frame(minHeight: 44)
+            .contentShape(.rect)
+        }
+        .accessibilityIdentifier("player-scale-mode")
+        .accessibilityLabel("Scale Mode")
+        .accessibilityValue(shown)
     }
 
     /// The orientations the phone may take while this game plays. A landscape game
@@ -812,9 +855,9 @@ struct RunView: View {
                                    mode: effectiveScaleMode,
                                    filter: PlayerFilter(rawValue: filterSetting) ?? .linear,
                                    inputEnabled: model.inputEnabled && !editingControllerTargets,
-                                   onOverlayGesture: showDebugOverlay ? nil : {
+                                   onOverlayGesture: persistentControls ? nil : {
                                        overlay.summon()
-                                       withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { hudExpanded = true }
+                                       withAnimation(controlsAnimation) { hudExpanded = true }
                                    },
                                    focus: focusPoint) { phase, point, finger in
                         model.touch(phase, at: point, finger: finger)
@@ -889,7 +932,7 @@ struct RunView: View {
 
         }
         .overlay(alignment: .topTrailing) {
-            if showDebugOverlay || overlay.visible {
+            if persistentControls || overlay.visible {
                 floatingHUDPill
                     .padding(.horizontal, 16)
                     .padding(.top, 16)
@@ -1091,10 +1134,10 @@ struct RunView: View {
                         .background(.black.opacity(0.4), in: Capsule())
 
                         Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            withAnimation(controlsAnimation) {
                                 hudExpanded = false
                                 overlay.minimize()
-                                if !showDebugOverlay { showLog = false }   // the log toggle lives in the hidden controls
+                                if !persistentControls { showLog = false }   // the log toggle lives in the hidden controls
                             }
                         } label: {
                             Image(systemName: "chevron.up.circle.fill")
@@ -1180,23 +1223,7 @@ struct RunView: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
 
-                        // Keep the segmented control's selection concrete; nil is
-                        // only the persisted representation of the global default.
-                        Picker("Scale Mode", selection: Binding<String>(get: { scaleSetting ?? "" }, set: { value in
-                            if value.isEmpty {
-                                scaleSetting = nil
-                                PlayerSettings.clearScaleMode(bundleID: app.info.bundleIdentifier)
-                            } else {
-                                scaleSetting = value
-                            }
-                        })) {
-                            Text("Use Default").tag("")
-                            ForEach(PlayerScaleMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode.rawValue)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("player-scale-mode")
+                        scaleModeMenu
 
                         if effectiveScaleMode.crops {
                             Picker("Crop Focus", selection: $cropFocusSetting) {
@@ -1251,6 +1278,7 @@ struct RunView: View {
                             Image(systemName: showLog ? "terminal.fill" : "terminal")
                                 .foregroundStyle(showLog ? .green : .white)
                         }
+                        .accessibilityLabel(showLog ? "Hide Log" : "Show Log")
 
                         Button(role: .destructive) {
                             if model.running { model.stop() } else { dismiss() }
@@ -1259,6 +1287,7 @@ struct RunView: View {
                                 .font(.title3)
                                 .foregroundStyle(.red)
                         }
+                        .accessibilityLabel("Quit Game")
                         .accessibilityIdentifier("player-quit")
                     }
                     .fixedSize(horizontal: false, vertical: true)
@@ -1271,11 +1300,11 @@ struct RunView: View {
                         .stroke(.white.opacity(0.2), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 6)
-                .transition(.scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
+                .transition(reduceMotion ? .identity : .scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
             } else {
                 // Minimized HUD Pill Handle
                 Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    withAnimation(controlsAnimation) {
                         hudExpanded = true
                     }
                 } label: {
@@ -1284,9 +1313,11 @@ struct RunView: View {
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.white)
 
-                        Text("\(model.fps) FPS")
-                            .font(.caption2.monospacedDigit().weight(.bold))
-                            .foregroundStyle(model.fps >= 30 ? .green : .yellow)
+                        if showDebugOverlay {
+                            Text("\(model.fps) FPS")
+                                .font(.caption2.monospacedDigit().weight(.bold))
+                                .foregroundStyle(model.fps >= 30 ? .green : .yellow)
+                        }
 
                         if model.activity.userPaused {
                             Text("PAUSED")
@@ -1298,7 +1329,7 @@ struct RunView: View {
                         }
                     }
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
+                    .frame(minWidth: 44, minHeight: 44)
                     .background(.ultraThinMaterial, in: Capsule())
                     .overlay(
                         Capsule().stroke(.white.opacity(0.25), lineWidth: 1)
@@ -1309,8 +1340,9 @@ struct RunView: View {
                 .fixedSize()
                 .accessibilityIdentifier("player-controls")
                 .accessibilityLabel("Player Controls")
-                .accessibilityValue(activityLabel)
-                .transition(.scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
+                .accessibilityValue(showDebugOverlay ? "\(activityLabel), \(model.fps) FPS" : activityLabel)
+                .accessibilityHint("Opens pause, volume, display settings, and quit")
+                .transition(reduceMotion ? .identity : .scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
             }
         }
     }
