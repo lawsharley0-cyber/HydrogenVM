@@ -3,7 +3,6 @@ import XCTest
 final class PlayerUITests: XCTestCase {
     @MainActor
     func testCustomKeyInputKeyboardAppearsAndForwardsIncrementalEvents() throws {
-        try XCTSkipIf(true, "Fails in CI's simulator for a reason the job log does not show (#384)")
         let app = XCUIApplication()
         app.launchEnvironment["PLAYER_KEYINPUT_TEST"] = "1"
         app.launch()
@@ -20,7 +19,10 @@ final class PlayerUITests: XCTestCase {
         screenshot.name = "Custom UIKeyInput keyboard and Done accessory"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        app.toolbars.buttons["Done"].tap()
+        let done = app.buttons["guest-keyinput-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        XCTAssertTrue(done.isHittable)
+        done.tap()
         wait(app.staticTexts["probe-key-event"], label: "dismiss")
         let hidden = NSPredicate(format: "exists == false")
         expectation(for: hidden, evaluatedWith: app.keyboards.firstMatch)
