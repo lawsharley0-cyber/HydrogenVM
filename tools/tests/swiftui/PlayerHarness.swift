@@ -105,6 +105,7 @@ final class HVMSession {
     var detailedRecording = false
     var allowInternet = false
     var unlockFrameRate = false
+    var useBlockCache = false
     var safeModeFallback: String?
     var gles1Emulate = false
     var maxTextureSize: UInt32 = 0
