@@ -1,4 +1,5 @@
 #include "runtime/android/dex/CoreCollections.hpp"
+#include "runtime/android/dex/CoreLang.hpp"
 #include "runtime/android/dex/DexFile.hpp"
 
 #include <algorithm>
@@ -22,12 +23,6 @@ Value ref(uint32_t id) { return {ValueKind::Reference, id}; }
 void checkIndex(int32_t i, size_t size, bool allowEnd) {
     if (i < 0 || size_t(i) > size || (!allowEnd && size_t(i) == size))
         throw JavaException{u"Ljava/lang/IndexOutOfBoundsException;"};
-}
-
-bool equal(Heap& heap, uint32_t lhs, uint32_t rhs) {
-    if (lhs == rhs) return true;
-    return lhs && rhs && heap.typeOf(lhs) == u"Ljava/lang/String;" &&
-        heap.typeOf(rhs) == u"Ljava/lang/String;" && heap.string(lhs) == heap.string(rhs);
 }
 
 bool isMapType(std::u16string_view t) {
@@ -65,6 +60,15 @@ uint32_t copyToArray(Heap& heap, const std::vector<uint32_t>& items, uint32_t ta
 }
 
 } // namespace
+
+bool CoreCollections::equal(Heap& heap, uint32_t lhs, uint32_t rhs) const {
+    if (lhs == rhs) return true;
+    if (!lhs || !rhs) return false;
+    if (heap.typeOf(lhs) == u"Ljava/lang/String;" && heap.typeOf(rhs) == u"Ljava/lang/String;")
+        return heap.string(lhs) == heap.string(rhs);
+    if (lang_ && lang_->sameBoxed(heap, lhs, rhs)) return true;
+    return false;
+}
 
 bool CoreCollections::hasClass(std::u16string_view type) {
     return type == u"Ljava/util/Arrays;" || type == u"Ljava/util/Collections;" ||

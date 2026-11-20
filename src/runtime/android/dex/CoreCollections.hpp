@@ -10,14 +10,18 @@
 
 namespace Hydrogen::Runtime::Android::Dex {
 
+class CoreLang;
+
 class CoreCollections {
 public:
     static bool hasClass(std::u16string_view type);
+    void setLang(CoreLang* lang) { lang_ = lang; }
     std::optional<Value> invoke(Heap& heap, std::u16string_view type,
                                 std::u16string_view name, std::u16string_view signature,
                                 bool isStatic, std::span<const Value> args);
 
 private:
+    bool equal(Heap& heap, uint32_t lhs, uint32_t rhs) const;
     using Entries = std::vector<std::pair<uint32_t, uint32_t>>;
     struct IteratorState {
         std::vector<uint32_t> snapshot;
@@ -56,6 +60,7 @@ private:
     std::map<uint32_t, std::vector<uint32_t>> sets_;
     std::map<uint32_t, IteratorState> iterators_;
     std::map<uint32_t, EntryState> entries_;
+    CoreLang* lang_ = nullptr;
 };
 
 } // namespace Hydrogen::Runtime::Android::Dex

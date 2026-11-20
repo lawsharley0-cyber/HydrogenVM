@@ -93,6 +93,7 @@ public:
             if (name.starts_with("classes") && name.ends_with(".dex") && i->is_regular_file(ec))
                 names.push_back(name);
         }
+        collections.setLang(&lang);
         if (names.empty()) return;
         auto path = std::make_shared<ClassPath>(std::move(names), [root](const std::string& name) {
             std::ifstream in(root / name, std::ios::binary | std::ios::ate);
@@ -254,12 +255,18 @@ public:
                 auto* slot = j.get(object);
                 if (!slot) return std::nullopt;
                 const auto it = slot->fields.find(member);
-                if (it == slot->fields.end()) return std::nullopt;
+                if (it == slot->fields.end()) {
+                    process.logf(LogLevel::Warning, "Missing: DEX field %s.%s:%s", cls.c_str(), member.c_str(), toMutf8(signature).c_str());
+                    return std::nullopt;
+                }
                 if (write) it->second = written;
                 result = it->second;
             } else {
                 const auto it = j.staticFields.find(cls + "." + member);
-                if (it == j.staticFields.end()) return std::nullopt;
+                if (it == j.staticFields.end()) {
+                    process.logf(LogLevel::Warning, "Missing: DEX static field %s.%s:%s", cls.c_str(), member.c_str(), toMutf8(signature).c_str());
+                    return std::nullopt;
+                }
                 if (write) it->second = written;
                 result = it->second;
             }
@@ -288,13 +295,27 @@ public:
             if (!j.dexNative(x, cls, method, sig, self, values, result)) return std::nullopt;
         } else {
             JMethod target;
+            std::string startType = cls;
+            if (!stat) {
+                std::lock_guard lock(j.mu);
+                if (const auto* obj = j.get(self); obj && !obj->isClass && !obj->cls.empty())
+                    startType = obj->cls;
+            }
+            // Walk DEX-defined superclasses first (without holding j.mu) so a DEX subclass
+            // of a host class (e.g. OptimizedByteArrayOutputStream -> ByteArrayOutputStream)
+            // dispatches to its concrete host superclass rather than an abstract ancestor.
+            std::vector<std::string> dexChain;
+            if (!stat) {
+                std::string cur = startType;
+                for (unsigned depth = 0; depth < 64 && !cur.empty(); ++depth) {
+                    dexChain.push_back(cur);
+                    const auto ci = machine->classInfo(descriptor(cur));
+                    if (!ci.defined || ci.superName.empty()) break;
+                    cur = className(ci.superName);
+                }
+            }
             {
                 std::lock_guard lock(j.mu);
-                std::string startType = cls;
-                if (!stat) {
-                    if (const auto* obj = j.get(self); obj && !obj->isClass && !obj->cls.empty())
-                        startType = obj->cls;
-                }
                 auto lookup = [&](std::string type) -> JMethod {
                     for (unsigned depth = 0; depth < 64 && !type.empty(); ++depth, type = j.superOf(type)) {
                         if (auto it = j.impls.find(type + "." + method + sig); it != j.impls.end())
@@ -302,8 +323,11 @@ public:
                     }
                     return {};
                 };
-                target = lookup(startType);
-                if (!target && startType != cls) target = lookup(cls);
+                for (const auto& t : dexChain) {
+                    target = lookup(t);
+                    if (target) break;
+                }
+                if (!target) target = lookup(cls);
             }
             if (!target) {
                 process.reportMissing("DEX " + cls + "." + method + sig);

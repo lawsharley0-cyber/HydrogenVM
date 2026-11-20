@@ -297,6 +297,16 @@ std::u16string CoreLang::formatObject(Heap& heap, uint32_t reference) {
     return cls + u"@" + formatUnsignedHex(reference);
 }
 
+bool CoreLang::sameBoxed(Heap& heap, uint32_t lhs, uint32_t rhs) {
+    if (!lhs || !rhs) return false;
+    const auto t1 = heap.typeOf(lhs);
+    if (t1 != heap.typeOf(rhs)) return false;
+    std::lock_guard lock(mutex_);
+    const auto v1 = boxedValueLocked(lhs);
+    const auto v2 = boxedValueLocked(rhs);
+    return v1 && v2 && *v1 == *v2;
+}
+
 std::optional<Value> CoreLang::boxedMethod(Heap& heap, std::u16string_view owner,
                                            std::u16string_view name, std::u16string_view sig,
                                            bool isStatic, std::span<const Value> args) {
@@ -575,9 +585,13 @@ std::optional<Value> CoreLang::boxedMethod(Heap& heap, std::u16string_view owner
                 const char16_t c = char16_t(args[0].bits);
                 return word(((c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9')) ? 1u : 0u);
             }
-            if (name == u"isWhitespace" && sig == u"(C)Z" && args.size() == 1) {
+            if ((name == u"isWhitespace" || name == u"isSpace") && sig == u"(C)Z" && args.size() == 1) {
                 const char16_t c = char16_t(args[0].bits);
                 return word((c == u' ' || c == u'\t' || c == u'\n' || c == u'\r' || c == u'\f' || c == 0x0b) ? 1u : 0u);
+            }
+            if (name == u"isSpaceChar" && sig == u"(C)Z" && args.size() == 1) {
+                const char16_t c = char16_t(args[0].bits);
+                return word((c == u' ' || c == 0x00A0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000) ? 1u : 0u);
             }
             if (name == u"isUpperCase" && sig == u"(C)Z" && args.size() == 1) {
                 const char16_t c = char16_t(args[0].bits);
@@ -1370,6 +1384,33 @@ std::optional<Value> CoreLang::throwableMethod(Heap& heap, std::u16string_view n
 std::optional<Value> CoreLang::invoke(Heap& heap, std::u16string_view owner, std::u16string_view name,
                                       std::u16string_view signature, bool isStatic,
                                       std::span<const Value> args) {
+    if (!isStatic && owner.starts_with(u'[') && name == u"clone" && signature == u"()Ljava/lang/Object;" && !args.empty()) {
+        const uint32_t self = asRef(args[0]);
+        if (!self) throw JavaException{u"Ljava/lang/NullPointerException;"};
+        const auto type = heap.typeOf(self);
+        const int32_t len = int32_t(heap.length(self));
+        const uint32_t copy = heap.array(type, len);
+        for (int32_t i = 0; i < len; ++i) heap.setElement(copy, i, heap.element(self, i));
+        return ref(copy);
+    }
+    if (!isStatic && owner == u"Ljava/lang/CharSequence;" && !args.empty()) {
+        const uint32_t self = asRef(args[0]);
+        if (!self) throw JavaException{u"Ljava/lang/NullPointerException;"};
+        const std::u16string text = charSequenceText(heap, self);
+        if (name == u"length" && signature == u"()I") return word(uint32_t(text.size()));
+        if (name == u"charAt" && signature == u"(I)C" && args.size() == 2) {
+            const int32_t idx = asInt(args[1]);
+            if (idx < 0 || size_t(idx) >= text.size()) throw JavaException{u"Ljava/lang/IndexOutOfBoundsException;"};
+            return word(text[size_t(idx)]);
+        }
+        if (name == u"subSequence" && signature == u"(II)Ljava/lang/CharSequence;" && args.size() == 3) {
+            const int32_t s = asInt(args[1]), e = asInt(args[2]);
+            if (s < 0 || e < s || size_t(e) > text.size()) throw JavaException{u"Ljava/lang/IndexOutOfBoundsException;"};
+            return ref(heap.newString(text.substr(size_t(s), size_t(e - s))));
+        }
+        if (name == u"toString" && signature == u"()Ljava/lang/String;")
+            return ref(heap.newString(text));
+    }
     if (isBoxedClass(owner)) return boxedMethod(heap, owner, name, signature, isStatic, args);
     if (owner == u"Ljava/lang/String;") return stringMethod(heap, name, signature, isStatic, args);
     if (!isStatic && (owner == u"Ljava/lang/StringBuilder;" || owner == u"Ljava/lang/StringBuffer;"))
