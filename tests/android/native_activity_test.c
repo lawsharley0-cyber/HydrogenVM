@@ -23,6 +23,7 @@ extern EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, void*
 extern EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const EGLint* attrib_list);
 extern EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx);
 extern EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface);
+extern EGLint eglGetError(void);
 
 extern void glClearColor(float r, float g, float b, float a);
 extern void glClear(unsigned int mask);
@@ -129,6 +130,20 @@ static void* android_main(void* arg) {
         eglSwapBuffers(dpy, surf);
     }
     check("NativeActivity EGL draw", cur_ok && w > 0 && h > 0, "EGL setup or window size failed");
+
+    /* No ES 3 here: no config is ES3-renderable (EGL_OPENGL_ES3_BIT_KHR 0x40), and a version 3
+       context is refused with EGL_BAD_MATCH (0x3009), so an engine that asks first for ES 3
+       falls back to ES 2 instead of calling ES 3 functions that do not exist (Pixel Gun 3D). */
+    const EGLint es3_attribs[] = {0x3040, 0x40, 0x3038};
+    const EGLint es3_ctx[] = {0x3098, 3, 0x3038};
+    EGLConfig es3_cfg = 0;
+    EGLint es3_count = -1;
+    const int es3_chosen = egl_ok && eglChooseConfig(dpy, es3_attribs, &es3_cfg, 1, &es3_count);
+    eglGetError();
+    EGLContext es3 = egl_ok ? eglCreateContext(dpy, cfg, 0, es3_ctx) : 0;
+    const EGLint es3_error = eglGetError();
+    check("EGL offers no ES 3 config and refuses an ES 3 context with EGL_BAD_MATCH",
+          es3_chosen && es3_count == 0 && es3 == 0 && es3_error == 0x3009, "ES 3 was accepted");
 
     int got_touch = 0;
     for (int iter = 0; iter < 50 && !got_touch; iter++) {

@@ -19,7 +19,7 @@ namespace Hydrogen::Runtime::Android {
 namespace {
 
 constexpr uint32_t EGL_SUCCESS = 0x3000, EGL_BAD_ATTRIBUTE = 0x3004, EGL_BAD_CONFIG = 0x3005, EGL_BAD_CONTEXT = 0x3006,
-                   EGL_BAD_DISPLAY = 0x3008, EGL_BAD_NATIVE_WINDOW = 0x300B, EGL_BAD_PARAMETER = 0x300C,
+                   EGL_BAD_DISPLAY = 0x3008, EGL_BAD_MATCH = 0x3009, EGL_BAD_NATIVE_WINDOW = 0x300B, EGL_BAD_PARAMETER = 0x300C,
                    EGL_BAD_SURFACE = 0x300D;
 constexpr uint32_t EGL_NONE = 0x3038, kDisplay = 1;
 constexpr uint32_t EGL_WIDTH = 0x3057, EGL_HEIGHT = 0x3056, EGL_CONFIG_ID = 0x3028;
@@ -187,7 +187,9 @@ uint32_t attrOf(const Config& c, int32_t attr, bool& known) {
         case 0x303B: return 0; case 0x303C: return 1;   // MIN / MAX_SWAP_INTERVAL
         case 0x303D: return 0; case 0x303E: return 0;   // LUMINANCE_SIZE, ALPHA_MASK_SIZE
         case 0x303F: return 0x308E;                  // COLOR_BUFFER_TYPE: RGB
-        case 0x3040: case 0x3042: return 0x1 | 0x4 | 0x40;   // RENDERABLE_TYPE / CONFORMANT: ES 1, 2, 3
+        // RENDERABLE_TYPE / CONFORMANT: ES 1 and 2. Contexts are ES 1.1 or 2.0; no ES 3 entry points
+        // exist, so ES 3 is not offered (engines that ask for it fall back to ES 2).
+        case 0x3040: case 0x3042: return 0x1 | 0x4;
         case 0x3142: return 0;                       // RECORDABLE_ANDROID
         default: known = false; return 0;
     }
@@ -297,6 +299,9 @@ uint32_t e_createContext(Ctx& x, uint32_t, uint32_t config, uint32_t share, Gues
     if (attribs)
         for (uint32_t a = attribs; x.mem.read<uint32_t>(a) != EGL_NONE; a += 8)
             if (x.mem.read<uint32_t>(a) == 0x3098 /*CONTEXT_CLIENT_VERSION*/) version = int(x.mem.read<uint32_t>(a + 4));
+    // ES 3 needs entry points HydrogenVM does not have (glGetStringi, ...). A device without
+    // ES 3 refuses the version, and engines then retry with 2 (Unity 2017: Pixel Gun 3D).
+    if (version >= 3) return fail(EGL_BAD_MATCH);
     uint32_t shareGroup = 0;
     if (share) {
         auto it = e.contexts.find(share);
@@ -306,7 +311,7 @@ uint32_t e_createContext(Ctx& x, uint32_t, uint32_t config, uint32_t share, Gues
     EglContext c;
     c.config = config;
     c.version = version;
-    createContext(x.proc, c.g, version >= 2 ? 2 : 1, shareGroup);
+    createContext(x.proc, c.g, version == 2 ? 2 : 1, shareGroup);
     const uint32_t h = c.g.context;
     e.contexts[h] = c;
     return ok(h);
