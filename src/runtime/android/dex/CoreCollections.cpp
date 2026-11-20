@@ -198,6 +198,12 @@ std::optional<Value> CoreCollections::mapMethod(Heap& heap, std::u16string_view 
         entries.clear();
         return Value{ValueKind::Void};
     }
+    if (name == u"clone" && sig == u"()Ljava/lang/Object;") {
+        const uint32_t copy = heap.object(heap.typeOf(id));
+        const Entries dup = entries;
+        maps_[copy] = dup;
+        return ref(copy);
+    }
     if (name == u"putAll" && sig == u"(Ljava/util/Map;)V" && args.size() == 2) {
         const uint32_t srcId = reference(args[1]);
         if (auto sit = maps_.find(srcId); sit != maps_.end()) {
@@ -290,6 +296,12 @@ std::optional<Value> CoreCollections::setMethod(Heap& heap, std::u16string_view 
         entries.clear();
         return Value{ValueKind::Void};
     }
+    if (name == u"clone" && sig == u"()Ljava/lang/Object;") {
+        const uint32_t copy = heap.object(heap.typeOf(id));
+        const std::vector<uint32_t> dup = entries;
+        sets_[copy] = dup;
+        return ref(copy);
+    }
     if (name == u"iterator" && sig == u"()Ljava/util/Iterator;") {
         return ref(makeIterator(heap, entries, id, IteratorState::Kind::Set));
     }
@@ -356,6 +368,12 @@ std::optional<Value> CoreCollections::listMethod(Heap& heap, std::u16string_view
     if (name == u"clear" && sig == u"()V") {
         contents.clear();
         return Value{ValueKind::Void};
+    }
+    if (name == u"clone" && sig == u"()Ljava/lang/Object;") {
+        const uint32_t copy = heap.object(heap.typeOf(list));
+        const std::vector<uint32_t> dup = contents;
+        lists_[copy] = dup;
+        return ref(copy);
     }
     if (name == u"iterator" && sig == u"()Ljava/util/Iterator;") {
         return ref(makeIterator(heap, contents, list, IteratorState::Kind::List));
@@ -560,6 +578,24 @@ std::optional<Value> CoreCollections::listAlgorithm(Heap& heap, std::u16string_v
         std::lock_guard lock(mutex_);
         maps_.try_emplace(id);
         return ref(id);
+    }
+    if (name == u"sort" && sig == u"(Ljava/util/List;Ljava/util/Comparator;)V" && args.size() == 2) {
+        const uint32_t listId = reference(args[0]);
+        const uint32_t cmpId = reference(args[1]);
+        if (!listId) throw JavaException{u"Ljava/lang/NullPointerException;"};
+        std::vector<uint32_t> items;
+        {
+            std::lock_guard lock(mutex_);
+            if (auto it = lists_.find(listId); it != lists_.end()) items = it->second;
+        }
+        if (items.size() > 1 && cmpId && compare_) {
+            std::stable_sort(items.begin(), items.end(), [&](uint32_t a, uint32_t b) {
+                return compare_(cmpId, a, b) < 0;
+            });
+            std::lock_guard lock(mutex_);
+            lists_[listId] = std::move(items);
+        }
+        return Value{ValueKind::Void};
     }
     if (name == u"addAll" && sig == u"(Ljava/util/Collection;[Ljava/lang/Object;)Z" && args.size() == 2) {
         const uint32_t col = reference(args[0]);
