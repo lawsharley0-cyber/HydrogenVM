@@ -545,12 +545,23 @@ struct AppIcon: View {
     /// the engine's decoder handles both, via the bridge. Decoded once, ready to draw.
     nonisolated static func load(_ path: String) -> UIImage? {
         if let hit = cached(path) { return hit }
-        var image = UIImage(contentsOfFile: path)
+        // An Xcode-crushed PNG goes straight to the engine's decoder: UIImage would only fail on
+        // it and log "Error -17102 decompressing image" for each icon in the library.
+        var image: UIImage?
+        if !isCrushedPNG(path) { image = UIImage(contentsOfFile: path) }
         if image == nil, let cg = HVMEngine.decodeImage(atPath: path) { image = UIImage(cgImage: cg) }
         guard let image else { return nil }
         let ready = image.preparingForDisplay() ?? image
         cache.setObject(ready, forKey: path as NSString)
         return ready
+    }
+
+    /// True for an iPhone-optimised ("CgBI") PNG: its first chunk, at byte 12, is CgBI.
+    nonisolated static func isCrushedPNG(_ path: String) -> Bool {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 16), head.count == 16 else { return false }
+        return head.subdata(in: 12..<16) == Data("CgBI".utf8)
     }
 
     /// Forget decoded icons (after an import or reinstall replaced one).
@@ -685,7 +696,7 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu("Options", systemImage: "gearshape") {
-                        Button("Test All Games", systemImage: "play.grid.2x2") {
+                        Button("Test All Games", systemImage: "play.rectangle.on.rectangle") {
                             testingAllGames = true
                         }
                         Divider()

@@ -3055,6 +3055,22 @@ int runFullSubsystemTests() {
         check(reported && once && snapshot, "a main thread waiting 5 s logs one Stall report with the lock, its holder and the wait chain; a stop logs a Snapshot");
     }
 
+    // NSArray getObjects:range: / getObjects: copy into the caller's buffer (Pocket God stopped on
+    // -[__NSArrayM getObjects:range:]). Expected: the objects at those indexes, in order.
+    {
+        using namespace Foundation;
+        const auto o0 = makeString(cx, "a"), o1 = makeString(cx, "b"), o2 = makeString(cx, "c");
+        const auto list = makeArray(cx, {o0, o1, o2});
+        const uint32_t buffer = proc.heap().allocZeroed(16);
+        r.send(cpu, list, "getObjects:range:", {buffer, 1, 2});
+        const bool ranged = proc.mem().read<uint32_t>(buffer) == o1 && proc.mem().read<uint32_t>(buffer + 4) == o2 &&
+                            proc.mem().read<uint32_t>(buffer + 8) == 0;
+        r.send(cpu, list, "getObjects:", {buffer});
+        const bool all = proc.mem().read<uint32_t>(buffer) == o0 && proc.mem().read<uint32_t>(buffer + 4) == o1 &&
+                         proc.mem().read<uint32_t>(buffer + 8) == o2;
+        check(ranged && all, "NSArray getObjects:range: and getObjects: copy the objects in order");
+    }
+
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.
     {
         using namespace Foundation;

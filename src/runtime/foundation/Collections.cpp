@@ -191,6 +191,17 @@ id a_subarrayWithRange(Ctx& x, id self, SEL, uint32_t loc, uint32_t len) {
     if (uint64_t(loc) + len > v.size()) rangeError("subarrayWithRange:", loc + len, v.size());
     return makeArray(x, std::vector<id>(v.begin() + loc, v.begin() + loc + len));
 }
+// getObjects:range: copies the objects in the range into the caller's buffer; getObjects:
+// copies them all (the buffer must hold count objects).
+void a_getObjectsRange(Ctx& x, id self, SEL, GuestPtr buffer, uint32_t loc, uint32_t len) {
+    auto v = itemsOf(x, self);
+    if (uint64_t(loc) + len > v.size()) rangeError("getObjects:range:", loc + len, v.size());
+    for (uint32_t i = 0; i < len; ++i) x.mem.write<uint32_t>(buffer + 4 * i, v[loc + i]);
+}
+void a_getObjects(Ctx& x, id self, SEL, GuestPtr buffer) {
+    auto v = itemsOf(x, self);
+    for (size_t i = 0; i < v.size(); ++i) x.mem.write<uint32_t>(buffer + uint32_t(4 * i), v[i]);
+}
 id a_arrayByAddingObject(Ctx& x, id self, SEL, id o) { auto v = itemsOf(x, self); v.push_back(o); return makeArray(x, v); }
 id a_arrayByAddingObjects(Ctx& x, id self, SEL, id other) { auto v = itemsOf(x, self); auto w = itemsOf(x, other); v.insert(v.end(), w.begin(), w.end()); return makeArray(x, v); }
 id a_componentsJoined(Ctx& x, id self, SEL, id sep) {
@@ -1286,6 +1297,7 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&a_containsObject>("containsObject:", "c@:@").m<&a_isEqualToArray>("isEqualToArray:", "c@:@")
       .m<&a_isEqualToArray>("isEqual:", "c@:@").m<&a_hash>("hash", "I@:")
       .m<&a_subarrayWithRange>("subarrayWithRange:").m<&a_arrayByAddingObject>("arrayByAddingObject:")
+      .m<&a_getObjectsRange>("getObjects:range:", "v@:^@{_NSRange=II}").m<&a_getObjects>("getObjects:", "v@:^@")
       .m<&a_arrayByAddingObjects>("arrayByAddingObjectsFromArray:").m<&a_componentsJoined>("componentsJoinedByString:")
       .m<&a_makeObjectsPerform>("makeObjectsPerformSelector:", "v@::").m<&a_makeObjectsPerformWith>("makeObjectsPerformSelector:withObject:", "v@::@")
       .m<&a_copyWithZone>("copyWithZone:").m<&a_mutableCopyWithZone>("mutableCopyWithZone:").m<&a_copy>("copy").m<&a_mutableCopy>("mutableCopy")
