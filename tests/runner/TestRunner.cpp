@@ -4229,6 +4229,27 @@ int runFullSubsystemTests() {
                   "UIApplication has isRegisteredForRemoteNotifications (NO) with a method signature");
         }
         {
+            // Cut the Rope's Crystal SDK waits for an answer to registerForRemoteNotificationTypes:.
+            // With no push service the delegate hears the failure, later, on the main run loop.
+            int failures = 0; uint32_t code = 0; ObjC::id fromApp = 0;
+            ObjC::ClassBuilder del = r.defineClass("HVMPushDelegate", "NSObject");
+            del.method("application:didFailToRegisterForRemoteNotificationsWithError:", [&](Ctx& x) {
+                ++failures; fromApp = x.cpu.r[2]; code = uint32_t(r.send(x.cpu, x.cpu.r[3], "code"));
+            }, "v@:@@");
+            const ObjC::id pushDelegate = r.createInstance(del.cls());
+            auto& ux = UIKit::ui(cx);
+            const ObjC::id savedApp = ux.app, savedDelegate = ux.appDelegate;
+            ux.app = sharedApp; ux.appDelegate = pushDelegate;
+            r.send(cpu, sharedApp, "registerForRemoteNotificationTypes:", {7});
+            const bool notAtOnce = failures == 0;
+            for (int i = 0; i < 20 && failures == 0; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            r.send(cpu, sharedApp, "registerForRemoteNotifications");
+            for (int i = 0; i < 20 && failures < 2; ++i) Foundation::mainRunLoop(proc).runOnce(cpu, 0.01);
+            ux.app = savedApp; ux.appDelegate = savedDelegate;
+            check(notAtOnce && failures == 2 && code == 3000 && fromApp == sharedApp,
+                  "registering for remote notifications answers didFailToRegister (NSCocoaErrorDomain 3000) on the run loop");
+        }
+        {
             // UIPickerView: a storyboard connects dataSource/delegate with setValue:forKey: (ROBLOX's login).
             const ObjC::id picker = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, ObjC::id(r.getClass("UIPickerView")), r.selAlloc)), "init"));
             const ObjC::id ds = r.createInstance(r.getClass("NSObject"));
@@ -5493,6 +5514,20 @@ int runFullSubsystemTests() {
             }
         };
         auto settle = [&] { const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(120); spin([&] { return std::chrono::steady_clock::now() >= until; }); };
+        // iPhone OS 3 apps wait for the preload notice after initWithContentURL: before they call
+        // -play (Cut the Rope's intro); a player that is played at once gets no notice.
+        int preloads = 0;
+        ObjC::ClassBuilder preloadObserver = r.defineClass("HVMPreloadObserver", "NSObject");
+        preloadObserver.method("preloaded:", [&](Ctx&) { ++preloads; }, "v@:@");
+        const ObjC::id observer = r.createInstance(preloadObserver.cls());
+        const ObjC::id center = ObjC::id(r.send(cpu, r.getClass("NSNotificationCenter"), "defaultCenter"));
+        r.send(cpu, center, "addObserver:selector:name:object:",
+               {observer, r.sel("preloaded:"), Foundation::makeString(cx, "MPMoviePlayerContentPreloadDidFinishNotification"), 0});
+        const auto waiting = newPlayer();
+        spin([&] { return preloads > 0; });
+        const bool preloadedOnce = preloads == 1;
+        r.send(cpu, center, "removeObserver:", {observer});
+        check(preloadedOnce && state(waiting) == 0, "a movie player made with a URL posts its preload-finished notice and waits for -play");
         const auto plain = newPlayer();
         r.send(cpu, plain, "play");
         const bool playsFirst = state(plain) == 1;

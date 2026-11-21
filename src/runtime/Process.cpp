@@ -348,18 +348,50 @@ void Process::requestGracefulStop(double timeout) {
     if (!lifecycleHandler_) { requestStop(); return; }
     lifecycleHandler_(Lifecycle::Terminate);
     // Watchdog: an app that doesn't get through its shutdown (or never runs its main loop) is stopped anyway.
+    // Three outcomes at the deadline:
+    //  - the main thread took the request and is still running guest code: it is saving, slower
+    //    than on a real iPhone, so it gets up to three times the time before the watchdog fires;
+    //  - the main thread never took the request but kept running guest code (a loading screen
+    //    that loops until its assets are in, as Minecraft PE's does): iOS would close such an app
+    //    too, and nothing was being saved, so it is stopped without a crash report;
+    //  - otherwise (the save hung, or the main thread is stuck) it is a recorded failure.
     std::thread([this, timeout, live = liveness_] {
-        const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
+        using Clock = std::chrono::steady_clock;
+        const auto start = Clock::now();
+        auto end = start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(timeout));
+        const auto hardEnd = start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(timeout * 3));
+        uint64_t lastMain = 0;
+        { std::lock_guard<std::mutex> lk(live->mu); if (!live->alive || stopping()) return; lastMain = mainThreadInstructions(); }
+        auto lastSample = start;
+        bool mainProgressed = false;   // over the most recent full second
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             std::lock_guard<std::mutex> lk(live->mu);
             if (!live->alive || stopping()) return;
-            if (std::chrono::steady_clock::now() >= end) {
-                log(LogLevel::Warning, "The app didn't finish saving in time; stopping it");
+            const auto now = Clock::now();
+            if (now - lastSample >= std::chrono::seconds(1)) {
+                const uint64_t m = mainThreadInstructions();
+                mainProgressed = m - lastMain >= 1000000;
+                lastMain = m;
+                lastSample = now;
+            }
+            if (now >= end && stopDelivered() && mainProgressed && end < hardEnd) {
+                end = std::min(hardEnd, end + std::chrono::seconds(1));
+                continue;
+            }
+            if (now >= end && !stopDelivered() && mainProgressed) {
+                log(LogLevel::Info, "The app was busy (still loading) and never took the stop request; closing it, as iOS would");
+                requestStop();
+                return;
+            }
+            if (now >= end) {
+                log(LogLevel::Warning, stopDelivered() ? "The app didn't finish saving in time; stopping it"
+                                                       : "The app stopped responding and never took the stop request; stopping it");
                 {
                     std::lock_guard<std::mutex> lk(exitMu_);
                     crashed_ = true;
-                    crashReport_ = "The game did not finish saving before the watchdog stopped it.";
+                    crashReport_ = stopDelivered() ? "The game did not finish saving before the watchdog stopped it."
+                                                   : "The game stopped responding: it never took the request to close, and the watchdog stopped it.";
                     CPU::Cpu empty{}; // The guest is running: do not race its register writes.
                     captureCrash(empty, "graceful-stop-watchdog", "registers unavailable while running");
                 }
@@ -2190,6 +2222,12 @@ void Process::reportDefaulted(const std::string& what) {
     log(LogLevel::Warning, "Defaulted: " + what + (caller.empty() ? "" : " (from " + caller + ")"));
 }
 
+uint64_t Process::mainThreadInstructions() const {
+    if (!mainThread_) return 0;
+    CPU::ThreadProgressSnapshot snap;
+    if (mainThread_->cpu.progress.snapshot(snap)) return snap.instructions;
+    return mainThread_->cpu.insn_count.load(std::memory_order_relaxed);
+}
 uint64_t Process::guestInstructions() {
     std::lock_guard<std::mutex> lk(threadsMu_);
     uint64_t n = 0;

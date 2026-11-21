@@ -211,6 +211,10 @@ public:
     // UIKit marks this immediately before willTerminate. Keep guest execution
     // available for the delegate/save flush, but suppress automatic callbacks.
     void beginTermination() { terminating_.store(true); }
+    // The guest's main thread has taken the stop request (its lifecycle handler started running).
+    void noteStopDelivered() { stopDelivered_.store(true); }
+    bool stopDelivered() const { return stopDelivered_.load(); }
+    uint64_t mainThreadInstructions() const;   // retired by the main thread, for progress checks
     bool terminating() const { return terminating_.load(); }
     // Used by the lifecycle handler while the app is in the background (parks the caller).
     void waitWhileBackgrounded();
@@ -618,7 +622,7 @@ private:
     std::function<void(Lifecycle)> lifecycleHandler_;
     struct Liveness { std::mutex mu; bool alive = true; };
     std::shared_ptr<Liveness> liveness_ = std::make_shared<Liveness>();   // for helper threads that outlive us
-    std::atomic<bool> backgrounded_{false}, backgroundRequested_{false}, gracefulStop_{false}, terminating_{false};
+    std::atomic<bool> backgrounded_{false}, backgroundRequested_{false}, gracefulStop_{false}, terminating_{false}, stopDelivered_{false};
     std::mutex lifeMu_;
     std::condition_variable lifeCv_;
     std::mutex slotMu_;

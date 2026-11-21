@@ -31,6 +31,24 @@ def main():
                   'actual', result.returncode, record.get('exitStatus'), record.get('crashed'))
             return 1
         print('ok actual guest saving watchdog cannot be masked by timed-stop success')
+
+        # A main thread busy in a loading loop never takes the close request: it is closed
+        # without a crash report (nothing was saving), and the request is never delivered.
+        subprocess.run([sys.executable, str(root / 'tools/ios_build.py'), 'app',
+                        '--name', 'ShutdownLoading', '--out', str(out),
+                        str(root / 'tests/ios/apps/shutdown_loading/main.m')], check=True, cwd=root)
+        report = out / 'loading-report.json'
+        result = subprocess.run([str(args.hvm.resolve()), 'run', str(out / 'ShutdownLoading.app'),
+            '--home', str(out / 'loading-home'), '--run-for', '1', '--graceful', '--report', str(report)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=25, cwd=root)
+        record = json.loads(report.read_text())
+        if ('LOADING_STARTED' not in result.stdout or 'LOADING_TERMINATION_ENTERED' in result.stdout or
+            record.get('crashed') is not False or 'never took the stop request' not in result.stdout):
+            print(result.stdout)
+            print('FAIL a main thread still loading must be closed without a crash report;',
+                  'actual', result.returncode, record.get('exitStatus'), record.get('crashed'))
+            return 1
+        print('ok a busy loading loop is closed without a crash report')
         return 0
 
 if __name__ == '__main__':

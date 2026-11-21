@@ -1250,14 +1250,17 @@ bool sendBool(Ctx& x, id self, const char* sel, std::initializer_list<uint32_t> 
 }
 
 void registerUIView(Process& p, ObjC::Runtime& r) {
-    // HVM_DUMP_VIEWS=1: print the key window's view tree when the app stops.
+    // HVM_DUMP_VIEWS=1: print every window's view tree (key window first) when the app stops.
     if (const char* e = std::getenv("HVM_DUMP_VIEWS"); e && *e == '1') {
         Process* pp = &p;
         p.onExit([pp] {
             CPU::Cpu cpu{};
             Ctx x{*pp, cpu, pp->mem()};
             std::string out;
-            for (id w : {ui(x).keyWindow}) describeTree(x, w, 0, out);
+            // Every window, key first: a game whose view sits in a second window shows up too.
+            std::vector<id> all{ui(x).keyWindow};
+            for (id w : ui(x).windows) if (w != ui(x).keyWindow) all.push_back(w);
+            for (id w : all) if (w) describeTree(x, w, 0, out);
             std::fprintf(stderr, "[hvm] view tree:\n%s", out.c_str());
         });
     }

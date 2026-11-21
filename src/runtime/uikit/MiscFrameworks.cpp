@@ -199,6 +199,14 @@ id mp_initWithURL(Ctx& x, id self, SEL, id url) {
     const id view = id(rt(x).send(x.cpu, rt(x).getClass("UIView"), rt(x).selAlloc));
     m.view = id(rt(x).send(x.cpu, view, "init"));
     rt(x).send(x.cpu, m.view, "setBackgroundColor:", {id(rt(x).send(x.cpu, rt(x).getClass("UIColor"), "blackColor"))});
+    // A player made with a URL starts loading at once and says so: iPhone OS 3 apps wait for
+    // MPMoviePlayerContentPreloadDidFinishNotification before calling -play (Cut the Rope's intro
+    // held the game on a black screen without it), later ones for the load-state change.
+    if (url) later(x, self, 0.02, [self](Ctx& cx) {
+        if (MD(cx, self).finished || MD(cx, self).hostMovie) return;   // already playing
+        postNote(cx, "MPMoviePlayerLoadStateDidChangeNotification", self, 0);
+        postNote(cx, "MPMoviePlayerContentPreloadDidFinishNotification", self, 0);
+    });
     return self;
 }
 id mp_init(Ctx& x, id self, SEL s) { return mp_initWithURL(x, self, s, 0); }

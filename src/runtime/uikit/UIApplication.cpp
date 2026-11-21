@@ -366,6 +366,28 @@ void app_beginIgnoring(Ctx& x, id, SEL) { ++ui(x).ignoreCount; }
 void app_endIgnoring(Ctx& x, id, SEL) { if (ui(x).ignoreCount > 0) --ui(x).ignoreCount; }
 bool app_isIgnoring(Ctx& x, id, SEL) { return ui(x).ignoreCount > 0; }
 void app_noop(Ctx&, id, SEL) {}
+// registerForRemoteNotificationTypes: / registerForRemoteNotifications: HydrogenVM has no push
+// service, so the app hears what iOS tells an app without the aps-environment entitlement: on a
+// later turn of the main run loop, application:didFailToRegisterForRemoteNotificationsWithError:
+// (NSCocoaErrorDomain 3000). Cut the Rope's Crystal SDK waits for one of the two answers before
+// it loads anything, so without it the game stayed on a black screen.
+void app_registerRemote(Ctx& x) {
+    Process* p = &x.proc;
+    Foundation::mainRunLoop(x.proc).post([p](CPU::Cpu& c) {
+        Ctx y{*p, c, p->mem()};
+        auto& r = rt(y);
+        const id del = ui(y).appDelegate;
+        const SEL sel = r.sel("application:didFailToRegisterForRemoteNotificationsWithError:");
+        if (!del || !r.respondsTo(del, sel)) return;
+        const uint32_t pool = r.poolPush();
+        const id info = Foundation::makeDict(y, {{Foundation::makeString(y, "NSLocalizedDescription"),
+            Foundation::makeString(y, "no valid \u201caps-environment\u201d entitlement string found for application")}});
+        const id err = id(r.send(y.cpu, r.getClass("NSError"), "errorWithDomain:code:userInfo:",
+                                 {Foundation::makeString(y, "NSCocoaErrorDomain"), 3000, info}));
+        r.send(y.cpu, del, sel, {ui(y).app, err});
+        r.poolPop(y.cpu, pool);
+    });
+}
 void app_noopObj(Ctx&, id, SEL, id) {}
 uint32_t app_beginBackgroundTask(Ctx&, id, SEL, uint32_t) { return 1; }
 uint32_t app_beginBackgroundTaskNamed(Ctx&, id, SEL, id, uint32_t) { return 1; }
@@ -623,6 +645,7 @@ void installLifecycle(Process& p) {
             Ctx x{*pp, c, pp->mem()};
             if (pp->stopping()) return;
             if (what == Process::Lifecycle::Terminate) {
+                pp->noteStopDelivered();
                 toBackground(x, *st);
                 pp->beginTermination();
                 deliverLifecycle(x, "applicationWillTerminate:", "UIApplicationWillTerminateNotification");
@@ -844,8 +867,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
        .m<&app_network>("isNetworkActivityIndicatorVisible", "c@:").m<&app_setNetwork>("setNetworkActivityIndicatorVisible:", "v@:c")
        .m<&app_badge>("applicationIconBadgeNumber", "i@:").m<&app_setBadge>("setApplicationIconBadgeNumber:", "v@:i")
        .m<&app_beginIgnoring>("beginIgnoringInteractionEvents", "v@:").m<&app_endIgnoring>("endIgnoringInteractionEvents", "v@:")
-       .m<&app_isIgnoring>("isIgnoringInteractionEvents", "c@:").m<&app_ignoreInt>("registerForRemoteNotificationTypes:", "v@:I")
-       .m<&app_noop>("registerForRemoteNotifications", "v@:").m<&app_noop>("unregisterForRemoteNotifications", "v@:")
+       .m<&app_isIgnoring>("isIgnoringInteractionEvents", "c@:").m<&app_noop>("unregisterForRemoteNotifications", "v@:")
        .m<&app_noopObj>("registerUserNotificationSettings:", "v@:@").m<&app_noop>("cancelAllLocalNotifications", "v@:")
        .m<&app_noopObj>("cancelLocalNotification:", "v@:@").m<&app_nil>("scheduledLocalNotifications")
        .m<&app_noop>("beginReceivingRemoteControlEvents", "v@:").m<&app_noop>("endReceivingRemoteControlEvents", "v@:")
@@ -862,6 +884,10 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
     // (Subway Surfers); a missing signature is a nil NSInvocation argument.
     supportMethod(p, app, "UIApplication", "isRegisteredForRemoteNotifications", [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Approx,
         "NO: remote notifications are never registered", "c@:");
+    supportMethod(p, app, "UIApplication", "registerForRemoteNotificationTypes:", [](Ctx& x) { app_registerRemote(x); },
+        SupportStatus::Approx, "No push service: the delegate later hears didFailToRegisterForRemoteNotificationsWithError: (NSCocoaErrorDomain 3000)", "v@:I");
+    supportMethod(p, app, "UIApplication", "registerForRemoteNotifications", [](Ctx& x) { app_registerRemote(x); },
+        SupportStatus::Approx, "No push service: the delegate later hears didFailToRegisterForRemoteNotificationsWithError: (NSCocoaErrorDomain 3000)", "v@:");
     supportMethod(p, app, "UIApplication", "currentUserNotificationSettings", [](Ctx& x) { x.cpu.r[0] = 0; }, SupportStatus::Stub,
         "nil: notification settings were never registered", "@@:");
     supportMethod(p, app, "UIApplication", "scheduleLocalNotification:", [](Ctx& x) { callWrapped<&app_noopObj>(x); }, SupportStatus::Stub,
