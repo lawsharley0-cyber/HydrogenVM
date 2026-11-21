@@ -709,6 +709,14 @@ id d_valueForKey(Ctx& x, id self, SEL s, id key) {
 id d_allKeys(Ctx& x, id self, SEL) { std::vector<id> k; for (auto& e : entriesOf(x, self)) k.push_back(e.first); return makeArray(x, k); }
 id d_allValues(Ctx& x, id self, SEL) { std::vector<id> v; for (auto& e : entriesOf(x, self)) v.push_back(e.second); return makeArray(x, v); }
 id d_allKeysForObject(Ctx& x, id self, SEL, id o) { std::vector<id> k; for (auto& e : entriesOf(x, self)) if (objectsEqual(x, e.second, o)) k.push_back(e.first); return makeArray(x, k); }
+// objectsForKeys:notFoundMarker: (Super Hexagon at launch): one value per key, in key order,
+// with the marker for a missing key. A nil marker raises, as on iOS.
+id d_objectsForKeys(Ctx& x, id self, SEL, id keys, id marker) {
+    if (!marker) throw ObjC::ObjCError("-[NSDictionary objectsForKeys:notFoundMarker:]: marker cannot be nil");
+    std::vector<id> out;
+    for (id k : itemsOf(x, keys)) { const id v = id(rt(x).send(x.cpu, self, "objectForKey:", {k})); out.push_back(v ? v : marker); }
+    return makeArray(x, out);
+}
 id d_keyEnumerator(Ctx& x, id self, SEL) {
     auto* d = dd(x, self);
     if (!d) throw ObjC::ObjCError("NSDictionary subclass must implement keyEnumerator");
@@ -1347,7 +1355,7 @@ void registerCollections(Process& p, ObjC::Runtime& r) {
       .m<&di_initWithContentsOfFile>("initWithContentsOfFile:").m<&di_initWithContentsOfURL>("initWithContentsOfURL:")
       .m<&d_count>("count", "I@:").m<&d_objectForKey>("objectForKey:").m<&d_objectForKeyedSubscript>("objectForKeyedSubscript:")
       .m<&d_valueForKey>("valueForKey:").m<&d_allKeys>("allKeys").m<&d_allValues>("allValues")
-      .m<&d_allKeysForObject>("allKeysForObject:").m<&d_keyEnumerator>("keyEnumerator").m<&d_objectEnumerator>("objectEnumerator")
+      .m<&d_allKeysForObject>("allKeysForObject:").m<&d_objectsForKeys>("objectsForKeys:notFoundMarker:").m<&d_keyEnumerator>("keyEnumerator").m<&d_objectEnumerator>("objectEnumerator")
       .m<&d_countByEnumerating>("countByEnumeratingWithState:objects:count:", "I@:^v^@I")
       .m<&d_enumerateKeysAndObjects>("enumerateKeysAndObjectsUsingBlock:").m<&d_enumerateKeysAndObjectsOpts>("enumerateKeysAndObjectsWithOptions:usingBlock:")
       .m<&d_keysOfEntriesPassingTest>("keysOfEntriesPassingTest:").m<&d_keysOfEntriesWithOptions>("keysOfEntriesWithOptions:passingTest:")

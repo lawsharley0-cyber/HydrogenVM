@@ -2863,6 +2863,17 @@ int runFullSubsystemTests() {
         std::remove(lockPath.c_str());
         check(locked && queried && unlocked, "fcntl F_SETLK and F_GETLK take Darwin's struct flock (LevelDB's db/LOCK)");
     }
+    // getfsstat (Super Hexagon's startup): a null buffer asks for the count; a full buffer gets one
+    // struct statfs (272 bytes, 32-bit layout) with f_fstypename at 60 and f_mntonname at 75.
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const uint32_t buf = proc.heap().allocZeroed(272 * 2);
+        const int count = int(call("_getfsstat", {0, 0, 2 /* MNT_NOWAIT */}));
+        const int filled = int(call("_getfsstat", {buf, 272 * 2, 2}));
+        const bool tooSmall = int(call("_getfsstat", {buf, 100, 2})) == 0;
+        const bool named = proc.readCString(buf + 60) == "hfs" && proc.readCString(buf + 75) == "/" && proc.mem().read<uint32_t>(buf + 4) == 4096;
+        check(count == 1 && filled == 1 && tooSmall && named, "getfsstat counts and describes one mounted volume in Darwin's struct statfs");
+    }
     {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
         const uint32_t size = proc.heap().allocZeroed(4), out = proc.heap().allocZeroed(8);
@@ -3097,6 +3108,20 @@ int runFullSubsystemTests() {
         const bool all = proc.mem().read<uint32_t>(buffer) == o0 && proc.mem().read<uint32_t>(buffer + 4) == o1 &&
                          proc.mem().read<uint32_t>(buffer + 8) == o2;
         check(ranged && all, "NSArray getObjects:range: and getObjects: copy the objects in order");
+    }
+    // Super Hexagon stops at launch on -[__NSDictionaryI objectsForKeys:notFoundMarker:].
+    {
+        using namespace Foundation;
+        const auto k1 = makeString(cx, "one"), k2 = makeString(cx, "two"), missing = makeString(cx, "three");
+        const auto v1 = makeNumberInt(cx, 1), v2 = makeNumberInt(cx, 2), marker = makeString(cx, "-");
+        const auto dict = makeDict(cx, {{k1, v1}, {k2, v2}});
+        bool ok = false, nilRaises = false;
+        try {
+            const auto got = arrayItems(cx, ObjC::id(r.send(cpu, dict, "objectsForKeys:notFoundMarker:", {makeArray(cx, {k2, missing, k1}), marker})));
+            ok = got == std::vector<ObjC::id>{v2, marker, v1};
+            try { r.send(cpu, dict, "objectsForKeys:notFoundMarker:", {makeArray(cx, {k1}), 0}); } catch (const std::exception&) { nilRaises = true; }
+        } catch (const std::exception& e) { std::printf("    %s\n", e.what()); }
+        check(ok && nilRaises, "NSDictionary objectsForKeys:notFoundMarker: keeps key order, fills the marker, rejects a nil marker");
     }
 
     // #32: exercise Cocoa semantics rather than accepting placeholder class pointers.

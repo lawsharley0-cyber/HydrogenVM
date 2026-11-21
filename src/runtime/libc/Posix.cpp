@@ -206,8 +206,19 @@ int32_t p_statfs(Ctx& x, GuestPtr, GuestPtr st) {
     x.mem.write<uint32_t>(st + 20, 2000000);      // f_bavail
     x.mem.write<uint32_t>(st + 24, 1000000);      // f_files
     x.mem.write<uint32_t>(st + 28, 900000);       // f_ffree
-    x.mem.copyIn(st + 64, "hfs", 4);              // f_fstypename
+    // f_fstypename[15] follows f_reserved2[2] at 60, then f_mntonname[90] at 75 and f_mntfromname[90] at 165.
+    x.mem.copyIn(st + 60, "hfs", 4);
+    x.mem.copyIn(st + 75, "/", 2);
+    x.mem.copyIn(st + 165, "/dev/disk0s1s1", 15);
     return 0;
+}
+// int getfsstat(struct statfs* buf, int bufsize, int flags): one mounted file system (the app's
+// sandbox volume), described as statfs describes it. A null buffer asks only for the count.
+int32_t p_getfsstat(Ctx& x, GuestPtr buf, int32_t bufsize, int32_t) {
+    if (!buf) return 1;
+    if (bufsize < 272) return 0;
+    p_statfs(x, 0, buf);
+    return 1;
 }
 // int statvfs(const char*, struct statvfs*) — every field is 32 bits on iOS.
 int32_t p_statvfs(Ctx& x, GuestPtr, GuestPtr st) {
@@ -316,7 +327,8 @@ void registerLibcPosix(Process& p) {
     supportDef<&p_semTryWait>(p, "_sem_trywait", SupportStatus::Real, "named semaphore try-wait (EAGAIN at zero)");
     supportDef<&p_semClose>(p, "_sem_close", SupportStatus::Real, "drops one sem_open reference");
     supportDef<&p_semUnlink>(p, "_sem_unlink", SupportStatus::Real, "removes the name; open handles keep working");
-    p.def<&p_statfs>("_statfs");
+    supportDef<&p_statfs>(p, "_statfs", SupportStatus::Approx, "fixed 16 GB hfs volume mounted at /, half free");
+    supportDef<&p_getfsstat>(p, "_getfsstat", SupportStatus::Approx, "one mounted volume (the app sandbox), described as statfs describes it");
     p.def<&p_statvfs>("_statvfs");
     p.def<&p_alarm>("_alarm");
     p.def<&p_setlocale>("_setlocale");
