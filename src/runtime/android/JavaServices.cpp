@@ -19,6 +19,7 @@
 #include <sstream>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <unistd.h>
 #include <unordered_map>
 
@@ -454,6 +455,83 @@ void registerJavaServices(Jni& j) {
         if (auto pr = prefsOf(j, self)) savePrefs(*pr);
         return JValue(0);
     });
+
+    // Unity 4.0/4.1's com.unity3d.player.PlayerPrefs (Subway Surfers 1.13), as the game's DEX
+    // has it: a SharedPreferences and one Editor, changes committed on the next read (Sync). The
+    // constructor calls the native InitPlayerPrefs(), where the player keeps this object and the
+    // Get/Set methods; until then its PlayerPrefs calls go through a null object.
+    {
+        const std::string kPp = "com/unity3d/player/PlayerPrefs";
+        auto field = [](Jni& j, jobject self, const char* name) -> uint64_t {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            JObject* o = j.get(self);
+            if (!o) return 0;
+            auto it = o->fields.find(name);
+            return it == o->fields.end() ? 0 : it->second;
+        };
+        auto setField = [](Jni& j, jobject self, const char* name, uint64_t v) {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            if (JObject* o = j.get(self)) o->fields[name] = v;
+        };
+        auto sync = [field, setField, kEd](Jni& j, Ctx& x, jobject self) {
+            if (!field(j, self, "c")) return;
+            setField(j, self, "c", 0);
+            j.invoke(x, j.methodId(kEd, "commit", "()Z", false), jobject(field(j, self, "b")), {});
+        };
+        j.method(kPp, "<init>", "(Landroid/content/SharedPreferences;)V", [kPp, kSp, kEd, setField](Jni& j, Ctx& x, jobject self, const auto& a) {
+            const jobject prefs = jobject(a[0]);
+            const jobject editor = jobject(j.invoke(x, j.methodId(kSp, "edit", "()L" + kEd + ";", false), prefs, {}));
+            {
+                std::lock_guard<std::recursive_mutex> lk(j.mu);
+                if (JObject* o = j.get(self)) o->permanent = true;
+                if (JObject* o = j.get(prefs)) o->permanent = true;
+                if (JObject* o = j.get(editor)) o->permanent = true;
+            }
+            setField(j, self, "a", prefs);
+            setField(j, self, "b", editor);
+            setField(j, self, "c", 0);
+            j.callNative(x, kPp, "InitPlayerPrefs", self, {}, nullptr, "()V");
+            return JValue(0);
+        });
+        j.method(kPp, "Sync", "()V", [sync](Jni& j, Ctx& x, jobject self, const auto&) { sync(j, x, self); return JValue(0); });
+        // Getters: Sync, then the SharedPreferences getter of the same signature.
+        for (const auto& [name, getter, sig] : std::initializer_list<std::tuple<const char*, const char*, const char*>>{
+                 {"GetString", "getString", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"},
+                 {"GetInt", "getInt", "(Ljava/lang/String;I)I"},
+                 {"GetFloat", "getFloat", "(Ljava/lang/String;F)F"}}) {
+            const std::string spGetter = getter, spSig = sig;
+            j.method(kPp, name, sig, [sync, field, kSp, spGetter, spSig](Jni& j, Ctx& x, jobject self, const auto& a) {
+                sync(j, x, self);
+                return j.invoke(x, j.methodId(kSp, spGetter, spSig, false), jobject(field(j, self, "a")), {a[0], a[1]});
+            });
+        }
+        j.method(kPp, "HasKey", "(Ljava/lang/String;)Z", [sync, field, kSp](Jni& j, Ctx& x, jobject self, const auto& a) {
+            sync(j, x, self);
+            return j.invoke(x, j.methodId(kSp, "contains", "(Ljava/lang/String;)Z", false), jobject(field(j, self, "a")), {a[0]});
+        });
+        // Setters: the Editor's putter, marked for the next Sync; they answer true.
+        for (const auto& [name, putter, sig] : std::initializer_list<std::tuple<const char*, const char*, const char*>>{
+                 {"SetString", "putString", "(Ljava/lang/String;Ljava/lang/String;)"},
+                 {"SetInt", "putInt", "(Ljava/lang/String;I)"},
+                 {"SetFloat", "putFloat", "(Ljava/lang/String;F)"}}) {
+            const std::string edPutter = putter, edSig = std::string(sig) + "L" + kEd + ";";
+            j.method(kPp, name, std::string(sig) + "Z", [field, setField, kEd, edPutter, edSig](Jni& j, Ctx& x, jobject self, const auto& a) {
+                j.invoke(x, j.methodId(kEd, edPutter, edSig, false), jobject(field(j, self, "b")), {a[0], a[1]});
+                setField(j, self, "c", 1);
+                return JValue(1);
+            });
+        }
+        j.method(kPp, "DeleteKey", "(Ljava/lang/String;)V", [field, setField, kEd](Jni& j, Ctx& x, jobject self, const auto& a) {
+            j.invoke(x, j.methodId(kEd, "remove", "(Ljava/lang/String;)L" + kEd + ";", false), jobject(field(j, self, "b")), {a[0]});
+            setField(j, self, "c", 1);
+            return JValue(0);
+        });
+        j.method(kPp, "DeleteAll", "()V", [field, setField, kEd](Jni& j, Ctx& x, jobject self, const auto&) {
+            j.invoke(x, j.methodId(kEd, "clear", "()L" + kEd + ";", false), jobject(field(j, self, "b")), {});
+            setField(j, self, "c", 1);
+            return JValue(0);
+        });
+    }
 
     // The launch Intent: MAIN, no data, no extras.
     const std::string kIntent = "android/content/Intent";

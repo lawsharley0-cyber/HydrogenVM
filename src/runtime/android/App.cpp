@@ -870,6 +870,25 @@ struct UnityDriver final : Driver {
         call(x, "nativeFile", {j.newString(x.proc.guestPath(x.proc.config().bundlePath + "/base.apk"))});
         if (registered("initJni()V")) call(x, "initJni");
         else call(x, "initJni", {activity});
+        bool javaPrefs;
+        {
+            std::lock_guard<std::recursive_mutex> lk(j.mu);
+            javaPrefs = j.registeredNatives.count("com/unity3d/player/PlayerPrefs.InitPlayerPrefs()V") != 0;
+        }
+        if (javaPrefs) {
+            // Unity 4.0/4.1 (Subway Surfers 1.13): UnityPlayer's constructor makes
+            // new PlayerPrefs(getSharedPreferences(packageName, MODE_PRIVATE)), whose constructor
+            // calls InitPlayerPrefs(); the player keeps that object and its Get/Set methods and
+            // calls them from unityAndroidInit. Without it they are null.
+            const jobject prefs = jobject(j.invoke(x,
+                j.methodId("android/content/Context", "getSharedPreferences", "(Ljava/lang/String;I)Landroid/content/SharedPreferences;", false),
+                activity, {uint32_t(j.invoke(x, j.methodId("android/content/Context", "getPackageName", "()Ljava/lang/String;", false),
+                                             activity, {})), 0}));
+            const jobject playerPrefs = j.newObject("com/unity3d/player/PlayerPrefs");
+            if (JObject* o = j.get(playerPrefs)) o->permanent = true;
+            j.invoke(x, j.methodId("com/unity3d/player/PlayerPrefs", "<init>", "(Landroid/content/SharedPreferences;)V", false),
+                     playerPrefs, {prefs});
+        }
         call(x, "nativeInitWWW", {j.classFor("com/unity3d/player/WWW")});
         bool javaFmod;
         {
