@@ -2844,6 +2844,25 @@ int runFullSubsystemTests() {
         call(same,"release");
         check(alive, "+[NSString stringWithString:] returns an immutable string itself, still valid after the pool drains");
     }
+    // fcntl record locks with Darwin's 32-bit struct flock (fcntl.h: l_start and l_len 8 bytes each,
+    // l_pid, then short l_type and l_whence; F_RDLCK 1, F_UNLCK 2, F_WRLCK 3; F_GETLK 7, F_SETLK 8).
+    // LevelDB locks db/LOCK this way; the EINVAL it got made every Minecraft PE world fail to open.
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const std::string lockPath = proc.homePath() + "/fcntl-lock-test";
+        { std::ofstream touch(lockPath); }
+        const int fd = int(call("_open", {proc.allocCString(lockPath), 2 /* O_RDWR */}));
+        const uint32_t fl = proc.heap().allocZeroed(24);
+        proc.mem().write<uint16_t>(fl + 20, 3);   // F_WRLCK over the whole file from SEEK_SET 0
+        const bool locked = fd >= 0 && int(call("_fcntl", {uint32_t(fd), 8, fl})) == 0;
+        proc.mem().write<uint16_t>(fl + 20, 3);   // F_GETLK: the process's own lock never conflicts
+        const bool queried = fd >= 0 && int(call("_fcntl", {uint32_t(fd), 7, fl})) == 0 && proc.mem().read<uint16_t>(fl + 20) == 2;
+        proc.mem().write<uint16_t>(fl + 20, 2);   // F_UNLCK
+        const bool unlocked = fd >= 0 && int(call("_fcntl", {uint32_t(fd), 8, fl})) == 0;
+        if (fd >= 0) call("_close", {uint32_t(fd)});
+        std::remove(lockPath.c_str());
+        check(locked && queried && unlocked, "fcntl F_SETLK and F_GETLK take Darwin's struct flock (LevelDB's db/LOCK)");
+    }
     {
         auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
         const uint32_t size = proc.heap().allocZeroed(4), out = proc.heap().allocZeroed(8);

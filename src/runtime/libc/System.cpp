@@ -705,6 +705,28 @@ int32_t f_fcntl(Ctx& x, int32_t fd, int32_t cmd, VarArgs va) {
             flags = (flags & ~(O_NONBLOCK | O_APPEND)) | (arg & 4 ? O_NONBLOCK : 0) | (arg & 8 ? O_APPEND : 0);
             return ::fcntl(fd, F_SETFL, flags) < 0 ? failD<int32_t>(x) : 0;
         }
+        case 7: case 8: case 9: {
+            // F_GETLK / F_SETLK / F_SETLKW: record locks in Darwin's 32-bit struct flock (l_start and
+            // l_len as 64-bit, l_pid, then short l_type and l_whence) with its lock types (F_RDLCK 1,
+            // F_UNLCK 2, F_WRLCK 3), on the host's struct. LevelDB locks db/LOCK so (Minecraft PE).
+            if (!arg) { setErrno(x, EFAULT); return -1; }
+            struct flock fl{};
+            fl.l_start = off_t(x.mem.read<int64_t>(arg));
+            fl.l_len = off_t(x.mem.read<int64_t>(arg + 8));
+            const uint16_t type = x.mem.read<uint16_t>(arg + 20);
+            fl.l_type = type == 1 ? F_RDLCK : type == 3 ? F_WRLCK : F_UNLCK;
+            fl.l_whence = short(x.mem.read<uint16_t>(arg + 22));
+            const int hostCmd = cmd == 7 ? F_GETLK : cmd == 8 ? F_SETLK : F_SETLKW;
+            if (::fcntl(fd, hostCmd, &fl) < 0) return failD<int32_t>(x);
+            if (cmd == 7) {
+                x.mem.write<int64_t>(arg, int64_t(fl.l_start));
+                x.mem.write<int64_t>(arg + 8, int64_t(fl.l_len));
+                x.mem.write<int32_t>(arg + 16, int32_t(fl.l_pid));
+                x.mem.write<uint16_t>(arg + 20, fl.l_type == F_RDLCK ? 1 : fl.l_type == F_WRLCK ? 3 : 2);
+                x.mem.write<uint16_t>(arg + 22, uint16_t(fl.l_whence));
+            }
+            return 0;
+        }
         case 48: case 51: return 0;                   // F_NOCACHE / F_FULLFSYNC
         default: (void)fd; (void)arg; setErrno(x, EINVAL); return -1;
     }
