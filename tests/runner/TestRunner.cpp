@@ -12798,6 +12798,25 @@ int runFullSubsystemTests() {
             bool mutableOK = mutableLookup() != 0;
             fs::remove(home + "/Mutable.tfc");
             check(mutableOK && !mutableLookup(), "sandbox bundle lookups do not retain stale mutable paths");
+            {
+                // Talking Larry plays "every image in this folder" in the order NSBundle returns them,
+                // as HFS+ gave them: name order. The host's directory order scrambled its animations.
+                fs::create_directories(home + "/Frames");
+                std::vector<std::string> want;
+                for (int i = 40; i-- > 0;) {   // created backwards, 40 so the host order is not sorted by chance
+                    char name[32]; std::snprintf(name, sizeof name, "eat%04d.jpg", i);
+                    put(home + "/Frames/" + name);
+                }
+                for (int i = 0; i < 40; ++i) { char name[32]; std::snprintf(name, sizeof name, "eat%04d.jpg", i); want.push_back(name); }
+                put(home + "/Frames/notes.txt");
+                const auto framesBundle = uint32_t(ar.send(acpu, ar.getClass("NSBundle"), "bundleWithPath:", {Foundation::makeString(ax, home)}));
+                const auto list = uint32_t(ar.send(acpu, framesBundle, "pathsForResourcesOfType:inDirectory:",
+                    {Foundation::makeString(ax, "jpg"), Foundation::makeString(ax, "Frames")}));
+                std::vector<std::string> got;
+                for (auto item : Foundation::arrayItems(ax, list)) got.push_back(fs::path(Foundation::utf8(ax, item)).filename().string());
+                check(got == want, "pathsForResourcesOfType:inDirectory: lists a folder's files in name order (animation frames)");
+                fs::remove_all(home + "/Frames");
+            }
             fs::create_directories(home + "/Documents");
             fs::create_directories(home + "/Mutable.app/CookedIPhone");
             fs::create_directories(bundle + "/Nested.app/CookedIPhone");

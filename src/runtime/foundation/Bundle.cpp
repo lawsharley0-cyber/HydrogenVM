@@ -416,13 +416,23 @@ struct BundleData : ObjC::HostObject {
 };
 BundleData* bd(Ctx& x, id b) { return b ? rt(x).hostIf<BundleData>(b) : nullptr; }
 
+// A directory's entries sorted by name. Apps from the HFS+ era got their bundle's files back
+// in name order and rely on it: Talking Larry plays each animation as "every image in this
+// folder" in the order it is given, so the host's raw directory order scrambled its frames.
+std::vector<fs::path> sortedEntries(const fs::path& dir) {
+    std::vector<fs::path> out;
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(dir, ec)) out.push_back(e.path());
+    std::sort(out.begin(), out.end(), [](const fs::path& a, const fs::path& b) { return a.filename().string() < b.filename().string(); });
+    return out;
+}
 std::string chooseLanguage(const std::string& bundle) {
     std::error_code ec;
     for (const char* l : {"en", "English", "en_US", "en-US", "Base"})
         if (fs::is_directory(fs::path(bundle) / (std::string(l) + ".lproj"), ec)) return l;
     // fall back to whatever localization exists
-    for (auto& e : fs::directory_iterator(bundle, ec)) {
-        const std::string n = e.path().filename().string();
+    for (const fs::path& e : sortedEntries(bundle)) {
+        const std::string n = e.filename().string();
         if (n.size() > 6 && n.substr(n.size() - 6) == ".lproj") return n.substr(0, n.size() - 6);
     }
     return "en";
@@ -603,8 +613,8 @@ std::string findResource(Ctx& x, const std::string& bundle, std::string name, st
         if (cacheable) entry.directories.emplace_back(d, fs::last_write_time(d, ec));
         if (name.empty()) {   // first file of that type
             if (!fs::is_directory(d, ec)) continue;
-            for (auto& e : fs::directory_iterator(d, ec)) if (e.path().extension() == "." + type) {
-                const auto result = found(e.path());
+            for (const fs::path& e : sortedEntries(d)) if (e.extension() == "." + type) {
+                const auto result = found(e);
                 if (!result.empty()) return result;
             }
             continue;
@@ -737,8 +747,8 @@ id b_pathsForResources(Ctx& x, id self, SEL, id type, id dir) {
     std::error_code ec;
     for (const fs::path& dd : {root, root / (B(x).language + ".lproj")}) {
         if (!fs::is_directory(dd, ec)) continue;
-        for (auto& e : fs::directory_iterator(dd, ec))
-            if (t.empty() || e.path().extension() == "." + t) out.push_back(makeString(x, x.proc.guestPath(e.path().string())));
+        for (const fs::path& e : sortedEntries(dd))
+            if (t.empty() || e.extension() == "." + t) out.push_back(makeString(x, x.proc.guestPath(e.string())));
     }
     return makeArray(x, out);
 }
@@ -782,8 +792,8 @@ id b_localizedString(Ctx& x, id self, SEL, id key, id value, id table) { return 
 id b_localizations(Ctx& x, id self, SEL) {
     std::vector<id> out;
     std::error_code ec;
-    for (auto& e : fs::directory_iterator(bd(x, self)->path, ec)) {
-        const std::string n = e.path().filename().string();
+    for (const fs::path& e : sortedEntries(bd(x, self)->path)) {
+        const std::string n = e.filename().string();
         if (n.size() > 6 && n.substr(n.size() - 6) == ".lproj") out.push_back(makeString(x, n.substr(0, n.size() - 6)));
     }
     return makeArray(x, out);
