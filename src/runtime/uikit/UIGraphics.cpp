@@ -941,4 +941,11 @@ void registerUIGraphics(Process& p, ObjC::Runtime& r) {
          .m<&ce_size>("encodeCGSize:forKey:", "v@:" + S + "@");
 }
 
+void addCoderGeometry(ObjC::ClassBuilder& b) {
+    const std::string S = "{CGSize=ff}", R = "{CGRect={CGPoint=ff}{CGSize=ff}}", P = "{CGPoint=ff}", E = "{UIEdgeInsets=ffff}";
+    b.m<&cd_rect>("decodeCGRectForKey:", R + "@:@").m<&cd_point>("decodeCGPointForKey:", P + "@:@")
+     .m<&cd_size>("decodeCGSizeForKey:", S + "@:@").m<&cd_insets>("decodeUIEdgeInsetsForKey:", E + "@:@")
+     .m<&cd_transform>("decodeCGAffineTransformForKey:", "{CGAffineTransform=ffffff}@:@");
+}
+
 } // namespace Hydrogen::Runtime::UIKit

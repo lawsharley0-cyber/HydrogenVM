@@ -188,7 +188,7 @@ template <class Next> struct PredicateParser {
     }
     std::string keyPath() {
         ws();
-        if (sym("%K")) return utf8(x, next('@'));
+        if (sym("%K")) return utf8(x, next('@', false));
         const size_t b = i;
         if (i < t.size() && (std::isalpha(uint8_t(t[i])) || t[i] == '_')) {
             while (i < t.size() && (std::isalnum(uint8_t(t[i])) || t[i] == '_' || t[i] == '.')) ++i;
@@ -203,7 +203,18 @@ template <class Next> struct PredicateParser {
     }
     id literal() {
         ws();
-        if (i + 1 < t.size() && t[i] == '%' && std::strchr("@difu", t[i + 1])) { const char c = t[i + 1]; i += 2; return next(c); }
+        if (i + 1 < t.size() && t[i] == '%') {
+            // Length modifiers (%lu, %lld, %hd, %zu, %qd) only change the C type the caller
+            // passed; skip them and dispatch on the conversion letter.
+            size_t j = i + 1;
+            while (j < t.size() && std::strchr("lhqzjt", t[j])) ++j;
+            if (j < t.size() && std::strchr("@difu", t[j]) && (t[j] != '@' || j == i + 1)) {
+                const char c = t[j];
+                const bool wide = t.compare(i + 1, 2, "ll") == 0 || (j > i + 1 && t[i + 1] == 'q');
+                i = j + 1;
+                return next(c, wide);
+            }
+        }
         if (i < t.size() && (t[i] == '\'' || t[i] == '"')) {
             const char q = t[i];
             const size_t e = t.find(q, i + 1);
@@ -239,8 +250,9 @@ template <class Next> id parse(Ctx& x, Class cls, id format, Next next) {
     }
 }
 id predicate_format(Ctx& x, Class cls, SEL, id format, VarArgs args) {
-    return parse(x, cls, format, [&](char type) -> id {
+    return parse(x, cls, format, [&](char type, bool wide) -> id {
         if (type == 'f') { const auto raw = args.args.dword(); double v; std::memcpy(&v, &raw, 8); return makeNumberDouble(x, v); }
+        if (wide) { const uint64_t raw = args.args.dword(); return makeNumberInt(x, int64_t(raw)); }
         const uint32_t raw = args.args.word();
         return type == '@' ? raw : type == 'u' ? makeNumberInt(x, raw) : makeNumberInt(x, int32_t(raw));
     });
@@ -255,7 +267,7 @@ id predicate_block(Ctx& x, Class cls, SEL, uint32_t block) {
 }
 id predicate_array(Ctx& x, Class cls, SEL, id format, id arguments) {
     auto values = arrayItems(x, arguments); size_t i = 0;
-    return parse(x, cls, format, [&](char) -> id { if (i >= values.size()) throw ObjC::ObjCError("not enough NSPredicate arguments"); return values[i++]; });
+    return parse(x, cls, format, [&](char, bool) -> id { if (i >= values.size()) throw ObjC::ObjCError("not enough NSPredicate arguments"); return values[i++]; });
 }
 // A string as the string operators compare it: [c] lowercases; [d] drops combining
 // marks and folds the accented Latin-1 letters to their base letter (é -> e).
@@ -652,9 +664,25 @@ uint32_t collation_index(Ctx&,id,SEL,uint32_t index) { if(index>26)throw ObjC::O
 uint32_t collation_section(Ctx& x,id,SEL,id object,SEL selector) {auto text=utf8(x,uint32_t(rt(x).send(x.cpu,object,selector,{})));if(text.empty())return 26;const unsigned char first=uint8_t(text[0]);return first>='A'&&first<='Z'?first-'A':first>='a'&&first<='z'?first-'a':26;}
 id collation_sort(Ctx& x,id,SEL,id array,SEL selector) {auto items=arrayItems(x,array);std::stable_sort(items.begin(),items.end(),[&](id a,id b){return compare(x,uint32_t(rt(x).send(x.cpu,a,selector,{})),uint32_t(rt(x).send(x.cpu,b,selector,{})))<0;});return makeArray(x,items);}
 
+// AssetsLibrary: the game sees an empty photo library. Apple's enumeration always ends by calling
+// the block once with a nil group; iPhoto stays on "Updating Photo Library" until that end arrives.
+void assets_enumerateGroups(Ctx& x, id, SEL, uint32_t /*types*/, uint32_t usingBlock, uint32_t /*failureBlock*/) {
+    if (!usingBlock) return;
+    const uint32_t stop = x.proc.heap().allocZeroed(4);
+    ObjC::callBlock(x, usingBlock, {0, stop});
+    x.proc.heap().free(stop);
+}
+// No asset has a URL in an empty library: the result block gets nil, as for a deleted photo.
+void assets_assetForURL(Ctx& x, id, SEL, id /*url*/, uint32_t resultBlock, uint32_t /*failureBlock*/) {
+    if (resultBlock) ObjC::callBlock(x, resultBlock, {0});
+}
+
 } // namespace
 
 void registerCompatibilityClasses(Process&, ObjC::Runtime& r) {
+    r.defineClass("ALAssetsLibrary","NSObject")
+      .m<&assets_enumerateGroups>("enumerateGroupsWithTypes:usingBlock:failureBlock:","v@:I@?@?")
+      .m<&assets_assetForURL>("assetForURL:resultBlock:failureBlock:","v@:@@?@?");
     r.defineClass("NSPredicate","NSObject")
       .cm<&predicate_value>("predicateWithValue:").cm<&predicate_format>("predicateWithFormat:")
       .cm<&predicate_array>("predicateWithFormat:argumentArray:").cm<&predicate_block>("predicateWithBlock:")

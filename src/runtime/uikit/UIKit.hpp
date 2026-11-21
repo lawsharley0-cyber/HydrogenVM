@@ -314,6 +314,10 @@ bool sendBool(Ctx& x, id self, const char* sel, std::initializer_list<uint32_t> 
 
 void registerQuartzCore(Process& p, ObjC::Runtime& r);
 void registerUIGraphics(Process& p, ObjC::Runtime& r);
+// NSCoder's geometry decoders (decodeCGRectForKey: and the rest) on another coder class. UINibDecoder
+// has its own, as UIKit's does, so an app's NSCoder category that replaces them (iPhoto parses a
+// string) cannot change how nibs load.
+void addCoderGeometry(ObjC::ClassBuilder& b);
 void registerUIView(Process& p, ObjC::Runtime& r);
 void registerUIControls(Process& p, ObjC::Runtime& r);
 void registerUIApplication(Process& p, ObjC::Runtime& r);

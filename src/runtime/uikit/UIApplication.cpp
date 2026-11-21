@@ -808,6 +808,11 @@ void applyGuestScreenEnv(Ctx& x) {
     }
 }
 
+
+// UIAccessibility C functions (see registration).
+uint32_t f_accessibilityOff(Ctx&) { return 0; }
+void f_accessibilityPost(Ctx&, uint32_t, uint32_t) {}
+
 void registerUIApplication(Process& p, ObjC::Runtime& r) {
     auto& u = ui(p);
     ObjC::ClassBuilder touch = r.defineClass("UITouch", "NSObject");
@@ -867,6 +872,15 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
         "Fixed 20pt-high bar across the screen; with HVM_SAFE_AREA it is as tall as the top inset. Not the real safeAreaInsets API",
         "{CGRect={CGPoint=ff}{CGSize=ff}}@:");
     p.def<&f_UIApplicationMain>("_UIApplicationMain");
+    // UIAccessibility queries: no assistive setting of the phone reaches the game, so each answers
+    // off (iPhoto reads UIAccessibilityIsVoiceOverRunning while setting up its preferences).
+    for (const char* n : {"_UIAccessibilityIsVoiceOverRunning", "_UIAccessibilityIsClosedCaptioningEnabled",
+                          "_UIAccessibilityIsReduceMotionEnabled", "_UIAccessibilityIsGuidedAccessEnabled",
+                          "_UIAccessibilityIsMonoAudioEnabled", "_UIAccessibilityIsInvertColorsEnabled",
+                          "_UIAccessibilityIsBoldTextEnabled"})
+        supportDef<&f_accessibilityOff>(p, n, SupportStatus::Approx, "always off: the phone's accessibility settings are not passed to games");
+    supportDef<&f_accessibilityPost>(p, "_UIAccessibilityPostNotification", SupportStatus::Approx,
+                                     "ignored: games' accessibility announcements are not spoken");
     
     r.defineClass("UILocalNotification", "NSObject")
      .m<&ln_get<kFireDate>>("fireDate").m<&ln_set<kFireDate>>("setFireDate:", "v@:@")

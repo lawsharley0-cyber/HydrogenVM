@@ -3074,6 +3074,15 @@ int runFullSubsystemTests() {
         check(reported && once && snapshot, "a main thread waiting 5 s logs one Stall report with the lock, its holder and the wait chain; a stop logs a Snapshot");
     }
 
+    // UINibDecoder decodes geometry itself, as UIKit's does: iPhoto's NSCoder category replaces
+    // decodeCGRectForKey: with a string parser, and nibs it loaded stopped in characterAtIndex:.
+    {
+        const auto s = r.sel("decodeCGRectForKey:");
+        const auto nib = r.getClass("UINibDecoder"), coder = r.getClass("NSCoder");
+        check(nib && coder && r.lookupForSend(nib, s) != r.lookupForSend(coder, s),
+              "UINibDecoder has its own decodeCGRectForKey:, so an app's NSCoder category cannot change nib loading");
+    }
+
     // NSArray getObjects:range: / getObjects: copy into the caller's buffer (Pocket God stopped on
     // -[__NSArrayM getObjects:range:]). Expected: the objects at those indexes, in order.
     {
@@ -3134,6 +3143,13 @@ int runFullSubsystemTests() {
             bool ok=true;
             auto expectRows=[&](uint32_t pred,std::vector<ObjC::id> want,const char* what){ if(matches(pred)!=want){ std::printf("    NSPredicate: %s\n",what); ok=false; } };
             expectRows(fmt("(%K == %@ || %K == %@)",{K,makeString(cx,"a"),K,makeString(cx,"b")}),{a1,a2,b3},"(%K == %@ || %K == %@)");
+            // iPhoto stops on "type == %lu": length modifiers name the C type; %lld reads two words (iOS packs them).
+            try {
+                expectRows(fmt("n == %lu",{2}),{a2},"%lu");
+                expectRows(fmt("n >= %ld AND n < %hd",{2,4}),{a2,b3},"%ld and %hd");
+                expectRows(fmt("n == %lld",{4,0}),{c4},"%lld reads a 64-bit argument");
+                expectRows(fmt("n == %qu OR n == %zu",{1,0,3}),{a1,b3},"%qu and %zu");
+            } catch(const std::exception& e){ std::printf("    NSPredicate length modifiers: %s\n",e.what()); ok=false; }
             // String operators and IN (Kindle stops on "%K BEGINSWITH %@").
             const auto T=makeString(cx,"title");
             auto book=[&](const char* title){return makeDict(cx,{{T,makeString(cx,title)}});};
@@ -3957,6 +3973,20 @@ int runFullSubsystemTests() {
         check(cmapTable != 0 && bogusTable == 0 && units == 1000 && ascent == 800 && descent == -200 &&
               capHeight == 700 && numGlyphs == 3 && advOk && advA == 600,
               "CGFontCopyTableForTag and CGFontGet* unscaled design metrics match TrueType tables");
+        {
+            // iPhoto: CTFontGetSize on a CTFont, and on the UIFont -[BLTextView setFont:] passes it.
+            const ObjC::id ui = ObjC::id(r.send(cpu, r.getClass("UIFont"), "systemFontOfSize:", {std::bit_cast<uint32_t>(13.0f)}));
+            const float ctSize = std::bit_cast<float>(uint32_t(call("_CTFontGetSize", {ct})));
+            const float uiSize = std::bit_cast<float>(uint32_t(call("_CTFontGetSize", {ui})));
+            check(ctSize == 20.0f && uiSize == 13.0f, "CTFontGetSize answers a CTFont's size and a bridged UIFont's pointSize");
+            const uint32_t bigger = uint32_t(call("_CTFontCreateCopyWithAttributes", {ct, std::bit_cast<uint32_t>(30.0f), 0, 0}));
+            const uint32_t same = uint32_t(call("_CTFontCreateCopyWithAttributes", {ct, 0, 0, 0}));
+            const uint32_t fromUI = uint32_t(call("_CTFontCreateCopyWithAttributes", {ui, std::bit_cast<uint32_t>(17.0f), 0, 0}));
+            auto sizeOf = [&](uint32_t f) { return std::bit_cast<float>(uint32_t(call("_CTFontGetSize", {f}))); };
+            check(bigger && same && fromUI && bigger != ct && sizeOf(bigger) == 30.0f && sizeOf(same) == 20.0f && sizeOf(fromUI) == 17.0f
+                  && sizeOf(ct) == 20.0f, "CTFontCreateCopyWithAttributes resizes a copy (0 keeps the size), also from a UIFont");
+            for (uint32_t f : {bigger, same, fromUI}) if (f) call("_CFRelease", {f});
+        }
         call("_CFRelease", {cmapTable});
         proc.heap().free(advBuf);
         proc.heap().free(testGlyphsMem);
@@ -4238,6 +4268,15 @@ int runFullSubsystemTests() {
         r.send(cpu, sv, "setContentOffset:animated:", {UIKit::fbits(25), UIKit::fbits(60), 0});
         const Graphics::Rect b = UIKit::getRect(cx, sv, "bounds");
         check(std::abs(b.x - 25.0f) < 0.01f && std::abs(b.y - 60.0f) < 0.01f, "UIScrollView setContentOffset updates bounds.origin");
+        // iPhoto's BLTextView asks for panGestureRecognizer: the same recognizer each time, of the right class, whose view is the scroll view.
+        bool recognizers=false;
+        try {
+            const ObjC::id pan=ObjC::id(r.send(cpu,sv,"panGestureRecognizer")), pinch=ObjC::id(r.send(cpu,sv,"pinchGestureRecognizer"));
+            recognizers=pan && pinch && pan==ObjC::id(r.send(cpu,sv,"panGestureRecognizer"))
+                && r.isKindOf(pan,r.getClass("UIPanGestureRecognizer")) && r.isKindOf(pinch,r.getClass("UIPinchGestureRecognizer"))
+                && ObjC::id(r.send(cpu,pan,"view"))==sv;
+        } catch(const std::exception& e){ std::printf("    %s\n",e.what()); }
+        check(recognizers,"UIScrollView panGestureRecognizer/pinchGestureRecognizer are stable recognizers owned by the scroll view");
     }
 
     // 2b. UITableView & UITableViewCell

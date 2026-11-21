@@ -632,6 +632,7 @@ void registerNib(Process& p, ObjC::Runtime& r) {
        .m<&nd_decodeFloat>("decodeFloatForKey:", "f@:@").m<&nd_decodeDouble>("decodeDoubleForKey:", "d@:@")
        .m<&nd_decodeBytes>("decodeBytesForKey:returnedLength:", "r*@:@^I").m<&nd_true>("allowsKeyedCoding", "c@:")
        .m<&nd_dealloc>("dealloc", "v@:");
+    addCoderGeometry(dec);
     // decodeObjectOfClass:forKey: takes (Class, key): fix the argument order
     dec.method("decodeObjectOfClass:forKey:", [](Ctx& x) { x.cpu.r[0] = nd_decodeObject(x, x.cpu.r[0], x.cpu.r[1], x.cpu.r[3]); }, "@@:#@");
 

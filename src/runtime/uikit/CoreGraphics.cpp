@@ -1435,6 +1435,31 @@ template<int Metric> float ct_metric(Ctx& x, id font) {
     const auto m = G::textBackend().measure("M", {f->name, f->size});
     return Metric == 0 ? m.ascent : Metric == 1 ? m.descent : m.lineHeight - m.ascent - m.descent;
 }
+// iPhoto's -[BLTextView setFont:] passes a UIFont here (UIFont and CTFont are bridged on iOS),
+// so an object that is not a CTFont answers its own pointSize.
+float ct_size(Ctx& x, id font) {
+    if (auto* f = hd<FontData>(x, font)) return f->size;
+    if (font && rt(x).respondsTo(font, rt(x).sel("pointSize"))) { const uint32_t b = uint32_t(rt(x).send(x.cpu, font, "pointSize")); float v; std::memcpy(&v, &b, 4); return v; }
+    return 0;
+}
+// CTFontCreateCopyWithAttributes(font, size, matrix, descriptor): size 0 keeps the size; the
+// descriptor's font (name/face) replaces the original's when it names one. A bridged UIFont is
+// first turned into the CTFont of the same name and point size.
+uint32_t ct_copyWithAttributes(Ctx& x, id font, float size, GuestPtr matrix, id desc) {
+    auto* f = hd<FontData>(x, font);
+    uint32_t temp = 0;
+    if (!f && font && rt(x).respondsTo(font, rt(x).sel("fontName"))) {
+        temp = ct_createName(x, id(rt(x).send(x.cpu, font, "fontName")), ct_size(x, font), 0);
+        f = hd<FontData>(x, temp);
+    }
+    if (!f || !std::isfinite(size) || size < 0) { if (temp) rt(x).release(x.cpu, temp); return 0; }
+    auto h = std::make_unique<FontData>(*f);
+    if (temp) rt(x).release(x.cpu, temp);
+    if (size) h->size = size;
+    if (matrix) h->matrix = toG(readStruct<CGAffineTransform>(x, matrix));
+    if (auto* d = hd<FontData>(x, desc); d && (d->face || !d->name.empty())) { h->name = d->name; h->face = d->face; }
+    return newObject(x, S(x).ctfont, std::move(h));
+}
 bool ct_characters(Ctx& x, id font, GuestPtr chars, GuestPtr glyphs, int32_t count) {
     auto* f = hd<FontData>(x, font);
     if (!f || !f->face) { x.proc.reportMissing("CTFontGetGlyphsForCharacters system font mapping"); return false; }
@@ -2161,6 +2186,8 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&ct_family>("_CTFontCopyFamilyName");
     p.def<&ct_traits>("_CTFontGetSymbolicTraits");
     p.def<&ct_underline>("_CTFontGetUnderlineThickness");
+    p.def<&ct_size>("_CTFontGetSize");
+    p.def<&ct_copyWithAttributes>("_CTFontCreateCopyWithAttributes");
     p.def<&ct_metric<0>>("_CTFontGetAscent");
     p.def<&ct_metric<1>>("_CTFontGetDescent");
     p.def<&ct_metric<2>>("_CTFontGetLeading");

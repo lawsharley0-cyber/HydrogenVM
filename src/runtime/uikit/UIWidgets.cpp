@@ -161,6 +161,23 @@ void sv_setDirLock(Ctx& x, id self, SEL, bool b) { SCR(x, self).dirLock = b; }
 bool sv_scrollsToTop(Ctx& x, id self, SEL) { return SCR(x, self).scrollsToTop; }
 void sv_setScrollsToTop(Ctx& x, id self, SEL, bool b) { SCR(x, self).scrollsToTop = b; }
 void sv_flash(Ctx&, id, SEL) {}
+// panGestureRecognizer / pinchGestureRecognizer (iOS 5): scrolling here is driven by the touch
+// methods, not by recognizers, so these are real recognizer objects (apps add targets, set
+// delegates or call requireGestureRecognizerToFail: on them) that are never attached to the
+// view's recognizer list and never fire. Created on first use and owned by the scroll view (released with it).
+id sv_recognizer(Ctx& x, id self, const char* cls, uint32_t key) {
+    if (const id g = rt(x).getAssociated(self, key)) return g;
+    const Class c = rt(x).getClass(cls);
+    if (!c) return 0;
+    const id g = id(rt(x).send(x.cpu, id(rt(x).send(x.cpu, c, "alloc")), "initWithTarget:action:", {0, 0}));
+    if (!g) return 0;
+    rt(x).send(x.cpu, g, "_hvmSetView:", {self});   // .view answers the scroll view, as on iOS (unretained)
+    rt(x).setAssociated(x.cpu, self, key, g, 1);   // RETAIN_NONATOMIC
+    rt(x).release(x.cpu, g);
+    return g;
+}
+id sv_panRecognizer(Ctx& x, id self, SEL) { return sv_recognizer(x, self, "UIPanGestureRecognizer", 0x5C01); }
+id sv_pinchRecognizer(Ctx& x, id self, SEL) { return sv_recognizer(x, self, "UIPinchGestureRecognizer", 0x5C02); }
 void sv_zoomToRect(Ctx&, id, SEL, CGRect, bool) {}
 
 void sv_scrollRectToVisible(Ctx& x, id self, SEL, CGRect r, bool) {
@@ -2210,6 +2227,8 @@ void registerUIWidgets(Process& p, ObjC::Runtime& r) {
       .m<&sv_scrollsToTop>("scrollsToTop", "c@:")
       .m<&sv_setScrollsToTop>("setScrollsToTop:", "v@:c")
       .m<&sv_flash>("flashScrollIndicators", "v@:")
+      .m<&sv_panRecognizer>("panGestureRecognizer")
+      .m<&sv_pinchRecognizer>("pinchGestureRecognizer")
       .m<&sv_zoomToRect>("zoomToRect:animated:", "v@:" + R + "c")
       .m<&sv_scrollRectToVisible>("scrollRectToVisible:animated:", "v@:" + R + "c")
       .m<&sv_touchesBegan>("touchesBegan:withEvent:", "v@:@@")

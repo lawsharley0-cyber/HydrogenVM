@@ -567,6 +567,8 @@ void b_setImage(Ctx& x, id self, SEL, id i, uint32_t st) { setContent(x, self, &
 void b_setBackground(Ctx& x, id self, SEL, id i, uint32_t st) { setContent(x, self, &StateContent::background, i, st, false); }
 id b_titleFor(Ctx& x, id self, SEL, uint32_t st) { return contentFor(x, self, &StateContent::title, st); }
 id b_titleColorFor(Ctx& x, id self, SEL, uint32_t st) { return contentFor(x, self, &StateContent::titleColor, st); }
+id b_shadowColorFor(Ctx& x, id self, SEL, uint32_t st) { return contentFor(x, self, &StateContent::shadowColor, st); }
+id b_currentShadowColor(Ctx& x, id self, SEL) { return contentFor(x, self, &StateContent::shadowColor, stateOf(x, self)); }
 id b_imageFor(Ctx& x, id self, SEL, uint32_t st) { return contentFor(x, self, &StateContent::image, st); }
 id b_backgroundFor(Ctx& x, id self, SEL, uint32_t st) { return contentFor(x, self, &StateContent::background, st); }
 id b_currentTitle(Ctx& x, id self, SEL) { return contentFor(x, self, &StateContent::title, stateOf(x, self)); }
@@ -1014,6 +1016,7 @@ void registerUIControls(Process& p, ObjC::Runtime& r) {
        .m<&b_setTitle>("setTitle:forState:", "v@:@I").m<&b_setTitleColor>("setTitleColor:forState:", "v@:@I")
        .m<&b_setShadowColor>("setTitleShadowColor:forState:", "v@:@I").m<&b_setImage>("setImage:forState:", "v@:@I")
        .m<&b_setBackground>("setBackgroundImage:forState:", "v@:@I").m<&b_titleFor>("titleForState:").m<&b_titleColorFor>("titleColorForState:")
+       .m<&b_shadowColorFor>("titleShadowColorForState:").m<&b_currentShadowColor>("currentTitleShadowColor")
        .m<&b_imageFor>("imageForState:").m<&b_backgroundFor>("backgroundImageForState:").m<&b_currentTitle>("currentTitle")
        .m<&b_currentImage>("currentImage").m<&b_currentBackground>("currentBackgroundImage").m<&b_currentTitleColor>("currentTitleColor")
        .m<&b_titleLabel>("titleLabel").m<&b_imageView>("imageView").m<&b_buttonType>("buttonType", "i@:").m<&b_setFont>("setFont:", "v@:@")
