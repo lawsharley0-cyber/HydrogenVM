@@ -168,6 +168,42 @@ Mixer::MemoryStats Mixer::memoryStats() const {
     return out;
 }
 
+namespace {
+// Butterworth stage Qs for order 8: 1 / (2 cos((2k - 1) pi / 16)), k = 1..4.
+constexpr double kButterQ[4] = {0.50979558, 0.60134489, 0.89997622, 2.56291545};
+}
+void Mixer::designImageFilter(Voice& v, double effectiveRate) {
+    if (effectiveRate == v.imageRate) return;
+    v.imageRate = effectiveRate;
+    const double fc = 0.46 * effectiveRate;
+    // Played at or above the mixer's rate, there are no images under 20 kHz to remove.
+    v.imageFilter = fc < 0.45 * double(kRate);
+    if (!v.imageFilter) return;
+    constexpr double kPi = 3.14159265358979323846;
+    const double w0 = 2.0 * kPi * fc / double(kRate), cw = std::cos(w0), sw = std::sin(w0);
+    for (int k = 0; k < 4; ++k) {
+        const double alpha = sw / (2.0 * kButterQ[k]);
+        const double a0 = 1.0 + alpha;
+        Voice::Biquad& q = v.image[k];
+        q.b0 = float((1.0 - cw) / 2.0 / a0);
+        q.b1 = float((1.0 - cw) / a0);
+        q.b2 = q.b0;
+        q.a1 = float(-2.0 * cw / a0);
+        q.a2 = float((1.0 - alpha) / a0);
+    }
+}
+float Mixer::filterImage(Voice& v, int channel, float x) {
+    for (int k = 0; k < 4; ++k) {
+        const Voice::Biquad& q = v.image[k];
+        float* z = v.imageZ[channel][k];
+        const float y = q.b0 * x + z[0];
+        z[0] = q.b1 * x - q.a1 * y + z[1];
+        z[1] = q.b2 * x - q.a2 * y;
+        x = y;
+    }
+    return x;
+}
+
 void Mixer::render(float* left, float* right, size_t frames) {
     std::memset(left, 0, frames * sizeof(float));
     std::memset(right, 0, frames * sizeof(float));
@@ -197,6 +233,7 @@ void Mixer::render(float* left, float* right, size_t frames) {
             const int rate = source ? source->sampleRate() : b->rate;
             const size_t n = source ? size_t(source->frames()) : b->pcm->size() / 2;
             const double step = double(rate) * pitch / double(kRate);
+            designImageFilter(v, double(rate) * pitch);
             if (n == 0) {
                 if (source) v.done = true;
                 else { v.processed.push_back(b->tag); v.queue.pop_front(); }
@@ -228,8 +265,12 @@ void Mixer::render(float* left, float* right, size_t frames) {
                     next[1] = following[1];
                 }
                 voicePeak = std::max<int16_t>(voicePeak, int16_t(std::min(32767, std::abs(int(current[0])))));
-                const float mixedL = float(current[0]) * (1 - t) + float(next[0]) * t;
-                const float mixedR = float(current[1]) * (1 - t) + float(next[1]) * t;
+                float mixedL = float(current[0]) * (1 - t) + float(next[0]) * t;
+                float mixedR = float(current[1]) * (1 - t) + float(next[1]) * t;
+                if (v.imageFilter) {
+                    mixedL = filterImage(v, 0, mixedL);
+                    mixedR = filterImage(v, 1, mixedR);
+                }
                 left[i] += mixedL * gl;
                 right[i] += mixedR * gr;
                 // Reporting only: 10 ms RMS of the audible (post-gain) level, for onset checks.
@@ -269,6 +310,10 @@ void Mixer::render(float* left, float* right, size_t frames) {
                 v.pos = v.queue.empty() ? 0 : carry * double(v.queue.front().rate);
             }
         }
+        // A fading voice drives the filter state toward zero through subnormal floats, which
+        // are many times slower to compute with: flush them once per block.
+        if (v.imageFilter)
+            for (auto& ch : v.imageZ) for (auto& st : ch) for (float& z : st) if (std::abs(z) < 1e-20f) z = 0;
         const float level = float(voicePeak) * kScale * appGain;
         // A music stream that just had a sharp rise also tallies as an effect (hold
         // is counted down per output sample above). Hold may extend into a later call.

@@ -1135,6 +1135,51 @@ int runFullSubsystemTests() {
         check(ok, "Mixer stats tell music (looping) from sound effects (one-shot) and ignore silent voices");
     }
 
+    // A 22,050 Hz sound mixed at 44,100 Hz: straight-line interpolation alone left a mirror image
+    // of every tone above 11 kHz only ~6 dB down (Talking Larry's voice and effects sounded hissy
+    // on the phone). A 9 kHz tone must not bring a 13,050 Hz image more than -30 dB, a 1 kHz tone
+    // must keep its level, and a 44.1 kHz sound must pass unchanged.
+    {
+        auto tone = [](int rate, double hz, int frames) {
+            auto pcm = std::make_shared<std::vector<int16_t>>(size_t(frames) * 2);
+            for (int n = 0; n < frames; ++n) {
+                const auto v = int16_t(std::lround(10000.0 * std::sin(6.283185307179586 * hz * n / rate)));
+                (*pcm)[size_t(n) * 2] = v; (*pcm)[size_t(n) * 2 + 1] = v;
+            }
+            return pcm;
+        };
+        auto mixed = [&](int rate, double hz) {
+            Audio::Mixer m;
+            m.play(tone(rate, hz, rate), rate, {});
+            std::vector<float> out, l(512), r(512);
+            for (int k = 0; k < 80; ++k) { m.render(l.data(), r.data(), 512); out.insert(out.end(), l.begin(), l.end()); }
+            return std::vector<float>(out.begin() + 4096, out.begin() + 4096 + 32768);   // skip the filter's start
+        };
+        auto level = [](const std::vector<float>& x, double hz) {   // Goertzel, in dB
+            const double w = 6.283185307179586 * hz / 44100.0, c = 2 * std::cos(w);
+            double s1 = 0, s2 = 0;
+            for (size_t i = 0; i < x.size(); ++i) {
+                const double win = 0.5 - 0.5 * std::cos(6.283185307179586 * double(i) / double(x.size() - 1));
+                const double s0 = double(x[i]) * win + c * s1 - s2; s2 = s1; s1 = s0;
+            }
+            return 10 * std::log10(s1 * s1 + s2 * s2 - c * s1 * s2 + 1e-30);
+        };
+        const auto high = mixed(22050, 9000);
+        const double image = level(high, 13050) - level(high, 9000);
+        const double passband = level(mixed(22050, 1000), 1000) - level(mixed(44100, 1000), 1000);
+        Audio::Mixer native;
+        const auto pcm = tone(44100, 15000, 4096);
+        native.play(pcm, 44100, {});
+        std::vector<float> l(512), r(512);
+        native.render(l.data(), r.data(), 512);
+        bool unchanged = true;
+        for (size_t i = 0; i < 512; ++i) unchanged &= std::abs(l[i] - float((*pcm)[i * 2]) / 32768.0f) < 1e-4f;
+        if (!(image < -30 && std::abs(passband) < 0.5 && unchanged))
+            std::printf("    resampling: image %.1f dB, 1 kHz level change %.2f dB, 44.1 kHz unchanged %d\n", image, passband, unchanged);
+        check(image < -30 && std::abs(passband) < 0.5 && unchanged,
+              "a 22 kHz sound mixed at 44.1 kHz has no audible mirror image, keeps its level, and 44.1 kHz audio is untouched");
+    }
+
     // Games that mix sound effects into one OpenAL stream (Angry Birds Hatchery Island HD
     // queues already-mixed PCM on a single source) were reported as music-only, because every
     // stream voice is classified as music. A sharp energy rise on a stream that already had
@@ -1416,14 +1461,15 @@ int runFullSubsystemTests() {
             }
             const size_t outFrames = size_t(kChunk) * kChunks * 2 - 2;
             const std::vector<float> out = renderLeft(m, outFrames);
+            // The same stream as one buffer is the reference: both go through the same interpolation
+            // and anti-imaging filter, so only a seam at a buffer edge can make them differ.
+            Audio::Mixer single;
+            single.play(whole, 22050, {});
+            const std::vector<float> ref = renderLeft(single, outFrames);
             double worst = 0;
             size_t worstAt = 0;
             for (size_t j = 0; j < outFrames; ++j) {
-                const size_t k = j / 2;
-                const double s0 = double((*whole)[k * 2]) / 32768.0;
-                const double s1 = double((*whole)[(k + 1) * 2]) / 32768.0;
-                const double ideal = (j & 1) ? 0.5 * (s0 + s1) : s0;
-                const double e = std::fabs(double(out[j]) - ideal);
+                const double e = std::fabs(double(out[j]) - double(ref[j]));
                 if (e > worst) { worst = e; worstAt = j; }
             }
             const bool ok = worst < 1e-4;

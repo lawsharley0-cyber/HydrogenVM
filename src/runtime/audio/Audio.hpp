@@ -174,6 +174,16 @@ private:
         double pos = 0;   // in frames of the front buffer
         VoiceParams p;
         bool paused = false, stream = false, autoRelease = false, done = false, heard = false;
+        // Anti-imaging filter for a voice whose sample rate (times pitch) is below the mixer's:
+        // straight-line interpolation leaves a mirror image of the sound above the source's
+        // Nyquist frequency (a 22 kHz sound got a hissy copy at 11-22 kHz only ~6 dB down).
+        // An 8th-order Butterworth low-pass (four biquads per channel) at 0.46 x the effective
+        // rate removes it, as iOS's own sample-rate converter does.
+        struct Biquad { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0; };
+        double imageRate = 0;          // effective rate the coefficients were made for
+        bool imageFilter = false;      // on only while upsampling
+        Biquad image[4];
+        float imageZ[2][4][2] = {};    // [channel][stage][state]
         // Onset detector (reporting only): 10 ms windows, ~400 ms of history.
         static constexpr int kOnsetHist = 40;
         static constexpr int kOnsetWindow = kRate / 100;   // 10 ms
@@ -183,6 +193,8 @@ private:
         bool onsetCounted = false;
         std::vector<uint64_t> processed;
     };
+    static void designImageFilter(Voice& v, double effectiveRate);
+    static float filterImage(Voice& v, int channel, float x);
     mutable std::mutex mu_;
     std::unordered_map<uint32_t, Voice> voices_;
     uint32_t next_ = 1;
