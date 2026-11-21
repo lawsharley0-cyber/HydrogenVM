@@ -42,10 +42,11 @@ final class PlayerUITests: XCTestCase {
     }
 
     @MainActor
-    private func open(_ orientation: Int = 1, overlay: Bool = true) -> XCUIApplication {
+    private func open(_ orientation: Int = 1, overlay: Bool = true, controls: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         // The debug overlay is off by default (#280); tests that drive the controls turn it on.
-        if overlay { app.launchArguments += ["-player.showDebugOverlay", "YES"] }
+        app.launchArguments += ["-player.showDebugOverlay", overlay ? "YES" : "NO",
+                                "-player.showControlsButton", controls ? "YES" : "NO"]
         app.launchEnvironment["PLAYER_ORIENTATION"] = String(orientation)
         app.launch()
         app.buttons["Open Player"].tap()
@@ -68,6 +69,19 @@ final class PlayerUITests: XCTestCase {
         // The game still receives its touches with nothing drawn over it.
         app.otherElements["player-viewport"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
+    }
+
+    @MainActor
+    func testControlsButtonWorksWithoutPerformanceOverlay() {
+        let app = open(overlay: false, controls: true)
+        let pill = app.buttons["player-controls"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 5))
+        XCTAssertEqual(pill.value as? String, "Running")
+        pill.tap()
+        app.buttons["player-pause"].tap()
+        wait(app.staticTexts["probe-lifecycle"], label: "paused")
+        app.buttons["hud-minimize"].tap()
+        XCTAssertEqual(pill.value as? String, "Paused")
     }
 
     @MainActor
@@ -115,13 +129,25 @@ final class PlayerUITests: XCTestCase {
     }
 
     @MainActor
+    private func selectScaleMode(_ mode: String, in app: XCUIApplication) {
+        let menu = app.buttons["player-scale-mode"]
+        XCTAssertTrue(menu.isHittable)
+        menu.tap()
+        let option = app.buttons[mode]
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.tap()
+        expectation(for: NSPredicate(format: "value == %@", mode), evaluatedWith: menu)
+        waitForExpectations(timeout: 5)
+    }
+
+    @MainActor
     func testBothLandscapeDirectionsAndDisplayModes() {
         let app = open(4)   // UIInterfaceOrientationLandscapeLeft
         let screen = app.otherElements["player-viewport"]
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:160,240:0")
         app.buttons["player-controls"].tap()
-        app.buttons["Stretch"].tap()
+        selectScaleMode("Stretch", in: app)
         app.buttons["hud-minimize"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.25)).tap()
         // With Stretch the entire container is the display, independent of safe areas.
@@ -130,7 +156,7 @@ final class PlayerUITests: XCTestCase {
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.25)).tap()
         wait(app.staticTexts["probe-touch"], label: "3:240,120:0")
         app.buttons["player-controls"].tap()
-        app.buttons["Integer Pixels"].tap()
+        selectScaleMode("Integer Pixels", in: app)
         app.buttons["Nearest Neighbor"].tap()
         app.buttons["hud-minimize"].tap()
         screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -145,33 +171,20 @@ final class PlayerUITests: XCTestCase {
     func testScaleModeReturnsToLiveGlobalDefault() {
         let app = open()
         app.buttons["player-controls"].tap()
-        let scale = app.segmentedControls["player-scale-mode"]
-        let useDefault = scale.buttons["Use Default"]
-        func select(_ label: String) {
-            let segment = scale.buttons[label]
-            expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: segment)
-            waitForExpectations(timeout: 5)
-            // Keep one deliberate finger gesture; do not retry a missed selection.
-            segment.press(forDuration: 0.1)
-            expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: segment)
-            waitForExpectations(timeout: 5)
-        }
         for _ in 0..<3 {
-            select("Fill (Crop)")
+            selectScaleMode("Fill (Crop)", in: app)
             XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
-            select("Use Default")
+            selectScaleMode("Use Default", in: app)
             XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForNonExistence(timeout: 5))
             app.buttons["probe-default-extended"].tap()
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
             app.buttons["probe-default-fill"].tap()
             XCTAssertTrue(app.segmentedControls["player-crop-focus"].waitForExistence(timeout: 5))
-            select("Stretch")
+            selectScaleMode("Stretch", in: app)
             app.buttons["probe-default-extended"].tap()
             wait(app.staticTexts["probe-scale-default"], label: "Extended Bars")
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForNonExistence(timeout: 5))
-            select("Use Default")
-            expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: useDefault)
-            waitForExpectations(timeout: 5)
+            selectScaleMode("Use Default", in: app)
             XCTAssertTrue(app.staticTexts["The bars show a blurred, dimmed copy of the frame."].waitForExistence(timeout: 5))
         }
     }
