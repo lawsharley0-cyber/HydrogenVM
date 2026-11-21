@@ -377,7 +377,30 @@ bool installMicTap(const std::shared_ptr<SessionCore> &core, AVAudioEngine *engi
     }
     return true;
 }
-// Starts the engine again if the system stopped it. Main queue.
+// AVAudioSession setActive: blocks while the audio server reconfigures, and iOS faults when it
+// runs on the main thread (the phone log showed it). Everything that activates the session
+// after launch (resume, microphone) runs on this serial queue instead; start and stop already
+// run on the session's own thread. audioMu still guards the engine.
+dispatch_queue_t audioSessionQueue() {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create("hvm.audio-session",
+                                  dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+    });
+    return q;
+}
+NSOperationQueue *audioSessionOperationQueue() {
+    static NSOperationQueue *q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        q = [[NSOperationQueue alloc] init];
+        q.underlyingQueue = audioSessionQueue();
+        q.maxConcurrentOperationCount = 1;
+    });
+    return q;
+}
+// Starts the engine again if the system stopped it. Audio-session queue.
 void resumeAudio(const std::shared_ptr<SessionCore> &core) {
     std::lock_guard<std::mutex> lk(core->audioMu);
     AVAudioEngine *engine = core->audioEngine;
@@ -429,12 +452,12 @@ void startAudio(const std::shared_ptr<SessionCore> &core, std::shared_ptr<Hydrog
     // Nothing restarted it, so a game's sound went silent for the rest of the run.
     std::weak_ptr<SessionCore> weakCore = core;
     core->audioConfigObserver = [NSNotificationCenter.defaultCenter addObserverForName:AVAudioEngineConfigurationChangeNotification
-                                                                               object:engine queue:NSOperationQueue.mainQueue
+                                                                               object:engine queue:audioSessionOperationQueue()
                                                                            usingBlock:^(NSNotification *) {
         if (auto c = weakCore.lock()) resumeAudio(c);
     }];
     core->audioInterruptObserver = [NSNotificationCenter.defaultCenter addObserverForName:AVAudioSessionInterruptionNotification
-                                                                                  object:nil queue:NSOperationQueue.mainQueue
+                                                                                  object:nil queue:audioSessionOperationQueue()
                                                                               usingBlock:^(NSNotification *note) {
         if ([note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] != AVAudioSessionInterruptionTypeEnded) return;
         if (auto c = weakCore.lock()) resumeAudio(c);
@@ -482,7 +505,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     core->micWanted = on;
     if (!on) return;
     [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
-        dispatch_async(dispatch_get_main_queue(), ^{
+        dispatch_async(audioSessionQueue(), ^{
             if (granted) beginCapture(core);
             else NSLog(@"HydrogenVM: microphone permission denied; the app records silence");
         });
@@ -928,7 +951,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     if (p && _core->ready) p->enterForeground();
     // Sound the system stopped while the app was away starts again.
     std::shared_ptr<SessionCore> core = _core;
-    dispatch_async(dispatch_get_main_queue(), ^{ resumeAudio(core); });
+    dispatch_async(audioSessionQueue(), ^{ resumeAudio(core); });
 }
 
 - (void)submitDocument:(NSString *)sourcePath requestId:(uint64_t)requestId {

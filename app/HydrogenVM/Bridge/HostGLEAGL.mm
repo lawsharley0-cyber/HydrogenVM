@@ -70,7 +70,15 @@ public:
     bool drawableStorage(void *ctx, uint32_t layerKey, int width, int height, bool &handled) override {
         handled = true;
         EAGLContext *c = (__bridge EAGLContext *)ctx;
-        if (!layerKey) return [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:nil];
+        // This runs on the game's GL thread. Every renderbufferStorage:fromDrawable: call sits in an
+        // explicit CATransaction: in an implicit one off the main thread, Core Animation warns that
+        // the call may be unsafe (the phone log showed it on every resize).
+        if (!layerKey) {
+            [CATransaction begin];
+            BOOL ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:nil];
+            [CATransaction commit];
+            return ok;
+        }
         CAEAGLLayer *layer = nil;
         bool created = false;
         {
@@ -93,7 +101,6 @@ public:
         [CATransaction setDisableActions:YES];
         layer.contentsScale = 1;
         layer.bounds = CGRectMake(0, 0, width, height);
-        [CATransaction commit];
         BOOL ok = [c renderbufferStorage:GL_RENDERBUFFER fromDrawable:layer];
         if (!ok && !created) {
             // Re-storing a layer that already backs a renderbuffer (a resize on rotation, or
@@ -124,6 +131,7 @@ public:
             }
             while (glGetError() != GL_NO_ERROR) {}   // the failed attempts' errors are not the game's
         }
+        [CATransaction commit];
         [CATransaction flush];
         if (created || ok) {
             auto notify = onLayer_;
