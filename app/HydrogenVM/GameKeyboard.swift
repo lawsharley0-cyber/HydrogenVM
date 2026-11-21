@@ -35,12 +35,27 @@ struct GameKeyInputKeyboard: UIViewRepresentable {
         private var needsFocus = false
         override var canBecomeFirstResponder: Bool { active }
 
-        override var inputAccessoryView: UIView? {
-            let bar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
-            bar.items = [UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
-                         UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
+        // Retain the accessory, and expose a real button for touch and accessibility.
+        private lazy var accessoryBar: UIInputView = {
+            let bar = UIInputView(frame: CGRect(x: 0, y: 0, width: 320, height: 44),
+                                  inputViewStyle: .keyboard)
+            bar.autoresizingMask = [.flexibleWidth]
+            var configuration = UIButton.Configuration.plain()
+            configuration.title = "Done"
+            let button = UIButton(configuration: configuration)
+            button.accessibilityIdentifier = "guest-keyinput-done"
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.addTarget(self, action: #selector(done), for: .touchUpInside)
+            bar.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.trailingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+                button.topAnchor.constraint(equalTo: bar.topAnchor),
+                button.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+                button.widthAnchor.constraint(greaterThanOrEqualToConstant: 60)
+            ])
             return bar
-        }
+        }()
+        override var inputAccessoryView: UIView? { accessoryBar }
         @objc private func done() { onDismiss?() }
         func insertText(_ text: String) { if active { onInsert?(text) } }
         func deleteBackward() { if active { onDelete?() } }
