@@ -1114,7 +1114,7 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
         if (wd.rootViewController || wd.subviews.empty()) continue;
         const id view = wd.subviews.front();
         const id vc = viewControllerOfView(x, view);
-        if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o || !controllerSupports(x, vc, o)) continue;
+        if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o) continue;
         // A view the app has already turned itself (a transform, or landscape-shaped bounds for
         // a landscape orientation) is left as it is. Turning it again showed the whole game
         // sideways, and nothing turned it back (a view that became the window's first subview
@@ -1130,6 +1130,11 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
                 continue;
             }
         }
+        // Asked only now, after looking at the view as the app left it: a controller may turn its
+        // own view inside shouldAutorotateToInterfaceOrientation: (Trucks & Skulls HD centres it
+        // from its frame there), and UIKit's rotation that follows sets transform, bounds and
+        // centre over it. Asking first made that half-done turn look like the app's own layout.
+        if (!controllerSupports(x, vc, o)) continue;
         const int from = VC(x, vc).legacyOrientation;
         x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, window-subview controller %s)", orientationName(from),
                     orientationName(o), cause, rt(x).objectClassName(vc).c_str());

@@ -59,7 +59,8 @@ struct Stdio {
 };
 
 Stdio& S(Ctx& x) { return x.proc.service<Stdio>(); }
-inline void setErrno(Ctx& x, int e) { x.mem.write<uint32_t>(x.proc.currentThread().errnoAddr, uint32_t(e)); }
+// A thread without an errno cell (the host test harness calling in directly) has nowhere to write.
+inline void setErrno(Ctx& x, int e) { if (const uint32_t a = x.proc.currentThread().errnoAddr) x.mem.write<uint32_t>(a, uint32_t(e)); }
 
 uint32_t newFile(Ctx& x, std::FILE* f) {
     const uint32_t fp = x.proc.heap().allocZeroed(kFileSize);
@@ -91,6 +92,7 @@ int32_t f_vfprintf(Ctx& x, GuestPtr fp, GuestPtr fmt, VaList ap) {
 // guest backing; _chk additionally rejects n > the compiler's object size.
 int32_t storeFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t objectSize,
                        bool bounded, const std::string& s) {
+    if (takeFormatEncodingError()) { setErrno(x, 92 /* Darwin EILSEQ */); return -1; }
     if (bounded && n > objectSize) throw std::runtime_error("__snprintf_chk object bound exceeded");
     if (s.size() > size_t(INT32_MAX)) return -1; // EOVERFLOW-style return
     const uint64_t required = bounded ? (n ? std::min<size_t>(s.size(), size_t(n) - 1) + 1 : 0)
@@ -453,6 +455,7 @@ std::string readWString(Ctx& x, GuestPtr ws, size_t maxChars = 65536) {
 // the narrow formatted path. A short destination throws; it is not clamped.
 int32_t storeWideFormatted(Ctx& x, GuestPtr buf, uint32_t n, uint32_t objectSize,
                            bool checked, const std::string& s) {
+    if (takeFormatEncodingError()) { setErrno(x, 92 /* Darwin EILSEQ */); return -1; }
     if (checked && uint64_t(n) * 4 > uint64_t(objectSize))
         throw std::runtime_error("__swprintf_chk object bound exceeded");
     if (!n) return -1;

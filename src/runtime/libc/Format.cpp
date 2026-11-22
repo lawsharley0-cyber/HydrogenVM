@@ -110,7 +110,10 @@ std::optional<std::string> positionalFormat(Process& p, const std::string& fmt, 
 void setObjectFormatHook(Process& p, std::function<std::string(uint32_t)> hook) { p.service<FormatState>().hook = std::move(hook); }
 const std::function<std::string(uint32_t)>& objectFormatHook(Process& p) { return p.service<FormatState>().hook; }
 
+namespace { thread_local bool tEncodingError = false; }
+bool takeFormatEncodingError() { const bool e = tEncodingError; tEncodingError = false; return e; }
 std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, const std::function<std::string(uint32_t)>& objectHook) {
+    tEncodingError = false;
     if (fmt.find('$') != std::string::npos)
         if (auto indexed = positionalFormat(p,fmt,args,objectHook)) return std::move(*indexed);
     std::string out;
@@ -220,6 +223,9 @@ std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, con
                     for (uint32_t a = ptr; prec < 0 || int(u.size()) < prec; a += 4) {
                         const uint32_t wc = p.mem().read<uint32_t>(a);
                         if (!wc) break;
+                        // Not a Unicode character (Rayman Jungle Run passes a 16-bit string to %ls):
+                        // libc's conversion fails there and the whole call returns -1.
+                        if (!objectHook && (wc > 0x10FFFF || (wc >= 0xD800 && wc <= 0xDFFF))) { tEncodingError = true; break; }
                         if (wc >= 0x10000) { u += char16_t(0xD800 + ((wc - 0x10000) >> 10)); u += char16_t(0xDC00 + ((wc - 0x10000) & 0x3FF)); }
                         else u += char16_t(wc);
                     }
@@ -239,6 +245,7 @@ std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, con
                     if (ptr) for (uint32_t a = ptr; prec < 0 || int(u.size()) < prec; a += 4) {
                         const uint32_t wc = p.mem().read<uint32_t>(a);
                         if (!wc) break;
+                        if (wc > 0x10FFFF || (wc >= 0xD800 && wc <= 0xDFFF)) { tEncodingError = true; break; }
                         if (wc >= 0x10000) { u += char16_t(0xD800 + ((wc - 0x10000) >> 10)); u += char16_t(0xDC00 + ((wc - 0x10000) & 0x3FF)); }
                         else u += char16_t(wc);
                     }

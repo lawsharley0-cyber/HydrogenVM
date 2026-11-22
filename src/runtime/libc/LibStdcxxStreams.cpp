@@ -501,6 +501,25 @@ uint32_t wo_insert(Ctx& x, GuestPtr os, GuestPtr ws, int32_t n) {
     }
     return os;
 }
+// operator<<(wostream&, const char*) / (wostream&, char): each byte is widened, as the
+// stream's ctype<wchar_t>::widen does for these (Rayman Jungle Run writes its log this way).
+uint32_t wo_cstr(Ctx& x, GuestPtr os, GuestPtr s) {
+    if (!s) { const uint32_t ios = iosOf(x, os); wr(x, ios + kState, rd(x, ios + kState) | kBad); return os; }
+    const std::string narrow = x.proc.readCString(s);
+    if (narrow.empty()) return os;
+    const uint32_t wide = x.proc.heap().alloc(uint32_t(narrow.size()) * 4);
+    for (size_t i = 0; i < narrow.size(); ++i) x.mem.write<uint32_t>(wide + uint32_t(i) * 4, uint8_t(narrow[i]));
+    wo_insert(x, os, wide, int32_t(narrow.size()));
+    x.proc.heap().free(wide);
+    return os;
+}
+uint32_t wo_char(Ctx& x, GuestPtr os, uint32_t c) {
+    const uint32_t wide = x.proc.heap().alloc(4);
+    x.mem.write<uint32_t>(wide, uint8_t(c));
+    wo_insert(x, os, wide, 1);
+    x.proc.heap().free(wide);
+    return os;
+}
 uint32_t o_cstr(Ctx& x, GuestPtr os, GuestPtr s) {
     if (!s) { const uint32_t ios = iosOf(x, os); wr(x, ios + kState, rd(x, ios + kState) | kBad); return os; }
     return emit(x, os, x.proc.readCString(s));
@@ -1473,6 +1492,8 @@ void registerLibStdcxxStreams(Process& p) {
     // ostream: formatted output
     p.def<&o_insert>("__ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_PKS3_i");
     p.def<&wo_insert>("__ZSt16__ostream_insertIwSt11char_traitsIwEERSt13basic_ostreamIT_T0_ES6_PKS3_i");
+    p.def<&wo_cstr>("__ZStlsIwSt11char_traitsIwEERSt13basic_ostreamIT_T0_ES6_PKc");
+    p.def<&wo_char>("__ZStlsIwSt11char_traitsIwEERSt13basic_ostreamIT_T0_ES6_c");
     p.def<&o_cstr>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_PKc");
     p.def<&o_char>("__ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_c");
     p.def<&o_string>("__ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostreamIT_T0_ES7_RKSbIS4_S5_T1_E");

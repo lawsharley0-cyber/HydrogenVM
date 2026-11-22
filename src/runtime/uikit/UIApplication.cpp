@@ -714,7 +714,10 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
     }
 
     // Main nib / storyboard
-    std::string mainNib = info ? info->getString("NSMainNibFile~iphone", info->getString("NSMainNibFile")) : "";
+    // The device-specific key first: an iPad-only app runs on an iPad canvas, so its
+    // NSMainNibFile~ipad (Trucks & Skulls HD names only an iPhone nib it does not ship under the plain key).
+    const char* deviceSuffix = tabletOnly(x) ? "~ipad" : "~iphone";
+    std::string mainNib = info ? info->getString(std::string("NSMainNibFile") + deviceSuffix, info->getString("NSMainNibFile")) : "";
     if (!mainNib.empty()) {
         x.proc.logf(LogLevel::Info, "Loading main nib %s", mainNib.c_str());
         // UIKit keeps the main nib's top-level objects (the app delegate, the window) alive for the
@@ -724,7 +727,7 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         u.deferLaunchWindows = false;
         if (top) for (id o : Foundation::arrayItems(x, top)) r.retain(x.cpu, o);
     }
-    const std::string storyboard = info ? info->getString("UIMainStoryboardFile~iphone", info->getString("UIMainStoryboardFile")) : "";
+    const std::string storyboard = info ? info->getString(std::string("UIMainStoryboardFile") + deviceSuffix, info->getString("UIMainStoryboardFile")) : "";
     if (!storyboard.empty()) {
         const Class sbCls = r.getClass("UIStoryboard");
         const id sb = sbCls ? id(r.send(x.cpu, sbCls, "storyboardWithName:bundle:", {makeString(x, storyboard), 0})) : 0;

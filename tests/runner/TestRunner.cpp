@@ -7607,6 +7607,44 @@ int runFullSubsystemTests() {
         const int squareW = int(proc.mem().read<int32_t>(q)), squareH = int(proc.mem().read<int32_t>(q + 4));
         check(squareW == grownW && squareH == grownH, "a larger viewport of another shape clips instead of growing the drawable");
 
+        // GLKit (Rayman Jungle Run): -[GLKView display] makes its context current, binds a framebuffer
+        // sized to bounds x scale with the viewport set, calls the delegate's glkView:drawInRect:, then
+        // presents. A GLKViewController's default view is a GLKView, running at 30 fps unless asked.
+        {
+            int draws = 0; uint32_t boundFbo = 0; int32_t vpW = 0, vpH = 0;
+            ObjC::ClassBuilder del = r.defineClass("HVMGLKDelegate", "NSObject");
+            del.method("glkView:drawInRect:", [&](Ctx& x) {
+                ++draws;
+                const uint32_t qv = proc.heap().allocZeroed(16);
+                callGL("_glGetIntegerv", {0x8CA6 /* FRAMEBUFFER_BINDING */, qv});
+                boundFbo = proc.mem().read<uint32_t>(qv);
+                callGL("_glGetIntegerv", {0x0BA2 /* VIEWPORT */, qv});
+                vpW = proc.mem().read<int32_t>(qv + 8); vpH = proc.mem().read<int32_t>(qv + 12);
+                proc.heap().free(qv);
+                (void)x;
+            }, "v@:@{CGRect={CGPoint=ff}{CGSize=ff}}");
+            const ObjC::id gctx = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, ctxCls, r.selAlloc)), "initWithAPI:", {2}));
+            const ObjC::id gv = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("GLKView"), r.selAlloc)), "initWithFrame:context:",
+                                                {UIKit::fbits(0), UIKit::fbits(0), UIKit::fbits(120), UIKit::fbits(80), gctx}));
+            const ObjC::id delegate = r.createInstance(del.cls());
+            r.send(cpu, gv, "setDelegate:", {delegate});
+            r.send(cpu, gv, "setDrawableDepthFormat:", {1});
+            r.send(cpu, win, "addSubview:", {gv});
+            r.send(cpu, gv, "display");
+            const int dw = int32_t(r.send(cpu, gv, "drawableWidth")), dh = int32_t(r.send(cpu, gv, "drawableHeight"));
+            const float scale = UIKit::ui(cx).scale;
+            const bool viewOk = draws == 1 && boundFbo != 0 && dw == int(std::lround(120 * scale)) && dh == int(std::lround(80 * scale)) &&
+                                vpW == dw && vpH == dh;
+            if (!viewOk) std::printf("    GLKView: draws %d fbo %u drawable %dx%d viewport %dx%d\n", draws, boundFbo, dw, dh, vpW, vpH);
+            check(viewOk, "GLKView display binds a bounds x scale framebuffer with its viewport and calls glkView:drawInRect:");
+            const ObjC::id glkvc = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("GLKViewController"), r.selAlloc)), "init"));
+            const ObjC::id vcView = ObjC::id(r.send(cpu, glkvc, "view"));
+            check(vcView && r.isKindOf(vcView, r.getClass("GLKView")) && int32_t(r.send(cpu, glkvc, "framesPerSecond")) == 30 &&
+                  (r.send(cpu, glkvc, "isPaused") & 0xFF) == 0,
+                  "GLKViewController makes a GLKView for its view and runs at 30 fps by default");
+            r.send(cpu, gv, "removeFromSuperview");
+        }
+
         r.send(cpu, win, "setHidden:", {1});
         r.send(cpu, ctxCls, "setCurrentContext:", {0});
         uistate.statusBarHidden = savedBar;
@@ -14218,6 +14256,20 @@ int runFullSubsystemTests() {
             check(cS && got && proc.readCString(back) == "res/a.png",
                   "swprintf's %S reads a wchar_t string; CFStringCreateWithBytes decodes kCFStringEncodingUTF32LE");
             proc.heap().free(big); proc.heap().free(back);
+        }
+        {
+            // Rayman Jungle Run hands %ls a 16-bit string: as 32-bit wchar_t its pairs are no characters, and
+            // Apple's libc fails the call (-1, EILSEQ) instead of reading on until some zero word.
+            const uint32_t u16 = proc.heap().allocZeroed(16), out = proc.heap().allocZeroed(64);
+            proc.mem().write<uint16_t>(u16, 'A'); proc.mem().write<uint16_t>(u16 + 2, 'B'); proc.mem().write<uint16_t>(u16 + 4, 'C');
+            const uint32_t fmtNarrow = proc.allocCString("%ls_%d");
+            const auto bad = wideRun("_snprintf", {out, 64, fmtNarrow, u16, 7});
+            const uint32_t errnoCell = proc.currentThread().errnoAddr;
+            const uint32_t errnoNow = errnoCell ? proc.mem().read<uint32_t>(errnoCell) : 92;
+            const auto good = wideRun("_snprintf", {out, 64, fmtNarrow, wideLiteral("ok"), 7});
+            check(!bad.failed && bad.result == -1 && errnoNow == 92 && !good.failed && good.result == 4 && proc.readCString(out) == "ok_7",
+                  "snprintf fails with EILSEQ on a %ls argument that holds no Unicode characters");
+            proc.heap().free(u16); proc.heap().free(out);
         }
         auto w = wideRun("_swprintf", {wideBuf, 4, wideExact});
         check(!w.failed && w.result == 3 && wideEquals(wideBuf, "123") && painted(wideNext, 16, 0xa5),
