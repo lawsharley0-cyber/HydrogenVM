@@ -3,7 +3,10 @@
 #include <mutex>
 #include "runtime/Process.hpp"
 #include "runtime/Support.hpp"
+#include <algorithm>
 #include <atomic>
+#include <cstdio>
+#include <string>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -151,6 +154,50 @@ uint32_t c_strtoul(Ctx& x, GuestPtr s, GuestPtr e, int32_t base) {
 }
 int64_t c_strtoll(Ctx& x, GuestPtr s, GuestPtr e, int32_t base) { return convert<int64_t>(x, s, e, [&](const char* a, char** b) { return int64_t(std::strtoll(a, b, base)); }); }
 uint64_t c_strtoull(Ctx& x, GuestPtr s, GuestPtr e, int32_t base) { return convert<uint64_t>(x, s, e, [&](const char* a, char** b) { return uint64_t(std::strtoull(a, b, base)); }); }
+// ecvt / fcvt(double value, int ndigit, int* decpt, int* sign): the digits of |value| without a
+// point, in a buffer the next call reuses. ecvt keeps ndigit significant digits; fcvt keeps
+// ndigit digits after the point and drops leading zeros (0.0123, 3 -> "12", decpt -1).
+// Dead Space formats its end-of-level stats with fcvt. value: r0:r1, ndigit: r2, decpt: r3,
+// sign: on the stack.
+void c_cvt(Ctx& x, bool fixed) {
+    const uint64_t bits = uint64_t(x.cpu.r[0]) | (uint64_t(x.cpu.r[1]) << 32);
+    double v;
+    std::memcpy(&v, &bits, 8);
+    const int nd = std::clamp(int32_t(x.cpu.r[2]), fixed ? 0 : 1, 100);
+    const uint32_t decptP = x.cpu.r[3], signP = x.mem.read<uint32_t>(x.cpu.r[CPU::kSP]);
+    std::string digits;
+    int decpt = 0;
+    const bool neg = std::signbit(v);
+    const double a = std::fabs(v);
+    char buf[512];
+    if (std::isnan(a) || std::isinf(a)) {
+        digits = std::isnan(a) ? "nan" : "inf";
+    } else if (fixed) {
+        std::snprintf(buf, sizeof buf, "%.*f", nd, a);
+        const char* dot = std::strchr(buf, '.');
+        std::string ip(buf, dot ? size_t(dot - buf) : std::strlen(buf)), fp(dot ? dot + 1 : "");
+        if (ip != "0") { digits = ip + fp; decpt = int(ip.size()); }
+        else {
+            const size_t nz = fp.find_first_not_of('0');
+            if (nz == std::string::npos) digits = std::string(size_t(std::max(nd, 1)), '0');
+            else { digits = fp.substr(nz); decpt = -int(nz); }
+        }
+    } else {
+        std::snprintf(buf, sizeof buf, "%.*e", nd - 1, a);   // d.ddde+XX
+        const char* e = std::strchr(buf, 'e');
+        for (const char* c = buf; c < e; ++c) if (*c != '.') digits += *c;
+        decpt = a == 0 ? 0 : std::atoi(e + 1) + 1;
+    }
+    if (decptP) x.mem.write<int32_t>(decptP, decpt);
+    if (signP) x.mem.write<int32_t>(signP, neg ? 1 : 0);
+    static const char key = 0;
+    uint32_t& out = x.proc.processSlot(&key);
+    if (!out) out = x.proc.heap().allocZeroed(512);
+    digits.resize(std::min<size_t>(digits.size(), 511));
+    x.mem.copyIn(out, digits.c_str(), digits.size() + 1);
+    x.cpu.r[0] = out;
+}
+
 double c_strtod(Ctx& x, GuestPtr s, GuestPtr e) { return convert<double>(x, s, e, [](const char* a, char** b) { return std::strtod(a, b); }); }
 float  c_strtof(Ctx& x, GuestPtr s, GuestPtr e) { return convert<float>(x, s, e, [](const char* a, char** b) { return std::strtof(a, b); }); }
 
@@ -451,6 +498,8 @@ void registerLibcStdlib(Process& p) {
     p.def<&c_strtoull>("_strtoull");
     p.def<&c_strtoull>("_strtouq");
     p.def<&c_strtod>("_strtod");
+    p.defineFunction("_fcvt", [](Ctx& x) { c_cvt(x, true); });
+    p.defineFunction("_ecvt", [](Ctx& x) { c_cvt(x, false); });
     p.def<&c_strtof>("_strtof");
     p.def<&c_wcstol>("_wcstol");
     p.def<&c_wcstoul>("_wcstoul");

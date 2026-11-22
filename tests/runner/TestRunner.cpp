@@ -10219,6 +10219,34 @@ int runFullSubsystemTests() {
             call("_inflateEnd", {zs});
             check(rc1 == 0 && rc2 == 0 && same && packedLen < text.size() / 4 && rc3 == 0 && zr == 1 && got == text,
                   "zlib compress/uncompress and streaming inflate on guest buffers");
+            // Input given before inflateInit, as zlib allows (Minecraft PE's world storage): the
+            // init keeps it. Before, it was cleared and every inflate answered Z_BUF_ERROR.
+            const uint32_t zs2 = proc.heap().allocZeroed(56);
+            proc.mem().write<uint32_t>(zs2 + 0, packed);
+            proc.mem().write<uint32_t>(zs2 + 4, packedLen);
+            const uint32_t rc4 = call("_inflateInit_", {zs2, ver, 56});
+            const uint32_t keptIn = proc.mem().read<uint32_t>(zs2 + 0), keptAvail = proc.mem().read<uint32_t>(zs2 + 4);
+            proc.mem().write<uint32_t>(zs2 + 12, out);
+            proc.mem().write<uint32_t>(zs2 + 16, uint32_t(text.size()) + 16);
+            const int32_t zr2 = int32_t(call("_inflate", {zs2, 0}));
+            const bool same2 = 16 == proc.mem().read<uint32_t>(zs2 + 16) && std::memcmp(proc.mem().host(out), text.data(), text.size()) == 0;
+            call("_inflateEnd", {zs2});
+            check(rc4 == 0 && keptIn == packed && keptAvail == packedLen && zr2 == 1 && same2,
+                  "zlib: input set before inflateInit is kept (Minecraft PE saved worlds)");
+
+            // fcvt/ecvt (Dead Space's end-of-level stats): digits without a point, decpt, sign.
+            const uint32_t dp = proc.heap().allocZeroed(8);
+            auto cvt = [&](const char* sym, double v, int nd) {
+                uint64_t b; std::memcpy(&b, &v, 8);
+                const uint32_t r = call(sym, {uint32_t(b), uint32_t(b >> 32), uint32_t(nd), dp, dp + 4});
+                return proc.readCString(r) + "/" + std::to_string(proc.mem().read<int32_t>(dp)) + "/" + std::to_string(proc.mem().read<int32_t>(dp + 4));
+            };
+            const std::string f1 = cvt("_fcvt", 10.25, 2), f2 = cvt("_fcvt", -0.0123, 3), f3 = cvt("_fcvt", 1234.5678, 1),
+                              e1 = cvt("_ecvt", 1234.5678, 3), e2 = cvt("_ecvt", 0.000125, 2);
+            check(f1 == "1025/2/0" && f2 == "12/-1/1" && f3 == "12346/4/0" && e1 == "123/4/0" && e2 == "13/-3/0",
+                  "fcvt/ecvt digits, decimal point and sign (Dead Space level end)");
+            if (f1 != "1025/2/0" || f2 != "12/-1/1" || f3 != "12346/4/0" || e1 != "123/4/0" || e2 != "13/-3/0")
+                std::fprintf(stderr, "cvt: %s %s %s %s %s\n", f1.c_str(), f2.c_str(), f3.c_str(), e1.c_str(), e2.c_str());
         }
 
         // sem_open and friends: one counting semaphore per name (Geometry Dash's worker threads).

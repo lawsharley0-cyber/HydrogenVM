@@ -31,13 +31,21 @@ z_stream* host(Ctx& x, uint32_t g) {
     auto it = Z(x).map.find(g);
     return it == Z(x).map.end() ? nullptr : it->second.get();
 }
+void pull(Ctx& x, uint32_t g, z_stream& s);
+// The caller may set next_in/avail_in (and next_out/avail_out) before *Init, as zlib allows:
+// LevelDB's zlib compressor in Minecraft PE does. The new host stream starts from them.
 z_stream* create(Ctx& x, uint32_t g) {
-    std::lock_guard<std::mutex> lk(Z(x).mu);
-    auto& p = Z(x).map[g];
-    p = std::make_unique<z_stream>();
-    *p = z_stream{};
+    z_stream* out;
+    {
+        std::lock_guard<std::mutex> lk(Z(x).mu);
+        auto& p = Z(x).map[g];
+        p = std::make_unique<z_stream>();
+        *p = z_stream{};
+        out = p.get();
+    }
+    pull(x, g, *out);
     x.mem.write<uint32_t>(g + kState, g);   // non-null "internal state"
-    return p.get();
+    return out;
 }
 void destroy(Ctx& x, uint32_t g) { std::lock_guard<std::mutex> lk(Z(x).mu); Z(x).map.erase(g); }
 
@@ -50,8 +58,8 @@ void pull(Ctx& x, uint32_t g, z_stream& s) {
 }
 void push(Ctx& x, uint32_t g, const z_stream& s) {
     const uint32_t in = x.mem.read<uint32_t>(g + kNextIn), out = x.mem.read<uint32_t>(g + kNextOut);
-    if (in) x.mem.write<uint32_t>(g + kNextIn, in + uint32_t(s.next_in - x.mem.host(in)));
-    if (out) x.mem.write<uint32_t>(g + kNextOut, out + uint32_t(s.next_out - x.mem.host(out)));
+    if (in && s.next_in) x.mem.write<uint32_t>(g + kNextIn, in + uint32_t(s.next_in - x.mem.host(in)));
+    if (out && s.next_out) x.mem.write<uint32_t>(g + kNextOut, out + uint32_t(s.next_out - x.mem.host(out)));
     x.mem.write<uint32_t>(g + kAvailIn, s.avail_in);
     x.mem.write<uint32_t>(g + kAvailOut, s.avail_out);
     x.mem.write<uint32_t>(g + kTotalIn, uint32_t(s.total_in));
