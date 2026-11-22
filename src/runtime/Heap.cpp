@@ -109,7 +109,8 @@ uint32_t Heap::alloc(uint32_t size) {
             const uint32_t run = carveRun(rounded);
             if (!run) {
                 // Out of fresh space: fall back to a big block (tracked in the maps).
-                const uint32_t b = bigAlloc(rounded);
+                uint32_t b = bigAlloc(rounded);
+                if (!b && !bigDelayed_.empty()) { flushBigDelayed(); b = bigAlloc(rounded); }
                 if (!b) return 0;
                 stats_.liveBytes += rounded; ++stats_.liveBlocks;
                 return b;
@@ -124,6 +125,7 @@ uint32_t Heap::alloc(uint32_t size) {
         stats_.liveBytes += rounded;
     } else {
         addr = bigAlloc(rounded);
+        if (!addr && !bigDelayed_.empty()) { flushBigDelayed(); addr = bigAlloc(rounded); }
         if (!addr) return 0;
         stats_.liveBytes += live_[addr];
     }
@@ -211,8 +213,23 @@ void Heap::release(uint32_t addr, uint32_t size) {
         if (delayed.size() <= kReuseDelay) return;
         small_[size / kAlign].push_back(delayed.front());
         delayed.pop_front();
+    } else if (size <= kBigDelayMax) {
+        bigDelayed_.emplace_back(addr, size);
+        bigDelayedBytes_ += size;
+        while (bigDelayed_.size() > kBigDelayCount || bigDelayedBytes_ > kBigDelayBytes) {
+            const auto [a, n] = bigDelayed_.front();
+            bigDelayed_.pop_front();
+            bigDelayedBytes_ -= n;
+            bigFree(a, n);
+        }
+    } else {
+        bigFree(addr, size);
     }
-    else bigFree(addr, size);
+}
+void Heap::flushBigDelayed() {
+    for (const auto& [a, n] : bigDelayed_) bigFree(a, n);
+    bigDelayed_.clear();
+    bigDelayedBytes_ = 0;
 }
 
 uint32_t Heap::realloc(uint32_t addr, uint32_t size) {

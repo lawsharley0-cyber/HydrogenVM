@@ -64,6 +64,13 @@ struct HostContext {
     std::unordered_map<uint32_t, MappedBuffer> mapped;   // key: the buffer object's name (a target's binding changes while mapped)
     // ES 1.1 guest on an ES 2/3 host context: fixed function emulated in shaders.
     std::shared_ptr<Gles1Emu> gles1;
+    // Higher resolution: the viewport and scissor box the game set, in its own pixels. GL keeps one
+    // viewport per context, not per framebuffer, so the host's copy is re-scaled whenever the bound
+    // framebuffer's scale changes (a game that set its viewport before binding or enlarging the
+    // drawable otherwise drew into a corner of the larger picture).
+    int32_t guestViewport[4] = {}, guestScissor[4] = {};
+    bool viewportSet = false, scissorSet = false;
+    int appliedScale = 1;
 };
 
 // Brackets GL calls the runtime makes in a guest's context (frame sampling,

@@ -4866,6 +4866,42 @@ int runFullSubsystemTests() {
         check(once && automatic, "a hand-added controller whose app sends viewWillAppear: itself is not sent a second set");
     }
 
+    // Fill the screen: on a taller screen, a game whose drawn content stays within the shorter
+    // screen it was made for is shown like that screen (no empty strip, touches on the band); the
+    // first frame with content past it shows the whole screen from then on.
+    {
+        auto& u = UIKit::ui(cx);
+        const float savedH = u.screenH;
+        std::vector<ObjC::id> hiddenOthers;
+        for (ObjC::id w : std::vector<ObjC::id>(u.windows))
+            if (UIKit::viewData(cx, w).visible) { r.send(cpu, w, "setHidden:", {1}); hiddenOthers.push_back(w); }
+        auto fn = [&](const char* n, std::vector<uint32_t> a) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(n), a)); };
+        const uint32_t space = fn("_CGColorSpaceCreateDeviceRGB", {});
+        const uint32_t bitmap = fn("_CGBitmapContextCreate", {0, 4, 4, 8, 16, space, 1});
+        fn("_CGContextSetRGBFillColor", {bitmap, UIKit::fbits(1), 0, 0, UIKit::fbits(1)});
+        fn("_CGContextFillRect", {bitmap, 0, 0, UIKit::fbits(4), UIKit::fbits(4)});
+        const uint32_t image = fn("_CGBitmapContextCreateImage", {bitmap});
+        u.screenH = 693; u.fillActive = true; u.fillConfirmed = false; u.naturalH = 480; u.shownY = 0;
+        const ObjC::id win = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 693}));
+        const ObjC::id art = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIView"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+        r.send(cpu, ObjC::id(r.send(cpu, art, "layer")), "setContents:", {image});
+        r.send(cpu, win, "addSubview:", {art});
+        r.send(cpu, win, "setHidden:", {0});
+        UIKit::compositeFrame(cx);
+        const bool band = u.framebuffer.height == int(480 * u.scale) && u.fillCropped();
+        // Content reaching past 480 points: the whole screen.
+        UIKit::sendRect(cx, art, r.sel("setFrame:"), {0, 0, 320, 693});
+        UIKit::compositeFrame(cx);
+        UIKit::compositeFrame(cx);
+        const bool whole = !u.fillCropped() && u.framebuffer.height == int(693 * u.scale);
+        r.send(cpu, win, "setHidden:", {1});
+        u.fillActive = false; u.fillConfirmed = false; u.screenH = savedH;
+        for (ObjC::id w : hiddenOthers) r.send(cpu, w, "setHidden:", {0});
+        fn("_CGImageRelease", {image}); fn("_CGContextRelease", {bitmap}); fn("_CGColorSpaceRelease", {space});
+        if (!(band && whole)) std::printf("    fill: band %d whole %d (%dx%d)\n", band, whole, u.framebuffer.width, u.framebuffer.height);
+        check(band && whole, "Fill the screen shows a game's shorter screen until its content goes past it");
+    }
+
     // NIBArchive booleans: value type 5 is true and 4 is false. A view saved hidden in Interface
     // Builder (UIHidden, 5) loads hidden, and one saved not opaque (UIOpaque, 4) loads not opaque.
     {
@@ -4922,7 +4958,14 @@ int runFullSubsystemTests() {
         bool reused = false;
         for (int i = 0; i < 32; ++i) { next.push_back(proc.heap().alloc(48)); reused |= next.back() == freed; }
         for (uint32_t b : next) proc.heap().free(b);
-        check(!reused, "a freed small block waits before it is reused");
+        // The same for a larger block (a hash table's bucket array in a big level).
+        const uint32_t bigFreed = proc.heap().alloc(16 * 1024);
+        proc.heap().free(bigFreed);
+        std::vector<uint32_t> bigNext;
+        bool bigReused = false;
+        for (int i = 0; i < 8; ++i) { bigNext.push_back(proc.heap().alloc(16 * 1024)); bigReused |= bigNext.back() == bigFreed; }
+        for (uint32_t b : bigNext) proc.heap().free(b);
+        check(!reused && !bigReused, "a freed block (small or up to 256 KB) waits before it is reused");
     }
 
     // CGSize / CGPoint dictionary round trip (Trucks & Skulls' level files store sizes this way).
@@ -14106,6 +14149,7 @@ int runFullSubsystemTests() {
                     if (pname == 0x8CA7) *out = rbBinding();                 // GL_RENDERBUFFER_BINDING
                     else if (pname == 0x8CA6) *out = 1;                      // GL_FRAMEBUFFER_BINDING
                     else if (pname == 0x0BA2) std::memcpy(out, viewport().data(), 16);
+                    else if (pname == 0x8069) *out = int32_t(texBinding());   // GL_TEXTURE_BINDING_2D
                     else *out = 0;
                 }
                 static void bindRenderbuffer(uint32_t, uint32_t rb) { rbBinding() = int32_t(rb); }
@@ -14114,12 +14158,18 @@ int runFullSubsystemTests() {
                     auto& s = sizes()[rbBinding()];
                     *out = pname == 0x8D42 ? s.first : pname == 0x8D43 ? s.second : pname == 0x8D44 ? 0x81A5 : 0;
                 }
+                static bool& depthIsTexture() { static bool v = false; return v; }
+                static uint32_t& texBinding() { static uint32_t v = 0; return v; }
+                static std::map<uint32_t, std::pair<int32_t, int32_t>>& texSizes() { static std::map<uint32_t, std::pair<int32_t, int32_t>> m; return m; }
                 static void attachmentParam(uint32_t, uint32_t attachment, uint32_t pname, int32_t* out) {
-                    // colour: renderbuffer 1 (the drawable); depth: renderbuffer 2
+                    // colour: renderbuffer 1 (the drawable); depth: renderbuffer 2, or texture 5
                     const bool color = attachment == 0x8CE0, depth = attachment == 0x8D00;
-                    if (pname == 0x8CD0) *out = (color || depth) ? 0x8D41 : 0;
-                    else if (pname == 0x8CD1) *out = color ? 1 : depth ? 2 : 0;
+                    if (pname == 0x8CD0) *out = color ? 0x8D41 : depth ? (depthIsTexture() ? 0x1702 : 0x8D41) : 0;
+                    else if (pname == 0x8CD1) *out = color ? 1 : depth ? (depthIsTexture() ? 5 : 2) : 0;
                 }
+                static void bindTexture(uint32_t, uint32_t t) { texBinding() = t; }
+                static void texImage2D(uint32_t, int32_t, int32_t, int32_t w, int32_t h, int32_t, uint32_t, uint32_t, const void*) { texSizes()[texBinding()] = {w, h}; }
+                static void framebufferTexture2D(uint32_t, uint32_t, uint32_t, uint32_t, int32_t) {}
                 static void framebufferRenderbuffer(uint32_t, uint32_t, uint32_t, uint32_t) {}
                 static void viewportFn(int32_t a, int32_t b, int32_t c, int32_t d) { viewport() = {a, b, c, d}; }
                 static uint32_t getError() { return 0; }
@@ -14140,6 +14190,9 @@ int runFullSubsystemTests() {
                     if (s == "glFramebufferRenderbuffer") return reinterpret_cast<void*>(&ScaleGL::framebufferRenderbuffer);
                     if (s == "glViewport") return reinterpret_cast<void*>(&ScaleGL::viewportFn);
                     if (s == "glGetError") return reinterpret_cast<void*>(&ScaleGL::getError);
+                    if (s == "glBindTexture") return reinterpret_cast<void*>(&ScaleGL::bindTexture);
+                    if (s == "glTexImage2D") return reinterpret_cast<void*>(&ScaleGL::texImage2D);
+                    if (s == "glFramebufferTexture2D") return reinterpret_cast<void*>(&ScaleGL::framebufferTexture2D);
                     return nullptr;
                 }
                 bool drawableStorage(void*, uint32_t, int w, int h, bool& handled) override {
@@ -14160,7 +14213,11 @@ int runFullSubsystemTests() {
             sr.send(scpu, ObjC::id(sctxCls), "setCurrentContext:", {sctx});
             auto gl = [&](const char* n, std::vector<uint32_t> a) { return uint32_t(sproc.callGuest(scpu, *sproc.lookupSymbol(n), a)); };
             ScaleGL::rbBinding() = 1;
+            // A viewport set before the drawable exists (as many games do at start-up) is scaled
+            // when the drawable is made larger: GL has one viewport per context.
+            gl("_glViewport", {0, 0, 320, 480});
             HostGL::renderbufferStorageFromDrawable(sproc, sctx, 0x5151, 320, 480);
+            const auto earlyViewport = ScaleGL::viewport();
             const uint32_t out = sproc.heap().allocZeroed(16);
             gl("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, out});
             const int32_t seenW = sproc.mem().read<int32_t>(out);
@@ -14174,15 +14231,30 @@ int runFullSubsystemTests() {
             const auto depth = ScaleGL::sizes()[2];
             gl("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, out});
             const int32_t depthSeenH = sproc.mem().read<int32_t>(out);
+            // A depth texture made at the game's size and attached beside the drawable (Minecraft:
+            // Story Mode) is made again at the drawable's real size.
+            gl("_glBindTexture", {0x0DE1, 5});
+            const uint32_t stack = sproc.heap().allocZeroed(64 * 1024);   // glTexImage2D passes arguments on the stack
+            const uint32_t savedSp = scpu.r[13];
+            scpu.r[13] = stack + 64 * 1024 - 64;
+            gl("_glTexImage2D", {0x0DE1, 0, 0x1902, 320, 480, 0, 0x1902, 0x1405, 0});
+            ScaleGL::depthIsTexture() = true;
+            gl("_glFramebufferTexture2D", {0x8D40, 0x8D00, 0x0DE1, 5, 0});
+            ScaleGL::depthIsTexture() = false;
+            scpu.r[13] = savedSp;
+            sproc.heap().free(stack);
+            const auto depthTex = ScaleGL::texSizes()[5];
             sproc.heap().free(out);
             sr.send(scpu, ObjC::id(sctxCls), "setCurrentContext:", {0});
             const bool ok = plat->stored.size() == 1 && plat->stored[0] == std::make_pair(960, 1440) && seenW == 320 &&
                             hostViewport == std::array<int32_t, 4>{0, 0, 960, 1440} && seenVw == 320 && seenVh == 480 &&
-                            depth == std::make_pair(960, 1440) && depthSeenH == 480;
-            if (!ok) std::printf("    resolution: stored %dx%d seen %d viewport %d,%d host %dx%d depth %dx%d seen %d\n",
+                            depth == std::make_pair(960, 1440) && depthSeenH == 480 &&
+                            earlyViewport == std::array<int32_t, 4>{0, 0, 960, 1440} && depthTex == std::make_pair(960, 1440);
+            if (!ok) std::printf("    resolution: depth texture %dx%d; early viewport %dx%d; stored %dx%d seen %d viewport %d,%d host %dx%d depth %dx%d seen %d\n",
+                                 depthTex.first, depthTex.second, earlyViewport[2], earlyViewport[3],
                                  plat->stored.empty() ? 0 : plat->stored[0].first, plat->stored.empty() ? 0 : plat->stored[0].second, seenW,
                                  seenVw, seenVh, hostViewport[2], hostViewport[3], depth.first, depth.second, depthSeenH);
-            check(ok, "higher resolution stores the drawable and its depth buffer larger while the game sees its own size");
+            check(ok, "higher resolution stores the drawable and its depth buffer larger while the game sees its own size; an earlier viewport follows");
         }
         FakeGL::mainId() = std::this_thread::get_id();
         auto platform = std::make_shared<ErrPlatform>();

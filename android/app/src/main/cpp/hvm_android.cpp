@@ -348,7 +348,7 @@ Session* startSession(const std::string& bundle, const std::string& home, bool h
         if (p) {   // read UIKit on this guest render thread, with the pixels
             orientation = RT::UIKit::ui(*p).statusBarOrientation;
             gw = RT::UIKit::ui(*p).screenW;
-            gh = RT::UIKit::ui(*p).screenH;
+            gh = RT::UIKit::ui(*p).shownH();   // the shown band (Fill the screen)
         }
         std::lock_guard<std::mutex> lk(s->mu);
         s->frame.assign(rgba, rgba + size_t(w) * size_t(h) * 4);

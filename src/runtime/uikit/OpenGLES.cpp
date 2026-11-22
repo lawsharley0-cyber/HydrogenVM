@@ -796,7 +796,9 @@ bool ctx_renderbufferStorage(Ctx& x, id self, SEL, uint32_t target, id drawable)
             w = std::max(1, int(std::round(bw * scale)));
             h = std::max(1, int(std::round(bh * scale)));
         }
-        return HostGL::renderbufferStorageFromDrawable(x.proc, self, drawable, w, h);
+        const bool ok = HostGL::renderbufferStorageFromDrawable(x.proc, self, drawable, w, h);
+        HostGL::afterDrawableStorage(x);
+        return ok;
     }
     ContextData& c = rt(x).host<ContextData>(self);
     SharegroupData* sg = currentSg(x, &c);

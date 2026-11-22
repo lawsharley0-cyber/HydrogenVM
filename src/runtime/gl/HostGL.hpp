@@ -101,6 +101,12 @@ public:
 // GL compatibility context for ES 1.1 when the driver has no ES 1.1. Null when
 // libEGL can't be loaded or initialized.
 std::shared_ptr<Platform> createEglPlatform(std::string* why = nullptr);
+// The part of a CAEAGLLayer's drawable the game's viewports have covered, as fractions of the drawable
+// with a top-left origin {x0, y0, x1, y1}. False before the game set a viewport on it.
+bool drawableUsedRect(Process& p, uint32_t layer, float out[4]);
+// After renderbufferStorage:fromDrawable: with higher resolution, depth/stencil textures beside the
+// drawable follow its size (needs the guest call's context; renderbuffers follow inside the storage call).
+void afterDrawableStorage(Ctx& x);
 
 // --- used by OpenGLES.cpp -------------------------------------------------
 

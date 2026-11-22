@@ -299,7 +299,7 @@ public class MainActivity extends Activity {
     private void settings(Games.Game g) {
         final String[] labels = {
                 "Higher resolution (sharper 3D, up to 3x)",
-                "Fill the screen (taller screen; not every game supports it)",
+                "Fill the screen (taller screen; games made for the old screen are shown normally)",
                 "Unlock frame rate (30 fps games at 60; experimental)"};
         final String[] keys = {Games.HIGHER_RESOLUTION, Games.FILL_SCREEN, Games.UNLOCK_FPS};
         boolean[] on = new boolean[keys.length];

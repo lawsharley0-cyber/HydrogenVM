@@ -822,6 +822,7 @@ void applyGuestScreenEnv(Ctx& x) {
         float v = 0;
         // 480 is today's shortest screen; 1024 keeps tablets-in-portrait out of reach of a typo.
         if (number(h, v) && v >= 480 && v <= 1024) {
+            if (std::floor(v) > u.screenH) { u.fillActive = true; u.fillConfirmed = false; u.naturalH = u.screenH; u.shownY = 0; }
             u.screenH = std::floor(v);
             x.proc.setScreenSize(uint32_t(u.screenW), uint32_t(u.screenH));
         }
@@ -987,6 +988,7 @@ void registerUIApplication(Process& p, ObjC::Runtime& r) {
     // Host input → main thread.
     p.setTouchHandler([&p](TouchPhase phase, float tx, float ty, uint32_t fid) {
         auto& st = ui(p);
+        if (st.fillCropped()) ty += st.shownY;   // the host maps touches onto the band it is shown
         {
             std::lock_guard<std::mutex> lk(st.inputMu);
             st.pendingTouches.push_back({int(phase), tx, ty, fid, nowSeconds()});

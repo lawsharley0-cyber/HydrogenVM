@@ -474,6 +474,14 @@ void dl_dealloc(Ctx& x, id self, SEL) {
 struct Compositor {
     Ctx& x;
     G::Surface& dst;
+    // Vertical extent of drawn content in this frame (device pixels, before clipping): what
+    // "Fill the screen" uses to tell whether the game draws past its shorter screen.
+    float contentTop = 1e30f, contentBottom = -1e30f;
+    void noteContent(const G::Rect& r) {
+        if (r.w <= 0.5f || r.h <= 0.5f) return;
+        contentTop = std::min(contentTop, r.y);
+        contentBottom = std::max(contentBottom, r.y + r.h);
+    }
 
     // 9-slice / gravity aware contents drawing (layer bounds space → device via m)
     void drawContents(const LayerData& d, const G::Image& img, float imgScale, const G::Affine& m, const G::Clip& clip, float alpha) {
@@ -601,6 +609,13 @@ struct Compositor {
         const G::Path devShape = shape.transformed(m);
 
         if (d.hostPresented) {
+            // Content extent: the part of the drawable the game draws into.
+            G::Rect drawn = d.bounds;
+            float used[4];
+            if (HostGL::drawableUsedRect(x.proc, layer, used))
+                drawn = {d.bounds.x + used[0] * d.bounds.w, d.bounds.y + used[1] * d.bounds.h,
+                         (used[2] - used[0]) * d.bounds.w, (used[3] - used[1]) * d.bounds.h};
+            noteContent(m.applyRect(drawn));
             // Tell the host where its GPU layer goes (rotated for landscape games).
             const float tm[6] = {m.a, m.b, m.c, m.d, m.tx, m.ty};
             HostGL::layerPlaced(x.proc, layer, tm, d.bounds.x, d.bounds.y, d.bounds.w, d.bounds.h, dst.width, dst.height);
@@ -634,6 +649,14 @@ struct Compositor {
         else if (d.externalContents) img = d.externalContents();
         else if (d.contents) { img = CG::imageOf(x, d.contents); }
         else if (d.backing) img = d.backing;
+        if (img && alpha > 0.01f) {
+            G::Rect drawn = d.bounds;
+            float used[4];
+            if (HostGL::drawableUsedRect(x.proc, layer, used))   // a GL layer read back (only GL layers have one)
+                drawn = {d.bounds.x + used[0] * d.bounds.w, d.bounds.y + used[1] * d.bounds.h,
+                         (used[2] - used[0]) * d.bounds.w, (used[3] - used[1]) * d.bounds.h};
+            noteContent(m.applyRect(drawn));
+        }
         if (img && img->width > 0) {
             const G::Clip c2 = d.cornerRadius > 0 && d.masksToBounds ? G::intersectClip(clip, devShape, false) : clip;
             drawContents(d, *img, imgScale > 0 ? imgScale : 1, m, c2, alpha);
@@ -745,7 +768,7 @@ void setNeedsComposite(Ctx& x) { dirty(x); }
 
 bool compositeFrame(Ctx& x) {
     auto& u = ui(x);
-    const int W = int(u.screenW * u.scale), H = int(u.screenH * u.scale);
+    const int W = int(u.screenW * u.scale), H = int(u.shownH() * u.scale);
     G::Image& fb = u.framebuffer;
     if (fb.width != W || fb.height != H) { fb.width = W; fb.height = H; fb.rgba.assign(size_t(W) * size_t(H) * 4, 0); }
     G::Surface s = fb.surface();
@@ -756,10 +779,28 @@ bool compositeFrame(Ctx& x) {
     std::vector<id> wins;
     for (id w : u.windows) if (viewData(x, w).visible) wins.push_back(w);
     std::stable_sort(wins.begin(), wins.end(), [&](id a, id b) { return viewData(x, a).windowLevel < viewData(x, b).windowLevel; });
-    const G::Affine screen = G::Affine::scale(u.scale, u.scale);
+    const bool cropped = u.fillCropped();
+    bool recompose = false;   // the shown band changed: draw again next frame
+    const G::Affine screen = cropped ? G::Affine::scale(u.scale, u.scale).then(G::Affine::translate(0, -u.shownY * u.scale))
+                                     : G::Affine::scale(u.scale, u.scale);
     for (id w : wins) c.render(viewLayer(x, w), screen, all, 1);
+    if (cropped && c.contentBottom > c.contentTop) {
+        // Content in the taller screen's points, clipped to the screen (an animation frame placed
+        // partly above the top, as Talking Larry's are, is not content below the shorter screen).
+        const float top = std::max(0.0f, c.contentTop / u.scale + u.shownY);
+        const float bottom = std::min(u.screenH, c.contentBottom / u.scale + u.shownY);
+        if (bottom - top > u.naturalH + 2) {
+            u.fillConfirmed = true;   // the game draws past the shorter screen: show all of it from now on
+            x.proc.logf(LogLevel::Info, "Fill the screen: the game draws over %.0f points; showing the whole %gx%g screen",
+                        bottom - top, u.screenW, u.screenH);
+            recompose = true;
+        } else if (top < u.shownY - 1 || bottom > u.shownY + u.naturalH + 1) {
+            u.shownY = std::clamp(top, 0.0f, u.screenH - u.naturalH);   // follow the content's band
+            recompose = true;
+        }
+    }
     if (!u.statusBarHidden) drawStatusBar(x, s);
-    u.needsComposite = false;
+    u.needsComposite = recompose;
     ++u.frames;
     return true;
 }

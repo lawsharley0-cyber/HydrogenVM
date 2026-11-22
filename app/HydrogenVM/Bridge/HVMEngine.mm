@@ -696,7 +696,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
             // The guest's screen in points (touches are sent in these). Not pixels / 2: an
             // iPad-only game runs a 768x1024 canvas at scale 1, and halving it put every
             // touch at half its place (buttons answered away from where they are drawn).
-            const float gw = p ? RT::UIKit::ui(*p).screenW : 0, gh = p ? RT::UIKit::ui(*p).screenH : 0;
+            const float gw = p ? RT::UIKit::ui(*p).screenW : 0, gh = p ? RT::UIKit::ui(*p).shownH() : 0;   // the shown band (Fill the screen)
             const CGSize size = gw > 0 && gh > 0 ? CGSizeMake(gw, gh) : CGSizeMake(float(w) / 2, float(h) / 2);
             NSData *pixels = [NSData dataWithBytes:rgba length:size_t(w) * size_t(h) * 4];
             CGDataProviderRef dp = CGDataProviderCreateWithCFData((__bridge CFDataRef)pixels);
@@ -761,7 +761,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
                 proc->load();
                 core->ready = true;
                 {   // The guest screen in points, before any frame: GPU-presented games never send one.
-                    const CGSize guestScreen = CGSizeMake(RT::UIKit::ui(*proc).screenW, RT::UIKit::ui(*proc).screenH);
+                    const CGSize guestScreen = CGSizeMake(RT::UIKit::ui(*proc).screenW, RT::UIKit::ui(*proc).shownH());
                     if (guestScreen.width > 0 && guestScreen.height > 0)
                         dispatch_async(dispatch_get_main_queue(), ^{ if (HVMSession *s = weakSelf) s.screenSize = guestScreen; });
                 }

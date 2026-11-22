@@ -56,6 +56,10 @@ struct Drawable {
     uint32_t layer = 0;
     int width = 0, height = 0;   // host pixels (scale times what the game is told)
     int scale = 1;               // ProcessConfig::resolutionScale applied to this drawable
+    // The part of the drawable the game's viewports have covered (host pixels, GL's bottom-left
+    // origin; x1 < 0 = none yet). A game made for a 480-point screen in a taller view draws only
+    // there ("Fill the screen", UIKit's compositor reads it with drawableUsedRect).
+    int used[4] = {0, 0, -1, -1};
 };
 struct Placement { float unit[6] = {}; };
 
@@ -70,6 +74,10 @@ struct State {
     // the size the game asked for, keyed by (guest sharegroup, name): the drawable's colour
     // buffer, depth/stencil buffers attached next to it and multisample buffers of its size.
     std::unordered_map<uint64_t, int> scaledRbs;
+    // With higher resolution: how each 2D texture was made at level 0 (the game's size and formats),
+    // so a depth or stencil texture beside the drawable can be made again at its size.
+    struct TexInfo { int32_t w = 0, h = 0, internalFormat = 0; uint32_t format = 0, type = 0; int scale = 1; };
+    std::unordered_map<uint64_t, TexInfo> textures;
     std::unordered_map<uint32_t, std::unique_ptr<HostContext>> contexts;          // guest EAGLContext -> host
     std::unordered_map<uint64_t, std::unique_ptr<HostContext>> workers;           // (thread, sharegroup) -> implicit
     uint64_t nextRetireId = 1;
@@ -551,6 +559,8 @@ static uint32_t toGuest(Ctx& x, const void* p) {
 
 #define hg_glViewport hg_glViewportGenerated
 #define hg_glScissor hg_glScissorGenerated
+#define hg_glFramebufferTexture2D hg_glFramebufferTexture2DGenerated
+#define hg_glFramebufferTexture2DOES hg_glFramebufferTexture2DOESGenerated
 #define hg_glGetRenderbufferParameteriv hg_glGetRenderbufferParameterivGenerated
 #define hg_glGetRenderbufferParameterivOES hg_glGetRenderbufferParameterivOESGenerated
 #define hg_glReadPixels hg_glReadPixelsGenerated
@@ -565,6 +575,8 @@ static uint32_t toGuest(Ctx& x, const void* p) {
 #undef HOSTGL_WRAPPERS
 #undef hg_glViewport
 #undef hg_glScissor
+#undef hg_glFramebufferTexture2D
+#undef hg_glFramebufferTexture2DOES
 #undef hg_glGetRenderbufferParameteriv
 #undef hg_glGetRenderbufferParameterivOES
 #undef hg_glReadPixels
@@ -702,8 +714,8 @@ int scaledRb(HostContext* hc, State& st, uint32_t rb) {
     return it == st.scaledRbs.end() ? 1 : it->second;
 }
 // The factor of the framebuffer bound for drawing: that of its colour renderbuffer.
-int currentFramebufferScale(Ctx& x, HostContext* hc) {
-    State& st = S(x.proc);
+int currentFramebufferScale(Process& p, HostContext* hc) {
+    State& st = S(p);
     {
         std::lock_guard<std::mutex> lk(st.mu);
         if (st.scaledRbs.empty()) return 1;
@@ -718,22 +730,26 @@ int currentFramebufferScale(Ctx& x, HostContext* hc) {
     attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &name);
     return scaledRb(hc, st, uint32_t(name));
 }
-// Depth and stencil renderbuffers attached to a scaled framebuffer at the game's size are stored
-// again at the colour buffer's size (iOS games size them from the drawable they just queried).
-void reconcileScaledAttachments(Ctx& x, HostContext* hc) {
-    const int k = currentFramebufferScale(x, hc);
-    if (k <= 1) return;
-    State& st = S(x.proc);
+// Depth and stencil renderbuffers attached beside the drawable follow its size: one at the game's
+// size of the drawable is stored at the drawable's real size. The game may size them before or
+// after the drawable, and make the drawable again at another size (Minecraft PE 1.1 made it at
+// 568x320, then 1136x640): a depth buffer left at the other size limited drawing to a corner.
+void reconcileScaledAttachments(Process& p, HostContext* hc) {
+    State& st = S(p);
     auto attachmentParam = hc->fn.glGetFramebufferAttachmentParameteriv
         ? hc->fn.glGetFramebufferAttachmentParameteriv : hc->fn.glGetFramebufferAttachmentParameterivOES;
     auto bindRb = hc->fn.glBindRenderbuffer ? hc->fn.glBindRenderbuffer : hc->fn.glBindRenderbufferOES;
     auto rbParam = hc->fn.glGetRenderbufferParameteriv ? hc->fn.glGetRenderbufferParameteriv : hc->fn.glGetRenderbufferParameterivOES;
     auto storage = hc->fn.glRenderbufferStorage ? hc->fn.glRenderbufferStorage : hc->fn.glRenderbufferStorageOES;
-    if (!attachmentParam || !bindRb || !rbParam || !storage) return;
+    if (!attachmentParam || !bindRb || !rbParam || !storage || hgGetInt(hc, kFramebufferBinding) == 0) return;
     GuestErrorScope quiet(hc);
-    const int32_t savedRb = hgGetInt(hc, kRenderbufferBinding);
-    int32_t colorName = 0, cw = 0, ch = 0;
+    int32_t colorType = 0, colorName = 0;
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectType, &colorType);
+    if (uint32_t(colorType) != kRenderbuffer) return;
     attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &colorName);
+    const int k = scaledRb(hc, st, uint32_t(colorName));
+    const int32_t savedRb = hgGetInt(hc, kRenderbufferBinding);
+    int32_t cw = 0, ch = 0;
     bindRb(kRenderbuffer, uint32_t(colorName));
     rbParam(kRenderbuffer, kRenderbufferWidth, &cw);
     rbParam(kRenderbuffer, kRenderbufferHeight, &ch);
@@ -741,16 +757,19 @@ void reconcileScaledAttachments(Ctx& x, HostContext* hc) {
         int32_t type = 0, name = 0;
         attachmentParam(kFramebuffer, point, kFbAttachmentObjectType, &type);
         attachmentParam(kFramebuffer, point, kFbAttachmentObjectName, &name);
-        if (uint32_t(type) != kRenderbuffer || name == 0 || name == colorName || scaledRb(hc, st, uint32_t(name)) > 1) continue;
+        if (uint32_t(type) != kRenderbuffer || name == 0 || name == colorName) continue;
+        const int f = scaledRb(hc, st, uint32_t(name));
         bindRb(kRenderbuffer, uint32_t(name));
         int32_t w = 0, h = 0, fmt = 0;
         rbParam(kRenderbuffer, kRenderbufferWidth, &w);
         rbParam(kRenderbuffer, kRenderbufferHeight, &h);
         rbParam(kRenderbuffer, kRenderbufferInternalFormat, &fmt);
-        if (w * k != cw || h * k != ch || !fmt) continue;
+        // Same size as the colour buffer in the game's pixels, but not in the host's: store it again.
+        if (!fmt || w / f != cw / k || h / f != ch / k || (w == cw && h == ch)) continue;
         storage(kRenderbuffer, uint32_t(fmt), cw, ch);
         std::lock_guard<std::mutex> lk(st.mu);
-        st.scaledRbs[key2(hc->guestSharegroup, uint32_t(name))] = k;
+        if (k > 1) st.scaledRbs[key2(hc->guestSharegroup, uint32_t(name))] = k;
+        else st.scaledRbs.erase(key2(hc->guestSharegroup, uint32_t(name)));
     }
     bindRb(kRenderbuffer, uint32_t(savedRb));
 }
@@ -773,28 +792,75 @@ void storeRenderbuffer(Ctx& x, HostContext* hc, int32_t w, int32_t h, const std:
     if (k > 1) st.scaledRbs[key] = k; else if (!st.drawables.count(key)) st.scaledRbs.erase(key);
 }
 
+// Adds a viewport (host pixels) to the used part of the drawable bound for drawing, if any.
+void noteDrawableViewport(Process& p, HostContext* hc, int32_t vx, int32_t vy, int32_t vw, int32_t vh) {
+    State& st = S(p);
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        if (st.drawables.empty()) return;
+    }
+    auto attachmentParam = hc->fn.glGetFramebufferAttachmentParameteriv
+        ? hc->fn.glGetFramebufferAttachmentParameteriv : hc->fn.glGetFramebufferAttachmentParameterivOES;
+    if (!attachmentParam || vw <= 0 || vh <= 0 || hgGetInt(hc, kFramebufferBinding) == 0) return;
+    int32_t type = 0, name = 0;
+    {
+        GuestErrorScope quiet(hc);
+        attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectType, &type);
+        if (uint32_t(type) != kRenderbuffer) return;
+        attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &name);
+    }
+    std::lock_guard<std::mutex> lk(st.mu);
+    auto it = st.drawables.find(key2(hc->guestSharegroup, uint32_t(name)));
+    if (it == st.drawables.end() || !it->second.layer) return;
+    Drawable& d = it->second;
+    const int x0 = std::clamp(vx, 0, d.width), y0 = std::clamp(vy, 0, d.height);
+    const int x1 = std::clamp(vx + vw, 0, d.width), y1 = std::clamp(vy + vh, 0, d.height);
+    if (x1 <= x0 || y1 <= y0) return;
+    if (d.used[2] < 0) { d.used[0] = x0; d.used[1] = y0; d.used[2] = x1; d.used[3] = y1; return; }
+    d.used[0] = std::min(d.used[0], x0); d.used[1] = std::min(d.used[1], y0);
+    d.used[2] = std::max(d.used[2], x1); d.used[3] = std::max(d.used[3], y1);
+}
+
 void hg_glViewport(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
     if (HostContext* hc = hgCurrent(x)) {
-        const int k = currentFramebufferScale(x, hc);
+        hc->guestViewport[0] = a_x; hc->guestViewport[1] = a_y; hc->guestViewport[2] = a_width; hc->guestViewport[3] = a_height;
+        hc->viewportSet = true;
+        const int k = currentFramebufferScale(x.proc, hc);
+        hc->appliedScale = k;
         a_x *= k; a_y *= k; a_width *= k; a_height *= k;
+        noteDrawableViewport(x.proc, hc, a_x, a_y, a_width, a_height);
     }
     maybeGrowHostDrawable(x, a_width, a_height);
     hg_glViewportGenerated(x, a_x, a_y, a_width, a_height);
 }
 void hg_glScissor(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
     if (HostContext* hc = hgCurrent(x)) {
-        const int k = currentFramebufferScale(x, hc);
+        hc->guestScissor[0] = a_x; hc->guestScissor[1] = a_y; hc->guestScissor[2] = a_width; hc->guestScissor[3] = a_height;
+        hc->scissorSet = true;
+        const int k = currentFramebufferScale(x.proc, hc);
         a_x *= k; a_y *= k; a_width *= k; a_height *= k;
     }
     hg_glScissorGenerated(x, a_x, a_y, a_width, a_height);
 }
+// Re-scales the host's viewport and scissor box after the bound framebuffer, or its scale, changed.
+void reapplyScaledViewport(Process& p, HostContext* hc) {
+    if (!hc || (!hc->viewportSet && !hc->scissorSet)) return;
+    const int k = currentFramebufferScale(p, hc);
+    if (k == hc->appliedScale) return;
+    hc->appliedScale = k;
+    GuestErrorScope quiet(hc);
+    if (hc->viewportSet && hc->fn.glViewport)
+        hc->fn.glViewport(hc->guestViewport[0] * k, hc->guestViewport[1] * k, hc->guestViewport[2] * k, hc->guestViewport[3] * k);
+    if (hc->scissorSet && hc->fn.glScissor)
+        hc->fn.glScissor(hc->guestScissor[0] * k, hc->guestScissor[1] * k, hc->guestScissor[2] * k, hc->guestScissor[3] * k);
+}
 void hg_glPointSize(Ctx& x, float size) {
     HostContext* hc = hgCurrent(x);
-    hg_glPointSizeGenerated(x, hc ? size * float(currentFramebufferScale(x, hc)) : size);
+    hg_glPointSizeGenerated(x, hc ? size * float(currentFramebufferScale(x.proc, hc)) : size);
 }
 void hg_glLineWidth(Ctx& x, float width) {
     HostContext* hc = hgCurrent(x);
-    hg_glLineWidthGenerated(x, hc ? width * float(currentFramebufferScale(x, hc)) : width);
+    hg_glLineWidthGenerated(x, hc ? width * float(currentFramebufferScale(x.proc, hc)) : width);
 }
 static void unscaleRenderbufferParam(Ctx& x, uint32_t pname, GuestPtr params) {
     if ((pname != kRenderbufferWidth && pname != kRenderbufferHeight) || !params) return;
@@ -835,7 +901,7 @@ void hg_glRenderbufferStorageMultisample(Ctx& x, uint32_t target, int32_t sample
 // for (averaged for 8-bit RGBA, nearest pixel for other formats).
 void hg_glReadPixels(Ctx& x, int32_t rx, int32_t ry, int32_t w, int32_t h, uint32_t format, uint32_t type, GuestPtr pixels) {
     HostContext* hc = hgCurrent(x);
-    const int k = hc ? currentFramebufferScale(x, hc) : 1;
+    const int k = hc ? currentFramebufferScale(x.proc, hc) : 1;
     if (k <= 1 || w <= 0 || h <= 0 || !pixels) { hg_glReadPixelsGenerated(x, rx, ry, w, h, format, type, pixels); return; }
     constexpr uint32_t kRgba = 0x1908, kRgb = 0x1907, kAlpha = 0x1906, kLuminance = 0x1909, kLuminanceAlpha = 0x190A, kBgra = 0x80E1;
     int bpp = 0;
@@ -906,8 +972,10 @@ void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
         return;
     }
     hc->fn.glGetIntegerv(pname, out);
-    if (pname == 0x0BA2 || pname == 0x0C10) {   // GL_VIEWPORT, GL_SCISSOR_BOX: the game's own size
-        if (const int k = currentFramebufferScale(x, hc); k > 1) for (int i = 0; i < 4; ++i) out[i] /= k;
+    if (pname == 0x0BA2 || pname == 0x0C10) {   // GL_VIEWPORT, GL_SCISSOR_BOX: what the game set, in its own pixels
+        const bool vp = pname == 0x0BA2;
+        if (vp ? hc->viewportSet : hc->scissorSet) std::memcpy(out, vp ? hc->guestViewport : hc->guestScissor, 16);
+        else if (const int k = currentFramebufferScale(x.proc, hc); k > 1) for (int i = 0; i < 4; ++i) out[i] /= k;
     }
     if (pname == kMaxTextureSize) *out = std::min(*out, 4096);   // what iOS devices of this era report
     if (pname == 0x8DF9 /*GL_NUM_SHADER_BINARY_FORMATS*/) *out = 0;
@@ -992,9 +1060,18 @@ void hg_glCompressedTexSubImage2D(Ctx& x, uint32_t target, int32_t level, int32_
 
 // APPLE_texture_format_BGRA8888 allows internalformat GL_RGBA with format GL_BGRA;
 // EXT_texture_format_BGRA8888 (Mesa ES) wants GL_BGRA for both.
+static thread_local bool remakingTexture = false;   // reconcileScaledTextures' own uploads
 void hg_glTexImage2D(Ctx& x, uint32_t target, int32_t level, int32_t internalformat, int32_t width, int32_t height,
                      int32_t border, uint32_t format, uint32_t type, GuestPtr pixels) {
     HG_BEGIN(glTexImage2D)
+    if (!remakingTexture && level == 0 && target == 0x0DE1 && resolutionFactor(x.proc) > 1) {
+        const uint32_t tex = uint32_t(hgGetInt(hc, 0x8069 /*TEXTURE_BINDING_2D*/));
+        if (tex) {
+            State& st = S(x.proc);
+            std::lock_guard<std::mutex> lk(st.mu);
+            st.textures[key2(hc->guestSharegroup, tex)] = {width, height, internalformat, format, type, 1};
+        }
+    }
     // Formats an iOS 5-9 driver took by their ES 2 names and a newer driver may refuse. The call
     // is made as the guest made it; if the driver refuses, it is made again in the form below.
     //  - Depth textures (OES_depth_texture, OES_packed_depth_stencil): the sized format.
@@ -1361,6 +1438,72 @@ void hg_glGetBufferPointervOES(Ctx& x, uint32_t target, uint32_t pname, GuestPtr
 
 // ------------------------------------------------------------- multisample ---
 
+// Depth and stencil textures attached beside a scaled drawable (Minecraft: Story Mode attaches a
+// depth-stencil texture to its screen framebuffer) are made again at the drawable's real size, with
+// the formats the game gave; at the game's size they confined drawing to a corner of the picture.
+void reconcileScaledTextures(Ctx& x, HostContext* hc) {
+    if (resolutionFactor(x.proc) <= 1) return;
+    State& st = S(x.proc);
+    auto attachmentParam = hc->fn.glGetFramebufferAttachmentParameteriv
+        ? hc->fn.glGetFramebufferAttachmentParameteriv : hc->fn.glGetFramebufferAttachmentParameterivOES;
+    auto rbParam = hc->fn.glGetRenderbufferParameteriv ? hc->fn.glGetRenderbufferParameteriv : hc->fn.glGetRenderbufferParameterivOES;
+    auto bindRb = hc->fn.glBindRenderbuffer ? hc->fn.glBindRenderbuffer : hc->fn.glBindRenderbufferOES;
+    if (!attachmentParam || !rbParam || !bindRb || !hc->fn.glBindTexture || hgGetInt(hc, kFramebufferBinding) == 0) return;
+    int32_t colorType = 0, colorName = 0, cw = 0, ch = 0;
+    struct Remake { uint32_t name; State::TexInfo info; };
+    std::vector<Remake> remake;
+    int k = 1;
+    {
+        GuestErrorScope quiet(hc);
+        attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectType, &colorType);
+        if (uint32_t(colorType) != kRenderbuffer) return;
+        attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &colorName);
+        k = scaledRb(hc, st, uint32_t(colorName));
+        const int32_t savedRb = hgGetInt(hc, kRenderbufferBinding);
+        bindRb(kRenderbuffer, uint32_t(colorName));
+        rbParam(kRenderbuffer, kRenderbufferWidth, &cw);
+        rbParam(kRenderbuffer, kRenderbufferHeight, &ch);
+        bindRb(kRenderbuffer, uint32_t(savedRb));
+        for (uint32_t point : {kDepthAttachment, kStencilAttachment}) {
+            int32_t type = 0, name = 0;
+            attachmentParam(kFramebuffer, point, kFbAttachmentObjectType, &type);
+            if (type != 0x1702 /*TEXTURE*/) continue;
+            attachmentParam(kFramebuffer, point, kFbAttachmentObjectName, &name);
+            std::lock_guard<std::mutex> lk(st.mu);
+            auto it = st.textures.find(key2(hc->guestSharegroup, uint32_t(name)));
+            if (it == st.textures.end()) continue;
+            const State::TexInfo& t = it->second;
+            if (t.w != cw / k || t.h != ch / k || t.scale == k) continue;   // not the drawable's size, or already right
+            if (std::none_of(remake.begin(), remake.end(), [&](const Remake& r) { return r.name == uint32_t(name); }))
+                remake.push_back({uint32_t(name), t});
+        }
+    }
+    if (remake.empty()) return;
+    const int32_t savedTex = hgGetInt(hc, 0x8069);
+    for (const Remake& r : remake) {
+        hc->fn.glBindTexture(0x0DE1, r.name);
+        remakingTexture = true;
+        hg_glTexImage2D(x, 0x0DE1, 0, r.info.internalFormat, cw, ch, 0, r.info.format, r.info.type, 0);
+        remakingTexture = false;
+        std::lock_guard<std::mutex> lk(st.mu);
+        st.textures[key2(hc->guestSharegroup, r.name)].scale = k;
+    }
+    hc->fn.glBindTexture(0x0DE1, uint32_t(savedTex));
+}
+
+void hg_glFramebufferTexture2D(Ctx& x, uint32_t target, uint32_t attachment, uint32_t textarget, uint32_t texture, int32_t level) {
+    hg_glFramebufferTexture2DGenerated(x, target, attachment, textarget, texture, level);
+    if (HostContext* hc = hgCurrent(x)) reconcileScaledTextures(x, hc);
+}
+void hg_glFramebufferTexture2DOES(Ctx& x, uint32_t target, uint32_t attachment, uint32_t textarget, uint32_t texture, int32_t level) {
+    hg_glFramebufferTexture2DOESGenerated(x, target, attachment, textarget, texture, level);
+    if (HostContext* hc = hgCurrent(x)) reconcileScaledTextures(x, hc);
+}
+
+void afterDrawableStorage(Ctx& x) {
+    if (HostContext* hc = hgCurrent(x)) reconcileScaledTextures(x, hc);
+}
+
 // ------------------------------------------------------------- attachments ---
 // Apple's drivers accept a detach written as (target, attachment, 0, 0); the ES
 // spec wants GL_RENDERBUFFER as the third argument even then, and other drivers
@@ -1370,14 +1513,14 @@ void hg_glFramebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, 
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbuffer(target, attachment, rbtarget, renderbuffer);
     if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
-    if (resolutionFactor(x.proc) > 1) reconcileScaledAttachments(x, hc);
+    if (resolutionFactor(x.proc) > 1) reconcileScaledAttachments(x.proc, hc);
 }
 void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
     HG_BEGIN(glFramebufferRenderbufferOES)
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbufferOES(target, attachment, rbtarget, renderbuffer);
     if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
-    if (resolutionFactor(x.proc) > 1) reconcileScaledAttachments(x, hc);
+    if (resolutionFactor(x.proc) > 1) reconcileScaledAttachments(x.proc, hc);
 }
 
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
@@ -1724,6 +1867,7 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
         Drawable& d = st.drawables[key];
         d.layer = layer;
         if (ok || oldW <= 0) {   // a refused request leaves the drawable the size it still has
+            if (d.width != width || d.height != height) { d.used[0] = d.used[1] = 0; d.used[2] = d.used[3] = -1; }
             d.width = width;
             d.height = height;
             d.scale = k;
@@ -1744,6 +1888,8 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
         }
     }
     if (resend) st.platform->layerGeometry(layer, again.unit);
+    if (resolutionFactor(p) > 1) reconcileScaledAttachments(p, hc);   // depth beside a drawable made again
+    reapplyScaledViewport(p, hc);   // a viewport the game set before its drawable was enlarged
     return ok;
 }
 
@@ -1941,6 +2087,20 @@ void layerGone(Process& p, uint32_t layer) {
     if (st.platform) st.platform->releaseLayer(layer);
 }
 
+bool drawableUsedRect(Process& p, uint32_t layer, float out[4]) {
+    State& st = S(p);
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (const auto& [k, d] : st.drawables) {
+        if (d.layer != layer || d.width <= 0 || d.height <= 0 || d.used[2] < 0) continue;
+        out[0] = float(d.used[0]) / float(d.width);
+        out[1] = float(d.height - d.used[3]) / float(d.height);   // top-left origin, as the layer is shown
+        out[2] = float(d.used[2]) / float(d.width);
+        out[3] = float(d.height - d.used[1]) / float(d.height);
+        return true;
+    }
+    return false;
+}
+
 void layerPlaced(Process& p, uint32_t layer, const float m[6], float bx, float by, float bw, float bh, int surfaceW,
                  int surfaceH) {
     State& st = S(p);
@@ -2016,6 +2176,7 @@ void hg_glBindFramebuffer(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
     hc->fn.glBindFramebuffer(a_target, a_framebuffer);
     lk.unlock();   // hgAfter may log, which calls into the host
     if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebuffer", [&] { return hgArgs(a_target, a_framebuffer); });
+    reapplyScaledViewport(x.proc, hc);
 }
 
 void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) {
@@ -2035,6 +2196,7 @@ void hg_glBindFramebufferOES(Ctx& x, uint32_t a_target, uint32_t a_framebuffer) 
     hc->fn.glBindFramebufferOES(a_target, a_framebuffer);
     lk.unlock();   // hgAfter may log, which calls into the host
     if (hgDebug || hc->trace) hgAfter(x, hc, "glBindFramebufferOES", [&] { return hgArgs(a_target, a_framebuffer); });
+    reapplyScaledViewport(x.proc, hc);
 }
 
 void hg_glUseProgram(Ctx& x, uint32_t a_program) {

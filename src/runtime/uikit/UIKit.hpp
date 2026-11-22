@@ -132,6 +132,14 @@ struct UIState {
     // Safe-area insets in portrait-framebuffer points (issue #281, mode 4). Approximation: they
     // shrink applicationFrame, the status bar and the root view; they are not safeAreaInsets.
     float safeTop = 0, safeLeft = 0, safeBottom = 0, safeRight = 0;
+    // "Fill the screen" (HVM_VIRTUAL_SCREEN_HEIGHT): the screen the game would have had (naturalH)
+    // and, until its drawn content goes past that height, the band of the taller screen that is
+    // shown (shownY, naturalH tall). A game made only for the shorter screen is shown like it, not
+    // with an empty strip; the first frame whose content reaches beyond it shows the whole screen.
+    bool fillActive = false, fillConfirmed = false;
+    float naturalH = 0, shownY = 0;
+    bool fillCropped() const { return fillActive && !fillConfirmed; }
+    float shownH() const { return fillCropped() ? naturalH : screenH; }
     bool statusBarHidden = false;
     int32_t statusBarOrientation = 1;   // UIInterfaceOrientationPortrait
     int32_t initialOrientation = 1;

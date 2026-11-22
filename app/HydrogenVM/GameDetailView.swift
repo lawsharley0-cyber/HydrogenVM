@@ -108,7 +108,7 @@ struct GameDetailView: View {
                                    isOn: $higherResolution)
                     GlossRule()
                     GlossToggleRow(title: "Fill the screen",
-                                   hint: "Gives the game a taller screen shaped like this iPhone, so it can reach the edges instead of showing black bars. Not every game supports it.",
+                                   hint: "Gives the game a taller screen shaped like this iPhone. Games made only for the old screen are shown normally; a few draw a black strip instead (turn it off for those).",
                                    isOn: $fillScreen)
                         .onChange(of: fillScreen) { _, isOn in
                             GuestScreenSettings.setVirtualScreen(isOn, bundleID: app.info.bundleIdentifier)

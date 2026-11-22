@@ -76,6 +76,15 @@ private:
     // worked on iOS and crashed 4 runs in 5 here when the very next allocation took that block.
     static constexpr size_t kReuseDelay = 64;
     std::vector<std::deque<uint32_t>> smallDelayed_;
+    // The same for larger blocks up to kBigDelayMax bytes (a hash table's bucket array outgrows the
+    // small sizes once a level has enough textures): at most kBigDelayCount blocks and
+    // kBigDelayBytes in all wait; when an allocation would fail they are handed back at once.
+    static constexpr uint32_t kBigDelayMax = 256 * 1024;
+    static constexpr size_t kBigDelayCount = 64;
+    static constexpr uint64_t kBigDelayBytes = 8ull << 20;
+    std::deque<std::pair<uint32_t, uint32_t>> bigDelayed_;
+    uint64_t bigDelayedBytes_ = 0;
+    void flushBigDelayed();
     std::map<uint32_t, uint32_t> freeByAddr_;      // big free blocks: addr -> size
     std::multimap<uint32_t, uint32_t> freeBySize_; // size -> addr
     // Small blocks are tracked without per-block maps, which made every malloc/free cost a few
