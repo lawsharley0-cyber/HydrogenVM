@@ -13,7 +13,7 @@ constexpr uint32_t MH_MAGIC_64 = 0xFEEDFACFu;
 constexpr uint32_t FAT_MAGIC = 0xCAFEBABEu, FAT_CIGAM = 0xBEBAFECAu;
 constexpr uint32_t CPU_TYPE_ARM = 12;
 constexpr uint32_t MH_EXECUTE = 2, MH_DYLIB = 6, MH_BUNDLE = 8;
-constexpr uint32_t MH_PIE = 0x200000, MH_SPLIT_SEGS = 0x20;
+constexpr uint32_t MH_PIE = 0x200000, MH_SPLIT_SEGS = 0x20, MH_PREBOUND = 0x10;
 
 enum : uint32_t {
     LC_SEGMENT = 0x1, LC_SYMTAB = 0x2, LC_THREAD = 0x4, LC_UNIXTHREAD = 0x5, LC_DYSYMTAB = 0xB,
@@ -459,6 +459,11 @@ void legacyBinds(Ctx& cx) {
         r.dylibOrdinal = int32_t((s.n_desc >> 8) & 0xFF);
         r.weakImport = s.n_desc & N_WEAK_REF;
         r.kind = BindKind::ExternalReloc;                        // value += symbol address
+        // A prebound image already holds the symbol's link-time address (the symbol's n_value) in
+        // the word, as dyld's classic loader knows: it subtracts that before adding the real
+        // address. Without this a coalesced C++ method in a vtable got its address twice
+        // (Reckless Racing called PiDisplay::GetType at 2 x its address).
+        if (cx.img.flags & MH_PREBOUND) r.addend = -int32_t(s.n_value);
         cx.img.binds.push_back(std::move(r));
     }
     // Local relocations only matter when the image is slid.

@@ -133,7 +133,10 @@ public:
     void stop(uint32_t voice);       // drops everything queued (counted as processed)
     void release(uint32_t voice);    // stop and forget
     bool playing(uint32_t voice) const;   // has audio left and isn't paused
-    double positionSeconds(uint32_t voice) const;
+    double positionSeconds(uint32_t voice) const;   // in the current buffer, for a queued stream
+    // A queued stream's time since it started (or was last stopped): every finished buffer plus
+    // the position in the current one. What AudioQueueGetCurrentTime's sample time counts.
+    double streamSeconds(uint32_t voice) const;
     void seekSeconds(uint32_t voice, double t);
     void setMasterGain(float g);
     void setAllPaused(bool paused);   // app in the background: silence everything, keep positions
@@ -172,6 +175,7 @@ private:
         std::shared_ptr<AudioSource> source;
         std::unique_ptr<SourceWindow> samples;
         double pos = 0;   // in frames of the front buffer
+        double playedSeconds = 0;   // queued stream: duration of the buffers already finished
         VoiceParams p;
         bool paused = false, stream = false, autoRelease = false, done = false, heard = false;
         // Anti-imaging filter for a voice whose sample rate (times pitch) is below the mixer's:

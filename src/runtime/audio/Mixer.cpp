@@ -95,6 +95,7 @@ void Mixer::stop(uint32_t voice) {
     it->second.samples.reset();
     it->second.source.reset();
     it->second.pos = 0;
+    it->second.playedSeconds = 0;
     it->second.done = true;
 }
 
@@ -118,6 +119,15 @@ double Mixer::positionSeconds(uint32_t voice) const {
     const Voice& v = it->second;
     if (v.source) return v.pos / v.source->sampleRate();
     return v.queue.empty() ? 0 : v.pos / v.queue.front().rate;
+}
+
+double Mixer::streamSeconds(uint32_t voice) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = voices_.find(voice);
+    if (it == voices_.end()) return 0;
+    const Voice& v = it->second;
+    if (v.source) return v.pos / v.source->sampleRate();
+    return v.playedSeconds + (v.queue.empty() ? 0 : v.pos / v.queue.front().rate);
 }
 
 void Mixer::seekSeconds(uint32_t voice, double t) {
@@ -305,6 +315,7 @@ void Mixer::render(float* left, float* right, size_t frames) {
                 if (!v.stream && v.p.loop) { v.pos = std::fmod(v.pos, double(n)); continue; }
                 if (source) { v.done = true; v.pos = double(n); break; }
                 const double carry = (v.pos - double(n)) / double(rate);   // seconds into the next buffer
+                v.playedSeconds += double(n) / double(rate);
                 v.processed.push_back(b->tag);
                 v.queue.pop_front();
                 v.pos = v.queue.empty() ? 0 : carry * double(v.queue.front().rate);

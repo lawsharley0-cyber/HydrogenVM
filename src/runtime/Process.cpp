@@ -1017,7 +1017,7 @@ void Process::bindImageImports(const Loader::Image& img,
                 mem_->write<uint32_t>(b.address, target + uint32_t(b.addend));
                 break;
             case Loader::BindKind::ExternalReloc:
-                mem_->write<uint32_t>(b.address, mem_->read<uint32_t>(b.address) + target);
+                mem_->write<uint32_t>(b.address, mem_->read<uint32_t>(b.address) + target + uint32_t(b.addend));
                 break;
             case Loader::BindKind::TextPcrel32:
                 mem_->write<uint32_t>(b.address, target + uint32_t(b.addend) - (b.address + 4));
@@ -1039,7 +1039,7 @@ void Process::bindImageImports(const Loader::Image& img,
                 mem_->write<uint32_t>(b.address, target + uint32_t(b.addend));
                 break;
             case Loader::BindKind::ExternalReloc:
-                mem_->write<uint32_t>(b.address, mem_->read<uint32_t>(b.address) + target);
+                mem_->write<uint32_t>(b.address, mem_->read<uint32_t>(b.address) + target + uint32_t(b.addend));
                 break;
             case Loader::BindKind::TextPcrel32:
                 mem_->write<uint32_t>(b.address, target + uint32_t(b.addend) - (b.address + 4));

@@ -1475,6 +1475,14 @@ int runFullSubsystemTests() {
             const bool ok = worst < 1e-4;
             if (!ok) std::printf("    mixer stream stitching: worst error %.5f FS at output frame %zu\n", worst, worstAt);
             check(ok, "Mixer interpolates across queued stream buffer boundaries (no click at each buffer edge)");
+            // AudioQueueGetCurrentTime counts from the start across buffers (Tap Tap Revenge 2 times notes by it).
+            Audio::Mixer clock;
+            const uint32_t cv = clock.createStream({});
+            for (int c = 0; c < 3; ++c) clock.enqueue(cv, std::make_shared<std::vector<int16_t>>(2000, int16_t(0)), 44100, uint64_t(c + 1));
+            renderLeft(clock, 2500);
+            const double played = clock.streamSeconds(cv), inBuffer = clock.positionSeconds(cv);
+            check(std::abs(played - 2500.0 / 44100.0) < 1e-6 && std::abs(inBuffer - 500.0 / 44100.0) < 1e-6,
+                  "a queued stream's clock counts every finished buffer, not only the position in the current one");
         }
     }
 
@@ -5628,6 +5636,18 @@ int runFullSubsystemTests() {
         check(stopped, "a movie the game stops is taken down on the host");
     }
 
+    // Tap Tap Revenge 2 asks UIImage for a folder: iOS answers nil; reading it as a file stopped the game.
+    {
+        const std::string folder = proc.homePath() + "/not-an-image.png";
+        std::filesystem::create_directories(folder);
+        bool nilNoThrow = false;
+        try {
+            nilNoThrow = uint32_t(r.send(cpu, r.getClass("UIImage"), "imageWithContentsOfFile:", {Foundation::makeString(cx, folder)})) == 0;
+        } catch (const std::exception& e) { std::printf("    %s\n", e.what()); }
+        std::filesystem::remove_all(folder);
+        check(nilNoThrow, "+[UIImage imageWithContentsOfFile:] on a folder answers nil");
+    }
+
     // Photo-library presentation is a shared host service, with guest-main-loop delivery.
     {
         std::vector<UIKit::PhotoPickerRequest> requests;
@@ -8555,6 +8575,17 @@ int runFullSubsystemTests() {
             proc.mem().write<uint32_t>(fl, 44);
             const auto flstStatus = audioCall("_AudioFileGetProperty", {fileID, 0x666C7374, fl, fl + 4});
             check(flstStatus != 0, "AudioFile does not offer a format list (FMOD would loop on decoded PCM)");
+            {
+                // Tap Tap Revenge 2: song progress = AudioQueueGetCurrentTime's mSampleTime / 'aqsr'.
+                // A 0 sample rate ended every song at once.
+                const uint32_t rate = proc.heap().allocZeroed(16);
+                proc.mem().write<uint32_t>(rate + 8, 8);
+                audioCall("_AudioQueueGetPropertySize", {q, 0x61717372, rate + 12});
+                const auto status = audioCall("_AudioQueueGetProperty", {q, 0x61717372, rate, rate + 8});
+                check(status == 0 && proc.mem().read<double>(rate) == 44100.0 && proc.mem().read<uint32_t>(rate + 12) == 8,
+                      "AudioQueue answers its device sample rate as a Float64 (the units of its sample time)");
+                proc.heap().free(rate);
+            }
             audioCall("_AudioQueueDispose", {q, 1});
             if (!(table && unknown && hugeStatus == uint32_t(-108)))
                 std::printf("    AudioFile: pnfo %d (%x) unknown %x/%x huge buffer %d\n", table, tableStatus, unknownStatus, infoStatus, int32_t(hugeStatus));
@@ -9291,6 +9322,20 @@ int runFullSubsystemTests() {
             check(utf16 && utf32 && fits && tooSmall && proc.mem().read<uint16_t>(out) == 'L' && proc.mem().read<uint16_t>(out + 4) == 0 &&
                   proc.mem().read<uint8_t>(out + 6) == 0x55,
                   "C strings in UTF-16 and UTF-32 carry no byte-order mark and end with a wide terminator");
+            {
+                // Reckless Racing: the deprecated getCString: and getCString:maxLength: (UTF-8, NUL-terminated;
+                // maxLength counts bytes before the NUL and never splits a character).
+                const ObjC::id cafe = Foundation::makeString(cx, "caf\xc3\xa9!");
+                const uint32_t buf = proc.heap().allocZeroed(16);
+                std::memset(proc.mem().host(buf), 0x55, 16);
+                sr.send(cpu, cafe, "getCString:", {buf});
+                const bool whole = proc.readCString(buf) == "caf\xc3\xa9!";
+                std::memset(proc.mem().host(buf), 0x55, 16);
+                sr.send(cpu, cafe, "getCString:maxLength:", {buf, 4});   // 4 bytes would cut the e-acute in half
+                const bool cut = proc.readCString(buf) == "caf" && proc.mem().read<uint8_t>(buf + 4) == 0x55;
+                proc.heap().free(buf);
+                check(whole && cut, "getCString: copies the UTF-8 string; getCString:maxLength: cuts at a character boundary");
+            }
             proc.heap().free(out);
             proc.heap().free(lit);
         }
@@ -13513,6 +13558,43 @@ int runFullSubsystemTests() {
             Loader::LoadOptions options; options.loadAddress = 0x20000;
             return Loader::loadMachO(arena, file, "synthetic-starts.dylib", options).functionStarts;
         };
+        // A prebound executable's external relocation (Reckless Racing's vtables): the word already holds
+        // the symbol's link-time address (its n_value), which dyld subtracts before adding the real one.
+        // Without that, PiDisplay::GetType was called at twice its address.
+        auto externalReloc = [](uint32_t flags) {
+            std::vector<uint8_t> file(0x2000);
+            auto word = [&](size_t at, uint32_t value) { std::memcpy(file.data() + at, &value, 4); };
+            word(0, 0xFEEDFACEu); word(4, 12); word(8, 9); word(12, 6);            // MH_DYLIB, armv7
+            word(16, 4); word(20, 56 + 56 + 24 + 80); word(24, flags);
+            size_t at = 28;
+            auto segment = [&](const char* name, uint32_t vm, uint32_t off, uint32_t prot) {
+                word(at, 1); word(at + 4, 56); std::memcpy(file.data() + at + 8, name, std::strlen(name));
+                word(at + 24, vm); word(at + 28, 0x1000); word(at + 32, off); word(at + 36, 0x1000);
+                word(at + 40, prot); word(at + 44, prot); at += 56;
+            };
+            segment("__TEXT", 0x1000, 0, 5);
+            segment("__DATA", 0x2000, 0x1000, 3);
+            word(at, 2); word(at + 4, 24); word(at + 8, 0x800); word(at + 12, 1); word(at + 16, 0x900); word(at + 20, 16); at += 24;
+            word(at, 0xB); word(at + 4, 80);
+            word(at + 16, 0); word(at + 20, 1);                                    // one external defined symbol
+            word(at + 8 + 4 * 14, 0xA00); word(at + 8 + 4 * 15, 1);               // extreloff, nextrel
+            at += 80;
+            word(0x800, 1); file[0x804] = 0x0F; file[0x805] = 1;                  // _weak_fn: N_SECT | N_EXT, section 1
+            file[0x806] = 0x80; file[0x807] = 0;                                   // n_desc N_WEAK_DEF
+            word(0x808, 0x1100);                                                   // n_value
+            std::memcpy(file.data() + 0x901, "_weak_fn", 9);
+            word(0xA00, 0x1000); word(0xA04, (2u << 25) | (1u << 27));            // r_address 0x1000 from __TEXT, len 2, extern
+            word(0x1000, 0x1100);                                                  // the prebound value
+            try {
+                Memory::GuestArena arena;
+                Loader::LoadOptions options; options.loadAddress = 0x1000;   // at its link address: no slide
+                const auto img = Loader::loadMachO(arena, file, "synthetic-prebound.dylib", options);
+                for (const auto& b : img.binds) if (b.kind == Loader::BindKind::ExternalReloc && b.address == 0x2000) return b.addend;
+            } catch (const std::exception& e) { std::printf("    prebound: %s\n", e.what()); }
+            return int32_t(0x7FFFFFFF);
+        };
+        check(externalReloc(0x10 | 0x1) == -0x1100 && externalReloc(0x1) == 0,
+              "a prebound image's external relocation subtracts the prebound address (no doubled vtable pointers)");
         check(parseStarts({0x81, 0x02, 0x20, 0}) == std::vector<uint32_t>({0x20100, 0x20120}),
               "Mach-O function starts accumulate ULEB deltas before Thumb normalization and slide");
         check(parseStarts({0x81, 0x02, 0x80}).empty() &&

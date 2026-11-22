@@ -446,6 +446,17 @@ int32_t aq_getProperty(Ctx& x, uint32_t qid, uint32_t prop, GuestPtr outData, Gu
             auto& st = ATS(x);
             if (st.queues.count(qid)) running = st.queues[qid].running;
             x.mem.write<uint32_t>(outData, running ? 1 : 0);
+        } else if (prop == 0x61717372 /* 'aqsr' kAudioQueueDeviceProperty_SampleRate */ && sz >= 8) {
+            // Float64, in the units AudioQueueGetCurrentTime's mSampleTime uses: the mixer's 44.1 kHz
+            // for playback, the queue's own rate for recording. Tap Tap Revenge 2 divides the queue
+            // time by it for the song's progress; answering 0 ended every song at once.
+            double rate = 44100.0;
+            auto& st = ATS(x);
+            if (st.queues.count(qid) && st.queues[qid].input) rate = double(st.queues[qid].sampleRate);
+            x.mem.write<double>(outData, rate);
+            x.mem.write<uint32_t>(ioSize, 8);
+        } else if (prop == 0x61716463 /* 'aqdc' kAudioQueueDeviceProperty_NumberChannels */ && sz >= 4) {
+            x.mem.write<uint32_t>(outData, 2);
         } else if (sz >= 4) {
             x.mem.write<uint32_t>(outData, 0);
             defaulted(x, "AudioQueueGetProperty(" + code4(prop) + ") answered 0");
@@ -453,8 +464,8 @@ int32_t aq_getProperty(Ctx& x, uint32_t qid, uint32_t prop, GuestPtr outData, Gu
     }
     return 0;
 }
-int32_t aq_getPropertySize(Ctx& x, uint32_t, uint32_t, GuestPtr outSize) {
-    if (outSize) x.mem.write<uint32_t>(outSize, 4);
+int32_t aq_getPropertySize(Ctx& x, uint32_t, uint32_t prop, GuestPtr outSize) {
+    if (outSize) x.mem.write<uint32_t>(outSize, prop == 0x61717372 /* 'aqsr': Float64 */ ? 8 : 4);
     return 0;
 }
 // Recording: AudioQueueNewInput(format, callback, userData, runLoop, mode, flags, outAQ). The
@@ -519,14 +530,16 @@ void aqPumpInput(Process& p, CPU::Cpu& c, uint32_t qid) {
 int32_t aq_setProperty(Ctx&, uint32_t, uint32_t, GuestPtr, uint32_t) { return 0; }   // channel layout, converter quality, ...
 int32_t aq_createTimeline(Ctx& x, uint32_t, GuestPtr out) { if (out) x.mem.write<uint32_t>(out, 0x71740001); return 0; }
 int32_t aq_disposeTimeline(Ctx&, uint32_t, uint32_t) { return 0; }
-// AudioQueueGetCurrentTime(q, timeline, AudioTimeStamp* outTime, Boolean* discontinuity): mSampleTime from the mixer.
+// AudioQueueGetCurrentTime(q, timeline, AudioTimeStamp* outTime, Boolean* discontinuity): mSampleTime from the
+// mixer, counted from AudioQueueStart across every buffer played (not reset at each buffer: Tap Tap Revenge 2
+// times its notes with it, and the per-buffer position made the song jump back every ~0.9 s).
 int32_t aq_getCurrentTime(Ctx& x, uint32_t qid, uint32_t, GuestPtr outTime, GuestPtr disc) {
     if (outTime) {
         for (uint32_t i = 0; i < 64; i += 4) x.mem.write<uint32_t>(outTime + i, 0);
         double t = 0;
         auto& st = ATS(x);
         if (st.queues.count(qid))
-            t = st.queues[qid].input ? st.queues[qid].sampleTime : MX(x.proc).positionSeconds(st.queues[qid].voice) * 44100.0;
+            t = st.queues[qid].input ? st.queues[qid].sampleTime : MX(x.proc).streamSeconds(st.queues[qid].voice) * 44100.0;
         x.mem.write<double>(outTime, t);              // mSampleTime
         x.mem.write<uint32_t>(outTime + 56, 1);       // mFlags: kAudioTimeStampSampleTimeValid
     }
@@ -3088,13 +3101,13 @@ void registerPlatformStubs(Process& p, ObjC::Runtime& r) {
     p.def<&aq_enqueueBuffer>("_AudioQueueEnqueueBuffer");
     p.defineFunction("_AudioQueueEnqueueBufferWithParameters", aq_enqueueWithParams);
     p.def<&aq_setProperty>("_AudioQueueSetProperty");
-    supportDef<&aq_getProperty>(p, "_AudioQueueGetProperty", SupportStatus::Approx, "Answers IsRunning; other properties read as zero");
-    p.def<&aq_getPropertySize>("_AudioQueueGetPropertySize");
+    supportDef<&aq_getProperty>(p, "_AudioQueueGetProperty", SupportStatus::Approx, "Answers IsRunning, the device sample rate and channel count; other properties read as zero");
+    supportDef<&aq_getPropertySize>(p, "_AudioQueueGetPropertySize", SupportStatus::Approx, "8 for the device sample rate (Float64), 4 for every other property");
     supportDef<&aq_addPropertyListener>(p, "_AudioQueueAddPropertyListener", SupportStatus::Approx, "Listeners are kept; only IsRunning changes are reported");
     supportDef<&aq_removePropertyListener>(p, "_AudioQueueRemovePropertyListener", SupportStatus::Real, "Removes a kept listener");
     p.def<&aq_createTimeline>("_AudioQueueCreateTimeline");
     p.def<&aq_disposeTimeline>("_AudioQueueDisposeTimeline");
-    p.def<&aq_getCurrentTime>("_AudioQueueGetCurrentTime");
+    supportDef<&aq_getCurrentTime>(p, "_AudioQueueGetCurrentTime", SupportStatus::Approx, "Sample time only (44.1 kHz playback clock since AudioQueueStart, or the recorder's frames); no host time; timelines ignored");
     supportDef<&aq_start>(p, "_AudioQueueStart", SupportStatus::Real, "Starts playback or recording and tells IsRunning listeners");
     p.def<&aq_pause>("_AudioQueuePause");
     supportDef<&aq_stop>(p, "_AudioQueueStop", SupportStatus::Approx,

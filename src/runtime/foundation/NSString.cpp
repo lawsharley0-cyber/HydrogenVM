@@ -426,6 +426,22 @@ bool s_getCString(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max, uint32_t enc
     x.mem.copyIn(buf, b.data(), b.size());
     return true;
 }
+// The deprecated getCString: / getCString:maxLength: (Reckless Racing): the default C-string
+// encoding (UTF-8 here, as -cString), then a NUL. maxLength counts bytes before the NUL; a
+// longer string is cut at that many bytes, never inside a UTF-8 sequence.
+void s_getCStringOld(Ctx& x, id self, SEL, GuestPtr buf, uint32_t max) {
+    bool ok = true;
+    uint32_t unit = 1;
+    std::string b = cStringBytes(sv(x, self), 4 /* NSUTF8StringEncoding */, &ok, &unit);
+    if (b.size() > max) {
+        size_t n = max;
+        while (n > 0 && (uint8_t(b[n]) & 0xC0) == 0x80) --n;   // b[n] starts the next character
+        b.resize(n);
+    }
+    b.push_back('\0');
+    x.mem.copyIn(buf, b.data(), b.size());
+}
+void s_getCStringUnbounded(Ctx& x, id self, SEL s, GuestPtr buf) { s_getCStringOld(x, self, s, buf, 0xFFFFFFFFu); }
 // NSString's range is in UTF-16 units, while maxLength/usedLength count bytes.
 // Unlike getCString:, this API converts a prefix and never adds a terminator.
 // A NULL buffer is a sizing query, independent of maxLength. Contract:
@@ -1101,7 +1117,7 @@ void registerStrings(Process& p, ObjC::Runtime& r) {
       .m<&s_length>("length", "I@:").m<&s_characterAtIndex>("characterAtIndex:", "S@:I")
       .m<&s_getCharactersRange>("getCharacters:range:", "v@:^S{_NSRange=II}").m<&s_getCharacters>("getCharacters:")
       .m<&s_UTF8String>("UTF8String", "*@:").m<&s_UTF8String>("cString").m<&s_UTF8String>("lossyCString")
-      .m<&s_cStringUsingEncoding>("cStringUsingEncoding:").m<&s_getCString>("getCString:maxLength:encoding:")
+      .m<&s_cStringUsingEncoding>("cStringUsingEncoding:").m<&s_getCString>("getCString:maxLength:encoding:").m<&s_getCStringOld>("getCString:maxLength:", "v@:*I").m<&s_getCStringUnbounded>("getCString:", "v@:*")
       .m<&s_getBytes>("getBytes:maxLength:usedLength:encoding:options:range:remainingRange:", "c@:^vI^III{_NSRange=II}^{_NSRange=II}")
       .m<&s_canConvert>("canBeConvertedToEncoding:", "c@:I").m<&s_lengthOfBytes>("lengthOfBytesUsingEncoding:").m<&s_maxLengthOfBytes>("maximumLengthOfBytesUsingEncoding:")
       .m<&s_dataUsingEncoding>("dataUsingEncoding:").m<&s_dataUsingEncodingLossy>("dataUsingEncoding:allowLossyConversion:")

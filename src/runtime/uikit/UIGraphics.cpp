@@ -241,6 +241,10 @@ id f_initWithCoder(Ctx& x, id self, SEL, id coder) {
 // ================================================================ UIImage ===
 
 std::vector<uint8_t> readFile(const std::string& p) {
+    // A directory is no image (Tap Tap Revenge 2 asks for one): iOS answers nil. Reading it as
+    // a stream threw on Linux and stopped the game.
+    std::error_code ec;
+    if (!fs::is_regular_file(p, ec)) return {};
     std::ifstream in(p, std::ios::binary);
     if (!in) return {};
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {});
