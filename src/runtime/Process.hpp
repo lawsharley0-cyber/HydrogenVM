@@ -59,7 +59,12 @@ struct ProcessConfig {
     // ties its game speed to the frame count, rather than to elapsed time, runs faster with it.
     bool unlockFrameRate = false;
     std::string blockCachePath; // optional Phase E1 persistent decoded-block cache file
-    int resolutionScale = 1;    // Phase E2 per-game HD scale multiplier (1 = native, 2 = 2x, 3 = 3x)
+    // Per-game "Higher resolution" (GPU only): the game's drawable is stored at up to this many times
+    // the size it asks for (1 = off, 2, 3); runtime/gl/HostGL.cpp keeps the game unaware of it.
+    int resolutionScale = 1;
+    // With resolutionScale > 1: the display's short side in pixels. The factor stops at what the
+    // display can show (a Retina game gets 2x on a 1179-pixel-wide iPhone, a 320x480 game 3x). 0: no limit.
+    uint32_t displayShortSidePixels = 0;
     // Phone mode (bench only: hvm run --phone): behave like the iPhone where it differs from a
     // Linux host. No /proc or /sys, case-insensitive file lookups (APFS), and a guest memory
     // budget past which the game is closed (as iOS would). The CLI adds 16 KB host pages,

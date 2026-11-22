@@ -174,6 +174,11 @@ final class RunModel {
         s.useGPU = !Self.softwareRendering(for: app.info.bundleIdentifier)
         s.allowInternet = Self.allowsInternet(for: app.info.bundleIdentifier)
         s.unlockFrameRate = Self.unlocksFrameRate(for: app.info.bundleIdentifier)
+        if Self.higherResolution(for: app.info.bundleIdentifier) {
+            s.resolutionScale = 3
+            let native = UIScreen.main.nativeBounds.size
+            s.displayShortSidePixels = Int(min(native.width, native.height))
+        }
         s.useBlockCache = Self.usesFastLaunchCache(for: app.info.bundleIdentifier)
         if let fallback {
             s.safeModeFallback = fallback
@@ -423,6 +428,11 @@ final class RunModel {
     /// content it needs before those servers close (Minion Rush's DLC).
     nonisolated static func internetKey(_ bundleID: String) -> String { "internet.\(bundleID)" }
     nonisolated static func unlockFPSKey(_ bundleID: String) -> String { "unlockFPS.\(bundleID)" }
+    /// Per-game "Higher resolution": draw the game's picture at up to 3x (just enough for this display).
+    nonisolated static func higherResolutionKey(_ bundleID: String) -> String { "higherResolution.\(bundleID)" }
+    nonisolated static func higherResolution(for bundleID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: higherResolutionKey(bundleID))
+    }
     nonisolated static func unlocksFrameRate(for bundleID: String) -> Bool {
         UserDefaults.standard.bool(forKey: unlockFPSKey(bundleID))
     }
@@ -755,6 +765,7 @@ struct RunView: View {
     @AppStorage private var softwareRenderer: Bool
     @AppStorage private var allowInternet: Bool
     @AppStorage private var unlockFrameRate: Bool
+    @AppStorage private var higherResolution: Bool
     @Environment(\.dismiss) private var dismiss
 
     init(app: InstalledApp, keepGoing: Bool, detailedRecording: Bool = false) {
@@ -766,6 +777,7 @@ struct RunView: View {
                                        RunModel.softwareRenderingKey(app.info.bundleIdentifier))
         _allowInternet = AppStorage(wrappedValue: false, RunModel.internetKey(app.info.bundleIdentifier))
         _unlockFrameRate = AppStorage(wrappedValue: false, RunModel.unlockFPSKey(app.info.bundleIdentifier))
+        _higherResolution = AppStorage(wrappedValue: false, RunModel.higherResolutionKey(app.info.bundleIdentifier))
         _scaleSetting = AppStorage(PlayerSettings.perGameKey(PlayerSettings.scaleModeKey, bundleID: app.info.bundleIdentifier))
         _cropFocusSetting = AppStorage(wrappedValue: PlayerSettings.cropFocus(bundleID: app.info.bundleIdentifier).rawValue,
                                        PlayerSettings.perGameKey(PlayerSettings.cropFocusKey, bundleID: app.info.bundleIdentifier))
@@ -975,7 +987,7 @@ struct RunView: View {
         return Group {
             Toggle(isOn: Binding(get: { GuestScreenSettings.virtualScreen(bundleID: bundleID) },
                                  set: { GuestScreenSettings.setVirtualScreen($0, bundleID: bundleID); virtualTick += 1 })) {
-                Text("Taller game screen for this game (next launch)").font(.caption)
+                Text("Fill the screen: taller game screen shaped like this iPhone (next launch)").font(.caption)
             }
             .accessibilityIdentifier("player-virtual-screen")
             if GuestScreenSettings.virtualScreen(bundleID: bundleID) {
@@ -1054,6 +1066,16 @@ struct RunView: View {
                 }
             }
             .accessibilityIdentifier("player-unlock-frame-rate")
+
+            Toggle(isOn: $higherResolution) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Higher resolution (next launch)")
+                        .font(.caption)
+                    Text("Draws the game's 3D at up to 3x the pixels. Needs GPU rendering.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("player-higher-resolution")
 
             // Taller guest screen and safe-area insets (issue #281, modes 3 and 4); next launch.
             virtualScreenControls

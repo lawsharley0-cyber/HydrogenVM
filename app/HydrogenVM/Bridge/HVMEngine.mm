@@ -584,6 +584,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
     const bool unlockFrameRate = _unlockFrameRate;
     const bool useBlockCache = _useBlockCache;
     const int resolutionScale = int(std::max<NSInteger>(1, std::min<NSInteger>(3, _resolutionScale)));
+    const uint32_t displayShortSidePixels = uint32_t(std::max<NSInteger>(0, std::min<NSInteger>(16384, _displayShortSidePixels)));
     const bool glTrace = _glTrace;
     const bool gles1Emulate = _gles1Emulate;
     const uint32_t maxTextureSize = _maxTextureSize;
@@ -633,6 +634,7 @@ void setMicrophone(const std::shared_ptr<SessionCore> &core, bool on) {
         cfg.inputRecordingPath = inputPath;
         cfg.blockCachePath = blockCachePath;
         cfg.resolutionScale = resolutionScale;
+        cfg.displayShortSidePixels = displayShortSidePixels;
         // Debug: keep freed Objective-C objects and name them when messaged (Library menu toggle).
         cfg.enableZombies = [[NSUserDefaults standardUserDefaults] boolForKey:@"hvm.zombies"];
         cfg.stopOnMissingFunction = !keepGoing;

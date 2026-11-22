@@ -54,7 +54,8 @@ namespace {
 
 struct Drawable {
     uint32_t layer = 0;
-    int width = 0, height = 0;
+    int width = 0, height = 0;   // host pixels (scale times what the game is told)
+    int scale = 1;               // ProcessConfig::resolutionScale applied to this drawable
 };
 struct Placement { float unit[6] = {}; };
 
@@ -65,6 +66,10 @@ struct State {
     std::shared_ptr<char> lifetime = std::make_shared<char>();
     std::mutex mu;
     std::shared_ptr<Platform> platform;
+    // Higher resolution (ProcessConfig::resolutionScale): renderbuffers stored at `factor` times
+    // the size the game asked for, keyed by (guest sharegroup, name): the drawable's colour
+    // buffer, depth/stencil buffers attached next to it and multisample buffers of its size.
+    std::unordered_map<uint64_t, int> scaledRbs;
     std::unordered_map<uint32_t, std::unique_ptr<HostContext>> contexts;          // guest EAGLContext -> host
     std::unordered_map<uint64_t, std::unique_ptr<HostContext>> workers;           // (thread, sharegroup) -> implicit
     uint64_t nextRetireId = 1;
@@ -545,10 +550,30 @@ static uint32_t toGuest(Ctx& x, const void* p) {
 }
 
 #define hg_glViewport hg_glViewportGenerated
+#define hg_glScissor hg_glScissorGenerated
+#define hg_glGetRenderbufferParameteriv hg_glGetRenderbufferParameterivGenerated
+#define hg_glGetRenderbufferParameterivOES hg_glGetRenderbufferParameterivOESGenerated
+#define hg_glReadPixels hg_glReadPixelsGenerated
+#define hg_glRenderbufferStorage hg_glRenderbufferStorageGenerated
+#define hg_glRenderbufferStorageOES hg_glRenderbufferStorageOESGenerated
+#define hg_glRenderbufferStorageMultisampleAPPLE hg_glRenderbufferStorageMultisampleAPPLEGenerated
+#define hg_glRenderbufferStorageMultisample hg_glRenderbufferStorageMultisampleGenerated
+#define hg_glPointSize hg_glPointSizeGenerated
+#define hg_glLineWidth hg_glLineWidthGenerated
 #define HOSTGL_WRAPPERS
 #include "runtime/gl/HostGLTable.inc"
 #undef HOSTGL_WRAPPERS
 #undef hg_glViewport
+#undef hg_glScissor
+#undef hg_glGetRenderbufferParameteriv
+#undef hg_glGetRenderbufferParameterivOES
+#undef hg_glReadPixels
+#undef hg_glRenderbufferStorage
+#undef hg_glRenderbufferStorageOES
+#undef hg_glRenderbufferStorageMultisampleAPPLE
+#undef hg_glRenderbufferStorageMultisample
+#undef hg_glPointSize
+#undef hg_glLineWidth
 
 // Backing-size fallback (see OpenGLES.cpp maybeGrowDrawableForViewport): when
 // glViewport exceeds a CAEAGLLayer drawable, grow that drawable and its depth
@@ -656,9 +681,192 @@ void maybeGrowHostDrawable(Ctx& x, int32_t vw, int32_t vh) {
                                    " (viewport exceeds CAEAGLLayer backing)");
 }
 
+// ------------------------------------------------------------ higher resolution ---
+// With ProcessConfig::resolutionScale k > 1 the game's drawable is stored at k times the size it
+// asked for, and everything the game learns about it stays at its own size: renderbuffer width
+// and height, the viewport and scissor box it reads back. Its viewport and scissor are scaled on
+// the way in, so a game that draws to "the screen" fills the larger buffer and its 3D edges come
+// out k times sharper; the platform shrinks the picture to the layer as it already does for a
+// drawable larger than its layer. Depth and stencil buffers attached beside the drawable, and
+// multisample buffers of the drawable's size (resolved into it), follow. Render-to-texture
+// framebuffers are left at their own size. Known gaps: glCopyTex(Sub)Image2D from the drawable
+// copies the corner of the larger picture, and shader-set point sizes are not scaled.
+int resolutionFactor(Process& p) {
+    if (!S(p).platform) return 1;
+    return std::clamp(p.config().resolutionScale, 1, 3);
+}
+int scaledRb(HostContext* hc, State& st, uint32_t rb) {
+    if (!rb) return 1;
+    std::lock_guard<std::mutex> lk(st.mu);
+    auto it = st.scaledRbs.find(key2(hc->guestSharegroup, rb));
+    return it == st.scaledRbs.end() ? 1 : it->second;
+}
+// The factor of the framebuffer bound for drawing: that of its colour renderbuffer.
+int currentFramebufferScale(Ctx& x, HostContext* hc) {
+    State& st = S(x.proc);
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        if (st.scaledRbs.empty()) return 1;
+    }
+    auto attachmentParam = hc->fn.glGetFramebufferAttachmentParameteriv
+        ? hc->fn.glGetFramebufferAttachmentParameteriv : hc->fn.glGetFramebufferAttachmentParameterivOES;
+    if (!attachmentParam || hgGetInt(hc, kFramebufferBinding) == 0) return 1;
+    GuestErrorScope quiet(hc);
+    int32_t type = 0, name = 0;
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectType, &type);
+    if (uint32_t(type) != kRenderbuffer) return 1;
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &name);
+    return scaledRb(hc, st, uint32_t(name));
+}
+// Depth and stencil renderbuffers attached to a scaled framebuffer at the game's size are stored
+// again at the colour buffer's size (iOS games size them from the drawable they just queried).
+void reconcileScaledAttachments(Ctx& x, HostContext* hc) {
+    const int k = currentFramebufferScale(x, hc);
+    if (k <= 1) return;
+    State& st = S(x.proc);
+    auto attachmentParam = hc->fn.glGetFramebufferAttachmentParameteriv
+        ? hc->fn.glGetFramebufferAttachmentParameteriv : hc->fn.glGetFramebufferAttachmentParameterivOES;
+    auto bindRb = hc->fn.glBindRenderbuffer ? hc->fn.glBindRenderbuffer : hc->fn.glBindRenderbufferOES;
+    auto rbParam = hc->fn.glGetRenderbufferParameteriv ? hc->fn.glGetRenderbufferParameteriv : hc->fn.glGetRenderbufferParameterivOES;
+    auto storage = hc->fn.glRenderbufferStorage ? hc->fn.glRenderbufferStorage : hc->fn.glRenderbufferStorageOES;
+    if (!attachmentParam || !bindRb || !rbParam || !storage) return;
+    GuestErrorScope quiet(hc);
+    const int32_t savedRb = hgGetInt(hc, kRenderbufferBinding);
+    int32_t colorName = 0, cw = 0, ch = 0;
+    attachmentParam(kFramebuffer, kColorAttachment0, kFbAttachmentObjectName, &colorName);
+    bindRb(kRenderbuffer, uint32_t(colorName));
+    rbParam(kRenderbuffer, kRenderbufferWidth, &cw);
+    rbParam(kRenderbuffer, kRenderbufferHeight, &ch);
+    for (uint32_t point : {kDepthAttachment, kStencilAttachment}) {
+        int32_t type = 0, name = 0;
+        attachmentParam(kFramebuffer, point, kFbAttachmentObjectType, &type);
+        attachmentParam(kFramebuffer, point, kFbAttachmentObjectName, &name);
+        if (uint32_t(type) != kRenderbuffer || name == 0 || name == colorName || scaledRb(hc, st, uint32_t(name)) > 1) continue;
+        bindRb(kRenderbuffer, uint32_t(name));
+        int32_t w = 0, h = 0, fmt = 0;
+        rbParam(kRenderbuffer, kRenderbufferWidth, &w);
+        rbParam(kRenderbuffer, kRenderbufferHeight, &h);
+        rbParam(kRenderbuffer, kRenderbufferInternalFormat, &fmt);
+        if (w * k != cw || h * k != ch || !fmt) continue;
+        storage(kRenderbuffer, uint32_t(fmt), cw, ch);
+        std::lock_guard<std::mutex> lk(st.mu);
+        st.scaledRbs[key2(hc->guestSharegroup, uint32_t(name))] = k;
+    }
+    bindRb(kRenderbuffer, uint32_t(savedRb));
+}
+// The factor for a renderbuffer the game sizes itself: that of a scaled drawable of this size
+// in the same sharegroup (a multisample buffer resolved into it, a depth buffer made again).
+int drawableSizedFactor(HostContext* hc, State& st, int32_t w, int32_t h) {
+    std::lock_guard<std::mutex> lk(st.mu);
+    for (const auto& [key, d] : st.drawables)
+        if (d.scale > 1 && uint32_t(key >> 32) == hc->guestSharegroup && d.width == w * d.scale && d.height == h * d.scale) return d.scale;
+    return 1;
+}
+void storeRenderbuffer(Ctx& x, HostContext* hc, int32_t w, int32_t h, const std::function<void(int32_t, int32_t)>& store) {
+    State& st = S(x.proc);
+    const uint32_t rb = uint32_t(hgGetInt(hc, kRenderbufferBinding));
+    const int k = resolutionFactor(x.proc) > 1 ? drawableSizedFactor(hc, st, w, h) : 1;
+    store(w * k, h * k);
+    if (!rb) return;
+    std::lock_guard<std::mutex> lk(st.mu);
+    const uint64_t key = key2(hc->guestSharegroup, rb);
+    if (k > 1) st.scaledRbs[key] = k; else if (!st.drawables.count(key)) st.scaledRbs.erase(key);
+}
+
 void hg_glViewport(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
+    if (HostContext* hc = hgCurrent(x)) {
+        const int k = currentFramebufferScale(x, hc);
+        a_x *= k; a_y *= k; a_width *= k; a_height *= k;
+    }
     maybeGrowHostDrawable(x, a_width, a_height);
     hg_glViewportGenerated(x, a_x, a_y, a_width, a_height);
+}
+void hg_glScissor(Ctx& x, int32_t a_x, int32_t a_y, int32_t a_width, int32_t a_height) {
+    if (HostContext* hc = hgCurrent(x)) {
+        const int k = currentFramebufferScale(x, hc);
+        a_x *= k; a_y *= k; a_width *= k; a_height *= k;
+    }
+    hg_glScissorGenerated(x, a_x, a_y, a_width, a_height);
+}
+void hg_glPointSize(Ctx& x, float size) {
+    HostContext* hc = hgCurrent(x);
+    hg_glPointSizeGenerated(x, hc ? size * float(currentFramebufferScale(x, hc)) : size);
+}
+void hg_glLineWidth(Ctx& x, float width) {
+    HostContext* hc = hgCurrent(x);
+    hg_glLineWidthGenerated(x, hc ? width * float(currentFramebufferScale(x, hc)) : width);
+}
+static void unscaleRenderbufferParam(Ctx& x, uint32_t pname, GuestPtr params) {
+    if ((pname != kRenderbufferWidth && pname != kRenderbufferHeight) || !params) return;
+    HostContext* hc = hgCurrent(x);
+    if (!hc) return;
+    const int k = scaledRb(hc, S(x.proc), uint32_t(hgGetInt(hc, kRenderbufferBinding)));
+    if (k > 1) x.mem.write<int32_t>(params, x.mem.read<int32_t>(params) / k);
+}
+void hg_glGetRenderbufferParameteriv(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
+    hg_glGetRenderbufferParameterivGenerated(x, target, pname, params);
+    unscaleRenderbufferParam(x, pname, params);
+}
+void hg_glGetRenderbufferParameterivOES(Ctx& x, uint32_t target, uint32_t pname, GuestPtr params) {
+    hg_glGetRenderbufferParameterivOESGenerated(x, target, pname, params);
+    unscaleRenderbufferParam(x, pname, params);
+}
+void hg_glRenderbufferStorage(Ctx& x, uint32_t target, uint32_t format, int32_t w, int32_t h) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || resolutionFactor(x.proc) <= 1) { hg_glRenderbufferStorageGenerated(x, target, format, w, h); return; }
+    storeRenderbuffer(x, hc, w, h, [&](int32_t sw, int32_t sh) { hg_glRenderbufferStorageGenerated(x, target, format, sw, sh); });
+}
+void hg_glRenderbufferStorageOES(Ctx& x, uint32_t target, uint32_t format, int32_t w, int32_t h) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || resolutionFactor(x.proc) <= 1) { hg_glRenderbufferStorageOESGenerated(x, target, format, w, h); return; }
+    storeRenderbuffer(x, hc, w, h, [&](int32_t sw, int32_t sh) { hg_glRenderbufferStorageOESGenerated(x, target, format, sw, sh); });
+}
+void hg_glRenderbufferStorageMultisampleAPPLE(Ctx& x, uint32_t target, int32_t samples, uint32_t format, int32_t w, int32_t h) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || resolutionFactor(x.proc) <= 1) { hg_glRenderbufferStorageMultisampleAPPLEGenerated(x, target, samples, format, w, h); return; }
+    storeRenderbuffer(x, hc, w, h, [&](int32_t sw, int32_t sh) { hg_glRenderbufferStorageMultisampleAPPLEGenerated(x, target, samples, format, sw, sh); });
+}
+void hg_glRenderbufferStorageMultisample(Ctx& x, uint32_t target, int32_t samples, uint32_t format, int32_t w, int32_t h) {
+    HostContext* hc = hgCurrent(x);
+    if (!hc || resolutionFactor(x.proc) <= 1) { hg_glRenderbufferStorageMultisampleGenerated(x, target, samples, format, w, h); return; }
+    storeRenderbuffer(x, hc, w, h, [&](int32_t sw, int32_t sh) { hg_glRenderbufferStorageMultisampleGenerated(x, target, samples, format, sw, sh); });
+}
+// Reading back a scaled framebuffer: read the larger area and shrink it to what the game asked
+// for (averaged for 8-bit RGBA, nearest pixel for other formats).
+void hg_glReadPixels(Ctx& x, int32_t rx, int32_t ry, int32_t w, int32_t h, uint32_t format, uint32_t type, GuestPtr pixels) {
+    HostContext* hc = hgCurrent(x);
+    const int k = hc ? currentFramebufferScale(x, hc) : 1;
+    if (k <= 1 || w <= 0 || h <= 0 || !pixels) { hg_glReadPixelsGenerated(x, rx, ry, w, h, format, type, pixels); return; }
+    constexpr uint32_t kRgba = 0x1908, kRgb = 0x1907, kAlpha = 0x1906, kLuminance = 0x1909, kLuminanceAlpha = 0x190A, kBgra = 0x80E1;
+    int bpp = 0;
+    if (type == kUnsignedByte) bpp = (format == kRgba || format == kBgra) ? 4 : format == kRgb ? 3 : format == kLuminanceAlpha ? 2 : (format == kAlpha || format == kLuminance) ? 1 : 0;
+    else if (type == 0x8363 || type == 0x8033 || type == 0x8034) bpp = 2;   // 565, 4444, 5551
+    if (!bpp || !hc->fn.glReadPixels) { hg_glReadPixelsGenerated(x, rx * k, ry * k, w, h, format, type, pixels); return; }
+    const int32_t align = std::max(1, hgGetInt(hc, kPackAlignment));
+    auto stride = [&](int32_t width) { return (int64_t(width) * bpp + align - 1) / align * align; };
+    const int32_t bw = w * k, bh = h * k;
+    std::vector<uint8_t> big(size_t(stride(bw) * bh));
+    hc->fn.glReadPixels(rx * k, ry * k, bw, bh, format, type, big.data());
+    const int64_t outStride = stride(w);
+    std::vector<uint8_t> out(size_t(outStride * h));
+    const bool average = bpp == 4 && type == kUnsignedByte;
+    for (int32_t yy = 0; yy < h; ++yy)
+        for (int32_t xx = 0; xx < w; ++xx) {
+            uint8_t* dst = out.data() + yy * outStride + xx * bpp;
+            if (!average) {
+                std::memcpy(dst, big.data() + int64_t(yy * k) * stride(bw) + int64_t(xx * k) * bpp, size_t(bpp));
+                continue;
+            }
+            uint32_t sum[4] = {};
+            for (int dy = 0; dy < k; ++dy)
+                for (int dx = 0; dx < k; ++dx) {
+                    const uint8_t* src = big.data() + int64_t(yy * k + dy) * stride(bw) + int64_t(xx * k + dx) * 4;
+                    for (int c = 0; c < 4; ++c) sum[c] += src[c];
+                }
+            for (int c = 0; c < 4; ++c) dst[c] = uint8_t(sum[c] / uint32_t(k * k));
+        }
+    uint32_t fault = 0;
+    x.mem.copyInWritable(pixels, out.data(), out.size(), fault);
 }
 
 // ------------------------------------------------------------- hand wrappers ---
@@ -698,6 +906,9 @@ void hg_glGetIntegerv(Ctx& x, uint32_t pname, GuestPtr data) {
         return;
     }
     hc->fn.glGetIntegerv(pname, out);
+    if (pname == 0x0BA2 || pname == 0x0C10) {   // GL_VIEWPORT, GL_SCISSOR_BOX: the game's own size
+        if (const int k = currentFramebufferScale(x, hc); k > 1) for (int i = 0; i < 4; ++i) out[i] /= k;
+    }
     if (pname == kMaxTextureSize) *out = std::min(*out, 4096);   // what iOS devices of this era report
     if (pname == 0x8DF9 /*GL_NUM_SHADER_BINARY_FORMATS*/) *out = 0;
     // iPhone 5-era limits, never above what the host can actually do.
@@ -1159,12 +1370,14 @@ void hg_glFramebufferRenderbuffer(Ctx& x, uint32_t target, uint32_t attachment, 
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbuffer(target, attachment, rbtarget, renderbuffer);
     if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbuffer", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+    if (resolutionFactor(x.proc) > 1) reconcileScaledAttachments(x, hc);
 }
 void hg_glFramebufferRenderbufferOES(Ctx& x, uint32_t target, uint32_t attachment, uint32_t rbtarget, uint32_t renderbuffer) {
     HG_BEGIN(glFramebufferRenderbufferOES)
     if (rbtarget == 0 && renderbuffer == 0) rbtarget = kRenderbuffer;
     hc->fn.glFramebufferRenderbufferOES(target, attachment, rbtarget, renderbuffer);
     if (hgDebug || hc->trace) hgAfter(x, hc, "glFramebufferRenderbufferOES", [&] { return hgArgs(target, attachment, rbtarget, renderbuffer); });
+    if (resolutionFactor(x.proc) > 1) reconcileScaledAttachments(x, hc);
 }
 
 void hg_glResolveMultisampleFramebufferAPPLE(Ctx& x) {
@@ -1472,6 +1685,15 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
     if (tls.ctx != hc) bind(p, hc);
     const uint32_t rb = uint32_t(hgGetInt(hc, kRenderbufferBinding));
     if (!rb) return false;
+    // Higher resolution: store the drawable larger (within 4096 pixels a side).
+    int k = layer ? resolutionFactor(p) : 1;
+    if (const uint32_t display = p.config().displayShortSidePixels; k > 1 && display && width > 0 && height > 0) {
+        const int shortSide = std::min(width, height);
+        k = std::clamp(int((display + uint32_t(shortSide) - 1) / uint32_t(shortSide)), 1, k);   // just enough for the display
+    }
+    while (k > 1 && (width * k > 4096 || height * k > 4096)) --k;
+    const int guestW = width, guestH = height;
+    width *= k; height *= k;
     bool handled = false;
     bool ok = st.platform->drawableStorage(hc->handle, layer, width, height, handled);
     if (!handled) {
@@ -1480,6 +1702,9 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
         storage(kRenderbuffer, kRgba8, width, height);
         ok = true;
     }
+    if (k > 1)
+        p.log(LogLevel::Info, "GPU: higher resolution: drawable " + std::to_string(guestW) + "x" + std::to_string(guestH) +
+                                  " stored at " + std::to_string(k) + "x");
     p.log(LogLevel::Info, "GPU: drawable " + std::to_string(width) + "x" + std::to_string(height) + " for renderbuffer " +
                               std::to_string(rb) + (handled ? " (platform layer)" : " (RGBA8 storage)") + (ok ? "" : " FAILED"));
     Placement again;
@@ -1501,6 +1726,8 @@ bool renderbufferStorageFromDrawable(Process& p, uint32_t guestContext, uint32_t
         if (ok || oldW <= 0) {   // a refused request leaves the drawable the size it still has
             d.width = width;
             d.height = height;
+            d.scale = k;
+            if (k > 1) st.scaledRbs[key] = k; else st.scaledRbs.erase(key);
         }
         // The platform may now show this layer through a new host layer, which has never been
         // told where the drawable sits (and the compositor only reports a placement that

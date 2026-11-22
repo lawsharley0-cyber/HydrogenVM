@@ -1,6 +1,6 @@
 // `hvm run <bundle.app | file.ipa> [--home DIR] [--keep-going] [--trace] [--quiet]
 //          [--run-for SECONDS] [--screenshot FILE.png] [--tap X,Y@T] [--drag X1,Y1,X2,Y2@T]
-//          [--device MODEL]
+//          [--device MODEL] [--unlock-fps] [--resolution-scale 1-3 (GPU: draw the game at 2x/3x)]
 //          [--report FILE.json] [--record FILE.hvmrec | --replay FILE.hvmrec] [-- args...]`
 // --record saves the session's seed, start time and every input (runtime/Session.hpp);
 // --replay plays a recording back (taps from the phone included) under the same seed and date.
@@ -168,6 +168,8 @@ int hvmRunMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--phone")) phone = true;
         else if (!std::strcmp(argv[i], "--phone-memory") && i + 1 < argc) { phone = true; phoneMemoryMB = std::max(64, std::atoi(argv[++i])); }
         else if (!std::strcmp(argv[i], "--unlock-fps")) cfg.unlockFrameRate = true;
+        else if (!std::strcmp(argv[i], "--resolution-scale") && i + 1 < argc) cfg.resolutionScale = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--display-pixels") && i + 1 < argc) cfg.displayShortSidePixels = uint32_t(std::atoi(argv[++i]));
         else if (!std::strcmp(argv[i], "--record") && i + 1 < argc) cfg.recordPath = argv[++i];
         else if (!std::strcmp(argv[i], "--replay") && i + 1 < argc) cfg.replayPath = argv[++i];
         else if (!std::strcmp(argv[i], "--block-cache") && i + 1 < argc) cfg.blockCachePath = argv[++i];

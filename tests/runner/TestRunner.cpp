@@ -14094,6 +14094,96 @@ int runFullSubsystemTests() {
             }
             pr.send(pcpu, ObjC::id(pctxCls), "setCurrentContext:", {0});
         }
+        // Higher resolution: a 320x480 drawable on a 1179-pixel display is stored at 3x (capped by the
+        // setting); the game still reads 320x480 back, its viewport is scaled on the way in, and a
+        // depth buffer it sizes from the drawable is stored at the drawable's real size.
+        {
+            struct ScaleGL {
+                static int32_t& rbBinding() { static int32_t v = 0; return v; }
+                static std::map<int32_t, std::pair<int32_t, int32_t>>& sizes() { static std::map<int32_t, std::pair<int32_t, int32_t>> m; return m; }
+                static std::array<int32_t, 4>& viewport() { static std::array<int32_t, 4> v{}; return v; }
+                static void getIntegerv(uint32_t pname, int32_t* out) {
+                    if (pname == 0x8CA7) *out = rbBinding();                 // GL_RENDERBUFFER_BINDING
+                    else if (pname == 0x8CA6) *out = 1;                      // GL_FRAMEBUFFER_BINDING
+                    else if (pname == 0x0BA2) std::memcpy(out, viewport().data(), 16);
+                    else *out = 0;
+                }
+                static void bindRenderbuffer(uint32_t, uint32_t rb) { rbBinding() = int32_t(rb); }
+                static void renderbufferStorage(uint32_t, uint32_t, int32_t w, int32_t h) { sizes()[rbBinding()] = {w, h}; }
+                static void getRenderbufferParameteriv(uint32_t, uint32_t pname, int32_t* out) {
+                    auto& s = sizes()[rbBinding()];
+                    *out = pname == 0x8D42 ? s.first : pname == 0x8D43 ? s.second : pname == 0x8D44 ? 0x81A5 : 0;
+                }
+                static void attachmentParam(uint32_t, uint32_t attachment, uint32_t pname, int32_t* out) {
+                    // colour: renderbuffer 1 (the drawable); depth: renderbuffer 2
+                    const bool color = attachment == 0x8CE0, depth = attachment == 0x8D00;
+                    if (pname == 0x8CD0) *out = (color || depth) ? 0x8D41 : 0;
+                    else if (pname == 0x8CD1) *out = color ? 1 : depth ? 2 : 0;
+                }
+                static void framebufferRenderbuffer(uint32_t, uint32_t, uint32_t, uint32_t) {}
+                static void viewportFn(int32_t a, int32_t b, int32_t c, int32_t d) { viewport() = {a, b, c, d}; }
+                static uint32_t getError() { return 0; }
+            };
+            struct ScalePlatform final : HostGL::Platform {
+                std::vector<std::pair<int, int>> stored;
+                const char* name() const override { return "resolution-test"; }
+                void* createContext(int, void*, bool& desktop) override { desktop = false; return new uint8_t(1); }
+                void destroyContext(void* p) override { delete static_cast<uint8_t*>(p); }
+                bool makeCurrent(void*) override { return true; }
+                void* proc(void*, const char* n) override {
+                    const std::string s = n;
+                    if (s == "glGetIntegerv") return reinterpret_cast<void*>(&ScaleGL::getIntegerv);
+                    if (s == "glBindRenderbuffer") return reinterpret_cast<void*>(&ScaleGL::bindRenderbuffer);
+                    if (s == "glRenderbufferStorage") return reinterpret_cast<void*>(&ScaleGL::renderbufferStorage);
+                    if (s == "glGetRenderbufferParameteriv") return reinterpret_cast<void*>(&ScaleGL::getRenderbufferParameteriv);
+                    if (s == "glGetFramebufferAttachmentParameteriv") return reinterpret_cast<void*>(&ScaleGL::attachmentParam);
+                    if (s == "glFramebufferRenderbuffer") return reinterpret_cast<void*>(&ScaleGL::framebufferRenderbuffer);
+                    if (s == "glViewport") return reinterpret_cast<void*>(&ScaleGL::viewportFn);
+                    if (s == "glGetError") return reinterpret_cast<void*>(&ScaleGL::getError);
+                    return nullptr;
+                }
+                bool drawableStorage(void*, uint32_t, int w, int h, bool& handled) override {
+                    handled = true; stored.push_back({w, h}); ScaleGL::sizes()[ScaleGL::rbBinding()] = {w, h}; return true;
+                }
+            };
+            auto plat = std::make_shared<ScalePlatform>();
+            ProcessConfig scfg;
+            scfg.homePath = "/tmp/hvm_gl_resolution";
+            scfg.hostGL = plat;
+            scfg.resolutionScale = 3;
+            scfg.displayShortSidePixels = 1179;
+            Process sproc(scfg);
+            auto& sr = ObjC::rt(sproc);
+            auto& scpu = sproc.mainThread().cpu;
+            const ObjC::Class sctxCls = sr.getClass("EAGLContext");
+            const ObjC::id sctx = ObjC::id(sr.send(scpu, ObjC::id(sr.send(scpu, ObjC::id(sctxCls), sr.selAlloc)), "initWithAPI:", {2}));
+            sr.send(scpu, ObjC::id(sctxCls), "setCurrentContext:", {sctx});
+            auto gl = [&](const char* n, std::vector<uint32_t> a) { return uint32_t(sproc.callGuest(scpu, *sproc.lookupSymbol(n), a)); };
+            ScaleGL::rbBinding() = 1;
+            HostGL::renderbufferStorageFromDrawable(sproc, sctx, 0x5151, 320, 480);
+            const uint32_t out = sproc.heap().allocZeroed(16);
+            gl("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, out});
+            const int32_t seenW = sproc.mem().read<int32_t>(out);
+            gl("_glViewport", {0, 0, 320, 480});
+            const auto hostViewport = ScaleGL::viewport();
+            gl("_glGetIntegerv", {0x0BA2, out});
+            const int32_t seenVw = sproc.mem().read<int32_t>(out + 8), seenVh = sproc.mem().read<int32_t>(out + 12);
+            gl("_glBindRenderbuffer", {0x8D41, 2});
+            gl("_glRenderbufferStorage", {0x8D41, 0x81A5, 320, 480});
+            gl("_glFramebufferRenderbuffer", {0x8D40, 0x8D00, 0x8D41, 2});
+            const auto depth = ScaleGL::sizes()[2];
+            gl("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, out});
+            const int32_t depthSeenH = sproc.mem().read<int32_t>(out);
+            sproc.heap().free(out);
+            sr.send(scpu, ObjC::id(sctxCls), "setCurrentContext:", {0});
+            const bool ok = plat->stored.size() == 1 && plat->stored[0] == std::make_pair(960, 1440) && seenW == 320 &&
+                            hostViewport == std::array<int32_t, 4>{0, 0, 960, 1440} && seenVw == 320 && seenVh == 480 &&
+                            depth == std::make_pair(960, 1440) && depthSeenH == 480;
+            if (!ok) std::printf("    resolution: stored %dx%d seen %d viewport %d,%d host %dx%d depth %dx%d seen %d\n",
+                                 plat->stored.empty() ? 0 : plat->stored[0].first, plat->stored.empty() ? 0 : plat->stored[0].second, seenW,
+                                 seenVw, seenVh, hostViewport[2], hostViewport[3], depth.first, depth.second, depthSeenH);
+            check(ok, "higher resolution stores the drawable and its depth buffer larger while the game sees its own size");
+        }
         FakeGL::mainId() = std::this_thread::get_id();
         auto platform = std::make_shared<ErrPlatform>();
         ProcessConfig ecfg;

@@ -11,6 +11,8 @@ struct GameDetailView: View {
 
     @AppStorage private var allowInternet: Bool
     @AppStorage private var unlockFrameRate: Bool
+    @AppStorage private var higherResolution: Bool
+    @State private var fillScreen = false
     @AppStorage private var fastLaunchCache: Bool
     @AppStorage private var softwareRenderer: Bool
     @AppStorage private var virtualControllerEnabled: Bool
@@ -30,6 +32,8 @@ struct GameDetailView: View {
         let id = app.info.bundleIdentifier
         _allowInternet = AppStorage(wrappedValue: false, RunModel.internetKey(id))
         _unlockFrameRate = AppStorage(wrappedValue: false, RunModel.unlockFPSKey(id))
+        _higherResolution = AppStorage(wrappedValue: false, RunModel.higherResolutionKey(id))
+        _fillScreen = State(initialValue: GuestScreenSettings.virtualScreen(bundleID: id))
         _fastLaunchCache = AppStorage(wrappedValue: true, RunModel.fastLaunchCacheKey(id))
         _softwareRenderer = AppStorage(wrappedValue: RunModel.softwareRendering(for: id), RunModel.softwareRenderingKey(id))
         _virtualControllerEnabled = AppStorage(wrappedValue: false, VirtualControllerLayout.enabledKey(id))
@@ -98,6 +102,19 @@ struct GameDetailView: View {
                     GlossToggleRow(title: "Unlock frame rate",
                                    hint: "Experimental. Games capped at 30 fps run at 60; a game that counts frames may run fast.",
                                    isOn: $unlockFrameRate)
+                    GlossRule()
+                    GlossToggleRow(title: "Higher resolution",
+                                   hint: "Draws the game's 3D at up to 3x the pixels, as sharp as this screen. Needs GPU rendering; uses more battery.",
+                                   isOn: $higherResolution)
+                    GlossRule()
+                    GlossToggleRow(title: "Fill the screen",
+                                   hint: "Gives the game a taller screen shaped like this iPhone, so it can reach the edges instead of showing black bars. Not every game supports it.",
+                                   isOn: $fillScreen)
+                        .onChange(of: fillScreen) { _, isOn in
+                            GuestScreenSettings.setVirtualScreen(isOn, bundleID: app.info.bundleIdentifier)
+                            // Switching it back on is a new try: forget an earlier "Broken" mark.
+                            if isOn { GuestScreenSettings.setRecord(.unknown, bundleID: app.info.bundleIdentifier) }
+                        }
                     GlossRule()
                     GlossToggleRow(title: "Fast launch cache",
                                    hint: "Persists decoded ARM blocks on disk (hash-checked on load) to speed up repeat launches.",

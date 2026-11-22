@@ -108,8 +108,10 @@ typedef NS_ENUM(NSInteger, HVMTouchPhase) { HVMTouchPhaseBegan = 0, HVMTouchPhas
 @property (nonatomic) BOOL unlockFrameRate;
 /// Phase E1: persist decoded ARM/Thumb Op blocks across launches (default YES).
 @property (nonatomic) BOOL useBlockCache;
-/// Phase E2: per-game HD resolution multiplier (1 = native, 2 = 2x, 3 = 3x; default 1).
+/// Per-game "Higher resolution" (GPU only): the most the game's drawable is enlarged (1 = off, 2, 3; default 1).
 @property (nonatomic) NSInteger resolutionScale;
+/// With resolutionScale > 1: the display's short side in pixels, so the factor stops at what it can show.
+@property (nonatomic) NSInteger displayShortSidePixels;
 /// Phase E4: capture a checksummed guest-arena + CPU quick-save snapshot to `path`.
 - (BOOL)saveQuickSnapshotToPath:(NSString *)path;
 /// Test runs: check every GL call for errors and count draws (slower). Read the
