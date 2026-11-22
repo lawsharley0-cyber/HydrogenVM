@@ -4766,6 +4766,143 @@ int runFullSubsystemTests() {
         check(ios2Left, "an app built for iPhone OS 2 keeps its portrait view in landscape");
         check(ownLeft, "a view the app already made landscape is not turned again");
         check(halves, "a controller with the two-step rotation callbacks gets both halves");
+
+        // A portrait app whose window-subview controller accepts landscape only (cocos2d's
+        // template, Forlorn): showing the window turns it to landscape right away, before the
+        // app builds its first scene. One that accepts portrait stays.
+        {
+            const bool savedByApp = u.orientationSetByApp;
+            const ObjC::id savedKey = u.keyWindow;
+            u.orientationSetByApp = false;
+            u.statusBarOrientation = 1;
+            u.accelFromHost = false;
+            const ObjC::id lc = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, legacy.cls(), r.selAlloc)), r.selInit));
+            const ObjC::id lw = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+            const ObjC::id lv = ObjC::id(r.send(cpu, lc, "view"));
+            r.send(cpu, lw, "addSubview:", {lv});
+            willTo = 0;
+            r.send(cpu, lw, "makeKeyAndVisible");
+            const auto lb = UIKit::getRect(cx, lv, "bounds");
+            const bool turnedNow = u.statusBarOrientation == 3 && willTo == 3 && lb.w > lb.h;
+            r.send(cpu, lw, "setHidden:", {1});
+            r.send(cpu, lv, "removeFromSuperview");
+            // A plain controller (accepts portrait) is left upright.
+            u.statusBarOrientation = 1;
+            const ObjC::id pc = ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, r.getClass("UIViewController"), r.selAlloc)), r.selInit));
+            const ObjC::id pw = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+            r.send(cpu, pw, "addSubview:", {ObjC::id(r.send(cpu, pc, "view"))});
+            r.send(cpu, pw, "makeKeyAndVisible");
+            const bool stayed = u.statusBarOrientation == 1;
+            r.send(cpu, pw, "setHidden:", {1});
+            if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");
+            u.statusBarOrientation = savedOrientation;
+            u.orientationSetByApp = savedByApp;
+            u.accelFromHost = savedHost;
+            if (!(turnedNow && stayed))
+                std::printf("    refused orientation: turned %d (bounds %gx%g, will %d) portrait stays %d\n", turnedNow, lb.w, lb.h, willTo, stayed);
+            check(turnedNow && stayed, "a shown window's controller that refuses portrait turns to landscape at once; one that accepts portrait stays");
+        }
+    }
+
+    // Appearance callbacks for a controller whose view the app adds with addSubview: by hand. An app
+    // that sends viewWillAppear: itself first (Trucks & Skulls' loading screen) gets no second set
+    // from UIKit; one that does not still gets them when its view enters a visible window.
+    {
+        static int willCount = 0, didCount = 0;
+        ObjC::ClassBuilder vcb = r.defineClass("HvmManualAppearanceVC", "UIViewController");
+        vcb.method("viewWillAppear:", [](Ctx& x) {
+               ++willCount;
+               ObjC::rt(x).sendSuper(x.cpu, x.cpu.r[0], UIKit::ui(x).viewController, x.cpu.r[1], {x.cpu.r[2]});
+           }, "v@:c")
+           .method("viewDidAppear:", [](Ctx&) { ++didCount; }, "v@:c");
+        auto& u = UIKit::ui(cx);
+        const ObjC::id savedKey = u.keyWindow;
+        const ObjC::id w = ObjC::id(UIKit::sendRect(cx, ObjC::id(r.send(cpu, r.getClass("UIWindow"), r.selAlloc)), r.sel("initWithFrame:"), {0, 0, 320, 480}));
+        r.send(cpu, w, "makeKeyAndVisible");
+        auto make = [&] { return ObjC::id(r.send(cpu, ObjC::id(r.send(cpu, vcb.cls(), r.selAlloc)), r.selInit)); };
+        const ObjC::id manual = make();
+        const ObjC::id manualView = ObjC::id(r.send(cpu, manual, "view"));   // loaded first, as the game does
+        willCount = didCount = 0;
+        r.send(cpu, manual, "viewWillAppear:", {0});
+        r.send(cpu, w, "addSubview:", {manualView});
+        r.send(cpu, manual, "viewDidAppear:", {0});
+        const bool once = willCount == 1 && didCount == 1;
+        const ObjC::id plain = make();
+        willCount = didCount = 0;
+        r.send(cpu, w, "addSubview:", {ObjC::id(r.send(cpu, plain, "view"))});
+        const bool automatic = willCount == 1 && didCount == 1;
+        r.send(cpu, w, "setHidden:", {1});
+        if (savedKey) r.send(cpu, savedKey, "makeKeyWindow");
+        if (!(once && automatic)) std::printf("    appearance: manual once %d, plain automatic %d (will %d did %d)\n", once, automatic, willCount, didCount);
+        check(once && automatic, "a hand-added controller whose app sends viewWillAppear: itself is not sent a second set");
+    }
+
+    // NIBArchive booleans: value type 5 is true and 4 is false. A view saved hidden in Interface
+    // Builder (UIHidden, 5) loads hidden, and one saved not opaque (UIOpaque, 4) loads not opaque.
+    {
+        std::vector<uint8_t> b(50, 0);
+        const char magic[] = "NIBArchive";
+        std::copy(magic, magic + 10, b.begin());
+        auto u32 = [&](uint32_t n) { for (int i = 0; i < 4; ++i) b.push_back(uint8_t(n >> (i * 8))); };
+        auto var = [&](uint32_t n) { b.push_back(uint8_t(n | 0x80)); };
+        auto set32 = [&](size_t off, uint32_t n) { for (int i = 0; i < 4; ++i) b[off + i] = uint8_t(n >> (i * 8)); };
+        const uint32_t objOff = uint32_t(b.size());
+        for (const auto& obj : {std::array<uint32_t, 3>{0, 0, 1}, {1, 1, 1}, {2, 2, 2}})   // class, first value, value count
+            for (uint32_t n : obj) var(n);
+        const uint32_t keyOff = uint32_t(b.size());
+        for (const std::string key : {"UINibTopLevelObjectsKey", "NS.objects", "UIHidden", "UIOpaque"}) {
+            var(uint32_t(key.size())); b.insert(b.end(), key.begin(), key.end());
+        }
+        const uint32_t valOff = uint32_t(b.size());
+        var(0); b.push_back(10); u32(1);   // root -> NSArray
+        var(1); b.push_back(10); u32(2);   // NSArray -> UIView
+        var(2); b.push_back(5);            // UIHidden = true
+        var(3); b.push_back(4);            // UIOpaque = false
+        const uint32_t clsOff = uint32_t(b.size());
+        for (const std::string cls : {"NSObject", "NSArray", "UIView"}) {
+            var(uint32_t(cls.size())); var(0);
+            b.insert(b.end(), cls.begin(), cls.end());
+        }
+        set32(18, 3); set32(22, objOff); set32(26, 4); set32(30, keyOff);
+        set32(34, 4); set32(38, valOff); set32(42, 3); set32(46, clsOff);
+        const std::string path = cx.proc.bundlePath() + "/HVMNibBools.nib";
+        bool hidden = false, opaque = true, loadedView = false;
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            std::fwrite(b.data(), 1, b.size(), f);
+            std::fclose(f);
+            const ObjC::id mainBundle = ObjC::id(r.send(cpu, r.getClass("NSBundle"), "mainBundle"));
+            const ObjC::id loaded = ObjC::id(r.send(cpu, mainBundle, "loadNibNamed:owner:options:", {Foundation::makeString(cx, "HVMNibBools"), 0, 0}));
+            if (loaded && uint32_t(r.send(cpu, loaded, "count")) == 1) {
+                const ObjC::id v = ObjC::id(r.send(cpu, loaded, "objectAtIndex:", {0}));
+                loadedView = r.isKindOf(v, r.getClass("UIView"));
+                hidden = r.send(cpu, v, "isHidden") & 0xff;
+                opaque = r.send(cpu, v, "isOpaque") & 0xff;
+            }
+        }
+        std::remove(path.c_str());
+        if (!(loadedView && hidden && !opaque)) std::printf("    nib booleans: view %d hidden %d opaque %d\n", loadedView, hidden, opaque);
+        check(loadedView && hidden && !opaque, "NIBArchive booleans: 5 is true (UIHidden loads hidden), 4 is false (UIOpaque off)");
+    }
+
+    // CGSize / CGPoint dictionary round trip (Trucks & Skulls' level files store sizes this way).
+    {
+        auto fn = [&](const char* n, std::vector<uint32_t> a) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(n), a)); };
+        const uint32_t sizeDict = fn("_CGSizeCreateDictionaryRepresentation", {UIKit::fbits(48), UIKit::fbits(-12.5f)});
+        const uint32_t pointDict = fn("_CGPointCreateDictionaryRepresentation", {UIKit::fbits(3), UIKit::fbits(7)});
+        const uint32_t out = proc.heap().allocZeroed(8);
+        const bool sizeOk = fn("_CGSizeMakeWithDictionaryRepresentation", {sizeDict, out}) & 0xff;
+        const float sw = UIKit::bitsf(proc.mem().read<uint32_t>(out)), sh = UIKit::bitsf(proc.mem().read<uint32_t>(out + 4));
+        const bool pointOk = fn("_CGPointMakeWithDictionaryRepresentation", {pointDict, out}) & 0xff;
+        const float px = UIKit::bitsf(proc.mem().read<uint32_t>(out)), py = UIKit::bitsf(proc.mem().read<uint32_t>(out + 4));
+        // A point dictionary has no Width/Height: reading it as a size fails and leaves the output alone.
+        const bool wrongKind = fn("_CGSizeMakeWithDictionaryRepresentation", {pointDict, out}) & 0xff;
+        const bool ok = sizeOk && sw == 48 && sh == -12.5f && pointOk && px == 3 && py == 7 && !wrongKind &&
+                        UIKit::bitsf(proc.mem().read<uint32_t>(out)) == 3;
+        if (!ok) std::printf("    CG dictionaries: size %d %g,%g point %d %g,%g wrong kind %d\n", sizeOk, sw, sh, pointOk, px, py, wrongKind);
+        r.release(cpu, sizeDict);
+        r.release(cpu, pointDict);
+        proc.heap().free(out);
+        check(ok, "CGSize and CGPoint dictionary representations round-trip; a wrong dictionary is refused");
     }
 
     // Accelerate's vector routines on recorded sound (Talking John), and long long rounding.

@@ -249,11 +249,15 @@ void notifyMoveToWindow(Ctx& x, id view, id newWindow, bool will) {
     rt(x).send(x.cpu, view, will ? "willMoveToWindow:" : "didMoveToWindow", will ? std::initializer_list<uint32_t>{newWindow} : std::initializer_list<uint32_t>{});
     for (id s : std::vector<id>(V(x, view).subviews)) notifyMoveToWindow(x, s, newWindow, will);
 }
+bool isRootOfWindow(Ctx& x, id vc) {
+    for (id w : ui(x).windows) if (V(x, w).rootViewController == vc) return true;
+    return false;
+}
 void vcAppearance(Ctx& x, id view, bool appearing) {
     std::vector<id> controllers;
     std::function<void(id)> collect = [&](id v) {
         const id vc = V(x, v).viewController;
-        if (vc && VC(x, vc).appeared != appearing) {
+        if (vc && !(VC(x, vc).appearanceByApp && !isRootOfWindow(x, vc)) && VC(x, vc).appeared != appearing) {
             VC(x, vc).appeared = appearing;
             controllers.push_back(vc);
         }
@@ -621,6 +625,10 @@ void w_makeKey(Ctx& x, id self, SEL) {
 void w_makeKeyAndVisible(Ctx& x, id self, SEL s) {
     setVisible(x, self, true);
     w_makeKey(x, self, s);
+    // iOS turns a shown window's controller that refuses the current orientation right away,
+    // before the app's next line: cocos2d builds its first scene from the view's size just
+    // after makeKeyAndVisible, and Forlorn's title was laid out upright when turned later.
+    rotateLegacyControllers(x, "window shown", true);
 }
 void w_setHidden(Ctx& x, id self, SEL s, bool h) { v_setHidden(x, self, s, h); setVisible(x, self, !h); }
 bool w_isKey(Ctx& x, id self, SEL) { return V(x, self).isKey; }
@@ -944,6 +952,18 @@ void vc_setView(Ctx& x, id self, SEL, id view) {
 bool vc_isViewLoaded(Ctx& x, id self, SEL) { return VC(x, self).view != 0; }
 void vc_hook(Ctx&, id, SEL) {}
 void vc_hookBool(Ctx&, id, SEL, bool) {}
+// Before iOS 5's containment API, UIKit sent no appearance callbacks to a controller whose view an
+// app added with addSubview: (only the window's root got them), so such apps call viewWillAppear: /
+// viewDidAppear: themselves. Sending them as well ran each one twice: Trucks & Skulls' loading screen
+// scheduled the level load twice and the second load freed the level the first had handed out.
+void vc_viewWillAppear(Ctx& x, id self, SEL, bool) {
+    VCData& d = VC(x, self);
+    // Only a loaded view that is off screen: a controller told before its view exists (Jetpack
+    // Joyride's) still expects UIKit's own callbacks when the view is shown.
+    if (d.parent || !d.view) return;
+    const id w = viewWindow(x, d.view);
+    if (!w || !V(x, w).visible) d.appearanceByApp = true;
+}
 id vc_title(Ctx& x, id self, SEL) { return VC(x, self).title; }
 void vc_setTitle(Ctx& x, id self, SEL, id t) { VCData& d = VC(x, self); const id o = d.title; d.title = t ? id(rt(x).send(x.cpu, t, "copy")) : 0; if (o) rt(x).release(x.cpu, o); }
 id vc_nibName(Ctx& x, id self, SEL) { return VC(x, self).nibName; }
@@ -1096,25 +1116,47 @@ void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation) {
         if (w != win) if (const id other = V(x, w).rootViewController) relayout(w, other);
 }
 
+// A window-subview controller that refuses the current orientation: iOS turns the interface to
+// one it accepts, as setRootViewController: does here. cocos2d's template keeps its director in
+// portrait and accepts landscape only from shouldAutorotateToInterfaceOrientation:, leaving
+// UIKit to turn the view; staying portrait drew Forlorn's landscape scenes half off the screen.
+// An app that set the status bar orientation itself keeps it.
+static bool turnToSupported(Ctx& x, id vc, const char* cause) {
+    auto& u = ui(x);
+    if (u.orientationSetByApp) return false;
+    for (int o : {3, 4, 1, 2}) {
+        if (o == u.statusBarOrientation || (u.plistLandscapeOnly && o <= 2)) continue;
+        if (!controllerSupports(x, vc, o)) continue;
+        changeOrientation(x, o, vc, cause);
+        return true;
+    }
+    return false;
+}
+
 // Before iOS 6 a window had no rootViewController: UIKit rotated the controller whose view
 // was the window's first subview, sending it willRotateToInterfaceOrientation:duration:,
 // willAnimateRotationToInterfaceOrientation:duration: and didRotateFromInterfaceOrientation:.
 // Unity 3.x (Bad Piggies) adds its controller's view this way and takes its orientation
 // from those callbacks; without them it drew landscape scenes unrotated in portrait.
-void rotateLegacyControllers(Ctx& x, const char* cause) {
+void rotateLegacyControllers(Ctx& x, const char* cause, bool refusedOnly) {
     auto& u = ui(x);
     // An app built for iPhone OS 2 turns its own picture: its view stays portrait and it draws
     // rotated (PvZ reads the status bar orientation and rotates in OpenGL). UIKit only began
     // turning a launch-landscape controller's view for apps built for 3.0 and later; doing it
     // for PvZ turned its title a second time, upside down and half off the screen.
     if (u.builtForIOS2) return;
-    const int o = u.statusBarOrientation;
     for (id win : std::vector<id>(u.windows)) {
+        const int o = u.statusBarOrientation;
         ViewData& wd = V(x, win);
         if (wd.rootViewController || wd.subviews.empty()) continue;
         const id view = wd.subviews.front();
         const id vc = viewControllerOfView(x, view);
-        if (!vc || VC(x, vc).view != view || VC(x, vc).legacyOrientation == o) continue;
+        if (!vc || VC(x, vc).view != view) continue;
+        // A controller already laid out for this orientation is asked once whether it accepts
+        // it at all: one that refuses portrait is turned to an orientation it accepts.
+        const bool settled = VC(x, vc).legacyOrientation == o;
+        if (settled ? VC(x, vc).legacyAsked : refusedOnly) continue;
+        VC(x, vc).legacyAsked = true;
         // A view the app has already turned itself (a transform, or landscape-shaped bounds for
         // a landscape orientation) is left as it is. Turning it again showed the whole game
         // sideways, and nothing turned it back (a view that became the window's first subview
@@ -1134,13 +1176,18 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
         // own view inside shouldAutorotateToInterfaceOrientation: (Trucks & Skulls HD centres it
         // from its frame there), and UIKit's rotation that follows sets transform, bounds and
         // centre over it. Asking first made that half-done turn look like the app's own layout.
-        if (!controllerSupports(x, vc, o)) continue;
+        if (controllerSupports(x, vc, o)) {
+            if (settled) continue;
+        } else if (!turnToSupported(x, vc, cause)) {
+            continue;
+        }
         const int from = VC(x, vc).legacyOrientation;
+        const int to = u.statusBarOrientation;
         x.proc.logf(LogLevel::Info, "Orientation: %s -> %s (%s, window-subview controller %s)", orientationName(from),
-                    orientationName(o), cause, rt(x).objectClassName(vc).c_str());
+                    orientationName(to), cause, rt(x).objectClassName(vc).c_str());
         auto& r = rt(x);
         const uint32_t noTime[2] = {0, 0};   // duration 0.0 (a double, after the int in r2: r3 and the stack)
-        r.send(x.cpu, vc, "willRotateToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+        r.send(x.cpu, vc, "willRotateToInterfaceOrientation:duration:", {uint32_t(to), noTime[0], noTime[1]});
         layoutRootView(x, win, vc);
         // iOS 2 had a two-step rotation, and a controller that implements it and not the
         // one-step method gets those callbacks instead. PvZ runs its own turn between the two
@@ -1149,15 +1196,15 @@ void rotateLegacyControllers(Ctx& x, const char* cause) {
         const SEL firstHalf = r.sel("willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:");
         const bool ownOneStep = r.lookup(r.classOf(vc), oneStep) != r.lookup(u.viewController, oneStep);
         if (!ownOneStep && r.respondsTo(vc, firstHalf)) {
-            r.send(x.cpu, vc, "willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+            r.send(x.cpu, vc, "willAnimateFirstHalfOfRotationToInterfaceOrientation:duration:", {uint32_t(to), noTime[0], noTime[1]});
             if (r.respondsTo(vc, r.sel("didAnimateFirstHalfOfRotationToInterfaceOrientation:")))
-                r.send(x.cpu, vc, "didAnimateFirstHalfOfRotationToInterfaceOrientation:", {uint32_t(o)});
+                r.send(x.cpu, vc, "didAnimateFirstHalfOfRotationToInterfaceOrientation:", {uint32_t(to)});
             if (r.respondsTo(vc, r.sel("willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:")))
                 r.send(x.cpu, vc, "willAnimateSecondHalfOfRotationFromInterfaceOrientation:duration:", {uint32_t(from), noTime[0], noTime[1]});
         } else {
-            r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(o), noTime[0], noTime[1]});
+            r.send(x.cpu, vc, "willAnimateRotationToInterfaceOrientation:duration:", {uint32_t(to), noTime[0], noTime[1]});
         }
-        VC(x, vc).legacyOrientation = o;
+        VC(x, vc).legacyOrientation = to;
         r.send(x.cpu, vc, "didRotateFromInterfaceOrientation:", {uint32_t(from)});
     }
 }
@@ -1400,7 +1447,7 @@ void registerUIView(Process& p, ObjC::Runtime& r) {
     vc.m<&vc_init>("init").m<&vc_initWithNib>("initWithNibName:bundle:").m<&vc_initWithCoder>("initWithCoder:")
       .m<&vc_dealloc>("dealloc", "v@:").m<&vc_loadView>("loadView", "v@:").m<&vc_view>("view").m<&vc_setView>("setView:", "v@:@")
       .m<&vc_isViewLoaded>("isViewLoaded", "c@:").m<&vc_hook>("viewDidLoad", "v@:").m<&vc_hook>("viewDidUnload", "v@:")
-      .m<&vc_hookBool>("viewWillAppear:", "v@:c").m<&vc_hookBool>("viewDidAppear:", "v@:c").m<&vc_hookBool>("viewWillDisappear:", "v@:c")
+      .m<&vc_viewWillAppear>("viewWillAppear:", "v@:c").m<&vc_hookBool>("viewDidAppear:", "v@:c").m<&vc_hookBool>("viewWillDisappear:", "v@:c")
       .m<&vc_hookBool>("viewDidDisappear:", "v@:c").m<&vc_hook>("viewWillLayoutSubviews", "v@:").m<&vc_hook>("viewDidLayoutSubviews", "v@:")
       .m<&vc_hook>("didReceiveMemoryWarning", "v@:").m<&vc_hook>("awakeFromNib", "v@:").m<&vc_title>("title").m<&vc_setTitle>("setTitle:", "v@:@")
       .m<&vc_nibName>("nibName").m<&vc_nibBundle>("nibBundle").m<&vc_parent>("parentViewController")

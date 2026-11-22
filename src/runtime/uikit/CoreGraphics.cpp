@@ -106,6 +106,27 @@ bool r_makeWithDictionary(Ctx& x, id dict, GuestPtr out) {
     uint32_t fault = 0;
     return x.mem.copyInWritable(out, &r, sizeof(r), fault);
 }
+// CGPoint / CGSize as dictionaries ({X, Y} and {Width, Height}), the form games store in
+// plists and archives (Trucks & Skulls' level files decode their sizes this way).
+id p_createDictionary(Ctx& x, CGPoint pt) {
+    using namespace Foundation;
+    return makeDict(x, {{constString(x.proc, "X"), makeNumberFloat(x, pt.x)}, {constString(x.proc, "Y"), makeNumberFloat(x, pt.y)}}, true);
+}
+id s_createDictionary(Ctx& x, CGSize sz) {
+    using namespace Foundation;
+    return makeDict(x, {{constString(x.proc, "Width"), makeNumberFloat(x, sz.width)}, {constString(x.proc, "Height"), makeNumberFloat(x, sz.height)}}, true);
+}
+bool pairFromDictionary(Ctx& x, id dict, const char* k1, const char* k2, GuestPtr out) {
+    using namespace Foundation;
+    if (!out || !isDict(x, dict)) return false;
+    const id a = dictGet(x, dict, k1), b = dictGet(x, dict, k2);
+    if (!isNumber(x, a) || !isNumber(x, b)) return false;
+    const float v[2] = {float(numberDouble(x, a)), float(numberDouble(x, b))};
+    uint32_t fault = 0;
+    return x.mem.copyInWritable(out, v, sizeof(v), fault);
+}
+bool p_makeWithDictionary(Ctx& x, id dict, GuestPtr out) { return pairFromDictionary(x, dict, "X", "Y", out); }
+bool s_makeWithDictionary(Ctx& x, id dict, GuestPtr out) { return pairFromDictionary(x, dict, "Width", "Height", out); }
 void r_intersection(Ctx& x, GuestPtr ret, CGRect a, CGRect b) {
     if (isNull(a) || isNull(b)) { writeStruct(x, ret, nullRect()); return; }
     const G::Rect r = toG(a).intersect(toG(b));
@@ -1937,6 +1958,10 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&r_isEmpty>("_CGRectIsEmpty"); p.def<&r_isNull>("_CGRectIsNull"); p.def<&r_isInfinite>("_CGRectIsInfinite");
     p.def<&r_createDictionary>("_CGRectCreateDictionaryRepresentation");
     p.def<&r_makeWithDictionary>("_CGRectMakeWithDictionaryRepresentation");
+    p.def<&p_createDictionary>("_CGPointCreateDictionaryRepresentation");
+    p.def<&p_makeWithDictionary>("_CGPointMakeWithDictionaryRepresentation");
+    p.def<&s_createDictionary>("_CGSizeCreateDictionaryRepresentation");
+    p.def<&s_makeWithDictionary>("_CGSizeMakeWithDictionaryRepresentation");
     p.def<&r_containsPoint>("_CGRectContainsPoint"); p.def<&r_containsRect>("_CGRectContainsRect"); p.def<&r_intersects>("_CGRectIntersectsRect");
     p.def<&r_equal>("_CGRectEqualToRect"); p.def<&p_equal>("_CGPointEqualToPoint"); p.def<&s_equal>("_CGSizeEqualToSize");
     p.def<&r_intersection>("_CGRectIntersection"); p.def<&r_union>("_CGRectUnion"); p.def<&r_inset>("_CGRectInset");

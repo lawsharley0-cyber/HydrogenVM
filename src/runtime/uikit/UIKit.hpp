@@ -103,7 +103,11 @@ struct VCData : ObjC::HostObject {
     id segueTemplates = 0;           // retained NSArray of UIStoryboardSegueTemplate, from the nib
     id externalObjects = 0;          // retained: a storyboard view nib's UpstreamPlaceholder-N objects
     bool appeared = false, wantsFullScreen = false;
+    // The app sent viewWillAppear: itself to this parentless controller before its view was on
+    // screen: it drives the appearance callbacks, and vcAppearance leaves the controller alone.
+    bool appearanceByApp = false;
     int32_t legacyOrientation = 1;   // what rotateLegacyControllers last laid this controller out for
+    bool legacyAsked = false;        // rotateLegacyControllers asked whether it accepts the launch orientation
     int32_t modalStyle = 0;
 };
 
@@ -347,7 +351,8 @@ id loadNib(Ctx& x, const std::string& name, id bundle, id owner, id externalObje
 void reevaluateRootOrientation(Ctx& x, const char* cause, bool rotation = false);
 // iOS 3-5 apps without a rootViewController: the controller whose view is a window's first
 // subview rotates (with willRotate/didRotate callbacks) to the interface orientation.
-void rotateLegacyControllers(Ctx& x, const char* cause);
+// refusedOnly: turn only a controller that refuses the orientation the app is in (a window being shown).
+void rotateLegacyControllers(Ctx& x, const char* cause, bool refusedOnly = false);
 // What UIAccelerometer reports: the host's reading, or until there is one, gravity for a
 // device held upright in the current interface orientation.
 std::array<double, 3> restingGravity(const UIState& u);

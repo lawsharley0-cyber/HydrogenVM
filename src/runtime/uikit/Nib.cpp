@@ -97,8 +97,12 @@ bool parseNibArchive(const std::vector<uint8_t>& data, NibGraph& g, std::string&
             case 1: { v.type = NValue::Int; const uint16_t a = uint16_t(r.u8() | r.u8() << 8); v.i = int16_t(a); break; }
             case 2: v.type = NValue::Int; v.i = int32_t(r.u32()); break;
             case 3: v.type = NValue::Int; v.i = int64_t(r.u64()); break;
-            case 4: v.type = NValue::Bool; v.i = 1; break;
-            case 5: v.type = NValue::Bool; v.i = 0; break;
+            // 4 is false and 5 is true: Interface Builder writes UIUserInteractionDisabled for
+            // every label as 5, and UIClearsContextBeforeDrawing (default on) only when it is
+            // off, as 4. Read the other way round, a view hidden in the nib was shown (Trucks &
+            // Skulls' placeholder labels over the real ones) and labels caught taps.
+            case 4: v.type = NValue::Bool; v.i = 0; break;
+            case 5: v.type = NValue::Bool; v.i = 1; break;
             case 6: { v.type = NValue::Double; const uint32_t bits = r.u32(); float f; std::memcpy(&f, &bits, 4); v.d = f; break; }
             case 7: { v.type = NValue::Double; const uint64_t bits = r.u64(); std::memcpy(&v.d, &bits, 8); break; }
             case 8: { v.type = NValue::Data; const uint32_t n = r.varint(); v.s = r.bytes(n); break; }

@@ -87,7 +87,7 @@ def nibarchive(root):
     def val(k, v):
         kb = varint(key(k))
         if isinstance(v, Obj): return kb + bytes([10]) + struct.pack("<I", index[id(v)])
-        if isinstance(v, bool): return kb + bytes([4 if v else 5])
+        if isinstance(v, bool): return kb + bytes([5 if v else 4])
         if isinstance(v, int): return kb + bytes([2]) + struct.pack("<i", v)
         if isinstance(v, tuple) and v[0] == "float": return kb + bytes([6]) + struct.pack("<f", v[1])
         if isinstance(v, tuple) and v[0] in ("rect", "point"):

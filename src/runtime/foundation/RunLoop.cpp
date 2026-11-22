@@ -929,6 +929,19 @@ void rl_removePort(Ctx& x, id self, SEL, id port, id mode) {
 id th_current(Ctx& x, id, SEL) { return threadObject(x, &x.proc.currentThread()); }
 id th_main(Ctx& x, id, SEL) { return threadObject(x, &x.proc.mainThread()); }
 bool th_isMainClass(Ctx& x, id, SEL) { return &x.proc.currentThread() == &x.proc.mainThread(); }
+// "<NSThread: 0x...>{name = (null), num = 1}", as iOS prints it. Games parse the number out
+// of it (Trucks & Skulls' TSCurrentThreadID searches for "num = "; finding nothing, it asked
+// for the substring from NSNotFound and stopped while loading a level).
+id th_description(Ctx& x, id self, SEL) {
+    ThreadData* d = rt(x).hostIf<ThreadData>(self);
+    const GuestThread* t = d ? d->t : nullptr;
+    const std::string name = d && d->name ? utf8(x, d->name) : "";
+    // iOS numbers the main thread 1 and each thread after it in creation order.
+    const unsigned num = t ? t->id - x.proc.mainThread().id + 1 : 0;
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "<NSThread: 0x%x>{name = ", self);
+    return makeString(x, std::string(buf) + (name.empty() ? "(null)" : name) + ", num = " + std::to_string(num) + "}");
+}
 bool th_isMain(Ctx& x, id self, SEL) { ThreadData* d = rt(x).hostIf<ThreadData>(self); return d && d->t == &x.proc.mainThread(); }
 bool th_isMultiThreaded(Ctx&, id, SEL) { return true; }
 void th_sleepFor(Ctx& x, id, SEL, double s) {
@@ -1081,7 +1094,7 @@ void registerRunLoop(Process& p, ObjC::Runtime& r) {
       .cm<&th_sleepUntil>("sleepUntilDate:").cm<&th_detach>("detachNewThreadSelector:toTarget:withObject:")
       .cm<&th_priority>("threadPriority", "d@:").cm<&th_setPriority>("setThreadPriority:", "c@:d");
     th.m<&th_init>("init").m<&th_initWithTarget>("initWithTarget:selector:object:").m<&th_start>("start", "v@:").m<&th_isMain>("isMainThread", "c@:")
-      .m<&th_noop>("main", "v@:").m<&th_name>("name").m<&th_setName>("setName:").m<&th_dict>("threadDictionary")
+      .m<&th_noop>("main", "v@:").m<&th_name>("name").m<&th_setName>("setName:").m<&th_description>("description").m<&th_dict>("threadDictionary")
       .m<&th_cancel>("cancel", "v@:").m<&th_isCancelled>("isCancelled", "c@:")
       .m<&th_isExecuting>("isExecuting", "c@:").m<&th_isFinished>("isFinished", "c@:")
       .m<&th_priority>("threadPriority", "d@:").m<&th_setPriority>("setThreadPriority:", "c@:d")
