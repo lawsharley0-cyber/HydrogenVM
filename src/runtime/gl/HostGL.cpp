@@ -559,6 +559,13 @@ constexpr int kMaxDrawableFallback = 4096;
 constexpr uint32_t kDepthAttachment = 0x8D00, kStencilAttachment = 0x8D20;
 constexpr uint32_t kRenderbufferInternalFormat = 0x8D44;
 
+// Same rule as the software renderer (OpenGLES.cpp): only a viewport of the drawable's own shape
+// is a design-sized picture to scale up; another shape (N.O.V.A. 2's square texture pass) clips.
+bool viewportMatchesDrawableShape(int32_t vw, int32_t vh, int32_t bw, int32_t bh) {
+    if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) return false;
+    const double a = double(vw) / double(vh), b = double(bw) / double(bh);
+    return std::abs(a - b) <= 0.03 * b;
+}
 void maybeGrowHostDrawable(Ctx& x, int32_t vw, int32_t vh) {
     if (vw <= 0 || vh <= 0 || vw > kMaxDrawableFallback || vh > kMaxDrawableFallback) return;
     HostContext* hc = hgCurrent(x);
@@ -591,6 +598,7 @@ void maybeGrowHostDrawable(Ctx& x, int32_t vw, int32_t vh) {
         d = it->second;
     }
     if (vw <= d.width && vh <= d.height) return;
+    if (!viewportMatchesDrawableShape(vw, vh, d.width, d.height)) return;   // another shape: clip, as iOS does
     const int nw = std::max(d.width, int(vw));
     const int nh = std::max(d.height, int(vh));
 

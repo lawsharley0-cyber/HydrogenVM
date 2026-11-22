@@ -253,6 +253,13 @@ void iosInit(Ctx& x, uint32_t ios, uint32_t sb) {
     wr(x, ios + kNumGet, St(x).facet);
 }
 void b_iosCtor(Ctx& x, GuestPtr ios) { initIosBase(x, ios); }
+// basic_ios<char>::basic_ios(): ios_base(), then tie, fill, fill_init, streambuf and the
+// facets all zero, as libstdc++'s protected default constructor leaves them until init()
+// (N.O.V.A. 2's glitch::core::randomString builds its own stringstream this way).
+void b_basicIosCtor(Ctx& x, GuestPtr ios) {
+    initIosBase(x, ios);
+    for (uint32_t off = kTie; off < kNumGet + 4; off += 4) wr(x, ios + off, 0);
+}
 void b_init(Ctx& x, GuestPtr ios, GuestPtr sb) { iosInit(x, ios, sb); }
 void b_clear(Ctx& x, GuestPtr ios, uint32_t st) {
     const uint32_t s = st | (rd(x, ios + kBuf) ? 0 : kBad);
@@ -292,6 +299,35 @@ uint32_t is_ctorSb2(Ctx& x, GuestPtr self, GuestPtr vtt, GuestPtr sb) {
     iosInit(x, ios, sb);
     return self;
 }
+// basic_iostream<char> base-object constructor (C2, with the VTT): libstdc++'s protected
+// default constructor builds the istream part (vptr, gcount 0) and the ostream part at +8 and
+// leaves the shared basic_ios to the derived class, which calls basic_ios::init() and then
+// installs its own vtables (N.O.V.A. 2's own std::stringstream). VTT: [0] this class, [1] its
+// istream part, [2] its ostream part.
+uint32_t ios_iostreamCtor2(Ctx& x, GuestPtr self, GuestPtr vtt) {
+    wr(x, self, vtt ? rd(x, vtt) : 0);
+    wr(x, self + 4, 0);
+    wr(x, self + 8, vtt ? rd(x, vtt + 8) : 0);
+    return self;
+}
+// basic_streambuf<char>: libstdc++ keeps these in the header, but an armv6 build of N.O.V.A. 2
+// imports them for its own stringbuf. Layout: +4 eback, +8 gptr, +12 egptr, +16 pbase,
+// +20 pptr, +24 epptr, +28 locale.
+uint32_t sb_ctor2(Ctx& x, GuestPtr self) {
+    wr(x, self, St(x).baseSbVptr);   // std::basic_streambuf's own vtable, until the derived class sets its own
+    for (uint32_t off = 4; off < 28; off += 4) wr(x, self + off, 0);
+    wr(x, self + 28, St(x).locImpl);
+    return self;
+}
+template <uint32_t Off> uint32_t sb_get(Ctx& x, GuestPtr self) { return rd(x, self + Off); }
+void sb_setg(Ctx& x, GuestPtr self, uint32_t b, uint32_t g, uint32_t e) { wr(x, self + 4, b); wr(x, self + 8, g); wr(x, self + 12, e); }
+void sb_setp(Ctx& x, GuestPtr self, uint32_t b, uint32_t e) { wr(x, self + 16, b); wr(x, self + 20, b); wr(x, self + 24, e); }
+void sb_gbump(Ctx& x, GuestPtr self, int32_t n) { wr(x, self + 8, rd(x, self + 8) + uint32_t(n)); }
+void sb_pbump(Ctx& x, GuestPtr self, int32_t n) { wr(x, self + 20, rd(x, self + 20) + uint32_t(n)); }
+// istream / ostream / iostream / basic_ios destructors: the parts hold nothing on the host
+// side here (the stream buffer is the derived class's). The deleting form frees the object.
+void ios_dtorNop(Ctx&, GuestPtr) {}
+void ios_dtorDelete(Ctx& x, GuestPtr self) { if (self) x.proc.heap().free(self); }
 // std::locale is { _Impl* }. Every default locale shares one _Impl (St::locImpl);
 // a locale built with locale(const locale&, Facet*) gets its own (inline code:
 // new _Impl(*other._M_impl, 1), then _M_install_facet), and copies share it.
@@ -1319,6 +1355,8 @@ void registerLibStdcxxStreams(Process& p) {
     p.def<&b_iosCtor>("__ZNSt8ios_baseC2Ev");
     p.def<&b_iosCtor>("__ZNSt8ios_baseC1Ev");
     for (const char* v : {"D0Ev", "D1Ev", "D2Ev"}) p.def<&nop1>(std::string("__ZNSt8ios_base") + v);
+    p.def<&b_basicIosCtor>("__ZNSt9basic_iosIcSt11char_traitsIcEEC1Ev");
+    p.def<&b_basicIosCtor>("__ZNSt9basic_iosIcSt11char_traitsIcEEC2Ev");
     p.def<&b_init>("__ZNSt9basic_iosIcSt11char_traitsIcEE4initEPSt15basic_streambufIcS1_E");
     p.def<&b_clear>("__ZNSt9basic_iosIcSt11char_traitsIcEE5clearESt12_Ios_Iostate");
     p.def<&b_setstate>("__ZNSt9basic_iosIcSt11char_traitsIcEE8setstateESt12_Ios_Iostate");
@@ -1329,6 +1367,32 @@ void registerLibStdcxxStreams(Process& p) {
     p.def<&useFacetCtype>("__ZSt9use_facetISt5ctypeIcEERKT_RKSt6locale");
     p.def<&is_ctorSb>("__ZNSiC1EPSt15basic_streambufIcSt11char_traitsIcEE");
     p.def<&is_ctorSb2>("__ZNSiC2EPSt15basic_streambufIcSt11char_traitsIcEE");
+    p.def<&ios_iostreamCtor2>("__ZNSdC2Ev");
+    for (const char* cls : {"__ZNSd", "__ZNSi", "__ZNSo"}) {
+        p.def<&ios_dtorNop>(std::string(cls) + "D1Ev");
+        p.def<&ios_dtorNop>(std::string(cls) + "D2Ev");
+        p.def<&ios_dtorDelete>(std::string(cls) + "D0Ev");
+    }
+    // Called through the ostream part's vtable (this + 8): non-virtual thunks to the whole object.
+    supportDef<&ios_dtorNop>(p, "__ZThn8_NSdD1Ev", SupportStatus::Real, "the iostream parts hold no host state; the stream buffer is the derived class's");
+    p.defineFunction("__ZThn8_NSdD0Ev", [](Ctx& x) { if (x.cpu.r[0]) x.proc.heap().free(x.cpu.r[0] - 8); });
+    {
+        const std::string SB = "St15basic_streambufIcSt11char_traitsIcEE";
+        p.def<&sb_ctor2>("__ZN" + SB + "C2Ev");
+        p.def<&sb_ctor2>("__ZN" + SB + "C1Ev");
+        p.def<&sb_get<4>>("__ZNK" + SB + "5ebackEv");
+        p.def<&sb_get<8>>("__ZNK" + SB + "4gptrEv");
+        p.def<&sb_get<12>>("__ZNK" + SB + "5egptrEv");
+        p.def<&sb_get<16>>("__ZNK" + SB + "5pbaseEv");
+        p.def<&sb_get<20>>("__ZNK" + SB + "4pptrEv");
+        p.def<&sb_get<24>>("__ZNK" + SB + "5epptrEv");
+        p.def<&sb_setg>("__ZN" + SB + "4setgEPcS3_S3_");
+        p.def<&sb_setp>("__ZN" + SB + "4setpEPcS3_");
+        p.def<&sb_gbump>("__ZN" + SB + "5gbumpEi");
+        p.def<&sb_pbump>("__ZN" + SB + "5pbumpEi");
+    }
+    supportDef<&ios_dtorNop>(p, "__ZNSt9basic_iosIcSt11char_traitsIcEED1Ev", SupportStatus::Real, "basic_ios holds no host state here");
+    supportDef<&ios_dtorNop>(p, "__ZNSt9basic_iosIcSt11char_traitsIcEED2Ev", SupportStatus::Real, "basic_ios holds no host state here");
     p.def<&std_getlineDelim>("__ZSt7getlineIcSt11char_traitsIcESaIcEERSt13basic_istreamIT_T0_ES7_RSbIS4_S5_T1_ES4_");
     p.def<&std_getline>("__ZSt7getlineIcSt11char_traitsIcESaIcEERSt13basic_istreamIT_T0_ES7_RSbIS4_S5_T1_E");
     p.def<&is_getlineDelim>("__ZNSi7getlineEPcic");

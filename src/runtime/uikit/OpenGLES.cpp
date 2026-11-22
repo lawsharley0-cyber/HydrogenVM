@@ -1112,6 +1112,15 @@ void resizeRenderbuffer(Renderbuffer& rb, int nw, int nh) {
     rb.height = nh;
 }
 
+// Only a design-sized picture of the drawable's own shape is scaled up (Rayman Origins: 1024x682
+// into 480x320). A viewport of another shape is a pass that iOS simply clips: N.O.V.A. 2 draws a
+// square 1024x1024 texture pass on its 768x1024 iPad framebuffer, and growing the drawable for it
+// squeezed every later frame into three quarters of the screen.
+bool viewportMatchesDrawableShape(int32_t vw, int32_t vh, int32_t bw, int32_t bh) {
+    if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) return false;
+    const double a = double(vw) / double(vh), b = double(bw) / double(bh);
+    return std::abs(a - b) <= 0.03 * b;
+}
 void maybeGrowDrawableForViewport(Ctx& x, int32_t vw, int32_t vh) {
     if (vw <= 0 || vh <= 0 || vw > kMaxDrawableFallback || vh > kMaxDrawableFallback) return;
     ContextData* c = currentCtx(x);
@@ -1132,6 +1141,7 @@ void maybeGrowDrawableForViewport(Ctx& x, int32_t vw, int32_t vh) {
     }
     if (!color || !color->drawableLayer) return;   // offscreen targets keep OpenGL's clip
     if (vw <= color->width && vh <= color->height) return;
+    if (!viewportMatchesDrawableShape(vw, vh, color->width, color->height)) return;
     const int nw = std::max(color->width, int(vw));
     const int nh = std::max(color->height, int(vh));
     resizeRenderbuffer(*color, nw, nh);

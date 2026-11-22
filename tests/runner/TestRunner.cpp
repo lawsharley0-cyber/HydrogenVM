@@ -2917,6 +2917,29 @@ int runFullSubsystemTests() {
         std::remove(lockPath.c_str());
         check(locked && queried && unlocked, "fcntl F_SETLK and F_GETLK take Darwin's struct flock (LevelDB's db/LOCK)");
     }
+    // libstdc++ basic_streambuf / basic_ios / basic_iostream base constructors and buffer accessors
+    // (N.O.V.A. 2 builds its own std::stringstream from them).
+    {
+        auto call = [&](const char* sym, std::initializer_list<uint32_t> args) { return uint32_t(proc.callGuest(cpu, *proc.lookupSymbol(sym), args)); };
+        const std::string SB = "St15basic_streambufIcSt11char_traitsIcEE";
+        const uint32_t sb = proc.heap().allocZeroed(32), buf = proc.heap().allocZeroed(16), ios = proc.heap().allocZeroed(136);
+        std::memset(proc.mem().host(sb), 0x55, 32);
+        std::memset(proc.mem().host(ios), 0x55, 136);
+        call(("__ZN" + SB + "C2Ev").c_str(), {sb});
+        const bool cleared = proc.mem().read<uint32_t>(sb + 8) == 0 && proc.mem().read<uint32_t>(sb + 24) == 0;
+        call(("__ZN" + SB + "4setpEPcS3_").c_str(), {sb, buf, buf + 16});
+        call(("__ZN" + SB + "5pbumpEi").c_str(), {sb, 3});
+        call(("__ZN" + SB + "4setgEPcS3_S3_").c_str(), {sb, buf, buf, buf + 8});
+        call(("__ZN" + SB + "5gbumpEi").c_str(), {sb, 2});
+        const bool put = call(("__ZNK" + SB + "5pbaseEv").c_str(), {sb}) == buf && call(("__ZNK" + SB + "4pptrEv").c_str(), {sb}) == buf + 3 &&
+                         call(("__ZNK" + SB + "5epptrEv").c_str(), {sb}) == buf + 16;
+        const bool get = call(("__ZNK" + SB + "5ebackEv").c_str(), {sb}) == buf && call(("__ZNK" + SB + "4gptrEv").c_str(), {sb}) == buf + 2 &&
+                         call(("__ZNK" + SB + "5egptrEv").c_str(), {sb}) == buf + 8;
+        call("__ZNSt9basic_iosIcSt11char_traitsIcEEC2Ev", {ios});
+        const bool iosZero = proc.mem().read<uint32_t>(ios + 112) == 0 && proc.mem().read<uint32_t>(ios + 120) == 0 && proc.mem().read<uint32_t>(ios + 132) == 0;
+        check(cleared && put && get && iosZero, "libstdc++ streambuf base constructor and put/get area accessors; basic_ios() leaves its buffer unset");
+        for (uint32_t a : {sb, buf, ios}) proc.heap().free(a);
+    }
     // getfsstat (Super Hexagon's startup): a null buffer asks for the count; a full buffer gets one
     // struct statfs (272 bytes, 32-bit layout) with f_fstypename at 60 and f_mntonname at 75.
     {
@@ -7564,6 +7587,14 @@ int runFullSubsystemTests() {
         const int afterOffW = int(proc.mem().read<int32_t>(q)), afterOffH = int(proc.mem().read<int32_t>(q + 4));
         check(stayW == grownW && stayH == grownH && afterOffW == grownW && afterOffH == grownH,
               "a smaller viewport and an offscreen FBO viewport leave the grown drawable size alone");
+        // N.O.V.A. 2: a larger viewport of another shape (a square texture pass) is clipped, as on iOS,
+        // instead of growing the drawable and squeezing every later frame.
+        callGL("_glViewport", {0, 0, 2048, 2048});
+        callGL("_glBindRenderbuffer", {0x8D41, colorRb});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D42, q});
+        callGL("_glGetRenderbufferParameteriv", {0x8D41, 0x8D43, q + 4});
+        const int squareW = int(proc.mem().read<int32_t>(q)), squareH = int(proc.mem().read<int32_t>(q + 4));
+        check(squareW == grownW && squareH == grownH, "a larger viewport of another shape clips instead of growing the drawable");
 
         r.send(cpu, win, "setHidden:", {1});
         r.send(cpu, ctxCls, "setCurrentContext:", {0});

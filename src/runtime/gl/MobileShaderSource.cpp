@@ -4,7 +4,38 @@
 #include <vector>
 
 namespace Hydrogen::Runtime::Shader {
-std::string normalizeMobileSource(const std::string& source) {
+namespace {
+// Apple's GLSL ES compiler only warned about tokens after #endif / #else; Mesa and desktop
+// drivers reject the shader (N.O.V.A. 2 ships "#endif]"). Blank them, keeping the line.
+std::string dropDirectiveTrailers(std::string source) {
+    for (size_t begin = 0; begin < source.size();) {
+        size_t end = source.find('\n', begin);
+        if (end == std::string::npos) end = source.size();
+        size_t p = source.find_first_not_of(" \t", begin);
+        if (p < end && source[p] == '#') {
+            p = source.find_first_not_of(" \t", p + 1);
+            for (const char* word : {"endif", "else"}) {
+                const size_t n = std::char_traits<char>::length(word);
+                if (p < end && source.compare(p, n, word) == 0 && (p + n == end || !std::isalnum(static_cast<unsigned char>(source[p + n])))) {
+                    for (size_t i = p + n; i < end; ++i) {
+                        if (source[i] == '/' && i + 1 < end && (source[i + 1] == '/' || source[i + 1] == '*')) break;   // a comment stays
+                        if (source[i] != '\r') source[i] = ' ';
+                    }
+                    break;
+                }
+            }
+        }
+        begin = end + 1;
+    }
+    return source;
+}
+std::string normalizeExtensions(const std::string& source);
+}
+
+std::string normalizeMobileSource(const std::string& source) { return normalizeExtensions(dropDirectiveTrailers(source)); }
+
+namespace {
+std::string normalizeExtensions(const std::string& source) {
     // Mobile engines prepend precision/uniform declarations to shader bodies
     // whose extension directives were originally at the beginning. Translate
     // only unconditional directives, before any function or struct body.
@@ -60,5 +91,6 @@ std::string normalizeMobileSource(const std::string& source) {
     header += "#line " + std::to_string(originalLine) + "\n";
     result.insert(insertion, header);
     return result;
+}
 }
 }

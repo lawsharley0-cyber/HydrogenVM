@@ -1,5 +1,6 @@
 #include "runtime/graphics/Shader.hpp"
 #include "runtime/gl/MobileShaderSource.hpp"
+#include <algorithm>
 #include <cstdio>
 
 using namespace Hydrogen::Runtime;
@@ -18,5 +19,14 @@ int main() {
     const std::string comment = "/*\n" + extension + "*/\nvoid main(){}\n";
     if (Shader::normalizeMobileSource(conditional) != conditional || Shader::normalizeMobileSource(inFunction) != inFunction ||
         Shader::normalizeMobileSource(comment) != comment) { std::puts("FAIL: must preserve conditional, function and commented directives"); return 1; }
+    // N.O.V.A. 2: "#endif]" — Apple's compiler only warned; strict ones reject the shader.
+    const std::string trailer = "precision mediump float;\n#if 0\n#endif]\r\n#ifdef X\n#else junk // note\n#endif\nvoid main(){ gl_FragColor = vec4(1.0); }\n";
+    Shader::Program strict, fixedProgram;
+    const auto cleaned = Shader::normalizeMobileSource(trailer);
+    if (strict.compile(trailer, false) || !fixedProgram.compile(cleaned, false) ||
+        std::count(cleaned.begin(), cleaned.end(), '\n') != std::count(trailer.begin(), trailer.end(), '\n') ||
+        cleaned.find("// note") == std::string::npos) {
+        std::puts("FAIL: tokens after #endif/#else are dropped, keeping lines and comments"); return 1;
+    }
     std::puts("mobile shader source: passed");
 }
