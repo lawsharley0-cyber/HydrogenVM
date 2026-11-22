@@ -62,6 +62,8 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         frame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) layoutPicture();
         });
+        // The frame takes every touch itself (not left to fall through to the activity).
+        frame.setOnTouchListener((v, e) -> onGameTouch(e));
         setContentView(frame);
         hideSystemBars();
 
@@ -103,14 +105,13 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent e) {
-        if (session == 0) return false;
-        int[] at = new int[2];
-        surface.getLocationOnScreen(at);
-        int[] frameAt = new int[2];
-        frame.getLocationOnScreen(frameAt);
-        float ox = at[0] - frameAt[0], oy = at[1] - frameAt[1];
+    /**
+     * Touches on the whole game screen (the picture and the black bars around it), in the frame's
+     * coordinates; the picture's position within the frame turns them into 0..1 of the picture.
+     */
+    private boolean onGameTouch(MotionEvent e) {
+        if (session == 0) return true;
+        float ox = surface.getLeft(), oy = surface.getTop();
         float w = surface.getWidth(), h = surface.getHeight();
         if (w <= 0 || h <= 0) return true;
         int action = e.getActionMasked();

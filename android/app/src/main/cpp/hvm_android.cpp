@@ -78,6 +78,7 @@ struct Session {
     float guestW = 320, guestH = 480;    // the game's screen in points (touch space)
     bool frameReady = false, stopBlit = false;
     uint64_t frames = 0;                 // frames presented (for tests and the log)
+    int touchesLogged = 0;               // the first few touches go in the log (input reports)
     ANativeWindow* window = nullptr;
     std::thread blitter;
     AAudioStream* audio = nullptr;
@@ -418,10 +419,20 @@ void hvmandroid::touchSession(Session* s, int phase, float u, float v, int finge
         o = s->orientation;
         gw = s->guestW; gh = s->guestH;
     }
-    if (!p) return;
     float x, y;
     toFramebuffer(o, std::clamp(float(u), 0.0f, 1.0f), std::clamp(float(v), 0.0f, 1.0f), x, y);
-    p->injectTouch(RT::TouchPhase(phase), std::min(x * gw, gw - 0.5f), std::min(y * gh, gh - 0.5f), uint32_t(finger) + 1);
+    const float gx = std::min(x * gw, gw - 0.5f), gy = std::min(y * gh, gh - 0.5f);
+    // The first touches go in the game's log, so a report says whether input reached the game.
+    bool logIt = false;
+    { std::lock_guard<std::mutex> lk(s->mu); logIt = phase == 0 && s->touchesLogged < 6 && ++s->touchesLogged; }
+    if (logIt) {
+        char line[200];
+        std::snprintf(line, sizeof line, "Touch: finger %d down at %.2f,%.2f of the picture -> %.0f,%.0f in the game's %.0fx%.0f screen (orientation %d)%s",
+                      finger, u, v, gx, gy, gw, gh, o, !p ? ", before the game started: dropped" : !p->acceptsTouches() ? ", but the game takes no touches yet: dropped" : "");
+        s->logLine("", line);
+    }
+    if (!p) return;
+    p->injectTouch(RT::TouchPhase(phase), gx, gy, uint32_t(finger) + 1);
 }
 
 extern "C" {
