@@ -70,6 +70,12 @@ private:
     uint32_t top_;                                 // bump pointer for fresh space
     uint32_t committed_;                           // [base_, committed_) is mapped
     std::vector<std::vector<uint32_t>> small_;     // free lists per class
+    // A freed small block waits behind the last kReuseDelay freed blocks of its size before it is
+    // handed out again. iOS rarely reuses a block at once, and games read memory they just freed:
+    // Dead Space walks an EASTL hash table's old bucket array after the table regrew under it, which
+    // worked on iOS and crashed 4 runs in 5 here when the very next allocation took that block.
+    static constexpr size_t kReuseDelay = 64;
+    std::vector<std::deque<uint32_t>> smallDelayed_;
     std::map<uint32_t, uint32_t> freeByAddr_;      // big free blocks: addr -> size
     std::multimap<uint32_t, uint32_t> freeBySize_; // size -> addr
     // Small blocks are tracked without per-block maps, which made every malloc/free cost a few

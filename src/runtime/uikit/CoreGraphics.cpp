@@ -21,7 +21,7 @@ using ObjC::rt;
 
 struct CGState {
     explicit CGState(Process&) {}
-    Class context = 0, image = 0, colorSpace = 0, color = 0, provider = 0, path = 0, gradient = 0, font = 0, ctfont = 0, descriptor = 0, text = 0;
+    Class context = 0, image = 0, colorSpace = 0, color = 0, provider = 0, path = 0, gradient = 0, font = 0, ctfont = 0, descriptor = 0, text = 0, frame = 0, paragraph = 0;
     Class function = 0, shading = 0, layer = 0;
     id rgbSpace = 0, graySpace = 0;
 };
@@ -1237,10 +1237,12 @@ void ctx_showGlyphsAt(Ctx& x, id c, float px, float py, GuestPtr glyphs, uint32_
 // The host's outlines for a system font name (cached), so that a game reading the font's 'cmap'
 // and drawing with CGContextShowGlyphs gets glyphs. Army of Darkness Defense draws its HUD text
 // that way; without outlines its panels stayed empty.
+struct FaceCache { std::mutex mu; std::map<std::string, std::shared_ptr<G::TrueTypeFont>> faces; };
+FaceCache& faceCache() { static FaceCache c; return c; }
 std::shared_ptr<G::TrueTypeFont> systemFace(Ctx& x, const std::string& name) {
-    static std::mutex mu;
-    static std::map<std::string, std::shared_ptr<G::TrueTypeFont>> cache;
-    std::lock_guard<std::mutex> lk(mu);
+    auto& fc = faceCache();
+    auto& cache = fc.faces;
+    std::lock_guard<std::mutex> lk(fc.mu);
     auto it = cache.find(name);
     if (it != cache.end()) return it->second;
     G::FontDesc f;
@@ -1266,6 +1268,32 @@ uint32_t font_createWithProvider(Ctx& x, id provider) {
     h->name = face->name();
     h->face = std::move(face);
     return newObject(x, S(x).font, std::move(h));
+}
+// CTFontManagerRegisterFontsForURL: a font file the app ships becomes reachable by its PostScript
+// and family names (CTFontCreateWithName, CGFontCreateWithFontName). Unregistering forgets both.
+bool fm_register(Ctx& x, id url, uint32_t, GuestPtr error) {
+    if (error) x.mem.write<uint32_t>(error, 0);
+    std::ifstream in(Foundation::urlFilePath(x, url), std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+    auto face = bytes.empty() ? nullptr : G::TrueTypeFont::load(std::move(bytes));
+    if (!face) return false;
+    auto& fc = faceCache();
+    std::lock_guard<std::mutex> lk(fc.mu);
+    fc.faces[face->name()] = face;
+    fc.faces[face->name(true)] = face;
+    return true;
+}
+bool fm_unregister(Ctx& x, id url, uint32_t, GuestPtr error) {
+    if (error) x.mem.write<uint32_t>(error, 0);
+    std::ifstream in(Foundation::urlFilePath(x, url), std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+    auto face = bytes.empty() ? nullptr : G::TrueTypeFont::load(std::move(bytes));
+    if (!face) return false;
+    auto& fc = faceCache();
+    std::lock_guard<std::mutex> lk(fc.mu);
+    fc.faces.erase(face->name());
+    fc.faces.erase(face->name(true));
+    return true;
 }
 uint32_t font_copyName(Ctx& x, id f) { FontData* d = hd<FontData>(x, f); return Foundation::makeString(x, d ? d->name : "Helvetica", true); }
 uint32_t font_copyTableForTag(Ctx& x, id font, uint32_t tag) {
@@ -1439,6 +1467,10 @@ uint32_t ct_family(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
     return f ? Foundation::makeString(x, f->face ? f->face->name(true) : f->name, true) : 0;
 }
+uint32_t ct_postScriptName(Ctx& x, id font) {
+    auto* f = hd<FontData>(x, font);
+    return f ? Foundation::makeString(x, f->face ? f->face->name() : f->name, true) : 0;
+}
 uint32_t ct_traits(Ctx& x, id font) {
     auto* f = hd<FontData>(x, font);
     return !f ? 0 : f->face ? f->face->traits() :
@@ -1557,7 +1589,7 @@ void text_dealloc(Ctx& x, id self, SEL) {
 }
 id text_font(Ctx& x, const TextData& d) {
     for (auto [key, value] : Foundation::dictEntries(x, d.attributes))
-        if (Foundation::utf8(x, key) == "kCTFontAttributeName") return value;
+        if (const std::string k = Foundation::utf8(x, key); k == "NSFont" || k == "kCTFontAttributeName") return value;
     return 0;
 }
 uint32_t attributed_create(Ctx& x, uint32_t, id string, id attributes) {
@@ -1685,9 +1717,168 @@ void text_draw(Ctx& x, id text, id ctx) {
     const uint32_t positions = x.proc.heap().alloc(uint32_t(d->positions.size())*8);
     x.mem.copyIn(glyphs, d->glyphs.data(), d->glyphs.size()*2);
     for (size_t i=0; i<d->positions.size(); ++i) writeStruct(x, positions+uint32_t(i)*8, CGPoint{d->positions[i].x+c->textPos.x, d->positions[i].y+c->textPos.y});
+    // CoreText draws in kCTForegroundColorAttributeName, black when it is absent, not in the
+    // context's fill colour.
+    G::Color color{0, 0, 0, 1};
+    for (auto [key, value] : Foundation::dictEntries(x, d->attributes))
+        if (Foundation::utf8(x, key) == "CTForegroundColor" && hd<ColorData>(x, value)) color = colorOf(x, value);
+    const G::Color savedFill = c->gs().fill;
+    c->gs().fill = color;
     ct_draw(x, text_font(x,*d), glyphs, positions, uint32_t(d->glyphs.size()), ctx);
+    if (ContextData* again = cx(x, ctx)) again->gs().fill = savedFill;
     x.proc.heap().free(glyphs); x.proc.heap().free(positions);
 }
+int32_t text_glyphCount(Ctx& x, id line) { auto* d = hd<TextData>(x, line); return d ? int32_t(d->glyphs.size()) : 0; }
+void text_imageBounds(Ctx& x, GuestPtr ret, id line, id) {
+    auto* d = hd<TextData>(x, line);
+    writeStruct(x, ret, d ? CGRect{{0, -d->descent}, {d->width, d->ascent + d->descent}} : CGRect{});
+}
+int32_t text_indexForPosition(Ctx& x, id line, CGPoint pt) {
+    auto* d = hd<TextData>(x, line);
+    if (!d) return -1;   // kCFNotFound
+    float used = 0;
+    for (size_t i = 0; i < d->advances.size(); ++i) {
+        if (pt.x < used + d->advances[i] / 2) return d->start + int32_t(i);
+        used += d->advances[i];
+    }
+    return d->start + int32_t(d->string.size());
+}
+double text_trailingWhitespace(Ctx& x, id line) {
+    auto* d = hd<TextData>(x, line);
+    if (!d) return 0;
+    double w = 0;
+    for (size_t i = d->string.size(); i-- > 0;) {
+        const char16_t ch = d->string[i];
+        if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r') break;
+        w += d->advances[i];
+    }
+    return w;
+}
+uint32_t run_indicesPtr(Ctx&, id) { return 0; }   // allowed by the API: callers then use CTRunGetStringIndices
+
+// ---- CTFramesetter / CTFrame: lines broken to the path's bounding-box width and stacked from the top
+// edge until the next line would not fit. Origins are relative to the box, y up, as in CoreText.
+struct FrameData : ObjC::HostObject {
+    id lines = 0, path = 0;            // retained
+    std::vector<G::Point> origins;
+    G::Rect box;
+    TextRange range{0, 0}, visible{0, 0};
+};
+void frame_dealloc(Ctx& x, id self, SEL) {
+    if (auto* d = hd<FrameData>(x, self)) {
+        if (d->lines) rt(x).release(x.cpu, d->lines);
+        if (d->path) rt(x).release(x.cpu, d->path);
+        d->lines = d->path = 0;
+    }
+    rt(x).disposeInstance(x.cpu, self);
+}
+struct LaidOut { std::vector<id> lines; std::vector<G::Point> origins; int32_t end = 0; float width = 0, height = 0; };
+// Lays out [start, start+length) for a box of width w and height h; lines are new (+1) objects.
+LaidOut layoutText(Ctx& x, id text, int32_t start, int32_t length, float w, float h) {
+    LaidOut out;
+    auto* src = hd<TextData>(x, text);
+    if (!src) return out;
+    const int32_t end = length > 0 ? std::min<int32_t>(start + length, int32_t(src->string.size())) : int32_t(src->string.size());
+    float top = 0;   // distance used from the top edge
+    int32_t pos = start;
+    while (pos < end) {
+        int32_t n = text_break(x, text, pos, w);
+        if (n <= 0) break;
+        n = std::min(n, end - pos);
+        const id line = id(text_line(x, text, {pos, n}));
+        if (!line) break;
+        auto* ld = hd<TextData>(x, line);
+        const float lineHeight = ld->ascent + ld->descent;
+        if (!out.lines.empty() && top + lineHeight > h) { rt(x).release(x.cpu, line); break; }
+        out.lines.push_back(line);
+        out.origins.push_back({0, h - top - ld->ascent});
+        // Trailing spaces and newlines do not widen the box.
+        float visibleWidth = ld->width;
+        for (size_t i = ld->string.size(); i-- > 0;) {
+            const char16_t ch = ld->string[i];
+            if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r') break;
+            visibleWidth -= ld->advances[i];
+        }
+        out.width = std::max(out.width, visibleWidth);
+        top += lineHeight + ld->leading;
+        out.height = top - ld->leading;
+        pos += n;
+    }
+    out.end = pos;
+    return out;
+}
+uint32_t fs_createFrame(Ctx& x, id fs, TextRange range, id path, id) {
+    auto* src = hd<TextData>(x, fs);
+    G::Path* gp = pathOf(x, path);
+    if (!src || !gp) return 0;
+    const G::Rect box = gp->bounds();
+    const int32_t start = std::max(range.location, 0);
+    LaidOut l = layoutText(x, fs, start, range.length, box.w, box.h);
+    auto h = std::make_unique<FrameData>();
+    h->lines = Foundation::makeArray(x, l.lines, true);
+    for (id line : l.lines) rt(x).release(x.cpu, line);
+    h->path = rt(x).retain(x.cpu, path);
+    h->origins = std::move(l.origins);
+    h->box = box;
+    h->range = {start, range.length > 0 ? range.length : int32_t(src->string.size()) - start};
+    h->visible = {start, l.end - start};
+    return newObject(x, S(x).frame, std::move(h));
+}
+void fs_suggestSize(Ctx& x, GuestPtr ret, id fs, TextRange range, id, CGSize constraints, GuestPtr fitRange) {
+    const float w = constraints.width > 0 ? constraints.width : 3.0e38f, h = constraints.height > 0 ? constraints.height : 3.0e38f;
+    const int32_t start = std::max(range.location, 0);
+    LaidOut l = layoutText(x, fs, start, range.length, w, h);
+    for (id line : l.lines) rt(x).release(x.cpu, line);
+    if (fitRange) writeStruct(x, fitRange, TextRange{start, l.end - start});
+    writeStruct(x, ret, CGSize{std::ceil(l.width), std::ceil(l.height)});
+}
+uint32_t frame_lines(Ctx& x, id f) { auto* d = hd<FrameData>(x, f); return d ? d->lines : 0; }
+uint32_t frame_path(Ctx& x, id f) { auto* d = hd<FrameData>(x, f); return d ? d->path : 0; }
+void frame_range(Ctx& x, GuestPtr ret, id f) { auto* d = hd<FrameData>(x, f); writeStruct(x, ret, d ? d->range : TextRange{0, 0}); }
+void frame_visible(Ctx& x, GuestPtr ret, id f) { auto* d = hd<FrameData>(x, f); writeStruct(x, ret, d ? d->visible : TextRange{0, 0}); }
+void frame_origins(Ctx& x, id f, TextRange range, GuestPtr out) {
+    auto* d = hd<FrameData>(x, f);
+    if (!d || !out) return;
+    const int32_t n = range.length ? range.length : int32_t(d->origins.size()) - range.location;
+    if (range.location < 0 || n < 0 || uint64_t(range.location) + n > d->origins.size()) throw std::out_of_range("CTFrame line origin range");
+    for (int32_t i = 0; i < n; ++i) writeStruct(x, out + uint32_t(i) * 8, fromG(d->origins[size_t(range.location + i)]));
+}
+void frame_draw(Ctx& x, id f, id ctx) {
+    auto* d = hd<FrameData>(x, f);
+    ContextData* c = cx(x, ctx);
+    if (!d || !c) return;
+    const auto saved = c->textPos;
+    const std::vector<id> lines = Foundation::arrayItems(x, d->lines);
+    for (size_t i = 0; i < lines.size() && i < d->origins.size(); ++i) {
+        if (ContextData* cc = cx(x, ctx)) cc->textPos = {d->box.x + d->origins[i].x, d->box.y + d->origins[i].y};
+        text_draw(x, lines[i], ctx);
+    }
+    if (ContextData* cc = cx(x, ctx)) cc->textPos = saved;
+}
+
+// ---- CTParagraphStyle: the settings are kept as given and read back by specifier.
+struct ParagraphData : ObjC::HostObject { std::map<uint32_t, std::vector<uint8_t>> values; };
+uint32_t ps_create(Ctx& x, GuestPtr settings, uint32_t count) {
+    auto h = std::make_unique<ParagraphData>();
+    for (uint32_t i = 0; settings && i < count && i < 64; ++i) {
+        const GuestPtr s = settings + i * 12;
+        const uint32_t spec = x.mem.read<uint32_t>(s), size = x.mem.read<uint32_t>(s + 4), value = x.mem.read<uint32_t>(s + 8);
+        if (!value || size > 256) continue;
+        std::vector<uint8_t> bytes(size);
+        x.mem.copyOut(bytes.data(), value, size);
+        h->values[spec] = std::move(bytes);
+    }
+    return newObject(x, S(x).paragraph, std::move(h));
+}
+bool ps_value(Ctx& x, id style, uint32_t spec, uint32_t size, GuestPtr out) {
+    auto* d = hd<ParagraphData>(x, style);
+    if (!d || !out) return false;
+    auto it = d->values.find(spec);
+    if (it == d->values.end() || it->second.size() != size) return false;
+    x.mem.copyIn(out, it->second.data(), size);
+    return true;
+}
+
 
 // ---- bitmap context API
 uint32_t bm_create(Ctx& x, GuestPtr data, uint32_t w, uint32_t h, uint32_t bpc, uint32_t bpr, id space, uint32_t info) {
@@ -1950,6 +2141,8 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     s.ctfont = cls("__HVMCTFont", nullptr);
     s.descriptor = cls("__HVMCTFontDescriptor", nullptr);
     s.text = cls("__HVMCTText", &text_dealloc);
+    s.frame = cls("__HVMCTFrame", &frame_dealloc);
+    s.paragraph = cls("__HVMCTParagraphStyle", nullptr);
     registerBezier(r);
 
     // geometry
@@ -2209,6 +2402,10 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
         "returns a copy of the descriptor; the text backend resolves every name to a face");
     p.def<&ct_createDescriptor>("_CTFontCreateWithFontDescriptor");
     p.def<&ct_family>("_CTFontCopyFamilyName");
+    p.def<&ct_postScriptName>("_CTFontCopyPostScriptName");
+    supportDef<&ct_postScriptName>(p, "_CTFontCopyDisplayName", SupportStatus::Approx, "Answers the PostScript name; the localized full name is not read from the font");
+    p.def<&fm_register>("_CTFontManagerRegisterFontsForURL");
+    p.def<&fm_unregister>("_CTFontManagerUnregisterFontsForURL");
     p.def<&ct_traits>("_CTFontGetSymbolicTraits");
     p.def<&ct_underline>("_CTFontGetUnderlineThickness");
     p.def<&ct_size>("_CTFontGetSize");
@@ -2230,6 +2427,36 @@ void registerCoreGraphics(Process& p, ObjC::Runtime& r) {
     p.def<&text_offset>("_CTLineGetOffsetForStringIndex");
     p.def<&text_runs>("_CTLineGetGlyphRuns");
     p.def<&text_draw>("_CTLineDraw");
+    p.def<&text_glyphCount>("_CTLineGetGlyphCount");
+    p.def<&text_imageBounds>("_CTLineGetImageBounds");
+    p.def<&text_indexForPosition>("_CTLineGetStringIndexForPosition");
+    p.def<&text_trailingWhitespace>("_CTLineGetTrailingWhitespaceWidth");
+    supportDef<&run_indicesPtr>(p, "_CTRunGetStringIndicesPtr", SupportStatus::Approx, "Returns NULL, which the API allows; callers then copy with CTRunGetStringIndices");
+    p.def<&text_retain>("_CTFramesetterCreateWithAttributedString");
+    p.def<&fs_createFrame>("_CTFramesetterCreateFrame");
+    p.def<&fs_suggestSize>("_CTFramesetterSuggestFrameSizeWithConstraints");
+    p.def<&frame_lines>("_CTFrameGetLines");
+    p.def<&frame_path>("_CTFrameGetPath");
+    p.def<&frame_range>("_CTFrameGetStringRange");
+    p.def<&frame_visible>("_CTFrameGetVisibleStringRange");
+    p.def<&frame_origins>("_CTFrameGetLineOrigins");
+    p.def<&frame_draw>("_CTFrameDraw");
+    p.def<&ps_create>("_CTParagraphStyleCreate");
+    p.def<&ps_value>("_CTParagraphStyleGetValueForSpecifier");
+    // Attribute names, with their iOS values (UIKit's NSFontAttributeName is "NSFont" too).
+    for (auto [sym, value] : {std::pair<const char*, const char*>{"_kCTFontAttributeName", "NSFont"},
+                              {"_kCTForegroundColorAttributeName", "CTForegroundColor"},
+                              {"_kCTForegroundColorFromContextAttributeName", "CTForegroundColorFromContext"},
+                              {"_kCTKernAttributeName", "NSKern"}, {"_kCTLigatureAttributeName", "NSLigature"},
+                              {"_kCTParagraphStyleAttributeName", "NSParagraphStyle"},
+                              {"_kCTStrokeColorAttributeName", "NSStrokeColor"}, {"_kCTStrokeWidthAttributeName", "NSStrokeWidth"},
+                              {"_kCTSuperscriptAttributeName", "NSSuperScript"},
+                              {"_kCTUnderlineColorAttributeName", "NSUnderlineColor"},
+                              {"_kCTUnderlineStyleAttributeName", "NSUnderline"}}) {
+        if (p.lookupSymbol(sym)) continue;
+        const uint32_t cell = p.defineDataBlock(sym, 4);
+        p.mem().write<uint32_t>(cell, Foundation::constString(p, value));
+    }
     p.def<&run_count>("_CTRunGetGlyphCount");
     p.def<&run_attrs>("_CTRunGetAttributes");
     p.def<&run_copy<0>>("_CTRunGetGlyphs");

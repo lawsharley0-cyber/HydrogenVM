@@ -4188,6 +4188,35 @@ int runFullSubsystemTests() {
                   "CTLineGetOffsetForStringIndex returns the summed advance as a float and writes secondaryOffset");
             proc.heap().free(sec);
         }
+        {
+            // CTFramesetter: "AA AA AA" in a 40-wide box breaks into three lines ("AA ", "AA ", "AA",
+            // 12 per glyph), stacked downward from the top; the suggested size ignores trailing spaces.
+            // The attribute key is the real constant's value ("NSFont").
+            const uint32_t fontKey = Foundation::makeString(cx, "NSFont", true);
+            const uint32_t fsAttrs = Foundation::makeDict(cx, {{fontKey, ct}}, true);
+            const uint32_t text3 = Foundation::makeString(cx, "AA AA AA", true);
+            const uint32_t attr3 = uint32_t(call("_CFAttributedStringCreate", {0, text3, fsAttrs}));
+            const uint32_t fs = uint32_t(call("_CTFramesetterCreateWithAttributedString", {attr3}));
+            const uint32_t sizeOut = proc.heap().allocZeroed(8), fit = proc.heap().allocZeroed(8);
+            call("_CTFramesetterSuggestFrameSizeWithConstraints",
+                 {sizeOut, fs, 0, 0, 0, std::bit_cast<uint32_t>(40.0f), std::bit_cast<uint32_t>(1000.0f), fit});
+            const float sw = proc.mem().read<float>(sizeOut), sh = proc.mem().read<float>(sizeOut + 4);
+            const uint32_t path = uint32_t(call("_CGPathCreateWithRect", {0, 0, std::bit_cast<uint32_t>(40.0f), std::bit_cast<uint32_t>(1000.0f), 0}));
+            const uint32_t frame = uint32_t(call("_CTFramesetterCreateFrame", {fs, 0, 0, path, 0}));
+            const auto frameLines = Foundation::arrayItems(cx, uint32_t(call("_CTFrameGetLines", {frame})));
+            const uint32_t origins = proc.heap().allocZeroed(24), visible = proc.heap().allocZeroed(8);
+            call("_CTFrameGetLineOrigins", {frame, 0, 0, origins});
+            call("_CTFrameGetVisibleStringRange", {visible, frame});
+            const float y0 = proc.mem().read<float>(origins + 4), y1 = proc.mem().read<float>(origins + 12), y2 = proc.mem().read<float>(origins + 20);
+            const bool ok = frameLines.size() == 3 && sw == 24 && sh > 0 && proc.mem().read<int32_t>(fit + 4) == 8 &&
+                            proc.mem().read<int32_t>(visible + 4) == 8 && y0 < 1000 && y0 > y1 && y1 > y2;
+            if (!ok) std::printf("    CTFrame: lines %zu size %gx%g fit %d visible %d origins %g %g %g\n", frameLines.size(), sw, sh,
+                                 proc.mem().read<int32_t>(fit + 4), proc.mem().read<int32_t>(visible + 4), y0, y1, y2);
+            call("_CFRelease", {frame}); call("_CFRelease", {path}); call("_CFRelease", {fs}); call("_CFRelease", {attr3});
+            call("_CFRelease", {text3}); call("_CFRelease", {fsAttrs}); call("_CFRelease", {fontKey});
+            proc.heap().free(sizeOut); proc.heap().free(fit); proc.heap().free(origins); proc.heap().free(visible);
+            check(ok, "CTFramesetter breaks lines to the frame width, stacks them from the top and suggests the used size");
+        }
         call("_CFRelease", {line});
         call("_CGContextRelease", {bitmap}); call("_CFRelease", {family}); call("_CFRelease", {copy});
         call("_CFRelease", {desc}); call("_CFRelease", {ct});
@@ -4882,6 +4911,18 @@ int runFullSubsystemTests() {
         std::remove(path.c_str());
         if (!(loadedView && hidden && !opaque)) std::printf("    nib booleans: view %d hidden %d opaque %d\n", loadedView, hidden, opaque);
         check(loadedView && hidden && !opaque, "NIBArchive booleans: 5 is true (UIHidden loads hidden), 4 is false (UIOpaque off)");
+    }
+
+    // A freed small block is not handed straight back out (Dead Space read a hash table's freed
+    // bucket array right after it was replaced).
+    {
+        const uint32_t freed = proc.heap().alloc(48);
+        proc.heap().free(freed);
+        std::vector<uint32_t> next;
+        bool reused = false;
+        for (int i = 0; i < 32; ++i) { next.push_back(proc.heap().alloc(48)); reused |= next.back() == freed; }
+        for (uint32_t b : next) proc.heap().free(b);
+        check(!reused, "a freed small block waits before it is reused");
     }
 
     // CGSize / CGPoint dictionary round trip (Trucks & Skulls' level files store sizes this way).

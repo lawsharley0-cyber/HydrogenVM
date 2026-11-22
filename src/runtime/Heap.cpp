@@ -6,7 +6,7 @@
 namespace Hydrogen::Runtime {
 
 Heap::Heap(Memory::GuestArena& mem, uint32_t base, uint32_t limit)
-    : mem_(mem), base_(base), limit_(limit), top_(base), committed_(base), small_(kClasses + 1),
+    : mem_(mem), base_(base), limit_(limit), top_(base), committed_(base), small_(kClasses + 1), smallDelayed_(kClasses + 1),
       runClass_(((uint64_t(limit) - base) >> kRunShift) + 1, 0) {
     if (const char* q = std::getenv("HVM_HEAP_QUARANTINE")) quarantineMax_ = std::strtoul(q, nullptr, 10);
 }
@@ -205,7 +205,13 @@ void Heap::free(uint32_t addr) {
     release(addr, size);
 }
 void Heap::release(uint32_t addr, uint32_t size) {
-    if (smallClassAt(addr)) small_[size / kAlign].push_back(addr);
+    if (smallClassAt(addr)) {
+        auto& delayed = smallDelayed_[size / kAlign];
+        delayed.push_back(addr);
+        if (delayed.size() <= kReuseDelay) return;
+        small_[size / kAlign].push_back(delayed.front());
+        delayed.pop_front();
+    }
     else bigFree(addr, size);
 }
 
