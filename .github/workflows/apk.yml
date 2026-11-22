@@ -2,12 +2,13 @@ name: Android APK
 
 # Builds the HydrogenVM Android app (android/): the emulator core compiled with the NDK for
 # arm64 phones, Android 12 or later, signed with the runner's debug key so it can be sideloaded.
-# Manual, or on a push that changes the Android app.
+# Manual, or on a push that changes the Android app or the emulator core.
 on:
   workflow_dispatch:
   push:
     paths:
       - 'android/**'
+      - 'src/**'
       - '.github/workflows/apk.yml'
 
 permissions:

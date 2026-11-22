@@ -25,6 +25,8 @@ final class Games {
             this.folder = folder;
         }
 
+        File iconFile() { return new File(folder, "hvm-icon.png"); }
+
         /** The game's home (Documents, Library, ...): the folder that holds it, as on iPhone. */
         String homePath() {
             return new File(bundlePath).getParent();
@@ -96,6 +98,31 @@ final class Games {
 
     static void setFlag(Context c, String key, String bundleId, boolean on) {
         prefs(c).edit().putBoolean(key + "." + bundleId, on).apply();
+    }
+
+    // Crash reporting: a marker written when a game starts and removed when it closes normally.
+    // Found on the next start of the app, it means the app died during the game.
+    static File runMarker(Context c) { return new File(c.getFilesDir(), "game-running.txt"); }
+    static File lastLog(Context c) { return new File(c.getFilesDir(), "last-game.log"); }
+    static File appCrash(Context c) { return new File(c.getFilesDir(), "app-crash.txt"); }
+
+    static String readText(File f, int maxChars) {
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            byte[] b = new byte[(int) Math.min(f.length(), 4L << 20)];
+            int n = 0;
+            for (int r; n < b.length && (r = in.read(b, n, b.length - n)) > 0; ) n += r;
+            String text = new String(b, 0, n, java.nio.charset.StandardCharsets.UTF_8);
+            return text.length() > maxChars ? text.substring(text.length() - maxChars) : text;
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    static void writeText(File f, String text) {
+        try (FileOutputStream out = new FileOutputStream(f)) {
+            out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (IOException ignored) {
+        }
     }
 
     static final String HIGHER_RESOLUTION = "higherResolution";

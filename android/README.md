@@ -16,6 +16,14 @@ Build: `.github/workflows/apk.yml` (manual), or locally with the Android SDK, ND
 and CMake 3.22.1: `cd android && gradle assembleRelease`. The release APK is signed with the debug
 key so it installs by sideloading.
 
-Differences from the iPhone app, for now: no internet for games, regular expressions use
-std::regex (the NDK's ICU has none), and M4A audio needs a decoder the Android build doesn't
-include yet.
+Testing without a phone: `hvm_android_test` (build the CMake project with `-DHVM_ANDROID_TEST=ON`)
+drives the same session code from the command line on a device or an emulator (`adb shell`):
+`hvm_android_test game.ipa <work dir> <seconds> [u,v@seconds ...]` imports, plays with scripted
+touches and writes the last frame and the log; `--decode file.m4a` checks the AAC decoder. Debug
+builds of the app also take `--es importPath <file>` and `--es play <bundle id>` on `am start`.
+If the app dies during a game, its next start shows the game's log and the app's system log lines,
+with a Share button.
+
+Differences from the iPhone app, for now: no internet for games, and regular expressions use
+std::regex (the NDK's ICU has none). AAC/M4A music is decoded by Android's own decoders
+(MediaExtractor/MediaCodec); AAC inside CAF files isn't read yet.

@@ -70,9 +70,13 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         int shortSide = Math.min(m.widthPixels, m.heightPixels), longSide = Math.max(m.widthPixels, m.heightPixels);
         // Fill the screen: a 320-point-wide screen shaped like this phone (the game may or may not use it).
         int virtualHeight = Games.flag(this, Games.FILL_SCREEN, bundleId) ? (int) (320f * longSide / shortSide) : 0;
+        MainActivity.installCrashCatcher(getApplicationContext());
+        // Until the game closes normally, a marker says it is running: if the app dies, the next
+        // start shows the log (MainActivity.reportLastCrash).
+        Games.writeText(Games.runMarker(this), getIntent().getStringExtra("title") == null ? bundleId : getIntent().getStringExtra("title"));
         session = Native.start(getIntent().getStringExtra("bundlePath"), getIntent().getStringExtra("homePath"),
                 Games.flag(this, Games.HIGHER_RESOLUTION, bundleId), shortSide,
-                Games.flag(this, Games.UNLOCK_FPS, bundleId), virtualHeight);
+                Games.flag(this, Games.UNLOCK_FPS, bundleId), virtualHeight, Games.lastLog(this).getAbsolutePath());
         main.post(watch);
     }
 
@@ -177,6 +181,8 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         session = 0;
         new Thread(() -> {
             Native.stop(s);
+            //noinspection ResultOfMethodCallIgnored
+            Games.runMarker(this).delete();
             main.post(this::finish);
         }).start();
     }
@@ -187,6 +193,10 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         finishing = true;
         String message = Native.exitMessage(s);
         new Thread(() -> Native.stop(s)).start();
+        //noinspection ResultOfMethodCallIgnored
+        Games.runMarker(this).delete();
+        if (message != null && !message.isEmpty())
+            message += "\n\nLast lines of the log:\n" + Games.readText(Games.lastLog(this), 1500);
         if (message == null || message.isEmpty()) {
             finish();
             return;

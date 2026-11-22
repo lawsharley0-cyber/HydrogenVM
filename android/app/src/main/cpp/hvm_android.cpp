@@ -7,9 +7,11 @@
 //   * sound is pulled from the game's mixer by an AAudio stream.
 #include "loader/Apk.hpp"
 #include "loader/AppBundle.hpp"
+#include "loader/Zip.hpp"
 #include "runtime/Process.hpp"
 #include "runtime/audio/Audio.hpp"
 #include "runtime/gl/HostGL.hpp"
+#include "runtime/graphics/Graphics.hpp"
 #include "runtime/uikit/UIKit.hpp"
 
 #include <aaudio/AAudio.h>
@@ -22,10 +24,13 @@
 #include <condition_variable>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace RT = Hydrogen::Runtime;
@@ -72,12 +77,35 @@ struct Session {
     int frameW = 0, frameH = 0, orientation = 1;
     float guestW = 320, guestH = 480;    // the game's screen in points (touch space)
     bool frameReady = false, stopBlit = false;
+    uint64_t frames = 0;                 // frames presented (for tests and the log)
     ANativeWindow* window = nullptr;
     std::thread blitter;
     AAudioStream* audio = nullptr;
     std::vector<float> left, right;
+    std::mutex logMu;
+    FILE* logFile = nullptr;   // the run's log, kept for the "the game closed unexpectedly" report
+    void logLine(const char* level, const std::string& msg) {
+        std::lock_guard<std::mutex> lk(logMu);
+        if (!logFile) return;
+        std::fprintf(logFile, "%s%s\n", level, msg.c_str());
+        std::fflush(logFile);   // the process may die on the next line
+    }
 };
 
+}  // namespace
+
+// The bridge without JNI, so tests can drive the same code (hvm_android_test.cpp).
+namespace hvmandroid {
+using ::Session;
+std::vector<std::string> importGame(const std::string& path, const std::string& appsRoot);
+bool writeIcon(const std::string& bundlePath, const std::string& outPath);
+Session* startSession(const std::string& bundle, const std::string& home, bool higherResolution, int displayShort,
+                      bool unlockFrameRate, int virtualHeight, const std::string& logPath);
+void touchSession(Session* s, int phase, float u, float v, int finger);
+void stopSession(Session* s);
+}
+
+namespace {
 // Copies the newest frame into the window, turned upright (nearest pixel per window pixel).
 void blitLoop(Session* s) {
     std::vector<uint8_t> local;
@@ -150,6 +178,7 @@ void stopAudio(Session* s) {
 }
 
 struct StartArgs {
+    std::shared_ptr<Session> keep;   // the session outlives its game thread
     Session* session;
     RT::ProcessConfig cfg;
 };
@@ -159,6 +188,10 @@ void* gameThread(void* p) {
     Session* s = args->session;
     std::string message;
     try {
+        // The GPU interface is set up here, on the game's thread, not on the app's UI thread.
+        std::string why;
+        args->cfg.hostGL = RT::HostGL::createEglPlatform(&why);
+        if (!args->cfg.hostGL) s->logLine("[warn] ", "GPU unavailable (" + why + "): software rendering");
         auto proc = std::make_shared<RT::Process>(args->cfg);
         {
             std::lock_guard<std::mutex> lk(s->mu);
@@ -175,6 +208,7 @@ void* gameThread(void* p) {
         __android_log_print(ANDROID_LOG_ERROR, kTag, "%s", message.c_str());
     }
     stopAudio(s);
+    s->logLine("", message.empty() ? "The game closed." : message);
     std::lock_guard<std::mutex> lk(s->mu);
     s->exitMessage = message;
     s->running = false;
@@ -183,52 +217,127 @@ void* gameThread(void* p) {
 
 Session* session(jlong h) { return reinterpret_cast<Session*>(h); }
 
+// Live sessions, owned here from start until stop. The engine's callbacks (log, present) hold only
+// weak references: a late call after the session is gone is dropped instead of using freed memory
+// (closing a game while it was still loading music aborted the app on a destroyed mutex).
+std::mutex registryMu;
+std::unordered_map<Session*, std::shared_ptr<Session>> registry;
+
 } // namespace
 
 extern "C" {
 
 // importGame(file, appsRoot) -> {bundlePath, title, bundleId, problem}; problem "" when it can run.
 JNIEXPORT jobjectArray JNICALL Java_com_hydrogenvm_android_Native_importGame(JNIEnv* env, jclass, jstring file, jstring root) {
-    const std::string path = str(env, file), appsRoot = str(env, root);
+    return strings(env, hvmandroid::importGame(str(env, file), str(env, root)));
+}
+
+// writeIcon(bundlePath, outPng): the game's best icon as an ordinary PNG (iPhone icons are often
+// Apple's "crushed" PNGs, which Android can't read). Returns false when it has none.
+JNIEXPORT jboolean JNICALL Java_com_hydrogenvm_android_Native_writeIcon(JNIEnv* env, jclass, jstring bundle, jstring out) {
+    return hvmandroid::writeIcon(str(env, bundle), str(env, out));
+}
+}  // extern "C"
+
+namespace hvmandroid {
+std::vector<std::string> importGame(const std::string& path, const std::string& appsRoot) {
     try {
         std::string ext = fs::path(path).extension().string();
         for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
-        const bool android = ext == ".apk" || ext == ".xapk" || ext == ".apks" || ext == ".apkm";
-        const auto info = android ? Hydrogen::Loader::importApk(path, appsRoot) : Hydrogen::Loader::importIpa(path, appsRoot);
+        bool android = ext == ".apk" || ext == ".xapk" || ext == ".apks" || ext == ".apkm";
+        // The file picker doesn't always give the real name: look inside. An .ipa has Payload/;
+        // an Android package has AndroidManifest.xml, or (XAPK, APKS) the split .apk files.
+        try {
+            Hydrogen::Loader::ZipReader zip(path);
+            bool payload = false, manifest = false, splits = false;
+            for (const auto& e : zip.entries()) {
+                if (e.name.rfind("Payload/", 0) == 0) payload = true;
+                if (e.name == "AndroidManifest.xml") manifest = true;
+                if (e.name.size() > 4 && e.name.compare(e.name.size() - 4, 4, ".apk") == 0) splits = true;
+            }
+            if (payload) android = false;
+            else if (manifest || splits) android = true;
+        } catch (const std::exception&) {
+            // Not a readable zip: the importer reports it.
+        }
+        std::string file = path;
+        if (android && ext != ".apk" && ext != ".xapk" && ext != ".apks" && ext != ".apkm") {
+            // The Android importer reads the kind of package from its extension.
+            bool manifest = false;
+            try {
+                Hydrogen::Loader::ZipReader zip(path);
+                manifest = zip.find("AndroidManifest.xml") != nullptr;
+            } catch (const std::exception&) {}
+            file = path + (manifest ? ".apk" : ".xapk");
+            fs::rename(path, file);
+        }
+        const auto info = android ? Hydrogen::Loader::importApk(file, appsRoot) : Hydrogen::Loader::importIpa(file, appsRoot);
+        if (file != path) { std::error_code ec; fs::rename(file, path, ec); }
         const std::string title = info.displayName.empty() ? info.name : info.displayName;
-        return strings(env, {info.bundlePath, title, info.bundleId, info.runnable ? "" : (info.problem.empty() ? "This game can't run." : info.problem)});
+        return {info.bundlePath, title, info.bundleId, info.runnable ? "" : (info.problem.empty() ? "This game can't run." : info.problem)};
     } catch (const std::exception& e) {
-        return strings(env, {"", "", "", std::string("Import failed: ") + e.what()});
+        return {"", "", "", std::string("Import failed: ") + e.what()};
     }
 }
 
-// start(bundlePath, homePath, higherResolution, displayShortSidePixels, unlockFrameRate, virtualScreenHeight)
-JNIEXPORT jlong JNICALL Java_com_hydrogenvm_android_Native_start(JNIEnv* env, jclass, jstring bundle, jstring home,
-                                                                  jboolean higherResolution, jint displayShort,
-                                                                  jboolean unlockFrameRate, jint virtualHeight) {
-    auto* s = new Session();
+bool writeIcon(const std::string& bundlePath, const std::string& outPath) {
+    try {
+        const auto info = Hydrogen::Loader::readBundle(bundlePath);
+        for (const auto& path : info.iconPaths) {
+            std::ifstream in(path, std::ios::binary);
+            std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+            if (bytes.empty()) continue;
+            auto img = Hydrogen::Graphics::decodeImage(bytes.data(), bytes.size());
+            if (!img || img->width <= 0 || img->height <= 0) continue;
+            const auto png = Hydrogen::Graphics::encodePng(*img);
+            std::ofstream(outPath, std::ios::binary).write(reinterpret_cast<const char*>(png.data()), std::streamsize(png.size()));
+            return true;
+        }
+    } catch (const std::exception& e) {
+        __android_log_print(ANDROID_LOG_WARN, kTag, "icon: %s", e.what());
+    }
+    return false;
+}
+
+Session* startSession(const std::string& bundle, const std::string& home, bool higherResolution, int displayShort,
+                      bool unlockFrameRate, int virtualHeight, const std::string& logPath) {
+    auto owned = std::make_shared<Session>();
+    Session* s = owned.get();
+    std::weak_ptr<Session> weak = owned;
+    {
+        std::lock_guard<std::mutex> lk(registryMu);
+        registry[s] = owned;
+    }
     auto args = std::make_unique<StartArgs>();
+    args->keep = owned;
     args->session = s;
     RT::ProcessConfig& cfg = args->cfg;
-    cfg.bundlePath = str(env, bundle);
-    cfg.homePath = str(env, home);
+    cfg.bundlePath = bundle;
+    cfg.homePath = home;
     cfg.screenWidth = 320;
     cfg.screenHeight = 568;   // UIKit drops to 480 unless the app opts into 4"
     cfg.screenScale = 2;
     cfg.rotateAndroidReadback = true;
+    // OpenGL ES 1.1 games run on an ES 2 context through the runtime's fixed-function emulation, as on
+    // the bench's phone mode: Android drivers' own ES 1 is uneven (on the emulator's, Canabalt's
+    // framebuffer was never complete and it drew nothing).
+    cfg.gles1Emulate = true;
     cfg.unlockFrameRate = unlockFrameRate;
     if (higherResolution) { cfg.resolutionScale = 3; cfg.displayShortSidePixels = uint32_t(std::max(0, int(displayShort))); }
     if (virtualHeight >= 480 && virtualHeight <= 1024) setenv("HVM_VIRTUAL_SCREEN_HEIGHT", std::to_string(virtualHeight).c_str(), 1);
     else unsetenv("HVM_VIRTUAL_SCREEN_HEIGHT");
     unsetenv("HVM_SAFE_AREA");
-    std::string why;
-    cfg.hostGL = RT::HostGL::createEglPlatform(&why);
-    if (!cfg.hostGL) __android_log_print(ANDROID_LOG_WARN, kTag, "GPU unavailable (%s): software rendering", why.c_str());
-    cfg.log = [](RT::LogLevel lvl, const std::string& msg) {
+    s->logFile = logPath.empty() ? nullptr : std::fopen(logPath.c_str(), "w");
+    cfg.log = [weak](RT::LogLevel lvl, const std::string& msg) {
         const int prio = lvl == RT::LogLevel::Error ? ANDROID_LOG_ERROR : lvl == RT::LogLevel::Warning ? ANDROID_LOG_WARN : ANDROID_LOG_INFO;
         __android_log_print(prio, kTag, "%s", msg.c_str());
+        auto s = weak.lock();
+        if (s) s->logLine(lvl == RT::LogLevel::Error ? "[error] " : lvl == RT::LogLevel::Warning ? "[warn] " : "", msg);
     };
-    cfg.present = [s](const uint8_t* rgba, int w, int h) {
+    s->logLine("", "HydrogenVM for Android: starting " + cfg.bundlePath);
+    cfg.present = [weak](const uint8_t* rgba, int w, int h) {
+        auto s = weak.lock();
+        if (!s) return;
         std::shared_ptr<RT::Process> p;
         {
             std::lock_guard<std::mutex> lk(s->mu);
@@ -244,6 +353,7 @@ JNIEXPORT jlong JNICALL Java_com_hydrogenvm_android_Native_start(JNIEnv* env, jc
         std::lock_guard<std::mutex> lk(s->mu);
         s->frame.assign(rgba, rgba + size_t(w) * size_t(h) * 4);
         s->frameW = w; s->frameH = h; s->orientation = orientation;
+        ++s->frames;
         if (gw > 0 && gh > 0) { s->guestW = gw; s->guestH = gh; }
         s->frameReady = true;
         s->frameCv.notify_one();
@@ -261,7 +371,17 @@ JNIEXPORT jlong JNICALL Java_com_hydrogenvm_android_Native_start(JNIEnv* env, jc
         s->exitMessage = "Could not start the game thread.";
     }
     pthread_attr_destroy(&attr);
-    return reinterpret_cast<jlong>(s);
+    return s;
+}
+}  // namespace hvmandroid
+
+extern "C" {
+// start(bundlePath, homePath, higherResolution, displayShortSidePixels, unlockFrameRate, virtualScreenHeight, logPath)
+JNIEXPORT jlong JNICALL Java_com_hydrogenvm_android_Native_start(JNIEnv* env, jclass, jstring bundle, jstring home,
+                                                                  jboolean higherResolution, jint displayShort,
+                                                                  jboolean unlockFrameRate, jint virtualHeight, jstring logPath) {
+    return reinterpret_cast<jlong>(hvmandroid::startSession(str(env, bundle), str(env, home), higherResolution, displayShort,
+                                                            unlockFrameRate, virtualHeight, str(env, logPath)));
 }
 
 JNIEXPORT void JNICALL Java_com_hydrogenvm_android_Native_setSurface(JNIEnv* env, jclass, jlong h, jobject surface) {
@@ -284,7 +404,11 @@ JNIEXPORT jfloat JNICALL Java_com_hydrogenvm_android_Native_aspect(JNIEnv*, jcla
 
 // phase: 0 began, 1 moved, 3 ended, 4 cancelled; (u, v): position within the shown picture, 0...1.
 JNIEXPORT void JNICALL Java_com_hydrogenvm_android_Native_touch(JNIEnv*, jclass, jlong h, jint phase, jfloat u, jfloat v, jint finger) {
-    Session* s = session(h);
+    hvmandroid::touchSession(session(h), phase, u, v, finger);
+}
+}  // extern "C"
+
+void hvmandroid::touchSession(Session* s, int phase, float u, float v, int finger) {
     std::shared_ptr<RT::Process> p;
     int o;
     float gw, gh;
@@ -300,6 +424,7 @@ JNIEXPORT void JNICALL Java_com_hydrogenvm_android_Native_touch(JNIEnv*, jclass,
     p->injectTouch(RT::TouchPhase(phase), std::min(x * gw, gw - 0.5f), std::min(y * gh, gh - 0.5f), uint32_t(finger) + 1);
 }
 
+extern "C" {
 JNIEXPORT void JNICALL Java_com_hydrogenvm_android_Native_pause(JNIEnv*, jclass, jlong h) {
     Session* s = session(h);
     std::shared_ptr<RT::Process> p;
@@ -326,7 +451,11 @@ JNIEXPORT jstring JNICALL Java_com_hydrogenvm_android_Native_exitMessage(JNIEnv*
 
 // Asks the game to close (it gets the chance to save, as on iPhone), waits for it, frees the session.
 JNIEXPORT void JNICALL Java_com_hydrogenvm_android_Native_stop(JNIEnv*, jclass, jlong h) {
-    Session* s = session(h);
+    hvmandroid::stopSession(session(h));
+}
+}  // extern "C"
+
+void hvmandroid::stopSession(Session* s) {
     std::shared_ptr<RT::Process> p;
     { std::lock_guard<std::mutex> lk(s->mu); p = s->proc; }
     if (p && s->running) p->requestGracefulStop();
@@ -338,12 +467,24 @@ JNIEXPORT void JNICALL Java_com_hydrogenvm_android_Native_stop(JNIEnv*, jclass, 
     }
     if (s->blitter.joinable()) s->blitter.join();
     if (s->running) return;   // still closing after 10 s: leave it (the process exits with the app)
+    // The game process first, while everything it may log to or present into still exists.
+    std::shared_ptr<RT::Process> proc;
     {
         std::lock_guard<std::mutex> lk(s->mu);
+        proc.swap(s->proc);
         if (s->window) ANativeWindow_release(s->window);
         s->window = nullptr;
     }
-    delete s;
+    proc.reset();
+    {
+        std::lock_guard<std::mutex> lk(s->logMu);
+        if (s->logFile) std::fclose(s->logFile);
+        s->logFile = nullptr;
+    }
+    std::shared_ptr<Session> last;   // released outside the registry lock
+    {
+        std::lock_guard<std::mutex> lk(registryMu);
+        auto it = registry.find(s);
+        if (it != registry.end()) { last = std::move(it->second); registry.erase(it); }
+    }
 }
-
-} // extern "C"

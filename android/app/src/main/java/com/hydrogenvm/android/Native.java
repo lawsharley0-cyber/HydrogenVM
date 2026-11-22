@@ -15,7 +15,10 @@ final class Native {
 
     /** Starts a game; returns a session handle for the calls below. */
     static native long start(String bundlePath, String homePath, boolean higherResolution, int displayShortSidePixels,
-                             boolean unlockFrameRate, int virtualScreenHeight);
+                             boolean unlockFrameRate, int virtualScreenHeight, String logPath);
+
+    /** Writes the game's best icon to outPng as an ordinary PNG; false when it has none. */
+    static native boolean writeIcon(String bundlePath, String outPng);
 
     static native void setSurface(long session, Surface surface);
 

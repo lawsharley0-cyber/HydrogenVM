@@ -35,9 +35,12 @@ android {
         }
     }
 
-    // Release lint downloads extra tools at build time; this project has no Android library code to check.
+    // Calls newer than minSdk crash on older phones (InputStream.readAllBytes on Android 12 did):
+    // the release build fails on them.
     lint {
-        checkReleaseBuilds false
+        checkOnly 'NewApi', 'InlinedApi'
+        abortOnError true
+        checkReleaseBuilds true
     }
 
     compileOptions {

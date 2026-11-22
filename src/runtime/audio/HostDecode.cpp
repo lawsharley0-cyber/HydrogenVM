@@ -13,6 +13,12 @@
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <AudioToolbox/AudioToolbox.h>
+#elif defined(__ANDROID__)
+// Android: the platform's own decoders (NDK MediaExtractor / MediaCodec) read MP4/M4A (AAC).
+#include <media/NdkMediaCodec.h>
+#include <sys/mman.h>
+#include <media/NdkMediaExtractor.h>
+#include <media/NdkMediaFormat.h>
 #elif defined(HVM_HAVE_FFMPEG)
 extern "C" {
 #include <libavformat/avformat.h>
@@ -368,6 +374,103 @@ std::shared_ptr<AudioSource> openHostStream(int fd, size_t size) {
 #endif
 }
 
+#if defined(__ANDROID__)
+namespace {
+// Decodes the file's first audio track to interleaved stereo 16-bit.
+// The bytes go to the extractor as an in-memory file: the platform parses media in another process,
+// and a file descriptor needs no callbacks into this one (a custom data source does, and found no
+// tracks in a process without a binder thread pool).
+bool decodeWithMediaCodec(DecodedAudio& out, const uint8_t* data, size_t size) {
+    const int fd = memfd_create("hvm-audio", 0);
+    if (fd < 0) return false;
+    for (size_t done = 0; done < size;) {
+        const ssize_t n = ::write(fd, data + done, size - done);
+        if (n <= 0) { if (n < 0 && errno == EINTR) continue; ::close(fd); return false; }
+        done += size_t(n);
+    }
+    AMediaExtractor* extractor = AMediaExtractor_new();
+    AMediaCodec* codec = nullptr;
+    bool ok = false;
+    struct Cleanup {
+        int fd; AMediaExtractor*& e; AMediaCodec*& c;
+        ~Cleanup() {
+            if (c) { AMediaCodec_stop(c); AMediaCodec_delete(c); }
+            if (e) AMediaExtractor_delete(e);
+            ::close(fd);
+        }
+    } cleanup{fd, extractor, codec};
+    if (!extractor || AMediaExtractor_setDataSourceFd(extractor, fd, 0, off64_t(size)) != AMEDIA_OK) return false;
+    int track = -1;
+    int32_t rate = 0, channels = 0;
+    const char* mime = nullptr;
+    for (size_t i = 0, n = AMediaExtractor_getTrackCount(extractor); i < n && track < 0; ++i) {
+        AMediaFormat* f = AMediaExtractor_getTrackFormat(extractor, i);
+        const char* m = nullptr;
+        if (AMediaFormat_getString(f, AMEDIAFORMAT_KEY_MIME, &m) && m && std::strncmp(m, "audio/", 6) == 0) {
+            track = int(i);
+            AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_SAMPLE_RATE, &rate);
+            AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
+            codec = AMediaCodec_createDecoderByType(m);
+            mime = m;
+            if (codec && AMediaCodec_configure(codec, f, nullptr, nullptr, 0) != AMEDIA_OK) { AMediaCodec_delete(codec); codec = nullptr; }
+        }
+        AMediaFormat_delete(f);
+    }
+    (void)mime;
+    if (track < 0 || !codec || rate <= 0 || channels <= 0) return false;
+    AMediaExtractor_selectTrack(extractor, size_t(track));
+    if (AMediaCodec_start(codec) != AMEDIA_OK) return false;
+    out.sampleRate = rate;
+    out.channels = channels;
+    bool inputDone = false;
+    for (int idle = 0; idle < 2000;) {
+        if (!inputDone) {
+            const ssize_t in = AMediaCodec_dequeueInputBuffer(codec, 5000);
+            if (in >= 0) {
+                size_t cap = 0;
+                uint8_t* buf = AMediaCodec_getInputBuffer(codec, size_t(in), &cap);
+                const ssize_t n = buf ? AMediaExtractor_readSampleData(extractor, buf, cap) : -1;
+                if (n < 0) {
+                    AMediaCodec_queueInputBuffer(codec, size_t(in), 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
+                    inputDone = true;
+                } else {
+                    AMediaCodec_queueInputBuffer(codec, size_t(in), 0, size_t(n), uint64_t(std::max<int64_t>(0, AMediaExtractor_getSampleTime(extractor))), 0);
+                    AMediaExtractor_advance(extractor);
+                }
+            }
+        }
+        AMediaCodecBufferInfo info{};
+        const ssize_t outIndex = AMediaCodec_dequeueOutputBuffer(codec, &info, 5000);
+        if (outIndex == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
+            AMediaFormat* f = AMediaCodec_getOutputFormat(codec);
+            AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_SAMPLE_RATE, &rate);
+            AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
+            AMediaFormat_delete(f);
+            if (rate > 0) out.sampleRate = rate;
+            if (channels > 0) out.channels = channels;
+            continue;
+        }
+        if (outIndex < 0) { ++idle; continue; }
+        idle = 0;
+        size_t cap = 0;
+        const uint8_t* buf = AMediaCodec_getOutputBuffer(codec, size_t(outIndex), &cap);
+        if (buf && info.size > 0 && out.channels > 0) {
+            const auto* pcm = reinterpret_cast<const int16_t*>(buf + info.offset);   // 16-bit PCM, the default output
+            const size_t frames = size_t(info.size) / 2 / size_t(out.channels);
+            if (frames * 2 > kMaxSamples - out.stereoPcm.size()) { AMediaCodec_releaseOutputBuffer(codec, size_t(outIndex), false); return false; }
+            for (size_t i = 0; i < frames; ++i) {
+                out.stereoPcm.push_back(pcm[i * size_t(out.channels)]);
+                out.stereoPcm.push_back(pcm[i * size_t(out.channels) + (out.channels > 1 ? 1 : 0)]);
+            }
+        }
+        AMediaCodec_releaseOutputBuffer(codec, size_t(outIndex), false);
+        if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) { ok = true; break; }
+    }
+    return ok && !out.stereoPcm.empty();
+}
+}  // namespace
+#endif
+
 bool decodeHostContainer(DecodedAudio& out, const uint8_t* data, size_t size) {
     if (!data || size < 12 || size > 256u * 1024 * 1024 || !hostContainer(Input(data, size))) return false;
     DecodedAudio decoded;
@@ -434,6 +537,8 @@ bool decodeHostContainer(DecodedAudio& out, const uint8_t* data, size_t size) {
         if (!accepted) return false;
     }
     if (result != AVERROR_EOF || avcodec_send_packet(decoder.codec, nullptr) < 0 || !drain()) return false;
+#elif defined(__ANDROID__)
+    if (!decodeWithMediaCodec(decoded, data, size)) return false;
 #elif defined(__linux__) && !defined(__ANDROID__)
     // Desktop bench without FFmpeg headers: the ffmpeg program, when installed, decodes to
     // 44.1 kHz stereo 16-bit. Lets the bench play AAC like a phone does (a rhythm game that

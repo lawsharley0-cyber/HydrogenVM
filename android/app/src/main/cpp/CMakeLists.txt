@@ -41,7 +41,14 @@ target_include_directories(hvm_core PUBLIC ${HVM_ROOT}/src)
 target_compile_definitions(hvm_core PRIVATE HVM_COMMIT="android")
 target_compile_options(hvm_core PRIVATE -Wno-unused-parameter -fno-strict-aliasing -ffp-contract=off -foptimize-sibling-calls)
 # libicu.so is part of the NDK from Android 12 (API 31); zlib, EGL, GLES and AAudio always.
-target_link_libraries(hvm_core PUBLIC hvm_sqlite3 z icu log)
+target_link_libraries(hvm_core PUBLIC hvm_sqlite3 z icu log mediandk)
 
 add_library(hydrogenvm SHARED hvm_android.cpp)
 target_link_libraries(hydrogenvm PRIVATE hvm_core android EGL GLESv2 aaudio log)
+
+# Command-line check of the bridge, run through adb (not packaged in the app).
+option(HVM_ANDROID_TEST "Build hvm_android_test" OFF)
+if(HVM_ANDROID_TEST)
+  add_executable(hvm_android_test hvm_android_test.cpp)
+  target_link_libraries(hvm_android_test PRIVATE hvm_core android EGL GLESv2 aaudio log)
+endif()
