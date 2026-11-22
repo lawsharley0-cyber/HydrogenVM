@@ -200,8 +200,14 @@ std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, con
                 out += buf;
                 break;
             }
-            case 'C': {   // unichar
-                const char16_t u = char16_t(args.word());
+            case 'C': {   // unichar (Cocoa); C's %C is a wint_t, the same as %lc
+                const uint32_t w = args.word();
+                if (!objectHook && w >= 0x10000 && w <= 0x10FFFF) {
+                    const char16_t pair[2] = {char16_t(0xD800 + ((w - 0x10000) >> 10)), char16_t(0xDC00 + ((w - 0x10000) & 0x3FF))};
+                    pad(Plist::utf16ToUtf8(pair, 2));
+                    break;
+                }
+                const char16_t u = char16_t(w);
                 pad(Plist::utf16ToUtf8(&u, 1));
                 break;
             }
@@ -226,7 +232,19 @@ std::string formatGuest(Process& p, const std::string& fmt, ArgReader& args, con
                 else pad(s);
                 break;
             }
-            case 'S': {   // UTF-16 string (Cocoa)
+            case 'S': {   // UTF-16 string (Cocoa). In C's printf family %S is a wchar_t* (%ls): Osmos builds its paths with swprintf(L"%S...")
+                if (!objectHook) {
+                    const uint32_t ptr = args.word();
+                    std::u16string u;
+                    if (ptr) for (uint32_t a = ptr; prec < 0 || int(u.size()) < prec; a += 4) {
+                        const uint32_t wc = p.mem().read<uint32_t>(a);
+                        if (!wc) break;
+                        if (wc >= 0x10000) { u += char16_t(0xD800 + ((wc - 0x10000) >> 10)); u += char16_t(0xDC00 + ((wc - 0x10000) & 0x3FF)); }
+                        else u += char16_t(wc);
+                    }
+                    pad(ptr ? Plist::utf16ToUtf8(u.data(), u.size()) : "(null)");
+                    break;
+                }
                 const uint32_t ptr = args.word();
                 std::u16string u;
                 if (ptr) for (uint32_t a = ptr; prec < 0 || int(u.size()) < prec; a += 2) {

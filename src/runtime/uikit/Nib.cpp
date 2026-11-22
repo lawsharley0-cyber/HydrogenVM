@@ -451,7 +451,10 @@ id loadGraph(Ctx& x, std::shared_ptr<NibGraph> g, bool keyed, id owner, id exter
         }
     }
     // windows marked visible at launch
-    for (id w : visible ? Foundation::arrayItems(x, visible) : std::vector<id>()) r.send(x.cpu, w, "setHidden:", {0});
+    for (id w : visible ? Foundation::arrayItems(x, visible) : std::vector<id>()) {
+        if (UIKit::ui(x).deferLaunchWindows) { r.retain(x.cpu, w); UIKit::ui(x).launchWindows.push_back(w); }
+        else r.send(x.cpu, w, "setHidden:", {0});
+    }
     // awakeFromNib, in decode order, skipping proxies and connections
     std::vector<id> awake = DD(x, coder).order;
     for (id o : awake) {

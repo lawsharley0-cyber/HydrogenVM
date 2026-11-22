@@ -157,6 +157,8 @@ uint32_t toNS(uint32_t e) {
         case 0x10000100: return kNSUTF16BE;
         case 0x14000100: return kNSUTF16LE;
         case 0x0C000100: return kNSUTF32;
+        case 0x18000100: return kNSUTF32BE;   // kCFStringEncodingUTF32BE
+        case 0x1C000100: return kNSUTF32LE;   // kCFStringEncodingUTF32LE (Osmos converts its wchar_t paths with it)
         case 0x0500: return kNSWindowsCP1252;
         case 0: return kNSMacOSRoman;
         case 0x0BFF: return kNSNonLossyASCII;
@@ -174,6 +176,8 @@ uint32_t toCF(uint32_t e) {
         case kNSUTF16BE: return 0x10000100;
         case kNSUTF16LE: return 0x14000100;
         case kNSUTF32: return 0x0C000100;
+        case kNSUTF32BE: return 0x18000100;
+        case kNSUTF32LE: return 0x1C000100;
         case kNSWindowsCP1252: return 0x0500;
         case kNSMacOSRoman: return 0;
         default: return 0x08000100;

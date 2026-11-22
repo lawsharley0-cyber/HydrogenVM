@@ -147,6 +147,10 @@ struct UIState {
     uint64_t frames = 0;
     bool needsComposite = true;
     bool launched = false;
+    // The main nib's "Visible at Launch" windows: iOS shows them after didFinishLaunching
+    // returns, not while the nib loads (Osmos drew from layoutSubviews before its launch code ran).
+    bool deferLaunchWindows = false;
+    std::vector<id> launchWindows;
     // display links
     struct Link { id obj; id target; SEL sel; int interval; bool paused; int counter; };
     std::vector<Link> links;

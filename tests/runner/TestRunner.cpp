@@ -4297,6 +4297,17 @@ int runFullSubsystemTests() {
               "safe-area insets shrink applicationFrame (top 44, bottom 34)");
         const ObjC::id sharedApp = u.app ? u.app : r.createInstance(r.getClass("UIApplication"));
         {
+            // UIInterfaceOrientationLandscapeRight == UIDeviceOrientationLandscapeLeft == 3 (and both LandscapeLeft/Right
+            // counterparts are 4): the device orientation matching the interface has the same number. Osmos sets the
+            // status bar from [UIDevice orientation] every frame; a swapped mapping flipped it forever.
+            const int saved = u.statusBarOrientation;
+            const ObjC::id device = ObjC::id(r.send(cpu, r.getClass("UIDevice"), "currentDevice"));
+            bool same = true;
+            for (int o : {3, 4}) { u.statusBarOrientation = o; same &= int32_t(r.send(cpu, device, "orientation")) == o; }
+            u.statusBarOrientation = saved;
+            check(same, "UIDevice orientation has the number of the matching interface orientation (3 = 3, 4 = 4)");
+        }
+        {
             // Subway Surfers: respondsTo registerForRemoteNotifications, then an NSInvocation for
             // isRegisteredForRemoteNotifications built from the class's method signature.
             const ObjC::id appCls = ObjC::id(r.getClass("UIApplication"));
@@ -14194,6 +14205,20 @@ int runFullSubsystemTests() {
         const uint32_t wideNext = proc.heap().allocZeroed(16);
         paint(wideNext, 16, 0xa5);
 
+        {
+            // Osmos: in C's printf family %S is a wchar_t* (as %ls), not Cocoa's UTF-16; and its paths go
+            // through CFStringCreateWithBytes(kCFStringEncodingUTF32LE) before fopen.
+            const uint32_t big = proc.heap().allocZeroed(64);
+            const auto r = wideRun("_swprintf", {big, 16, wideLiteral("%S/x"), wideLiteral("data")});
+            const bool cS = !r.failed && r.result == 6 && wideEquals(big, "data/x");
+            const uint32_t utf32 = wideLiteral("res/a.png");
+            const auto str = uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_CFStringCreateWithBytes"), {0, utf32, 9 * 4, 0x1C000100u, 0}));
+            const uint32_t back = proc.heap().allocZeroed(32);
+            const bool got = str && uint32_t(proc.callGuest(cpu, *proc.lookupSymbol("_CFStringGetCString"), {str, back, 32, 0x08000100u})) & 0xFF;
+            check(cS && got && proc.readCString(back) == "res/a.png",
+                  "swprintf's %S reads a wchar_t string; CFStringCreateWithBytes decodes kCFStringEncodingUTF32LE");
+            proc.heap().free(big); proc.heap().free(back);
+        }
         auto w = wideRun("_swprintf", {wideBuf, 4, wideExact});
         check(!w.failed && w.result == 3 && wideEquals(wideBuf, "123") && painted(wideNext, 16, 0xa5),
               "swprintf accepts an exact four-wchar heap fit");

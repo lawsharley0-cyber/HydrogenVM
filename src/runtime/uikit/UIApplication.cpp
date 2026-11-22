@@ -469,8 +469,12 @@ id dev_vendorId(Ctx& x, id, SEL) {
     return autoreleased(x, id(rt(x).send(x.cpu, uuid, "initWithUUIDString:", {makeString(x, u)})));
 }
 int32_t dev_orientation(Ctx& x, id, SEL) {
-    // UIDeviceOrientation: LandscapeLeft(3) = interface LandscapeRight(4) and vice versa
-    switch (ui(x).statusBarOrientation) { case 3: return 4; case 4: return 3; default: return ui(x).statusBarOrientation; }
+    // UIKit defines UIInterfaceOrientationLandscapeRight = UIDeviceOrientationLandscapeLeft (both 3)
+    // and UIInterfaceOrientationLandscapeLeft = UIDeviceOrientationLandscapeRight (both 4): the
+    // device orientation that matches an interface orientation has the same number. Swapping
+    // them made Osmos, which sets the status bar from [UIDevice orientation] every frame, flip
+    // between the two landscapes forever.
+    return ui(x).statusBarOrientation;
 }
 int32_t dev_idiom(Ctx& x, id, SEL) { return tabletOnly(x) ? 1 : 0; }
 struct DevFlags : ObjC::HostObject { bool battery = false, proximity = false, orientationNotes = false; };
@@ -715,8 +719,10 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         x.proc.logf(LogLevel::Info, "Loading main nib %s", mainNib.c_str());
         // UIKit keeps the main nib's top-level objects (the app delegate, the window) alive for the
         // app's lifetime; they're usually assign-outlets, so nothing else retains them.
-        if (const id top = loadNib(x, mainNib, 0, u.app, 0))
-            for (id o : Foundation::arrayItems(x, top)) r.retain(x.cpu, o);
+        u.deferLaunchWindows = true;
+        const id top = loadNib(x, mainNib, 0, u.app, 0);
+        u.deferLaunchWindows = false;
+        if (top) for (id o : Foundation::arrayItems(x, top)) r.retain(x.cpu, o);
     }
     const std::string storyboard = info ? info->getString("UIMainStoryboardFile~iphone", info->getString("UIMainStoryboardFile")) : "";
     if (!storyboard.empty()) {
@@ -747,6 +753,12 @@ int32_t f_UIApplicationMain(Ctx& x, int32_t, GuestPtr, id principalName, id dele
         r.send(x.cpu, del, "application:didFinishLaunchingWithOptions:", {u.app, launchOptions});
     else if (del && r.respondsTo(del, r.sel("applicationDidFinishLaunching:")))
         r.send(x.cpu, del, "applicationDidFinishLaunching:", {u.app});
+    // The main nib's "Visible at Launch" windows appear now, after the delegate's launch code.
+    for (id w : std::vector<id>(u.launchWindows)) {
+        if (!viewData(x, w).visible) r.send(x.cpu, w, "setHidden:", {0});
+        r.release(x.cpu, w);
+    }
+    u.launchWindows.clear();
     Foundation::postNotification(x, "UIApplicationDidFinishLaunchingNotification", u.app);
     reevaluateRootOrientation(x, "after launch");
     // iOS lays the windows out (the root controller's viewWillAppear, viewWillLayoutSubviews,
