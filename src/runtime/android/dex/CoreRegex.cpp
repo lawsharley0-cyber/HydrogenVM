@@ -4,8 +4,11 @@
 #include <bit>
 #include <utility>
 
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 #include <unicode/uregex.h>
+#endif
+#if defined(__ANDROID__)
+#include <regex>
 #endif
 
 namespace Hydrogen::Runtime::Android::Dex {
@@ -26,7 +29,93 @@ std::u16string upperAscii(std::u16string s) {
     return s;
 }
 
-#if !defined(__APPLE__)
+#if defined(__ANDROID__)
+// The NDK's ICU has no regular expressions: java.util.regex runs on std::regex (ECMAScript) over
+// UTF-32 text, with match positions mapped back to UTF-16 indices. DOTALL and COMMENTS are not
+// available in that grammar; LITERAL escapes the pattern.
+class StdRegexPattern final : public HostRegexPattern {
+public:
+    StdRegexPattern(std::u16string_view pattern, int32_t javaFlags) {
+        std::wstring source = widen(pattern, nullptr);
+        if (javaFlags & 0x10) {   // LITERAL
+            std::wstring escaped;
+            for (wchar_t c : source) { if (std::wcschr(L"\\^$.|?*+()[]{}", c)) escaped.push_back(L'\\'); escaped.push_back(c); }
+            source = escaped;
+        }
+        auto flags = std::regex::ECMAScript;
+        if (javaFlags & 0x02) flags |= std::regex::icase;
+        if (javaFlags & 0x08) flags |= std::regex::multiline;
+        try { re_ = std::wregex(source, flags); }
+        catch (const std::regex_error&) { throw JavaException{u"Ljava/util/regex/PatternSyntaxException;"}; }
+        groups_ = int32_t(re_.mark_count());
+    }
+    int32_t groupCount() const override { return groups_; }
+    bool matches(std::u16string_view input, std::vector<RegexGroup>& groups) const override {
+        std::vector<size_t> map;
+        const std::wstring text = widen(input, &map);
+        std::wsmatch m;
+        if (!std::regex_match(text, m, re_)) return false;
+        capture(m, map, groups, text.begin());
+        return true;
+    }
+    bool find(std::u16string_view input, size_t startPos, std::vector<RegexGroup>& groups) const override {
+        std::vector<size_t> map;
+        const std::wstring text = widen(input, &map);
+        size_t from = 0;
+        while (from < map.size() - 1 && map[from] < startPos) ++from;
+        std::wsmatch m;
+        if (!std::regex_search(text.begin() + std::ptrdiff_t(from), text.end(), m, re_,
+                               from ? std::regex_constants::match_prev_avail : std::regex_constants::match_default))
+            return false;
+        capture(m, map, groups, text.begin());
+        return true;
+    }
+    std::u16string replace(std::u16string_view input, std::u16string_view replacement, bool firstOnly) const override {
+        const std::wstring out = std::regex_replace(widen(input, nullptr), re_, widen(replacement, nullptr),
+                                                    firstOnly ? std::regex_constants::format_first_only : std::regex_constants::format_default);
+        std::u16string result;
+        for (wchar_t c : out) {
+            const uint32_t cp = uint32_t(c);
+            if (cp > 0xFFFF) { result.push_back(char16_t(0xD800 + ((cp - 0x10000) >> 10))); result.push_back(char16_t(0xDC00 + ((cp - 0x10000) & 0x3FF))); }
+            else result.push_back(char16_t(cp));
+        }
+        return result;
+    }
+private:
+    // UTF-16 to UTF-32; map[i] is the UTF-16 index of code point i (and map[n] the length).
+    static std::wstring widen(std::u16string_view s, std::vector<size_t>* map) {
+        std::wstring out;
+        for (size_t i = 0; i < s.size();) {
+            if (map) map->push_back(i);
+            uint32_t cp = s[i];
+            if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] < 0xE000) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (s[i + 1] - 0xDC00);
+                i += 2;
+            } else {
+                ++i;
+            }
+            out.push_back(wchar_t(cp));
+        }
+        if (map) map->push_back(s.size());
+        return out;
+    }
+    // Positions are measured from `base`, the start of the whole text.
+    void capture(const std::wsmatch& m, const std::vector<size_t>& map, std::vector<RegexGroup>& groups,
+                 std::wstring::const_iterator base) const {
+        groups.clear();
+        for (size_t i = 0; i <= size_t(groups_); ++i) {
+            if (i >= m.size() || !m[i].matched) { groups.push_back({false, 0, 0}); continue; }
+            const size_t start = size_t(m[i].first - base);
+            const size_t end = start + size_t(m[i].length());
+            groups.push_back({true, map[start], map[end]});
+        }
+    }
+    std::wregex re_;
+    int32_t groups_ = 0;
+};
+#endif
+
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 uint32_t toIcuFlags(int32_t javaFlags) {
     uint32_t out = 0;
     if (javaFlags & 0x01) out |= UREGEX_UNIX_LINES;
@@ -163,7 +252,11 @@ std::vector<std::u16string> splitWithPattern(const HostRegexPattern& re, std::u1
 
 } // namespace
 
-#if !defined(__APPLE__)
+#if defined(__ANDROID__)
+std::shared_ptr<const HostRegexPattern> compileHostRegex(std::u16string_view pattern, int32_t javaFlags) {
+    return std::make_shared<StdRegexPattern>(pattern, javaFlags);
+}
+#elif !defined(__APPLE__)
 std::shared_ptr<const HostRegexPattern> compileHostRegex(std::u16string_view pattern, int32_t javaFlags) {
     return std::make_shared<IcuRegexPattern>(pattern, javaFlags);
 }

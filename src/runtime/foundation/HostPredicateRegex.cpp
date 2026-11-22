@@ -1,5 +1,5 @@
 #include "HostPredicateRegex.hpp"
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 // ICU's C API (uregex), so the build depends only on ICU's stable C ABI.
 #include <unicode/uregex.h>
 #include <unicode/ustring.h>
@@ -50,6 +50,47 @@ struct Regex final : HostPredicateRegex {
         const bool result = U_SUCCESS(status) && uregex_matches(re, 0, &status);
         if (U_FAILURE(status)) throw std::runtime_error("MATCHES evaluation failed");
         return result;
+    }
+};
+}
+std::shared_ptr<const HostPredicateRegex> compilePredicateRegex(const std::string& pattern, bool insensitive) {
+    return std::make_shared<Regex>(pattern, insensitive);
+}
+}
+#endif
+
+#if defined(__ANDROID__)
+// The NDK's ICU has no regular expressions: Android uses std::regex (ECMAScript grammar) over
+// UTF-32 text. ICU-only syntax (Unicode categories, inline flags) is refused as invalid.
+#include <regex>
+#include <stdexcept>
+namespace Hydrogen::Runtime::Foundation {
+namespace {
+std::wstring toWide(const std::string& s) {
+    std::wstring out;
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        uint32_t cp = c; size_t n = 1;
+        if (c >= 0xF0) { cp = c & 0x07; n = 4; } else if (c >= 0xE0) { cp = c & 0x0F; n = 3; } else if (c >= 0xC0) { cp = c & 0x1F; n = 2; }
+        if (i + n > s.size()) throw std::invalid_argument("invalid UTF-8");
+        for (size_t k = 1; k < n; ++k) cp = (cp << 6) | (static_cast<unsigned char>(s[i + k]) & 0x3F);
+        out.push_back(wchar_t(cp));
+        i += n;
+    }
+    return out;
+}
+struct Regex final : HostPredicateRegex {
+    std::wregex re;
+    Regex(const std::string& source, bool insensitive) {
+        try {
+            re = std::wregex(toWide(source), insensitive ? std::regex::ECMAScript | std::regex::icase : std::regex::ECMAScript);
+        } catch (const std::regex_error&) {
+            throw std::invalid_argument("invalid MATCHES regular expression");
+        }
+    }
+    bool matches(const std::string& input) const override {
+        try { return std::regex_match(toWide(input), re); }
+        catch (const std::regex_error&) { throw std::runtime_error("MATCHES evaluation failed"); }
     }
 };
 }

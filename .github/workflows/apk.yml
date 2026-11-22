@@ -1,0 +1,52 @@
+name: Android APK
+
+# Builds the HydrogenVM Android app (android/): the emulator core compiled with the NDK for
+# arm64 phones, Android 12 or later, signed with the runner's debug key so it can be sideloaded.
+# Manual, or on a push that changes the Android app.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/apk.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Build Android APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Install the NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+      - name: Build (release, debug-key signed)
+        working-directory: android
+        run: gradle --no-daemon assembleRelease
+      - name: Name the package
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk out/HydrogenVM-android.apk
+          echo "$(git rev-parse HEAD)" > out/HydrogenVM-android.commit.txt
+          sha256sum out/HydrogenVM-android.apk | tee out/HydrogenVM-android.sha256
+          unzip -l out/HydrogenVM-android.apk | grep -E "lib/arm64-v8a/|classes.dex"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: HydrogenVM-android-apk
+          if-no-files-found: error
+          path: out/
