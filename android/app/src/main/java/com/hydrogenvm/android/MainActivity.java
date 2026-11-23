@@ -308,6 +308,8 @@ public class MainActivity extends Activity {
                 .setTitle(g.title)
                 .setMultiChoiceItems(labels, on, (d, which, checked) -> Games.setFlag(this, keys[which], g.bundleId, checked))
                 .setPositiveButton("Done", null)
+                // The log of the last game played (any game), for reports such as "taps do nothing".
+                .setNeutralButton("Share last game's log", (d, w) -> shareLastLog())
                 .setNegativeButton("Delete game", (d, w) -> new AlertDialog.Builder(this)
                         .setMessage("Delete " + g.title + " and its saved data?")
                         .setPositiveButton("Delete", (d2, w2) -> {
@@ -317,6 +319,19 @@ public class MainActivity extends Activity {
                         .setNegativeButton("Cancel", null)
                         .show())
                 .show();
+    }
+
+    private void shareLastLog() {
+        String log = Games.readText(Games.lastLog(this), 90000);
+        if (log.isEmpty()) {
+            new AlertDialog.Builder(this).setMessage("No game has been played yet.").setPositiveButton("OK", null).show();
+            return;
+        }
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_SUBJECT, "HydrogenVM Android game log");
+        send.putExtra(Intent.EXTRA_TEXT, log);
+        startActivity(Intent.createChooser(send, "Share log"));
     }
 
     /** Java errors anywhere in the app are written down for the next start, then the app closes as usual. */
